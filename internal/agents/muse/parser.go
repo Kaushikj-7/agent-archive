@@ -14,9 +14,9 @@ import (
 type Parser struct{}
 
 // Version identifies the Muse retained analysis policy.
-func (Parser) Version() string { return "0.2.0" }
+func (Parser) Version() string { return "0.3.0" }
 
-// Parse interprets the complete validated muse-jsonl v1 evidence.
+// Parse interprets the complete validated Muse ordinary/omission union.
 func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {
 	rows, e := retainedRows(ctx, b)
 	if e != nil {
@@ -26,7 +26,7 @@ func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analys
 		if e = ctx.Err(); e != nil {
 			return archive.Analysis{}, e
 		}
-		rows[i], e = privacyWithGaps(r, i+1, func(string, int, string) {})
+		rows[i], e = privacyLogical(r, i+1, func(string, int, string) {})
 		if e != nil {
 			return archive.Analysis{}, e
 		}
@@ -37,16 +37,20 @@ func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analys
 			return archive.Analysis{}, errFormat
 		}
 	}
-	if e = validateRootRows(rows); e != nil {
+	if e = validateLogical(rows); e != nil {
 		return archive.Analysis{}, e
 	}
-	view, e := conversation(rows)
+	if !validOmissionGaps(rows, b.Capture.Gaps) {
+		return archive.Analysis{}, errFormat
+	}
+	slots := ordinarySlots(rows)
+	view, e := conversation(slots)
 	if e != nil {
 		return archive.Analysis{}, e
 	}
 	unavailable := archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
-	a := archive.Analysis{View: view, Facts: archive.NativeFacts{NativeStartedAt: time.UnixMicro(rows[0].Timestamp).UTC(), EarliestRecordAt: time.UnixMicro(rows[0].Timestamp).UTC(), TokenScopeUnknown: true}, Observability: archive.Observability{StructuredCounts: archive.Availability{State: archive.AvailabilityAvailable}, ToolCalls: unavailable, FilesTouched: unavailable, GitActivity: unavailable, Compactions: unavailable, ToolErrors: unavailable, ToolResults: unavailable}}
-	for _, r := range rows {
+	a := archive.Analysis{View: view, Facts: archive.NativeFacts{NativeStartedAt: time.UnixMicro(slots[0].Timestamp).UTC(), EarliestRecordAt: time.UnixMicro(slots[0].Timestamp).UTC(), TokenScopeUnknown: true}, Observability: archive.Observability{StructuredCounts: archive.Availability{State: archive.AvailabilityAvailable}, ToolCalls: unavailable, FilesTouched: unavailable, GitActivity: unavailable, Compactions: unavailable, ToolErrors: unavailable, ToolResults: unavailable}}
+	for _, r := range slots {
 		if r.Type == payloadRuntimeSessionMetadata && a.Facts.WorkspaceRoot == "" {
 			a.Facts.WorkspaceRoot = str(r.Fields["workspace_root"])
 		}
@@ -54,7 +58,7 @@ func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analys
 			a.Facts.Name = archive.CollapseSessionTitle(str(r.Fields["new_name"]))
 		}
 	}
-	a.Facts.IdentityConflict = b.NativeSessionID != "" && b.NativeSessionID != rows[0].Stream.ID
+	a.Facts.IdentityConflict = b.NativeSessionID != "" && b.NativeSessionID != slots[0].Stream.ID
 	return a, nil
 }
 
@@ -69,12 +73,17 @@ func conversation(rows []retained) (archive.NormalizedView, error) {
 	materialized := map[string]bool{}
 	consumed := map[string]bool{}
 	for i, r := range rows {
+		if r.Version == 0 {
+			continue
+		}
 		ts := time.UnixMicro(r.Timestamp).UTC()
 		if ts.After(view.LatestRecordAt) {
 			view.LatestRecordAt = ts
 		}
 		f := r.Fields
 		switch r.Type {
+		case payloadApprovalWaitStarted, payloadApprovalWaitTerminal, payloadToolBatchStarted, payloadToolBatchTerminal:
+			// Omitted private effects do not create conversation facts.
 		case payloadRuntimeUserIntentAccepted:
 			id := str(f["intent_id"])
 			if id == "" {
@@ -100,12 +109,12 @@ func conversation(rows []retained) (archive.NormalizedView, error) {
 				started[run] = i
 				sourceRecords[runIdentity{run, str(f["source_run_record_id"])}] = true
 				lastSequence[run] = num(f["source_run_record_sequence"])
-			case eventAssistantMessageCommitted:
-				_, ok := started[run]
-				if !ok || !joined[run] {
+			case eventReasoningCommitted:
+				if observeConversationSource(f, run, joined, lastSequence, sourceRecords) != nil {
 					return view, errFormat
 				}
-				if num(f["source_run_record_sequence"]) <= lastSequence[run] || sourceRecords[runIdentity{run, str(f["source_run_record_id"])}] {
+			case eventAssistantMessageCommitted:
+				if observeConversationSource(f, run, joined, lastSequence, sourceRecords) != nil {
 					return view, errFormat
 				}
 				key := runIdentity{run, str(f["message_id"])}
@@ -113,8 +122,6 @@ func conversation(rows []retained) (archive.NormalizedView, error) {
 					return view, errFormat
 				}
 				messages[key] = true
-				sourceRecords[runIdentity{run, str(f["source_run_record_id"])}] = true
-				lastSequence[run] = num(f["source_run_record_sequence"])
 				view.Turns = append(view.Turns, archive.NormalizedTurn{RecordIndex: i, Role: "assistant", Kind: archive.TurnKindAssistant, Text: str(f["text"]), ID: r.ID, MessageID: str(f["message_id"]), TurnID: run, Timestamp: ts.Format(time.RFC3339Nano)})
 			case eventAccepted, eventAssistantToolCallsCommitted, eventCancelled, eventCompleted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventFailed, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProposed, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventScheduled, eventSideEffectIntent, eventStatus, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
 				// Known optional facts do not create visible conversation turns.
@@ -172,4 +179,15 @@ func materializedTurn(r retained, rows []retained, accepted map[string]retained,
 type runIdentity struct {
 	run    string
 	record string
+}
+
+func observeConversationSource(f map[string]any, run string, joined map[string]bool, last map[string]int64, seen map[runIdentity]bool) error {
+	key := runIdentity{run, str(f["source_run_record_id"])}
+	seq := num(f["source_run_record_sequence"])
+	if !joined[run] || seq <= last[run] || seen[key] {
+		return errFormat
+	}
+	seen[key] = true
+	last[run] = seq
+	return nil
 }

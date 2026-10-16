@@ -44,6 +44,11 @@ follow [Semantic Versioning](https://semver.org/).
   strict validation. Muse capture, native show/search and destination launch
   remain unavailable.
 
+- Muse local handoff recognizes the qualified reasoning, approval and tool-effect
+  records while omitting their private bodies. A timestamp-free ephemeral task
+  marker preserves position without inventing activity or tool results. Fixed
+  omission gaps survive retained-only privacy refresh; unknown shapes still refuse.
+
 - Read complete supported Muse exec/MSP roots with `handoff --file PATH
   --harness muse`, including safe own prompts and committed assistant text,
   JSON/Markdown output and handoff into an existing supported agent. Creation

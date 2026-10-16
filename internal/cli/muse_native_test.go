@@ -57,6 +57,7 @@ type museFilterCounter struct {
 	agentapi.TranscriptFilter
 	calls  atomic.Int64
 	before func()
+	after  func(archive.FilteredTranscript)
 }
 
 func (f *museFilterCounter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.FilterContext) (archive.FilteredTranscript, error) {
@@ -64,7 +65,11 @@ func (f *museFilterCounter) Filter(ctx context.Context, in agentapi.NativeInput,
 	if f.before != nil {
 		f.before()
 	}
-	return f.TranscriptFilter.Filter(ctx, in, c)
+	out, e := f.TranscriptFilter.Filter(ctx, in, c)
+	if f.after != nil && e == nil {
+		f.after(out)
+	}
+	return out, e
 }
 
 func museCountingRegistry(tb testing.TB) (*builtin.Registry, *museFilterCounter) {
@@ -92,9 +97,15 @@ func museCountingRegistry(tb testing.TB) (*builtin.Registry, *museFilterCounter)
 
 // museNativeBytes derives synthetic variants and recomputes the native frame
 // checksum; production decoding never uses this fixture constructor.
+
 func museNativeBytes(tb testing.TB, lane, id, workspace string) []byte {
 	tb.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "agents", "muse", "testdata", "synthetic-"+lane+"-conversation.jsonl"))
+	return museNativeFixtureBytes(tb, "synthetic-"+lane+"-conversation.jsonl", id, workspace)
+}
+
+func museNativeFixtureBytes(tb testing.TB, name, id, workspace string) []byte {
+	tb.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "agents", "muse", "testdata", name))
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -622,5 +633,75 @@ func TestMuseSelectedPathRecheckFailureAndCancellationCloseHandles(t *testing.T)
 				t.Fatalf("recheck accepted/failed cleanup err=%v active=%d filter=%d", err, active, counter.calls.Load())
 			}
 		})
+	}
+}
+
+func TestMuseNativeOmissionsReachSelectedArtifactAndMetadata(t *testing.T) {
+	env, data, workspace, counter := museNativeEnv(t)
+	raw := museNativeFixtureBytes(t, "synthetic-model-resolution-omissions.jsonl", museSyntheticID, workspace)
+	// Exercise the enriched assistant native leaf without retaining it.
+	raw = bytes.Replace(raw, []byte(`"message_id":"synthetic-message","response_id"`), []byte(`"message_id":"synthetic-message","provider_item_id":"PRIVATE_PROVIDER_ITEM_SENTINEL","response_id"`), 1)
+	writeMuseNative(t, data, museSyntheticID, raw)
+	fake := newFakeKeys("/0000", "\x1b[B", string(fakeResize), "\x1b", "q")
+	env.openKeys = func(io.Reader) (keyTerminal, bool) { return fake, true }
+	env.IsTerminal = func(any) bool { return true }
+	env.TerminalSize = fixedTerminal{100, 12}.terminalSize
+	var browseOut, browseErr strings.Builder
+	code := Run([]string{"handoff", "--harness", "muse", "--source", "local", "--no-preamble"}, strings.NewReader(""), &browseOut, &browseErr, env)
+	if code != 0 || counter.calls.Load() != 0 {
+		t.Fatal("browsing filtered native bodies")
+	}
+	var selected archive.FilteredTranscript
+	counter.after = func(out archive.FilteredTranscript) { selected = out }
+	artifact := filepath.Join(t.TempDir(), "handoff.json")
+	out, errOut, code := runHandoff(t, env, museSyntheticID, "--source", "local", "--harness", "muse", "--format", "json", "--output", artifact)
+	if code != 0 || counter.calls.Load() != 1 {
+		t.Fatalf("selected source failed: %d %s", code, errOut)
+	}
+	contents, e := os.ReadFile(artifact)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var handoff archive.Handoff
+	if json.Unmarshal(contents, &handoff) != nil {
+		t.Fatal("handoff artifact malformed")
+	}
+	if !handoff.ToolResultsUnavailable || len(handoff.Exchanges) != 1 || !bytes.Contains(contents, []byte("Explain the synthetic parser.")) {
+		t.Fatal("own text/unavailability lost")
+	}
+	for _, code := range []string{"muse_private_native_bodies_omitted", "muse_ephemeral_task_delta_omitted", "usage_cache_reasoning_cost_unavailable", "tool_facts_unavailable"} {
+		if !bytes.Contains(contents, []byte(code)) {
+			t.Fatal("artifact omitted coverage")
+		}
+	}
+	reg := archive.SessionRegistration{ArchiveSessionID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", NativeSessionID: museSyntheticID, ProjectID: "local", ProjectRoot: workspace, Harness: archive.Harness{Name: "muse"}, SessionStartedAt: selected.NativeStartAt}
+	bundle, e := archive.NewSourceBundle(reg, counter.TranscriptFilter, selected, env.Now(), nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	analysis, e := analyzeSource(t.Context(), env.Agents, bundle)
+	if e != nil {
+		t.Fatal(e)
+	}
+	metadata, e := archive.BuildMetadataWithAnalysis(bundle, analysis, nil, "synthetic-machine", selected.NativeStartAt, env.Now(), archive.SourceReference{Key: "sessions/muse/synthetic/source.jsonl.gz", SHA256: strings.Repeat("a", 64), CompressedBytes: 1}, archive.ParserInfo{Name: "muse", Version: "0.3.0"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if metadata.Counts.ToolCalls != nil || metadata.Counts.ToolResults != nil || metadata.Counts.FilesTouched != nil || metadata.Counts.Commits != nil {
+		t.Fatal("omitted facts became measurements")
+	}
+	metadataBytes, _ := json.Marshal(metadata)
+	for _, code := range []string{"muse_private_native_bodies_omitted", "muse_ephemeral_task_delta_omitted"} {
+		if !bytes.Contains(metadataBytes, []byte(code)) {
+			t.Fatal("metadata omitted coverage")
+		}
+	}
+	for _, private := range []string{"PRIVATE_NATIVE_BODY_SENTINEL", "PRIVATE_PROVIDER_ITEM_SENTINEL"} {
+		if bytes.Contains(contents, []byte(private)) || bytes.Contains(metadataBytes, []byte(private)) || strings.Contains(out+errOut+browseOut.String()+browseErr.String(), private) {
+			t.Fatal("private native body escaped")
+		}
+	}
+	if counter.calls.Load() != 1 {
+		t.Fatal("metadata rebuilt native source")
 	}
 }

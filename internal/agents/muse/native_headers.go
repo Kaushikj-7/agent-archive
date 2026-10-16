@@ -25,6 +25,7 @@ func (NativeHeaders) InspectHeader(req agentapi.NativeHeaderRequest) (agentapi.N
 	}
 	rows := make([]retained, 0, 8)
 	var decodeErr error
+	nativeJoins := nativeBodyJoins{}
 	complete := false
 	scanErr := req.Scan(func(raw []byte) bool {
 		if len(rows) == 0 {
@@ -32,6 +33,14 @@ func (NativeHeaders) InspectHeader(req agentapi.NativeHeaderRequest) (agentapi.N
 		} else {
 			var r retained
 			r, decodeErr = envelope(raw, position{Line: int64(len(rows))})
+			if decodeErr == nil {
+				m, _, err := decodeObject(raw)
+				if err != nil {
+					decodeErr = err
+				} else {
+					decodeErr = nativeJoins.observe(r, object(m["payload"]))
+				}
+			}
 			if decodeErr == nil {
 				rows = append(rows, r)
 			}
@@ -42,6 +51,9 @@ func (NativeHeaders) InspectHeader(req agentapi.NativeHeaderRequest) (agentapi.N
 		needed := 4
 		if len(rows) >= 3 && rows[2].Type == payloadRuntimeSessionCaptureSelection {
 			needed = 8
+		}
+		if len(rows) >= 4 && rows[2].Type == payloadRuntimeSessionMetadata && rows[3].Type == payloadRuntimeSessionMetadata {
+			needed = 5
 		}
 		if len(rows) < needed {
 			return true

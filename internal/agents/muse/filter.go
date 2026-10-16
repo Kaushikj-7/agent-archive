@@ -24,7 +24,7 @@ type Filter struct{}
 func (Filter) Name() string { return "muse" }
 
 // Version identifies the current privacy projection.
-func (Filter) Version() string { return "0.19.0" }
+func (Filter) Version() string { return "0.23.0" }
 
 // LeasedFilterFor refuses decorators which may change filtering semantics.
 func (Filter) LeasedFilterFor(a archive.Adapter) bool { _, ok := a.(Filter); return ok }
@@ -49,15 +49,7 @@ func (Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 	if in.File == nil || in.Records != nil {
 		return out, release, errFormat
 	}
-	rawLimit := c.Limits.RawBytes
-	if rawLimit <= 0 {
-		rawLimit = archive.MaxRawTranscriptBytes
-	}
-	recordLimit := c.Limits.RecordBytes
-	if recordLimit <= 0 {
-		recordLimit = archive.MaxRecordBytes
-	}
-	recordLimit = min(recordLimit, archive.MaxRecordBytes)
+	rawLimit, recordLimit := boundedNativeLimits(c.Limits)
 	if in.File.Length() > rawLimit {
 		return out, release, archive.ErrRecordTooLarge
 	}
@@ -66,10 +58,11 @@ func (Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 	}
 	held += 4096
 	reader := bufio.NewReaderSize(io.NewSectionReader(in.File, 0, in.File.Length()), 4096)
-	rows := []retained{}
+	rows := []logicalRow{}
 	gaps := privacyGaps{}
 	line := int64(0)
 	encodedTotal := int64(0)
+	nativeJoins := nativeBodyJoins{}
 	for {
 		if err = ctx.Err(); err != nil {
 			return out, release, err
@@ -92,18 +85,21 @@ func (Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 			held -= charge
 			return out, release, errFormat
 		}
-		var decoded []retained
-		if line == 1 {
-			decoded, err = frame(raw, line)
-		} else {
-			var r retained
-			r, err = envelope(raw, position{Line: line})
-			decoded = []retained{r}
+		var decoded []logicalRow
+		var privateCharge int64
+		decoded, privateCharge, err = decodeNativeRows(raw, line, &nativeJoins)
+		if err == nil && privateCharge > 0 {
+			if !reservation.Reserve(privateCharge) {
+				err = errBudget
+			} else {
+				held += privateCharge
+			}
 		}
+
 		if err == nil {
 			for _, r := range decoded {
-				var safe retained
-				safe, err = privacyWithGaps(r, len(rows)+1, gaps.add)
+				var safe logicalRow
+				safe, err = privacyLogical(r, len(rows)+1, gaps.add)
 				if err != nil {
 					break
 				}
@@ -138,7 +134,7 @@ func (Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 	if err = in.File.Check(); err != nil {
 		return out, release, err
 	}
-	if err = validateRows(rows); err != nil {
+	if err = validateLogical(rows); err != nil {
 		return out, release, err
 	}
 	out, err = filtered(rows, c.Limits, gaps.list())
@@ -198,7 +194,7 @@ func privacyWithGaps(r retained, record int, addGap func(string, int, string)) (
 	for k, v := range original.Fields {
 		switch fieldName(k) {
 		case fieldPrompt, fieldText, fieldNewName, fieldPreviousName:
-		case fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence, fieldResume:
+		case fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence, fieldResume, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldModelCallIndex:
 			fallthrough
 		default:
 			if !reflect.DeepEqual(v, r.Fields[k]) {
@@ -209,10 +205,12 @@ func privacyWithGaps(r retained, record int, addGap func(string, int, string)) (
 	return r, nil
 }
 
-func filtered(rows []retained, limits agentapi.ReadLimits, gaps []archive.CaptureGap) (archive.FilteredTranscript, error) {
-	out := archive.FilteredTranscript{Format: "muse-jsonl", SessionIDs: []string{rows[0].Stream.ID}, NativeStartAt: time.UnixMicro(rows[0].Timestamp).UTC(), NativeStartComplete: true, LocalIdentity: archive.NativeSessionIdentity{ID: rows[0].Stream.ID}, Gaps: []archive.CaptureGap{{Code: "muse_local_conversation_only", Detail: "Own visible conversation only"}, {Code: "usage_cache_reasoning_cost_unavailable"}, {Code: "tool_facts_unavailable"}, {Code: "model_switches_unavailable"}, {Code: "child_coverage_unavailable"}}}
+func filtered(rows []logicalRow, limits agentapi.ReadLimits, gaps []archive.CaptureGap) (archive.FilteredTranscript, error) {
+	slots := ordinarySlots(rows)
+	out := archive.FilteredTranscript{Format: "muse-jsonl", SessionIDs: []string{slots[0].Stream.ID}, NativeStartAt: time.UnixMicro(slots[0].Timestamp).UTC(), NativeStartComplete: true, LocalIdentity: archive.NativeSessionIdentity{ID: slots[0].Stream.ID}, Gaps: []archive.CaptureGap{{Code: "muse_local_conversation_only", Detail: "Own visible conversation only"}, {Code: "usage_cache_reasoning_cost_unavailable"}, {Code: "tool_facts_unavailable"}, {Code: "model_switches_unavailable"}, {Code: "child_coverage_unavailable"}}}
 	out.Gaps = append(out.Gaps, gaps...)
-	for _, r := range rows {
+	out.Gaps = append(out.Gaps, omissionGaps(rows)...)
+	for _, r := range slots {
 		if r.Type == payloadRuntimeSessionMetadata {
 			if _, present := r.Fields["model_id"]; !present {
 				out.Gaps = append(out.Gaps, archive.CaptureGap{Code: "model_identity_unavailable", Detail: "Startup metadata does not identify a model"})
@@ -220,7 +218,7 @@ func filtered(rows []retained, limits agentapi.ReadLimits, gaps []archive.Captur
 			break
 		}
 	}
-	if pendingResponse(rows) {
+	if pendingResponse(slots) {
 		out.Gaps = append(out.Gaps, archive.CaptureGap{Code: "muse_response_pending", Detail: "A qualified own prompt has no committed assistant response yet"})
 	}
 	var total int64
@@ -243,11 +241,11 @@ func filtered(rows []retained, limits agentapi.ReadLimits, gaps []archive.Captur
 	return out, nil
 }
 
-func retainedRows(ctx context.Context, b archive.SourceBundle) ([]retained, error) {
+func retainedRows(ctx context.Context, b archive.SourceBundle) ([]logicalRow, error) {
 	if b.NativeChild || b.ParentSessionID != "" || b.SchemaVersion != archive.SourceSchemaVersion || b.Capture.Harness.Name != "muse" || b.Capture.AdapterName != "muse" || b.Capture.SourceFormat != "muse-jsonl" || len(b.NativeText) != 0 || b.History != nil {
 		return nil, errFormat
 	}
-	rows := []retained{}
+	rows := []logicalRow{}
 	total := 0
 	for _, m := range b.NativeRecords {
 		if e := ctx.Err(); e != nil {
@@ -270,24 +268,13 @@ func retainedRows(ctx context.Context, b archive.SourceBundle) ([]retained, erro
 		if total > archive.MaxRecordBytes {
 			return nil, archive.ErrRecordTooLarge
 		}
-		obj, _, e := decodeObject(raw)
-		if e != nil || !keys(obj, "v", "pos", "id", "stream", "seq", "ts_us", "schema", "type", "payload_schema", "record_type", "durability", "causation_id", "fields") {
-			return nil, errFormat
-		}
-		if !keys(object(obj["pos"]), "line", "child") || !keys(object(obj["stream"]), "kind", "id") {
-			return nil, errFormat
-		}
-		var r retained
-		if json.Unmarshal(raw, &r) != nil {
-			return nil, errFormat
-		}
-		r.Fields = object(obj["fields"])
-		if !validFields(r) {
-			return nil, errFormat
+		r, e := decodeLogical(raw)
+		if e != nil {
+			return nil, e
 		}
 		rows = append(rows, r)
 	}
-	if len(rows) > 0 && b.NativeSessionID != "" && b.NativeSessionID != rows[0].Stream.ID {
+	if len(rows) > 0 && b.NativeSessionID != "" && (rows[0].ordinary == nil || b.NativeSessionID != rows[0].ordinary.Stream.ID) {
 		return nil, errFormat
 	}
 	return rows, nil
@@ -318,12 +305,12 @@ func (Filter) RefilterBounded(ctx context.Context, b archive.SourceBundle, _ tim
 		if e = ctx.Err(); e != nil {
 			return archive.FilteredTranscript{}, e
 		}
-		rows[i], e = privacyWithGaps(r, i+1, gaps.add)
+		rows[i], e = privacyLogical(r, i+1, gaps.add)
 		if e != nil {
 			return archive.FilteredTranscript{}, e
 		}
 	}
-	if e = validateRows(rows); e != nil {
+	if e = validateLogical(rows); e != nil {
 		return archive.FilteredTranscript{}, e
 	}
 	return filtered(rows, limits, gaps.list())
@@ -364,11 +351,11 @@ func (Filter) EvidenceExtends(a, b archive.SourceBundle) bool {
 		return false
 	}
 	left, e := retainedRows(context.Background(), a)
-	if e != nil || validateRows(left) != nil {
+	if e != nil || validateLogical(left) != nil {
 		return false
 	}
 	right, e := retainedRows(context.Background(), b)
-	if e != nil || validateRows(right) != nil || len(right) < len(left) {
+	if e != nil || validateLogical(right) != nil || len(right) < len(left) {
 		return false
 	}
 	for i := range left {
@@ -390,7 +377,7 @@ var _ agentapi.LeasedTranscriptRefilter = Filter{}
 var _ agentapi.TranscriptParser = Parser{}
 
 var retainedKeys = func() map[string]bool {
-	keys := strings.Fields("v pos line child id stream kind seq ts_us schema type payload_schema record_type durability causation_id fields schema_version format permission_epoch cause workspace_root provider_id model_id tool_surface_version session_id resume selection publication_id command_id command_kind activation_source cwd intent_id source_session_id surface semantic_kind envelope_record_id envelope_sequence run_id run_started_session_record_id run_started_source_record_id outcome_kind new_name previous_name source operation_id root_agent_id root_session_id event_kind source_run_record_id source_run_record_sequence prompt message_id response_id text")
+	keys := strings.Fields("v pos line child id stream kind seq ts_us schema type payload_schema record_type durability causation_id fields schema_version format permission_epoch cause workspace_root provider_id model_id tool_surface_version session_id resume selection publication_id command_id command_kind activation_source cwd intent_id source_session_id surface semantic_kind envelope_record_id envelope_sequence run_id run_started_session_record_id run_started_source_record_id outcome_kind new_name previous_name source operation_id root_agent_id root_session_id event_kind source_run_record_id source_run_record_sequence prompt message_id response_id text position sequence marker omitted_record payload_type payload_schema_version payload_kind omission_class pending_action_id task_id tool_call_id review_id effect_id model_call_index")
 	out := map[string]bool{}
 	for _, key := range keys {
 		out[key] = true
@@ -435,6 +422,8 @@ func pendingResponse(rows []retained) bool {
 		}
 		run := str(r.Fields["run_id"])
 		switch runtimeEvent(str(r.Fields["event_kind"])) {
+		case eventReasoningCommitted:
+			// Reasoning does not change pending visible response state.
 		case eventStarted:
 			pending[run] = true
 		case eventAssistantMessageCommitted:
@@ -520,4 +509,67 @@ func retainedPrivacyGaps(ctx context.Context, b archive.SourceBundle, records in
 		}
 	}
 	return gaps, nil
+}
+
+func privacyMarker(raw []byte, record int, add func(string, int, string)) ([]byte, error) {
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return nil, errFormat
+	}
+	safe, ok := archive.SanitizeValue(value, &archive.PrivacyState{ExtraAllowed: retainedKeys, Record: record, AddGap: add})
+	if !ok {
+		return nil, errFormat
+	}
+	return json.Marshal(safe)
+}
+
+func omissionGaps(rows []logicalRow) []archive.CaptureGap {
+	marker, body := false, false
+	for _, r := range rows {
+		if r.omission != nil {
+			marker = true
+		}
+		if r.ordinary != nil && newFamily(*r.ordinary) {
+			body = true
+		}
+	}
+	var out []archive.CaptureGap
+	if marker {
+		out = append(out, archive.CaptureGap{Code: "muse_ephemeral_task_delta_omitted"})
+	}
+	if body {
+		out = append(out, archive.CaptureGap{Code: "muse_private_native_bodies_omitted"})
+	}
+	return out
+}
+
+// validOmissionGaps refuses concealed or altered recognized omission coverage.
+// Refilter reconstructs these fixed gaps from validated rows without native I/O.
+func validOmissionGaps(rows []logicalRow, gaps []archive.CaptureGap) bool {
+	for _, expected := range omissionGaps(rows) {
+		count := 0
+		for _, gap := range gaps {
+			if gap.Code == expected.Code {
+				if gap != expected {
+					return false
+				}
+				count++
+			}
+		}
+		if count != 1 {
+			return false
+		}
+	}
+	return true
+}
+
+func boundedNativeLimits(limits agentapi.ReadLimits) (int64, int64) {
+	raw, record := limits.RawBytes, limits.RecordBytes
+	if raw <= 0 {
+		raw = archive.MaxRawTranscriptBytes
+	}
+	if record <= 0 {
+		record = archive.MaxRecordBytes
+	}
+	return raw, min(record, archive.MaxRecordBytes)
 }

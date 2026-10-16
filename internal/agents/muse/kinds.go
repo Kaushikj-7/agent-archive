@@ -67,6 +67,10 @@ type fieldName string
 
 const (
 	fieldPrompt                  fieldName = "prompt"
+	fieldKind                    fieldName = "kind"
+	fieldEventKind               fieldName = "event_kind"
+	fieldSourceRunRecordID       fieldName = "source_run_record_id"
+	fieldModelCallIndex          fieldName = "model_call_index"
 	fieldText                    fieldName = "text"
 	fieldNewName                 fieldName = "new_name"
 	fieldPreviousName            fieldName = "previous_name"
@@ -81,4 +85,24 @@ type streamKind string
 
 const (
 	streamSession streamKind = "session"
+)
+
+// approvalEvent is the closed newly qualified private review lane.
+type approvalEvent string
+
+const (
+	approvalRequested       approvalEvent = "requested"
+	approvalReviewStarted   approvalEvent = "automated_review_started"
+	approvalReviewCompleted approvalEvent = "automated_review_completed"
+	approvalDecisionApplied approvalEvent = "decision_applied"
+)
+
+type omittedKind string
+
+const (
+	omittedRun      omittedKind = "run"
+	omittedTask     omittedKind = "task"
+	omittedApproval omittedKind = "approval"
+	omittedWait     omittedKind = "approval_wait_effect"
+	omittedTool     omittedKind = "tool_batch_effect"
 )
