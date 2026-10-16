@@ -203,6 +203,10 @@ func (s *sessionScan) scanOnce(ctx context.Context) (sessionOutcome, error) {
 	if out, handled, err := s.resumeRetentionDeletion(); handled || err != nil {
 		return out, err
 	}
+	return s.scanRetainedOrNative(ctx)
+}
+
+func (s *sessionScan) scanRetainedOrNative(ctx context.Context) (sessionOutcome, error) {
 	if err := s.prepareRetainedOwnership(); err != nil {
 		return outcomeSkipped, err
 	}

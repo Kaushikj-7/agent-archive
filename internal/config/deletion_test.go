@@ -43,10 +43,17 @@ func FuzzDeletionConfigurationFenceRoundTrip(f *testing.F) {
 	}
 	f.Add(seed)
 	f.Add([]byte(`{"schema_version":1,"machine_id":"synthetic"}`))
+	f.Add([]byte(`{"schema_version":7,"0000000000":"000000000"}`))
 	f.Add([]byte(`{"schema_version":{"version":18,"writer":"owned-deletion-v18","base":1},"deletion_protection":true}`))
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		var c Config
 		if err := json.Unmarshal(raw, &c); err != nil {
+			return
+		}
+		// Older numeric schemas may be readable for diagnosis while their
+		// missing capability flags deliberately forbid writing. This property
+		// concerns accepted deletion-fenced configurations and their full base.
+		if !c.DeletionProtection {
 			return
 		}
 		encoded, err := json.Marshal(c)

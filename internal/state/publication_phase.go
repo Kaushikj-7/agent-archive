@@ -244,8 +244,8 @@ func (owned *PendingPublication) validatePublicationEnvelopeWithFacts(facts *pay
 		return ErrDurableStorageRecovery
 	}
 	a := p.Preparation
-	if a.Retention != nil && (p.RequestToken != "" || p.ScanSignature != nil || p.MetadataOnly || publicationSHA256(p.MetadataBytes) != a.OriginMetadataSHA256) {
-		return ErrDurableStorageRecovery
+	if err := p.validateRetentionEnvelope(); err != nil {
+		return err
 	}
 	if p.Commit != nil && p.Commit.SettledPrivacySHA256 != "" {
 		return ErrDurableStorageRecovery

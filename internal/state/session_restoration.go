@@ -185,3 +185,11 @@ func (s *Store) CompleteRetentionRestoration(reg archive.SessionRegistration, p 
 func restorationBaselineMatches(published *Published, j SessionDeletion, reg archive.SessionRegistration, policy, admission string) bool {
 	return published != nil && published.state.Commit != nil && published.state.Commit.PolicyContext == policy && published.state.Commit.DestinationID == reg.DestinationID && published.state.Commit.AdmissionContext == admission && bytes.Equal(published.Metadata(), j.MetadataBytes)
 }
+
+func (p PendingPublication) validateRetentionEnvelope() error {
+	a := p.Preparation
+	if a.Retention != nil && (p.RequestToken != "" || p.ScanSignature != nil || p.MetadataOnly || publicationSHA256(p.MetadataBytes) != a.OriginMetadataSHA256) {
+		return ErrDurableStorageRecovery
+	}
+	return nil
+}

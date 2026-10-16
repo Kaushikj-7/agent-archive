@@ -167,11 +167,7 @@ func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err
 					continue
 				}
 				if base == deletionDirectory {
-					present, x := s.hasDeletionWork(entry.Name())
-					if present {
-						out = append(out, DurableStorageObligation{SessionID: entry.Name(), Namespace: SessionDeletionStorage})
-					}
-					err = errors.Join(err, x)
+					out, err = s.appendDeletionObligation(out, err, entry.Name())
 					continue
 				}
 				out, err = appendImportStageObligation(out, err, home.Root, base, entry.Name())
@@ -265,4 +261,12 @@ func importStageObligation(root *os.Root, base, id string) ([]DurableStorageObli
 func appendImportStageObligation(out []DurableStorageObligation, previous error, root *os.Root, base, id string) ([]DurableStorageObligation, error) {
 	next, err := importStageObligation(root, base, id)
 	return append(out, next...), errors.Join(previous, err)
+}
+
+func (s *Store) appendDeletionObligation(out []DurableStorageObligation, prior error, id string) ([]DurableStorageObligation, error) {
+	present, err := s.hasDeletionWork(id)
+	if present {
+		out = append(out, DurableStorageObligation{SessionID: id, Namespace: SessionDeletionStorage})
+	}
+	return out, errors.Join(prior, err)
 }

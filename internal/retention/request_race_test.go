@@ -3,6 +3,7 @@ package retention
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -112,6 +114,34 @@ func TestHookRequestWrittenMidExpiryRetainsPendingAfterRemoteDeletion(t *testing
 	}
 	if _, found, err := local.LoadRequest("s1"); err != nil || found {
 		t.Fatal("new publication did not acknowledge exact hook", found, err)
+	}
+	wire, err := memory.Get(t.Context(), "sessions/codex/s1/metadata.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata archive.Metadata
+	if err := json.Unmarshal(wire, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	source, err := memory.Get(t.Context(), metadata.SourceBundle.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := reader.DecodeReferencedSource(t.Context(), metadata, source, reader.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bundle.Capture.CapturedAt.Equal(expiry) || !metadata.CapturedAt.Equal(expiry) {
+		t.Fatal("new evidence lost its capture time")
+	}
+	kept := false
+	for _, item := range bundle.SupplementalEvidence {
+		if item.Kind == archive.EvidenceKindFinalResponse && item.Payload["turn_id"] == "late-turn" {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Fatal("new remotely selected source lost mid-expiry final response")
 	}
 
 }
