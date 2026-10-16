@@ -53,6 +53,14 @@ type LabelContextProvider interface {
 	LabelContextVersion() string
 }
 
+// RegistrationLabelContextProvider derives lookup context from the admitted
+// registration alone, for a provider whose lookup needs nothing of the
+// retained source: the collector then asks without loading the publication,
+// so a session too large to load for a context is still named.
+type RegistrationLabelContextProvider interface {
+	RegistrationLabelContext(archive.SessionRegistration) (LabelContext, bool)
+}
+
 // LabelProvider resolves bounded metadata for existing sources without enumeration.
 type LabelProvider interface {
 	LookupLabels(context.Context, LabelEnvironment, []LabelRequest) map[string]archive.SessionLabel

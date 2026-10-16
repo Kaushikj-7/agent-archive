@@ -2,7 +2,6 @@ package codex
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -10,29 +9,22 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"io/fs"
 	"maps"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"modernc.org/sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
-	"modernc.org/sqlite/vfs"
 )
 
-const labelIndexBytes = 4 << 20
+const labelIndexBytes = 16 << 20
 
-const labelIndexRecords = 32768
+const labelIndexRecords = 1 << 18
 
 var labelNativeUUID = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
@@ -41,24 +33,47 @@ const LabelContract = string(currentLabelInterpretation)
 
 type labelInterpretation string
 
+// Earlier interpretations read a settled state_5.sqlite beside the index and
+// only for Codex 0.159.2; their retained evidence stays readable.
 const (
 	legacyLabelInterpretation  labelInterpretation = "codex-files-159.2-v1"
-	currentLabelInterpretation labelInterpretation = "codex-files-159.2-v2"
+	settledLabelInterpretation labelInterpretation = "codex-files-159.2-v2"
+	currentLabelInterpretation labelInterpretation = "codex-session-index-v3"
 )
 
 // LabelContextVersion identifies the provider's content-free interpretation.
 func (LabelProvider) LabelContextVersion() string { return LabelContract }
 
-// LabelProvider reads only supported settled metadata for admitted sessions.
-// Construction performs no I/O; live WAL and unknown storage remain unavailable.
+// LabelProvider reads thread names from Codex's own name index,
+// $CODEX_HOME/session_index.jsonl, for admitted top-level threads.
+// Construction performs no I/O.
+//
+// The index is what Codex itself resolves names from: it appends
+// {id, thread_name, updated_at} whenever a thread is named or renamed, and the
+// last nonempty name for an ID is current. It is a plain append-only file, so
+// unlike state_5.sqlite (always in WAL mode while Codex runs) it can be read
+// while Codex is open, and its format has not changed across producer
+// versions, so no producer version is pinned.
 type LabelProvider struct {
 	homeLookup func(context.Context, string, []agentapi.LabelRequest) map[string]archive.SessionLabel
 }
 
-// LookupLabels shares one bounded index/DB observation per approved home.
+// RegistrationLabelContext derives the lookup context from the admitted
+// registration alone: an index lookup needs only the native thread ID, so the
+// collector need not load the retained publication to ask.
+func (LabelProvider) RegistrationLabelContext(reg archive.SessionRegistration) (agentapi.LabelContext, bool) {
+	if reg.Harness.Name != "codex" || reg.IsChild() || reg.CaptureFrozen || !labelNativeUUID.MatchString(reg.NativeSessionID) {
+		return agentapi.LabelContext{}, false
+	}
+	// The producer is not needed to read the index, and a development build's
+	// version is not one the label cache accepts.
+	return agentapi.LabelContext{NativeID: reg.NativeSessionID, Ordinary: true, Contract: LabelContract}, true
+}
+
+// LookupLabels reads each approved home's index at most once.
 func (p LabelProvider) LookupLabels(ctx context.Context, env agentapi.LabelEnvironment, requests []agentapi.LabelRequest) map[string]archive.SessionLabel {
 	out := map[string]archive.SessionLabel{}
-	if env.ExternalSQLite || len(env.Homes) > 16 || len(requests) > 64 {
+	if len(env.Homes) > 16 || len(requests) > 64 {
 		return out
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -67,7 +82,9 @@ func (p LabelProvider) LookupLabels(ctx context.Context, env agentapi.LabelEnvir
 	roots := []string{}
 	for _, request := range requests {
 		if request.Context.Contract == "" {
-			request.Context = (LabelProvider{}).LabelContext(request.Bundle)
+			if proof, ok := p.RegistrationLabelContext(request.Registration); ok {
+				request.Context = proof
+			}
 		}
 		if root, ok := labelHome(env.Homes, request); ok {
 			if len(groups[root]) == 0 {
@@ -78,91 +95,47 @@ func (p LabelProvider) LookupLabels(ctx context.Context, env agentapi.LabelEnvir
 	}
 	// Visit homes in persistent target order so an exhausted pass rotates priority.
 	for _, root := range roots {
-		batch := groups[root]
-		if len(batch) == 0 || ctx.Err() != nil || !labelDefaultStorage(root) {
-			continue
+		if ctx.Err() != nil {
+			break
 		}
 		lookup := p.homeLookup
 		if lookup == nil {
-			lookup = func(ctx context.Context, root string, batch []agentapi.LabelRequest) map[string]archive.SessionLabel {
-				return lookupLabelHome(ctx, root, batch, slices.Contains(env.VerifiedLegacyStorageHomes, root))
-			}
+			lookup = lookupLabelHome
 		}
-		maps.Copy(out, lookup(ctx, root, batch))
-
+		maps.Copy(out, lookup(ctx, root, groups[root]))
 	}
 	return out
 }
 
-func lookupLabelHome(ctx context.Context, root string, batch []agentapi.LabelRequest, legacyStorageVerified bool) map[string]archive.SessionLabel {
+// lookupLabelHome resolves each request from one complete read of the home's
+// index: the last nonempty name is present, and a complete index without one
+// is confirmed absence. An index that cannot be read whole proves nothing.
+func lookupLabelHome(ctx context.Context, root string, batch []agentapi.LabelRequest) map[string]archive.SessionLabel {
 	out := map[string]archive.SessionLabel{}
-	index, indexComplete := readLabelIndex(ctx, root, batch)
-	rows, settled, absent := readLabelDatabase(ctx, root, batch)
-	if !settled {
+	index, complete := readLabelIndex(ctx, root, batch)
+	if !complete {
 		return out
 	}
 	for _, request := range batch {
-		row, found := rows[request.Registration.NativeSessionID]
-		if filtered, ok := resolveLabel(root, request, row, found, absent && legacyStorageVerified, index, indexComplete); ok {
-			out[request.Registration.ArchiveSessionID] = filtered
+		reg := request.Registration
+		name := index[strings.ToLower(reg.NativeSessionID)]
+		state := archive.SessionLabelAbsent
+		if name != "" {
+			state = archive.SessionLabelPresent
+		}
+		label := archive.SessionLabel{NativeID: reg.NativeSessionID, State: state, Name: name, Source: archive.SessionLabelIndex, Contract: LabelContract}
+		if filtered, ok := archive.FilterSessionLabel(label); ok {
+			out[reg.ArchiveSessionID] = filtered
 		}
 	}
 	return out
 }
 
-func resolveLabel(root string, request agentapi.LabelRequest, row labelRow, found, absent bool, index map[string]string, indexComplete bool) (archive.SessionLabel, bool) {
-	reg := request.Registration
-	var name string
-	source := archive.SessionLabelIndex
-	if found {
-		if row.version != "0.159.2" || !labelOwnedPath(root, reg.TranscriptPath, row.path) {
-			return archive.SessionLabel{}, false
-		}
-		source = archive.SessionLabelDatabase
-		switch row.mode {
-		case codexmeta.CodexHistoryPaginated:
-			name = strings.TrimSpace(row.name)
-		case codexmeta.CodexHistoryLegacy:
-			title := strings.TrimSpace(row.title)
-			if title != "" && title != strings.TrimSpace(row.first) {
-				// Guardian's derived default requires native source classification.
-				if strings.Contains(row.source, "guardian") {
-					return archive.SessionLabel{}, false
-				}
-				name = title
-			} else {
-				if !indexComplete {
-					return archive.SessionLabel{}, false
-				}
-				name = index[strings.ToLower(reg.NativeSessionID)]
-			}
-			if strings.TrimSpace(name) == strings.TrimSpace(row.preview) {
-				name = ""
-			}
-		default:
-			return archive.SessionLabel{}, false
-		}
-	} else {
-		// A DB with no matching row is not proof of index-only authority.
-		if !absent || !indexComplete || !request.Context.Legacy || request.Context.Producer != "0.159.2" || !request.Context.PreviewComplete {
-			return archive.SessionLabel{}, false
-		}
-		name = index[strings.ToLower(reg.NativeSessionID)]
-		if labelPreviewDigest(name) == request.Context.PreviewDigest {
-			name = ""
-		}
-	}
-	state := archive.SessionLabelAbsent
-	if strings.TrimSpace(name) != "" {
-		state = archive.SessionLabelPresent
-	}
-	label := archive.SessionLabel{NativeID: reg.NativeSessionID, State: state, Name: name, Source: source, Contract: LabelContract}
-	return archive.FilterSessionLabel(label)
-}
-
+// labelHome is the one approved home that owns the registration's rollout.
+// Subagent threads are named from their task, not looked up.
 func labelHome(homes []string, request agentapi.LabelRequest) (string, bool) {
 	r, proof := request.Registration, request.Context
-	if r.Harness.Name != "codex" || r.CaptureFrozen || r.Imported() || !proof.Ordinary || proof.Producer != "0.159.2" || !labelNativeUUID.MatchString(r.NativeSessionID) || proof.NativeID != r.NativeSessionID {
+	if r.Harness.Name != "codex" || r.CaptureFrozen || r.IsChild() || !labelNativeUUID.MatchString(r.NativeSessionID) || proof.NativeID != r.NativeSessionID {
 		return "", false
 	}
 	matched := ""
@@ -249,7 +222,18 @@ func readLabelIndex(ctx context.Context, root string, requests []agentapi.LabelR
 		if errors.Is(err, io.EOF) && len(line) == 0 {
 			break
 		}
-		// Incomplete tails and overlong lines cannot establish absence or freshness.
+		// A record too long to be a name is skipped whole; it names nothing
+		// requested, since names are short.
+		if errors.Is(err, bufio.ErrBufferFull) {
+			for errors.Is(err, bufio.ErrBufferFull) {
+				_, err = reader.ReadSlice('\n')
+			}
+			if err != nil {
+				return nil, false
+			}
+			continue
+		}
+		// An incomplete tail cannot establish absence or freshness.
 		if err != nil {
 			return nil, false
 		}
@@ -268,207 +252,6 @@ func readLabelIndex(ctx context.Context, root string, requests []agentapi.LabelR
 		return nil, false
 	}
 	return out, true
-}
-
-type labelRow struct {
-	mode    codexmeta.HistoryMode
-	name    string
-	title   string
-	first   string
-	preview string
-	source  string
-	version string
-	path    string
-}
-
-func readLabelDatabase(ctx context.Context, root string, requests []agentapi.LabelRequest) (map[string]labelRow, bool, bool) {
-	out := map[string]labelRow{}
-	path := filepath.Join(root, "state_5.sqlite")
-	before, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return out, !labelSides(path), true
-	}
-	if err != nil || !before.Mode().IsRegular() || labelSides(path) {
-		return nil, false, false
-	}
-	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-	defer cancel()
-	header, ok := labelDBHeader(root)
-	if !ok {
-		return nil, false, false
-	}
-	fsys := &labelFS{root: root, ctx: ctx, expected: before}
-	name, registered, err := vfs.New(fsys)
-	if err != nil {
-		return nil, false, false
-	}
-	defer func() { _ = registered.Close() }()
-	query := url.Values{"vfs": {name}, "mode": {"ro"}, "immutable": {"1"}}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Opaque: "state_5.sqlite", RawQuery: query.Encode()}).String())
-	if err != nil {
-		return nil, false, false
-	}
-	defer func() { _ = db.Close() }()
-	db.SetMaxOpenConns(1)
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return nil, false, false
-	}
-	defer func() { _ = conn.Close() }()
-	for _, limit := range []struct {
-		id    int
-		value int
-	}{{sqlite3.SQLITE_LIMIT_LENGTH, 16384}, {sqlite3.SQLITE_LIMIT_SQL_LENGTH, 16384}, {sqlite3.SQLITE_LIMIT_ATTACHED, 0}, {sqlite3.SQLITE_LIMIT_VDBE_OP, 20000}} {
-		if _, err := sqlite.Limit(conn, limit.id, limit.value); err != nil {
-			return nil, false, false
-		}
-	}
-	tx, err := conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, false, false
-	}
-	defer func() { _ = tx.Rollback() }()
-	if !labelDatabaseSchema(ctx, tx) {
-		return nil, false, false
-	}
-	// The primary-key plan and explicit columns refuse incompatible schemas and scans.
-	const statement = "SELECT history_mode,name,title,first_user_message,preview,source,cli_version,rollout_path FROM threads WHERE id=?"
-	if !labelDatabaseIndexed(ctx, tx, statement) {
-		return nil, false, false
-	}
-
-	for _, request := range requests {
-		var values [8]any
-		err := tx.QueryRowContext(ctx, statement, request.Registration.NativeSessionID).Scan(&values[0], &values[1], &values[2], &values[3], &values[4], &values[5], &values[6], &values[7])
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return nil, false, false
-		}
-		row, ok := labelDatabaseRow(values)
-		if !ok {
-			return nil, false, false
-		}
-		out[request.Registration.NativeSessionID] = row
-	}
-	after, err := os.Lstat(path)
-	headerAfter, headerOK := labelDBHeader(root)
-	if err != nil || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) || labelSides(path) || !headerOK || !bytes.Equal(header, headerAfter) || !labelDefaultStorage(root) {
-		return nil, false, false
-	}
-	return out, true, false
-}
-
-func labelDatabaseSchema(ctx context.Context, tx *sql.Tx) bool {
-	rows, err := tx.QueryContext(ctx, "PRAGMA table_info(threads)")
-	if err != nil {
-		return false
-	}
-	defer func() { _ = rows.Close() }()
-	required := map[string]bool{"id": false, "history_mode": false, "name": false, "title": false, "first_user_message": false, "preview": false, "source": false, "cli_version": false, "rollout_path": false}
-	for rows.Next() {
-		var ordinal, notNull, primary int
-		var name, kind string
-		var defaultValue any
-		if rows.Scan(&ordinal, &name, &kind, &notNull, &defaultValue, &primary) != nil {
-			return false
-		}
-		if _, needed := required[name]; needed {
-			if kind != "TEXT" || (name == "id" && primary != 1) {
-				return false
-			}
-			required[name] = true
-		}
-	}
-	if rows.Err() != nil {
-		return false
-	}
-	for _, found := range required {
-		if !found {
-			return false
-		}
-	}
-	return true
-}
-
-func labelDatabaseRow(values [8]any) (labelRow, bool) {
-	var text [8]string
-	for i, value := range values {
-		if value == nil && (i == 1 || i == 3) {
-			continue
-		}
-		var ok bool
-		if text[i], ok = value.(string); !ok {
-			return labelRow{}, false
-		}
-	}
-	return labelRow{mode: codexmeta.HistoryMode(text[0]), name: text[1], title: text[2], first: text[3], preview: text[4], source: text[5], version: text[6], path: text[7]}, true
-}
-
-func labelSides(path string) bool {
-	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-		if _, err := os.Lstat(path + suffix); !errors.Is(err, os.ErrNotExist) {
-			return true
-		}
-	}
-	return false
-}
-
-// The VFS receives only bounded reads of the confined DB; it has no native write path.
-type labelFS struct {
-	root     string
-	ctx      context.Context
-	bytes    int64
-	expected os.FileInfo
-}
-
-func (f *labelFS) Open(name string) (fs.File, error) {
-	if name != "state_5.sqlite" {
-		return nil, fs.ErrNotExist
-	}
-	file, err := labelOpenRegular(f.root, filepath.Join(f.root, name))
-	if err != nil {
-		return nil, err
-	}
-	info, err := file.Stat()
-	if err != nil || !os.SameFile(f.expected, info) {
-		_ = file.Close()
-		return nil, errors.New("label database changed while opening")
-	}
-	return &labelFile{File: file, owner: f}, nil
-}
-
-type labelFile struct {
-	*os.File
-	owner *labelFS
-}
-
-func (f *labelFile) Read(p []byte) (int, error) {
-	if err := f.owner.ctx.Err(); err != nil {
-		return 0, err
-	}
-	const budget = 8 << 20
-	if f.owner.bytes >= budget {
-		return 0, errors.New("label database read budget exceeded")
-	}
-	if int64(len(p)) > budget-f.owner.bytes {
-		p = p[:budget-f.owner.bytes]
-	}
-	n, err := f.File.Read(p)
-	f.owner.bytes += int64(n)
-	return n, err
-}
-
-func labelDBHeader(root string) ([]byte, bool) {
-	f, err := labelOpenRegular(root, filepath.Join(root, "state_5.sqlite"))
-	if err != nil {
-		return nil, false
-	}
-	defer func() { _ = f.Close() }()
-	header := make([]byte, 100)
-	_, err = io.ReadFull(f, header)
-	return header, err == nil
 }
 
 // LabelContext derives safe content-free equality facts once from retained source.
@@ -536,14 +319,19 @@ func labelOpenRegular(root, path string) (*os.File, error) {
 }
 
 func supportedLabelContract(contract string) bool {
-	interpretation := labelInterpretation(contract)
-	return interpretation == currentLabelInterpretation || interpretation == legacyLabelInterpretation
+	switch labelInterpretation(contract) {
+	case currentLabelInterpretation, settledLabelInterpretation, legacyLabelInterpretation:
+		return true
+	}
+	return false
 }
 
 // LabelRequestGroup shares lookup priority for targets in one verified native home.
 func (p LabelProvider) LabelRequestGroup(env agentapi.LabelEnvironment, request agentapi.LabelRequest) string {
 	if request.Context.Contract == "" {
-		request.Context = p.LabelContext(request.Bundle)
+		if proof, ok := p.RegistrationLabelContext(request.Registration); ok {
+			request.Context = proof
+		}
 	}
 	root, ok := labelHome(env.Homes, request)
 	if !ok {

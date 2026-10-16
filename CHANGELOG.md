@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Codex sessions are titled with their Codex thread name, so `list`, search
+  and `handoff "words"` find them by it. Names come from Codex's own name index
+  (`~/.codex/session_index.jsonl`) for every Codex release, while Codex is
+  running, for imported sessions too, and stay with a thread that continues
+  into a later rollout. Before, only threads from Codex 0.159.2 with Codex
+  closed could be named, so in practice none were. Existing sessions are named
+  on the next collection (filter 21). A build older than this one cannot read
+  a named Codex thread that continued into a later rollout; update every
+  machine that reads the archive.
+
 - Codex sessions are no longer titled with their injected AGENTS.md
   instructions. Codex 0.160 sends a project's AGENTS.md as the first user
   message (`# AGENTS.md instructions for …`); it is now dropped like other

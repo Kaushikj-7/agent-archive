@@ -69,7 +69,8 @@ func (p *pass) observeLabels(ctx context.Context) {
 			continue
 		}
 		checksum, stamp, err := p.local.LabelRevision(id)
-		if err != nil {
+		_, registrationContext := providers[reg.Harness.Name].(agentapi.RegistrationLabelContextProvider)
+		if err != nil && !(registrationContext && errors.Is(err, state.ErrNoLabelPublication)) {
 			if errors.Is(err, state.ErrDurableStorageRecovery) {
 				addError(p.result.Errors, id, err)
 				p.unreadable[id] = true
@@ -128,7 +129,7 @@ func (p *pass) observeLabels(ctx context.Context) {
 }
 
 func (p *pass) labelEligible(reg archive.SessionRegistration) bool {
-	if reg.HistoricalProject != nil || reg.CaptureFrozen || reg.Imported() || p.unreadable[reg.ArchiveSessionID] || (p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg)) {
+	if reg.HistoricalProject != nil || reg.CaptureFrozen || p.unreadable[reg.ArchiveSessionID] || (p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg)) {
 		return false
 	}
 	if p.local.GenerationCaptureAllowed(reg) != nil {
@@ -167,15 +168,18 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 		if entry.NextAt.After(p.now) {
 			continue
 		}
+		provider := providers[reg.Harness.Name]
+		fromRegistration, registrationContext := provider.(agentapi.RegistrationLabelContextProvider)
 		checksum, stamp, err := p.local.LabelRevision(id)
-		if err != nil {
+		// A provider that needs nothing of the retained source is asked
+		// before the first publication, so that one carries the name.
+		if err != nil && !(registrationContext && errors.Is(err, state.ErrNoLabelPublication)) {
 			if errors.Is(err, state.ErrDurableStorageRecovery) {
 				addError(p.result.Errors, id, err)
 				p.unreadable[id] = true
 			}
 			continue
 		}
-		provider := providers[reg.Harness.Name]
 		interpretation := "generic-label-context-v1"
 		if builder, ok := provider.(agentapi.LabelContextProvider); ok {
 			interpretation = builder.LabelContextVersion()
@@ -183,7 +187,18 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 		revision := sha256.Sum256([]byte(interpretation + "/" + archive.FilterVersion + "/" + p.opts.parserVersionFor(reg.Harness.Name)))
 		contract := hex.EncodeToString(revision[:])
 		validContext := entry.Context.Contract == contract && entry.Context.NativeID == reg.NativeSessionID && stamp == entry.SourceStamp && (checksum == "" || checksum == entry.SourceChecksum)
-		if !validContext {
+		if registrationContext && !validContext {
+			proof, ok := fromRegistration.RegistrationLabelContext(reg)
+			if !ok {
+				delete(cache.Entries, id)
+				delete(p.opts.labels, id)
+				continue
+			}
+			entry.Context = proof
+			entry.Context.Contract = contract
+			entry.SourceChecksum = checksum
+			entry.SourceStamp = stamp
+		} else if !validContext {
 			published, n, err := p.labelLocal.LoadLabelPublication(id, (16<<20)-p.labelBytes)
 			p.labelBytes += n
 			if p.opts.labelReadObserver != nil {
@@ -255,16 +270,6 @@ func (s *sessionScan) applyLabels(evidence []archive.SupplementalEvidence) []arc
 	// Retained-source renames bypass NewSourceBundle; use its canonical UTC
 	// observation encoding here too, without changing the cached instant.
 	return archive.MergeSupplementalEvidence(evidence, []archive.SupplementalEvidence{entry.Label.Evidence(entry.ObservedAt.UTC(), s.reg.Harness.Name)})
-}
-
-func withoutSessionLabels(evidence []archive.SupplementalEvidence) []archive.SupplementalEvidence {
-	out := make([]archive.SupplementalEvidence, 0, len(evidence))
-	for _, item := range evidence {
-		if item.Kind != archive.EvidenceKindSessionLabels {
-			out = append(out, item)
-		}
-	}
-	return out
 }
 
 func labelFingerprint(bundle archive.SourceBundle) string {

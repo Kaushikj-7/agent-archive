@@ -5,6 +5,25 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 21
+
+Adapter 0.21.0 accompanies this change.
+
+- **Codex names on every Codex thread.** A Codex name is the last nonempty
+  `thread_name` in Codex's `session_index.jsonl` for the thread (contract
+  `codex-session-index-v3`), read for any Codex release and while Codex runs.
+  Filter 18's resolver read only Codex 0.159.2 threads from a settled
+  `state_5.sqlite`, which Codex keeps in WAL mode while it runs, so it named
+  no current thread. The retained `session_labels` shape is unchanged.
+- **History source sets carry the name.** A thread that continues into a later
+  rollout (a history source, schema 3) now retains the same `session_labels`
+  item an ordinary source does; earlier filters refused it there, so a thread lost
+  its name once it continued. A reader older than this filter refuses such a
+  history source.
+- What is newly uploaded: the filtered thread name (already uploaded for
+  ordinary sources) on history sources, and names of threads from Codex
+  releases after 0.159.2. Subagent threads are not looked up.
+
 ## Source filter version 20
 
 Adapter 0.20.0 accompanies this change.

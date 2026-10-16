@@ -2,7 +2,6 @@ package collector
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -360,23 +359,27 @@ func testCachedLabelRefusalAndRecovery(t *testing.T, legacyOffset bool) {
 	remote := &countedPublications{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour).In(time.FixedZone("synthetic Pacific", -7*60*60))
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return now }, LabelEnvironment: agentapi.LabelEnvironment{Homes: []string{nativeHome}, VerifiedLegacyStorageHomes: []string{nativeHome}}}
-	db, err := sql.Open("sqlite", filepath.Join(nativeHome, "state_5.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.ExecContext(t.Context(), "CREATE TABLE threads(id TEXT PRIMARY KEY,history_mode TEXT,name TEXT,title TEXT,first_user_message TEXT,preview TEXT,source TEXT,cli_version TEXT,rollout_path TEXT)"); err != nil {
-		t.Fatal(err)
-	}
-	name := "Selected native name"
-	if _, err := db.ExecContext(t.Context(), "INSERT INTO threads VALUES(?,?,?,?,?,?,?,?,?)", reg.NativeSessionID, "legacy", "", name, "Invented prompt", "Invented prompt", "\"cli\"", "0.159.2", path); err != nil {
-		t.Fatal(err)
-	}
-	updateName := func(value string) {
+	index := filepath.Join(nativeHome, "session_index.jsonl")
+	writeIndex := func(name, unfinished string) {
 		t.Helper()
-		if _, err := db.ExecContext(t.Context(), "UPDATE threads SET title=? WHERE id=?", value, reg.NativeSessionID); err != nil {
+		line, err := json.Marshal(map[string]string{"id": reg.NativeSessionID, "thread_name": name, "updated_at": "2026-01-01T00:00:00Z"})
+		if err != nil {
 			t.Fatal(err)
 		}
+		data := append(line, '\n')
+		if unfinished != "" {
+			// A record Codex is still appending proves nothing.
+			data = append(data, `{"id":"`+reg.NativeSessionID+`","thread_name":"`+unfinished...)
+		}
+		if err := os.WriteFile(index, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	name := "Selected native name"
+	writeIndex(name, "")
+	updateName := func(value string) {
+		t.Helper()
+		writeIndex(value, "")
 	}
 	run := func(want int) {
 		t.Helper()
@@ -484,11 +487,7 @@ func testCachedLabelRefusalAndRecovery(t *testing.T, legacyOffset bool) {
 	now = now.Add(time.Hour)
 	run(0)
 	unchanged()
-	updateName("Unseen name during refusal")
-	wal := filepath.Join(nativeHome, "state_5.sqlite-wal")
-	if err := os.WriteFile(wal, []byte("synthetic live-WAL refusal"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeIndex(name, "Unseen name during refusal")
 	now = now.Add(time.Hour)
 	rescan()
 	run(0)
@@ -502,9 +501,6 @@ func testCachedLabelRefusalAndRecovery(t *testing.T, legacyOffset bool) {
 	rescan()
 	run(0)
 	unchanged()
-	if err := os.Remove(wal); err != nil {
-		t.Fatal(err)
-	}
 	updateName(name)
 	now = now.Add(time.Hour)
 	rescan()
