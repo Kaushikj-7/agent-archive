@@ -66,7 +66,7 @@ func (p *inventoryBridgePass) Read(ctx context.Context, ref agentapi.SourceRef, 
 
 func TestInventoryPendingNoRequestThroughActualMuseProofAndGuardedCommit(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"success", "suffix-failure", "stale-selection", "paused"} {
+	for _, mode := range []string{"success", "observations", "suffix-failure", "stale-selection", "paused"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			project, err := filepath.EvalSymlinks(t.TempDir())
@@ -77,7 +77,11 @@ func TestInventoryPendingNoRequestThroughActualMuseProofAndGuardedCommit(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			raw := bytes.ReplaceAll(readSynthetic(t, "synthetic-exec-conversation.jsonl"), []byte("/work/synthetic-muse"), []byte(project))
+			fixture := "synthetic-exec-conversation.jsonl"
+			if mode == "observations" {
+				fixture = "synthetic-own-observations.jsonl"
+			}
+			raw := bytes.ReplaceAll(readSynthetic(t, fixture), []byte("/work/synthetic-muse"), []byte(project))
 			id := "00000000-0000-7000-8000-000000000001"
 			path := filepath.Join(rootPath, "2026/10/15", id, "session.jsonl")
 			if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -152,7 +156,7 @@ func TestInventoryPendingNoRequestThroughActualMuseProofAndGuardedCommit(t *test
 			if reads != 1 {
 				t.Fatalf("no-request pending owner did not reach exactly one real source Filter read: %d, result=%+v, err=%v", reads, result, runErr)
 			}
-			if mode != "success" {
+			if mode != "success" && mode != "observations" {
 				if saved.TranscriptPath != "" || saved.NativeBinding != nil {
 					t.Fatal("failed source/policy/selection committed authority")
 				}
@@ -163,6 +167,20 @@ func TestInventoryPendingNoRequestThroughActualMuseProofAndGuardedCommit(t *test
 			}
 			if saved.TranscriptPath != path || saved.NativeBinding == nil || saved.NativeBinding.Checkpoint == nil || saved.NativeBinding.Checkpoint.Boundary != int64(len(raw)) || !saved.SessionStartedAt.Equal(reg.SessionStartedAt) || !saved.RegisteredAt.Equal(reg.RegisteredAt) {
 				t.Fatalf("first bind not atomic/original owner lost: %+v", saved)
+			}
+			if mode == "observations" {
+				bundle, _, _, found, err := local.LoadPublished(reg.ArchiveSessionID)
+				if err != nil || !found {
+					t.Fatal("missing observation-bearing publication", found, err)
+				}
+				analysis, err := (Parser{}).Parse(t.Context(), bundle)
+				if err != nil {
+					t.Fatal(err)
+				}
+				summary := analysis.TokenObservations
+				if !summary.HasObservations() || *summary.Input != 202 || *summary.Output != 46 || summary.Coverage.Available() || summary.Composition.Available() || summary.Pricing.Available() {
+					t.Fatal("first binding changed observation accounting", summary)
+				}
 			}
 			if charged, _ := budget.Charged(); charged != 0 {
 				t.Fatal("pass leaked", charged)
