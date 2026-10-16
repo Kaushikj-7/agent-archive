@@ -115,7 +115,7 @@ func retainedBoundaryProblems(path string, raw []byte) []string {
 			}
 		}
 	}
-	domainSource := strings.HasPrefix(path, "internal/agents/retainedprivacy/") && !strings.HasSuffix(path, "_test.go")
+	domainSource := strings.HasPrefix(path, "internal/agents/retainedprivacy/") && (!strings.HasSuffix(path, "_test.go") || strings.HasPrefix(path, "internal/agents/retainedprivacy/internal/sealed/"))
 	if domainSource {
 		allowedFiles := map[string]bool{"internal/agents/retainedprivacy/proof.go": true, "internal/agents/retainedprivacy/producer/transform.go": true, "internal/agents/retainedprivacy/internal/sealed/proof.go": true, "internal/agents/retainedprivacy/internal/sealed/request.go": true}
 		if !allowedFiles[path] {
@@ -579,6 +579,7 @@ func TestRetainedPrivacyBoundaryRejectsHiddenMintAndProducerSubstitution(t *test
 		path   string
 		source string
 	}{
+		{"same-package test issuer", "internal/agents/retainedprivacy/internal/sealed/issuer_test.go", "package sealed\nfunc ForgedTestIssuer() *Proof { return New(nil, nil, nil, nil, \"\", nil) }\n"},
 		{"hidden mint", "internal/agents/retainedprivacy/producer/hidden.go", "//go:build unavailable\n\npackage producer\nimport s \"" + retainedDomain + "/internal/sealed\"\nvar Issuer=s.New\n"},
 		{"mint callback", "internal/agents/retainedprivacy/producer/transform.go", "package producer\nimport s \"" + retainedDomain + "/internal/sealed\"\nfunc Transform(){f:=s.New;_ = f}\n"},
 		{"external sealed alias", "internal/agents/retainedprivacy/extra.go", "package retainedprivacy\nimport s \"" + retainedDomain + "/internal/sealed\"\ntype Issuer=s.Proof\n"},
