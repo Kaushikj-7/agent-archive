@@ -19,20 +19,24 @@ import (
 // Its finite allowance is not extra source-data capacity: each read scope must
 // borrow all retained bytes from its own captured ledger before using the cache.
 const publishedSummaryCacheLimit int64 = 128 << 10
+
 const publishedSummaryCacheEntries = 64
 
 type publishedSummaryEntry struct {
-	id          string
-	sum, config [32]byte
-	home        os.FileInfo
-	summary     PublishedSummary
-	bytes       int64
+	id      string
+	sum     [32]byte
+	config  [32]byte
+	home    os.FileInfo
+	summary PublishedSummary
+	bytes   int64
 }
+
 type publishedSummaryCache struct {
 	mu      sync.Mutex
 	entries []publishedSummaryEntry // least recently used first
 	bytes   int64
 }
+
 type publishedSummaryBorrow struct {
 	n     int64
 	owner stateReservation
@@ -51,6 +55,7 @@ func summaryOwnedBytes(id string, p PublishedSummary) int64 {
 	}
 	return 2 * n // owned strings, slice slots, file identity and bounded bookkeeping
 }
+
 func clonePublishedSummary(p PublishedSummary) PublishedSummary {
 	// A time.Location may own arbitrary zone tables or a caller-supplied name.
 	// Retain only timestamp instants, with no pointer into that caller's graph.
@@ -115,7 +120,9 @@ func (s *Store) borrowPublishedSummaries(n int64) bool {
 	}
 	return true
 }
+
 func (c *publishedSummaryCache) clear() { c.entries = nil; c.bytes = 0 }
+
 func (c *publishedSummaryCache) remove(i int) {
 	c.bytes -= c.entries[i].bytes
 	copy(c.entries[i:], c.entries[i+1:])
@@ -150,6 +157,7 @@ func (s *Store) cacheSummary(id string, p PublishedSummary, sum, cfg [32]byte, h
 	c.entries = append(c.entries, publishedSummaryEntry{id: strings.Clone(id), summary: clonePublishedSummary(p), sum: sum, config: cfg, home: home, bytes: n})
 	c.bytes += n
 }
+
 func (s *Store) cachedSummary(id string, sum, cfg [32]byte, home os.FileInfo) (PublishedSummary, bool, error) {
 	c := s.summaryCache
 	if c == nil {
@@ -195,7 +203,7 @@ func (s *Store) summaryConfig(home *local.RootedHome) (sum [32]byte, identity os
 		return sum, nil, errStateBudget
 	}
 	defer owner.Release(n)
-	cfg, found, sum, err := config.LoadRootedObserved(home)
+	cfg, found, sum, err := config.LoadRootedObservedBounded(home, info.Size())
 	if err != nil || !found || !cfg.SourceSetPublicationProtection {
 		return sum, nil, errors.Join(ErrDurableStorageRecovery, err)
 	}
@@ -262,12 +270,23 @@ func (s *Store) cacheSavedSummary(id string, p PublishedSummary, sum [32]byte) {
 	if s.summaryCache == nil {
 		return
 	}
+	cfg, identity, valid := s.savedSummaryBinding(id, sum)
+	if valid {
+		s.cacheSummary(id, p, sum, cfg, identity)
+	}
+}
+
+func (s *Store) savedSummaryBinding(id string, sum [32]byte) (cfg [32]byte, identity os.FileInfo, valid bool) {
 	home, err := local.OpenRootedHome(s.home)
 	if err != nil {
 		return
 	}
-	defer home.Close()
-	cfg, identity, err := s.summaryConfig(home)
+	defer func() {
+		if err := home.Close(); err != nil {
+			valid = false
+		}
+	}()
+	cfg, identity, err = s.summaryConfig(home)
 	if err != nil {
 		return
 	}
@@ -284,7 +303,7 @@ func (s *Store) cacheSavedSummary(id string, p PublishedSummary, sum [32]byte) {
 	if err != nil || cfgAfter != cfg {
 		return
 	}
-	s.cacheSummary(id, p, sum, cfg, identity)
+	return cfg, identity, true
 }
 
 func (s *Store) validatedPublishedSummary(id string, home *local.RootedHome, path string, info os.FileInfo, sourceSet bool) (summary PublishedSummary, err error) {

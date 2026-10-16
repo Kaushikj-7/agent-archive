@@ -180,6 +180,13 @@ func LoadRooted(home *local.RootedHome) (Config, bool, error) {
 // LoadRootedObserved returns the digest of the same supported bytes decoded by
 // LoadRooted. It neither creates a protection floor nor supplies write authority.
 func LoadRootedObserved(home *local.RootedHome) (cfg Config, found bool, digest [32]byte, err error) {
+	return LoadRootedObservedBounded(home, math.MaxInt64)
+}
+
+// LoadRootedObservedBounded limits the exact observation before allocating or
+// decoding it. A caller can reserve for an earlier file size without allowing a
+// larger replacement to consume memory outside that reservation.
+func LoadRootedObservedBounded(home *local.RootedHome, maxBytes int64) (cfg Config, found bool, digest [32]byte, err error) {
 	if err = home.Check(); err != nil {
 		return Config{}, false, digest, err
 	}
@@ -189,6 +196,9 @@ func LoadRootedObserved(home *local.RootedHome) (cfg Config, found bool, digest 
 	}
 	if err != nil || !before.Mode().IsRegular() {
 		return Config{}, false, digest, errors.Join(errors.New("rooted configuration must be a regular file"), err)
+	}
+	if before.Size() < 0 || before.Size() > maxBytes {
+		return Config{}, false, digest, errors.New("rooted configuration exceeds the reserved read limit")
 	}
 	raw, readErr := readRootedConfigObserved(home, before)
 	if err := rootedConfigReadUnchanged(home, before, raw, readErr); err != nil {

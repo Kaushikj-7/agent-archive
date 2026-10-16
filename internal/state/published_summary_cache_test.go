@@ -34,6 +34,7 @@ func summaryCacheFixture(t *testing.T) (*Store, string) {
 	}
 	return s, p.Bundle.ArchiveSessionID
 }
+
 func TestPublishedSummaryCacheWarmColdAndPassOwnership(t *testing.T) {
 	s, id := summaryCacheFixture(t)
 	info, err := os.Stat(s.publishedPath(id))
@@ -78,6 +79,7 @@ func TestPublishedSummaryCacheWarmColdAndPassOwnership(t *testing.T) {
 		t.Fatal("validated cold result was not cached")
 	}
 }
+
 func TestPublishedSummaryCacheRefusesSameStampChangedAuthority(t *testing.T) {
 	for _, configuration := range []bool{false, true} {
 		t.Run(map[bool]string{false: "body", true: "config"}[configuration], func(t *testing.T) {
@@ -114,6 +116,7 @@ func TestPublishedSummaryCacheRefusesSameStampChangedAuthority(t *testing.T) {
 		})
 	}
 }
+
 func TestPublishedSummaryCacheDeepOwnershipEvictionAndScopeRefusal(t *testing.T) {
 	s, id := summaryCacheFixture(t)
 	e := s.summaryCache.entries[0]
@@ -161,6 +164,7 @@ func TestPublishedSummaryCacheDeepOwnershipEvictionAndScopeRefusal(t *testing.T)
 		t.Fatal("eviction leaked pass charges", used)
 	}
 }
+
 func TestPublishedSummaryCacheDelayedReleaseCannotCreditNewScope(t *testing.T) {
 	s, id := summaryCacheFixture(t)
 	e := s.summaryCache.entries[0]
@@ -184,6 +188,7 @@ func TestPublishedSummaryCacheDelayedReleaseCannotCreditNewScope(t *testing.T) {
 		t.Fatal("old cache release credited new scope", ownerB.Available())
 	}
 }
+
 func TestPublishedSummaryCacheCanceledAndReplacedRoot(t *testing.T) {
 	s, id := summaryCacheFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -202,7 +207,11 @@ func TestPublishedSummaryCacheCanceledAndReplacedRoot(t *testing.T) {
 	if err := os.Rename(s.Home(), oldHome); err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(oldHome)
+	defer func() {
+		if err := os.RemoveAll(oldHome); err != nil {
+			t.Error(err)
+		}
+	}()
 	if err := os.MkdirAll(filepath.Join(s.Home(), "published"), 0700); err != nil {
 		t.Fatal(err)
 	}
