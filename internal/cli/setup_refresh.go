@@ -163,6 +163,11 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 		return plan, userHome, refuse("a hook is finishing; retry")
 	}
 	defer releaseHooks()
+	releaseSearch, err := local.NamedLockWait(home, "search-worker.lock", min(env.refreshCollectorWait(), 2*time.Second))
+	if err != nil {
+		return plan, userHome, refuse("search indexing is finishing; retry")
+	}
+	defer releaseSearch()
 	// Again under the locks: setup or uninstall may have finished meanwhile.
 	cfg, err := refreshableConfig(home)
 	if err != nil {
@@ -293,11 +298,14 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 	// The job is left as it is: no file change needs launchd, and none asks
 	// it anything. A new plist for a loaded job is the one thing that does,
 	// since launchd runs the definition it loaded, not the file.
-	plan.journal = setupjournal.Journal{Changes: changes, Plist: definitionPath(definition), Backend: in.sched().Name(), JobRef: string(in.ref()), FilesOnly: true}
+	plan.journal = setupjournal.Journal{NativeAuthorityProtection: cfg.NativeAuthorityProtection, Changes: changes, Plist: definitionPath(definition), Backend: in.sched().Name(), JobRef: string(in.ref()), FilesOnly: true}
 	if plan.plist {
 		if err := planJobRestart(&plan, in, userHome, env); err != nil {
 			return plan, err
 		}
+	}
+	if err := planSearchRefresh(home, userHome, exe, cfg, env, &plan); err != nil {
+		return plan, refuse("%v", err)
 	}
 	return plan, nil
 }

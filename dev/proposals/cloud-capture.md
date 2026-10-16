@@ -2,7 +2,7 @@
 
 > **Proposed.** Not implemented or scheduled. See the [documentation index](../../docs/README.md) for what exists today.
 
-Status: proposed plan for review; not scheduled for implementation. Prepared 2026-09-24; revised 2026-10-01. This document describes a target design, not the current implementation. Claude Code on the web facts marked *verified* come from live probes on 2026-09-23 and 2026-09-24; Codex CLI observations below come from a separate CLI launched inside a managed cloud worker on 2026-09-30. They do not verify the hosted conversation. Other vendor-product claims retain their original documentation dates and need rechecking before implementation.
+Status: proposed plan for review; not scheduled for implementation. Prepared 2026-09-24; revised 2026-10-16. This document describes a target design, not the current implementation. Claude Code on the web facts marked *verified* are author-reported observations from live probes on 2026-09-23, 2026-09-24 and 2026-10-14; Codex CLI observations below come from a separate CLI launched inside a managed cloud worker on 2026-09-30. They do not verify the hosted conversation. Other vendor-product claims retain their original documentation dates and need rechecking before implementation. The October 14 probe records below are retained research reports, not independently repeated acceptance of the current source or end-to-end cloud capture.
 
 ## Purpose
 
@@ -31,7 +31,7 @@ Three strategies exist. They differ in fidelity and in where credentials live.
 
 Push is the primary strategy. Pull is a fallback only where push is impossible or unreliable.
 
-**Claude Code on the web: push through an account plugin (2026-10-14).** Pull from Claude Code's session API works technically but is blocked: it needs the user's Claude Code login, which Anthropic's terms forbid third-party tools to collect ([pull capture](claude-code-cloud-pull.md)). Instead, a plugin the user adds once to their claude.ai account is synced into every cloud session they start, and its hooks fire there ([verified](#verified-behavior-account-plugins)). That gives push capture with no repository commits.
+**Claude Code on the web: push through an account plugin (2026-10-14).** Pull from Claude Code's session API works technically but is blocked: it needs the user's Claude Code login, which Anthropic's terms forbid third-party tools to collect ([pull capture](claude-code-cloud-pull.md)). Instead, a plugin the user adds once to their claude.ai account was synced into the manually started cloud session tested, and its hooks fired there ([reported observations](#verified-behavior-account-plugins)). This provides a proposed push route without repository commits; actual filtering, upload and final-turn durability remain unverified.
 
 ## Support matrix
 
@@ -86,17 +86,19 @@ a marketplace from a GitHub repository or Git URL.
 - `Stop` input also carries `last_assistant_message`, `background_tasks` and
   `session_crons`; `SessionStart` carries `scratchpad_dir`.
 
-So the existing Claude capture runs in the cloud as it does locally. What the
-plugin must add is the `agent-archive` Linux binary and upload credentials;
-section 3 (ephemeral capture) and section 6 (credentials) apply.
+These observations establish hook delivery and transcript availability in the
+tested sessions. They do not establish working archive capture: no end-to-end
+filter, source upload/read-back, metadata publication, retry or VM teardown
+acceptance is recorded here. The proposed plugin still needs the ephemeral
+capture command (section 3), credential design (section 6) and live acceptance.
 
 A second probe (plugin 0.0.3, same day) answered the packaging questions:
 
 | Question | Result |
 | --- | --- |
 | Can the plugin carry the Linux binary? | Yes. A 12.4 MB upload (34.5 MB binary) was accepted, synced with mode `0755`, and `agent-archive version` ran from a hook. claude.ai rejects a top-level `bin/` directory ("claude.ai-hosted plugins may not ship bin/ executables"), so the binary lives in `libexec/` and only declared hooks run it |
-| Can the session download a release instead? | Yes by default: `github.com` releases and `api.github.com` returned 200 at the default network level. A restricted environment would block it |
-| Can `Stop` upload without delaying the session? | Yes. A hook with `"async": true` finished a 20-second task |
+| Can the session download a release instead? | Release and API pages returned 200 at the tested default network level. An actual pinned asset download and checksum verification were not established by those page checks; restricted environments need separate acceptance |
+| Can an asynchronous `Stop` task finish? | A hook with `"async": true` finished a 20-second marker task in one live session. This does not establish upload completion or a drain guarantee when the VM is reclaimed |
 | Can plugin options carry the upload key? | **No.** claude.ai did not prompt for the plugin's `userConfig` on upload, no `CLAUDE_PLUGIN_OPTION_*` variables reached any hook, and a hook whose command referenced `${user_config.…}` did not run |
 | Does `SessionEnd` fire? | Not observable: its only evidence would vanish with the VM. `Stop` already gives an upload point every turn |
 
@@ -106,25 +108,29 @@ Because uploaded plugins cannot take options, the plugin carries its own
 configuration, and the user uploads it once:
 
 1. `agent-archive cloud setup` on the user's Mac or Linux machine creates a
-   write-only upload credential scoped to a cloud prefix (section 6), then
+   read/write upload credential isolated to a cloud prefix or dedicated bucket (section 6), then
    builds a personal plugin zip. The zip holds the hooks, a config file with
    the destination and that credential, and the pinned Linux binary in
    `libexec/`. It opens claude.ai's plugin page and says what to upload.
 2. The user uploads the zip under Settings → Plugins → Add → Upload plugin.
    No repository commits, environment variables or per-environment steps.
-3. In every cloud session the user starts, `SessionStart` registers the session
+3. In a supported cloud session the user starts, `SessionStart` would register the session
    with the existing fresh-start proof; `Stop` and `SubagentStop` run capture
-   in an `async` hook and upload with read-back (section 3).
+   in an `async` hook and upload with read-back (section 3). Delivery, bounded
+   concurrency, final-turn completeness and worker teardown still need acceptance;
+   the marker task alone does not qualify this flow.
 4. The Mac reads cloud sessions from the cloud prefix like any other machine's
    sessions, and sweeps them (section 7).
 
 Trade-offs:
 
 - **Key exposure.** The credential sits in a file the cloud agent can read, the
-  same exposure as an environment variable. It is write-only and prefix-scoped,
-  so a leak lets someone add objects under that prefix, not read the archive.
-  Encrypting uploads to a key that never leaves the Mac would also make leaked
-  objects unreadable; that is a separate design choice.
+  same exposure as an environment variable. Read-back requires `GetObject` as
+  well as `PutObject`; a leak can read and overwrite objects within the granted
+  scope. Use an isolated S3 prefix or a dedicated R2 bucket and never the local
+  archive destination. Durable R2 credentials are bucket-scoped, not
+  prefix-scoped. An ingestion service with a truly write-only credential or
+  encryption would require a separate design; neither is implemented here.
 - **Updates.** A new agent-archive version means building and uploading a new
   zip, which `status` can prompt for. Alternatively the hook downloads a pinned,
   checksum-verified release into `CLAUDE_PLUGIN_DATA`, which keeps the zip
@@ -204,7 +210,7 @@ The metadata schema has `additionalProperties: false`, so cloud fields require `
 
 - `execution`: `{ "kind": "local" | "cloud" | "ci", "provider": "claude_code_web" | "cursor_cloud" | "codex_cloud" | "github_actions" | …, "remote_session_id": "…" }`. `remote_session_id` comes from vendor variables such as `CLAUDE_CODE_REMOTE_SESSION_ID`, so a session can be linked back to the vendor UI.
 - `machine_id`: in cloud mode, a stable pseudo-machine per provider and environment, for example `cloud-claude_code_web`, never the VM's random identity. This keeps `list` grouping meaningful and makes clear that the machine will not sweep its own sessions.
-- `repo_key`: reuse the implemented normalized-origin identity described in the [handoff specification](../specs/handoff.md). Do not introduce a second hashing or normalization rule. Local and cloud sessions for the same origin can group together despite different checkout paths.
+- `repo_key`: reuse the implemented normalized-origin identity described in the [handoff specification](implemented/handoff.md). Do not introduce a second hashing or normalization rule. Local and cloud sessions for the same origin can group together despite different checkout paths.
 
 `list` and `status` show the execution kind and provider. `show` and `handoff` are unchanged.
 
@@ -260,7 +266,7 @@ Commands:
 - **`agent-archive cloud provision [--harness claude,cursor,codex] [--ci github]`**, run on a configured macOS or Linux machine; a repository is required only when generating repository files. It is optional; every step can also be done by hand from the printed instructions.
   1. **Storage.** For R2, it asks once for a bootstrap Cloudflare API token with permission to create account API tokens (Account API Tokens: Edit), stores it in the platform credential store under its own reference, and uses it only for `provision` and `rotate`. It creates the cloud bucket if missing (default `agent-archive-cloud`), adds a lifecycle rule at the cloud retention period plus a margin, and mints a bucket-scoped object token. For S3 it creates a bucket-prefix-scoped IAM user and access key with `PutObject` and `GetObject` only, or, for GitHub Actions, an OIDC role with no stored key. It then runs the synthetic write, read-back and delete test.
   2. **Environment bootstrap (default).** Generate a pinned installation command and non-secret configuration for the vendor's environment setup field or a controlled runner. `cloud setup` (proposed below) installs runtime hooks before agent launch. It writes no tracked repository files by default. Report the required setup field and hook trust step, rather than promising one paste for an unverified vendor.
-     **Repository fallback (explicit).** A proposed `--repo-hooks` option writes or merges only the selected harness's repository hook configuration plus a pinned bootstrap script. Use owned-entry merge/removal and preserve unrelated handlers. Generated files require review; nothing is committed automatically. For Claude Code on the web, an account plugin replaces repository hooks ([verified](#verified-behavior-account-plugins)); repository hooks remain the fallback for routines.
+     **Repository fallback (explicit).** A proposed `--repo-hooks` option writes or merges only the selected harness's repository hook configuration plus a pinned bootstrap script. Use owned-entry merge/removal and preserve unrelated handlers. Generated files require review; nothing is committed automatically. For Claude Code on the web, an account plugin is the proposed alternative to repository hooks ([reported observations](#verified-behavior-account-plugins)); repository hooks remain the fallback for routines.
   3. **Environments.** With `--ci github`, it sets the repository secrets through `gh`. For each vendor without an API, it prints one block of `AGENT_ARCHIVE_*` variables in `.env` form and the settings location, and states who can read the values there (for example, anyone using a Claude Code environment, and the agent itself). The secret is printed once, to the terminal, never to a file.
 - **`agent-archive cloud rotate`** mints a new scoped credential, updates every target it can update programmatically, prints the paste block for the rest, and deletes the old credential only after the user confirms that the paste is done. A `cloud verify` pass, run in a new cloud session after the paste, confirms that the environment has switched to the new credential.
 - **`agent-archive cloud verify`**, run inside a cloud VM (or by the setup script), reports configuration, hook discovery/trust, transcript access, and storage readiness separately. A storage test writes and reads a unique object in a reserved verification prefix; it does not require List or Delete from the worker credential. A lifecycle rule or privileged maintenance client cleans up verification objects. Provisioning may perform a delete with its separate administrative credential. A successful storage test alone never means capture is verified. Errors contain no credential values.
@@ -316,6 +322,10 @@ ID separate from any independently proven vendor task ID.
 
 ### 8b. Hosted environments without repository changes
 
+For Claude Code on the web, account-plugin delivery was observed in manually
+started sessions; that proposed route is distinct from runtime-generated
+project or user settings and still needs complete capture acceptance.
+
 Try bootstrap in the provider's environment setup before the hosted agent
 starts. Probe which generated settings it actually loads and when it resolves
 trust. Claude web's committed project hooks are verified; runtime-generated
@@ -333,7 +343,9 @@ design and is not a prerequisite for this direct S3/R2 proposal.
 
 ### 9. After-the-fact pull (Phase 3)
 
-`agent-archive import cursor-cloud` fetches finished Cloud Agent conversations with a Cursor API key stored in the platform credential store. Its output is a new adapter (`cursor-cloud-api`) with `source_kind: vendor_api`, so readers never mistake it for a native transcript. It maps the Cursor agent ID to `native_session_id` and deduplicates against pushed sessions only once the mapping between agent ID and conversation ID is verified. The v0 endpoint has no tool calls, and the v1 stream expires, so the import must run periodically from the Mac's collector. Claude Code uses the same pattern with its own design: [pull capture](claude-code-cloud-pull.md).
+`agent-archive import cursor-cloud` fetches finished Cloud Agent conversations with a Cursor API key stored in the platform credential store. Its output is a new adapter (`cursor-cloud-api`) with `source_kind: vendor_api`, so readers never mistake it for a native transcript. It maps the Cursor agent ID to `native_session_id` and deduplicates against pushed sessions only once the mapping between agent ID and conversation ID is verified. The v0 endpoint has no tool calls, and the v1 stream expires, so the import must run periodically from the Mac's collector. Claude Code API pull remains **blocked and unimplemented**; its
+[research record](claude-code-cloud-pull.md) is retained for a possible supported
+export, not a planned implementation route.
 
 ## Phases
 

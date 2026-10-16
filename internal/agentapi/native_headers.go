@@ -50,9 +50,13 @@ type NativeStoreRoot struct {
 	Suffix     string
 }
 
-// NativeLocations supplies observed native configuration directories.
+// NativeLocations supplies qualified data locations and observed configuration directories.
 type NativeLocations struct {
-	UserHome    string
+	UserHome string
+	// DataHome is the caller-qualified absolute effective XDG data base, without
+	// an agent suffix. Empty means unavailable; providers must not infer a fallback.
+	// It supplies local read locations only, never capture permission.
+	DataHome    string
 	Directories []string
 }
 

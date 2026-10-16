@@ -3,7 +3,10 @@
 A marker-only Claude Code plugin used on 2026-10-14 to check how a plugin
 added to a claude.ai account behaves in Claude Code cloud sessions. Every hook
 writes a small JSON file to `/tmp/aa-plugin-probe/` in the cloud VM and uploads
-nothing. Results are in
+nothing. This is historical probe source, not a capture plugin. Use only a
+disposable cloud session with synthetic prompts and dummy option values; it
+records paths, session identifiers and supplied notes. Do not add archive
+credentials or run it against real user data. Results are in
 [cloud capture](../../proposals/cloud-capture.md#verified-behavior-account-plugins).
 
 To rebuild the uploadable zip with the bundled Linux binary (claude.ai rejects

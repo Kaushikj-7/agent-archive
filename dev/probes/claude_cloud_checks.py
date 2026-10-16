@@ -1,4 +1,7 @@
-"""Read-only pre-build checks for Claude Code cloud session pull capture.
+"""Archived pre-build research for blocked Claude Code cloud pull capture.
+
+The command-line entry point is disabled. Do not run the retained functions
+against a real account: they read login state and save unfiltered transcripts.
 
 Answers, for the user's own account:
   1. Does /v1/code/sessions/{id}/teleport-events work with the Claude Code login,
@@ -386,4 +389,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit("Blocked research probe: Claude Code API pull is not supported; "
+             "no credentials were read and no requests were sent.")

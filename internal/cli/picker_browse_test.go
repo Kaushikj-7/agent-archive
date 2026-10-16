@@ -237,7 +237,8 @@ func TestBoundedArchiveRowsKeepActivityAgeAndUnambiguousShortIDs(t *testing.T) {
 	}
 	for _, id := range []string{"collision-a", "collision-b"} {
 		r, ok := found[id]
-		if !ok || r.When != relativeAge(format.Now, active) || r.CapturedAt != formatTimeOrNever(captured) {
+		// Active files the row under its day's heading (dayBucket).
+		if !ok || r.When != relativeAge(format.Now, active) || !r.Active.Equal(active) || r.CapturedAt != formatTimeOrNever(captured) {
 			t.Fatal("activity display used capture time", r)
 		}
 	}
@@ -316,6 +317,20 @@ func TestBatchedScopedFixtureMatchesEagerUniverseAndKeepsMutationsPrivate(t *tes
 
 func cloneScopedFixtureStore(t *testing.T, source storage.ObjectStore) *storagetest.MemoryStore {
 	t.Helper()
+	var memory *storagetest.MemoryStore
+	switch source := source.(type) {
+	case *storagetest.MemoryStore:
+		memory = source
+	case *qualifiedCLIStore:
+		memory = source.MemoryStore
+	case *scopedMigrationCLIStore:
+		memory = source.MemoryStore
+	}
+	if memory != nil {
+		clone, err := storagetest.CloneMemoryStore(t.Context(), memory)
+		must(t, err)
+		return clone
+	}
 	clone := storagetest.NewMemoryStore()
 	objects, err := source.List(t.Context(), "")
 	must(t, err)

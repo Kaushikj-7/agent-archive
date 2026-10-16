@@ -69,12 +69,12 @@ func TestBackfillStagedAdmissionCrashBackgroundRecoversDeletedNative(t *testing.
 
 func TestBackfillDryRunNeverCreatesImportStaging(t *testing.T) {
 	f, bucket := newImportFixture(t)
-	before := snapshotTree(t, f.data)
+	before := snapshotArchiveTree(t, f.data)
 	remote := bucketSnapshot(t, bucket)
 	if _, errout, code := f.importRun(t, nil, false, "--dry-run"); code != 0 {
 		t.Fatalf("dry run %d %s", code, errout)
 	}
-	if snapshotTree(t, f.data) != before || bucketSnapshot(t, bucket) != remote {
+	if snapshotArchiveTree(t, f.data) != before || bucketSnapshot(t, bucket) != remote {
 		t.Fatal("dry run wrote import evidence or configuration")
 	}
 }
@@ -287,13 +287,13 @@ func (incompleteBackfillJSONWriter) Write(p []byte) (int, error) { return len(p)
 
 func TestBackfillDryRunJSONShortWriteFailsWithoutMutation(t *testing.T) {
 	f, bucket := newImportFixture(t)
-	before, remote := snapshotTree(t, f.data), bucketSnapshot(t, bucket)
+	before, remote := snapshotArchiveTree(t, f.data), bucketSnapshot(t, bucket)
 	var stderr bytes.Buffer
 	code := Run([]string{"backfill", "--dry-run", "--json"}, nil, incompleteBackfillJSONWriter{}, &stderr, f.env)
 	if code != 1 || !strings.Contains(stderr.String(), io.ErrShortWrite.Error()) {
 		t.Fatalf("incomplete JSON reported success: %d %s", code, stderr.String())
 	}
-	if snapshotTree(t, f.data) != before || bucketSnapshot(t, bucket) != remote {
+	if snapshotArchiveTree(t, f.data) != before || bucketSnapshot(t, bucket) != remote {
 		t.Fatal("failed JSON dry run changed local or remote state")
 	}
 }

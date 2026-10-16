@@ -3,10 +3,12 @@ package cli
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -25,12 +28,63 @@ import (
 // archive.SourceObjectKey, which both produce "sessions/<harness>/<id>/...".
 const archiveSessionsPrefix = "sessions"
 
-// notSetUpMessage is what every read-only command prints, to stderr with
-// exit 1 like sync and pause, when setup has never run: its output is often
-// captured (claude "$(agent-archive handoff --latest)"), and must not pass
-// the message off as a result. It is deliberately the same line `status`
-// prints, so a first-time user gets one consistent answer.
+// notSetUpMessage is what the commands that need a configured archive
+// print, to stderr with exit 1 like sync and pause, when setup has never
+// run: its output is often captured, and must not pass the message off as
+// a result. It names the same next step `status` names, so a first-time
+// user gets one consistent answer. (handoff before setup does not need a
+// configured archive: it reads this machine's own sessions instead; see
+// pendingSetupReason for when it refuses.)
 const notSetUpMessage = "Not set up. Run `agent-archive setup` to get started."
+
+// notSetUpHandoffMessage is what list, show, and stats print before
+// setup, and what a bare invocation leads with then: these are the ones
+// a new user tries first, and `handoff` already works for them on the
+// Claude Code and Codex sessions this machine has, so say so instead of
+// dead-ending at setup. preSetupGuidance decides when it applies.
+const notSetUpHandoffMessage = "Not set up yet. For Claude Code or Codex sessions already on this machine, try `agent-archive handoff`; to start archiving, run `agent-archive setup`."
+
+// setupUnfinishedMessage replaces notSetUpHandoffMessage while a setup
+// draft or an interrupted setup transaction is waiting: handoff refuses
+// then (pendingSetupReason), so the only way on is to finish setup.
+const setupUnfinishedMessage = "Setup is not finished. Run `agent-archive setup` to finish it."
+
+// pendingSetupReason says why a machine with no saved configuration is
+// nonetheless mid-setup: an interrupted setup transaction waiting for
+// recovery, or a saved setup draft (or one that cannot be checked). It is
+// "" when neither applies. handoff refuses its native pre-setup path for
+// any non-empty reason, and preSetupGuidance stops recommending handoff
+// for the same ones, so the two cannot disagree.
+func pendingSetupReason(home string) string {
+	if setupjournal.TransactionPending(home) {
+		return "setup recovery is pending"
+	}
+	if _, err := os.Lstat(draftPath(home)); !errors.Is(err, os.ErrNotExist) {
+		return "saved setup is pending or inaccessible"
+	}
+	return ""
+}
+
+// preSetupGuidance is the line list, show, stats, and a bare invocation
+// print when no configuration is saved: the handoff hint when handoff
+// would take its native pre-setup path, and plain setup guidance when
+// setup is under way and handoff would refuse.
+func preSetupGuidance(home string) string {
+	if pendingSetupReason(home) != "" {
+		return setupUnfinishedMessage
+	}
+	return notSetUpHandoffMessage
+}
+
+// preSetupGuidanceFor is preSetupGuidance for the read commands, which
+// resolve the data directory inside openReadOnlyStore.
+func preSetupGuidanceFor(env interface{ readHome() (string, error) }) string {
+	home, err := env.readHome()
+	if err != nil {
+		return notSetUpMessage
+	}
+	return preSetupGuidance(home)
+}
 
 // openReadOnlyStore loads configuration and opens the configured object
 // store the same way a collector pass does (env.openStore), but without the
@@ -115,7 +169,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	if !found {
-		terminal.Println(stderr, notSetUpMessage)
+		terminal.Println(stderr, preSetupGuidanceFor(env))
 		return 1
 	}
 	if *rebuildIndex && !rebuildListingIndex(env, store, stderr) {
@@ -131,19 +185,16 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	// Explicit project names, searches and interactive scope switching still
 	// need exhaustive metadata. Text activity and child counts use summaries.
 	full := listRequiresFullScan(opts, *project, scope, q, browsing)
-	var stopList func()
-	if !opts.jsonOut {
-		stopList = startActivity(stdout, "Listing sessions…")
-	} else {
-		stopList = func() {}
-	}
+	progress, stopList := startListProgress(stdout, opts.jsonOut)
 	listOpts := listingReadOptions(env, scope, opts, full, stderr)
+	listOpts.Progress = progress.read
 	listLimit := opts.limit
 	if full {
 		listLimit = 0
 	}
 	ctx, stopReads := readCommandContext(env)
 	defer stopReads()
+	ctx = withListProgress(ctx, progress)
 	if browsing && q.empty() {
 		if used, code := runBoundedListBrowser(catalog.WithReadView(ctx), env, store, cfg, opts, scope, stdin, stdout, stderr, stopList); used {
 			return code
@@ -169,7 +220,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	format := listFormatOptions{
 		Now: env.now(), Verbose: opts.verbose, Projects: labels, Style: styleFor(stdout),
-		GroupByProject: true, Numbered: browsing, Children: listingChildren(listed, sessions, full),
+		GroupByDay: true, Numbered: browsing, Children: listingChildren(listed, sessions, full),
 	}
 	words := strings.Join(strings.Fields(query), " ")
 	choices := listChoices(scope, format, browsing, sessions, opts.limit, view, words)
@@ -620,7 +671,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	if !found {
-		terminal.Println(stderr, notSetUpMessage)
+		terminal.Println(stderr, preSetupGuidanceFor(env))
 		return 1
 	}
 
@@ -1030,8 +1081,11 @@ func selectedShowMetadata(ctx context.Context, store storage.ObjectStore, harnes
 }
 
 func printListWithPager(ctx context.Context, env listCommandDependencies, stdout, stderr io.Writer, noPager bool, choices *scopeChoices) int {
+	// On a terminal, each row is fit to one line of it; piped, it is the
+	// plain table.
+	width, _, _ := env.terminalSize(stdout)
 	if err := withPager(ctx, stdout, stderr, env, noPager, func(w io.Writer) error {
-		return printListTable(w, choices.shown())
+		return printListTable(w, choices.shown(), width)
 	}); err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1

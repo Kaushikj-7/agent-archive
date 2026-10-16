@@ -103,7 +103,18 @@ type passOptions struct {
 	stop     func() bool
 }
 
-func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Result, resultErr error) {
+func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, error) {
+	var changes passChanges
+	result, err := runPassLocked(env, quietOnBusy, pass, &changes)
+	// Every inner defer has now finished: verification, retention, registration,
+	// staged-data closure and collector unlock precede any consumer hint work.
+	if changes.enabled {
+		dispatchSessionChanges(context.Background(), changes.destination, result.PublicationCandidates, env.changeConsumers(changes.home, changes.namespace))
+	}
+	return result, err
+}
+
+func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passChanges) (result collector.Result, resultErr error) {
 	// Read-only until the configuration is found: sync before setup leaves
 	// no data directory behind.
 	home, err := env.readHome()
@@ -189,6 +200,12 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		return collector.Result{}, err
 	}
 
+	namespace := ""
+	if cfg.SearchIndexing {
+		namespace, _ = contentSearchLocation(home, cfg)
+	}
+	*changes = passChanges{home: home, destination: cfg.DestinationID(), namespace: namespace, enabled: cfg.SearchIndexing}
+
 	// Registration gets an independent budget after capture and retention,
 	// including their failure paths. It cannot cause either to be skipped.
 	defer func() { _ = publishMachineLocked(context.Background(), home, cfg, env, objectStore, false) }()
@@ -210,17 +227,15 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		}
 	}
 	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
-		CollectorGuard:     guard,
-		CatalogDestination: config.DestinationID(cfg.Storage),
-		Labels:             env.labelProviders(cfg),
-		LabelEnvironment:   env.labelEnvironment(cfg, labelHomes),
-		PrepareCodexCoverage: func(ctx context.Context, regs []archive.SessionRegistration) error {
-			return rollouts.PrepareRegistered(ctx, cfg, regs, discovery.Options{Now: env.Now, Stop: stop})
-		},
+		CollectorGuard:           guard,
+		CatalogDestination:       config.DestinationID(cfg.Storage),
+		Labels:                   env.labelProviders(cfg),
+		LabelEnvironment:         env.labelEnvironment(cfg, labelHomes),
 		SkipSessionIndexRecovery: true,
 		CodexRollouts:            rollouts,
 		PendingCodexRollouts:     pendingCodexRollouts(rollouts),
 		ConfiguredCodexHomes:     readHomes,
+		NativeRoots:              cfg.NativeRoots,
 		ResolveCodexReadHomes:    func(current config.Config) ([]string, error) { return trustedCodexReadHomes(current, env) },
 		Parsers:                  parsersFor(env),
 		Sources:                  registryFor(env),
@@ -270,9 +285,10 @@ func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, en
 			return "", verifyErr, err
 		}
 	}
-	if len(result.Errors) > 0 {
+	if len(result.Errors) > 0 || len(result.RetryLater) > 0 {
 		// In place of collector.Run's own count of the same sessions; the
-		// pass's other problems stay.
+		// pass's other problems stay. A session the pass held on its
+		// backoff schedule keeps its issue (see recordSessionIssues).
 		summary, err = recordSessionIssues(localStore, result.Errors, subagentLookup(localStore), collector.FailedSessionsProblem(len(result.Errors)))
 		if err != nil {
 			return "", verifyErr, err

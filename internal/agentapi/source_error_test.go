@@ -16,8 +16,8 @@ func TestSourceErrorWordsItsCause(t *testing.T) {
 		kind FailureKind
 	}{
 		{Wrap(Unavailable, native), "source unavailable", Unavailable},
-		{WithCause(Wrap(Unavailable, native), CauseHistoryCoverage), "source unavailable: Codex history coverage incomplete", Unavailable},
-		{WithCause(Wrap(Changed, native), CauseHistoryCoverage), "source changed while reading; try again: Codex history coverage incomplete", Changed},
+		{WithCause(Wrap(Unavailable, native), CauseHistoryBaseUnavailable), "source unavailable: a Codex rollout this thread continues from was not found", Unavailable},
+		{WithCause(Wrap(Changed, native), CauseRolloutTipAmbiguous), "source changed while reading; try again: Codex thread has no single current rollout", Changed},
 		//lint:ignore LV1001 deliberately a cause with no declared constant
 		{WithCause(Wrap(Unsafe, native), "unknown_cause"), "unsafe source format", Unsafe},
 	} {
@@ -36,15 +36,15 @@ func TestSourceErrorWordsItsCause(t *testing.T) {
 func TestWithCauseLeavesTheOriginalAndOtherErrors(t *testing.T) {
 	t.Parallel()
 	original := Wrap(Unavailable, errors.New("refused"))
-	named := WithCause(original, CauseHistoryCoverage)
+	named := WithCause(original, CauseHistoryBaseUnavailable)
 	if original.Error() != "source unavailable" || named.Error() == original.Error() {
 		t.Fatalf("original=%q named=%q", original, named)
 	}
 	joined := errors.Join(original, errors.New("other"))
-	if got := WithCause(joined, CauseHistoryCoverage); got.Error() != joined.Error() || !errors.Is(got, joined) {
+	if got := WithCause(joined, CauseHistoryBaseUnavailable); got.Error() != joined.Error() || !errors.Is(got, joined) {
 		t.Fatal("a join was given one failure's cause")
 	}
-	if WithCause(nil, CauseHistoryCoverage) != nil {
+	if WithCause(nil, CauseHistoryBaseUnavailable) != nil {
 		t.Fatal("nil gained a cause")
 	}
 }

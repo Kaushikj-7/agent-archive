@@ -31,6 +31,7 @@ type chargedLineReader struct {
 	line        []byte
 	lineCharge  int64
 	charged     bool
+	traceFinish func()
 	done        bool
 	// err is the failure that ended the records: it is returned again,
 	// never a later record past a refused or oversized one.
@@ -124,6 +125,10 @@ func (c *chargedLineReader) close() {
 		return
 	}
 	c.charged = false
+	if c.traceFinish != nil {
+		c.traceFinish()
+		c.traceFinish = nil
+	}
 	c.p.release(c.reservation, c.lineCharge+lineReaderScratch)
 	c.lineCharge = 0
 	c.line = nil

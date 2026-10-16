@@ -263,13 +263,45 @@ class CandidateTest(unittest.TestCase):
         self.assertEqual(self.mutations(), [])
 
     def test_acceptance_requires_every_supported_app_and_no_unsupported_app(self):
-        # The product catalog and published acceptance sheet support three
-        # apps. An unsupported fourth row made honest acceptance impossible.
+        # Acceptance rows prove capture/publication, not identity recognition.
+        # Runtime/local-read bindings must not require unsupported capture evidence.
         root = Path(__file__).resolve().parent.parent
         catalog = (root / 'internal/agentmeta/catalog.go').read_text()
-        identities = set(re.findall(r'(?m)^\s*\w+\s+ID\s*=\s*"([a-z-]+)"$', catalog))
-        self.assertEqual(identities, {'claude', 'codex', 'cursor'})
-        app_rows = {'claude-code' if name == 'claude' else name for name in identities}
+        identities = dict(re.findall(r'(?m)^\s*(\w+)\s+ID\s*=\s*"([a-z-]+)"$', catalog))
+        registry = (root / 'internal/agents/builtin/registry.go').read_text()
+        composition = re.search(r'New\(agentmeta.Builtins\(\), \[\]Integration\{\n(.*?)\n\t\}\)',
+                                registry, re.S)
+        self.assertIsNotNone(composition)
+        bindings = {}
+        for line in composition.group(1).splitlines():
+            binding = re.fullmatch(
+                r'\s*\{Descriptor: agentmeta.Descriptor\{ID: agentmeta\.(\w+)\}, (.+)\},', line)
+            self.assertIsNotNone(binding, f'unrecognized builtin binding: {line}')
+            name, ports = binding.groups()
+            self.assertNotIn(name, bindings, f'duplicate builtin binding: {name}')
+            bindings[name] = ports
+        self.assertEqual(set(bindings), set(identities))
+        capture_ports = ('Sources:', 'Filter:', 'Parser:', 'Decoder:', 'Hooks:')
+        muse_local = ('NativeHeaders: muse.NativeHeaders{}, Discovery: muse.NativeHeaders{}, '
+                      'Preview: muse.Previewer{}, Runtime: muse.RuntimeDetector{}, '
+                      'Sources: muse.SourceProvider{}, Filter: muse.Filter{}, Parser: muse.Parser{}')
+        for name, ports in bindings.items():
+            implemented = [port in ports for port in capture_ports]
+            if name == 'Muse':
+                # Local handoff discovery, headers, and previews are not capture
+                # admission. Keep these ports exact; Decoder/Hooks need review.
+                self.assertEqual(ports, muse_local)
+                self.assertNotIn('Decoder:', ports)
+                self.assertNotIn('Hooks:', ports)
+            else:
+                self.assertTrue(not any(implemented) or all(implemented),
+                                f'partial capture binding needs explicit acceptance policy: {name}')
+        capture_apps = {identities[name] for name, ports in bindings.items()
+                        if all(port in ports for port in capture_ports)}
+        self.assertEqual(capture_apps, {'claude', 'codex', 'cursor'})
+        self.assertEqual(bindings['Muse'], muse_local)
+        app_rows = {'claude-code' if name == 'claude' else name for name in capture_apps}
+        self.assertTrue((set(identities.values()) - capture_apps).isdisjoint(rc.ROWS))
         template = json.loads((root / 'dev/maintainers/release-evidence/example.json').read_text())
         self.assertEqual(set(template['checks']), set(rc.ROWS))
         self.assertTrue(app_rows <= set(rc.ROWS))
@@ -466,7 +498,7 @@ class CommandsTest(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         rc.GitHub(REPO).release(TAG)
 
-    def test_security_verifies_manifest_and_binaries_constrained_provenance_and_darwin_only(self):
+    def test_security_verifies_every_asset_with_constrained_provenance_and_darwin_only(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(rc, 'run', return_value=b'') as command:
             directory = Path(temp)
             for name in rc.BINARIES:
@@ -474,7 +506,9 @@ class CommandsTest(unittest.TestCase):
             rc.verify_security(directory, TAG, COMMIT, REPO)
         calls = [c.args[0] for c in command.call_args_list]
         provenance = [c for c in calls if c[0] == 'gh']
-        self.assertEqual(len(provenance), 5)
+        self.assertEqual(len(provenance), 6)
+        self.assertEqual(sorted(Path(args[3]).name for args in provenance),
+                         sorted(rc.BINARIES + ['SHA256SUMS', rc.MANIFEST]))
         for args in provenance:
             self.assertIn('--deny-self-hosted-runners', args)
             self.assertEqual(args[args.index('--source-digest')+1], COMMIT)
@@ -606,4 +640,4 @@ class WorkflowTest(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    unittest.main(verbosity=2)

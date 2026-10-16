@@ -37,9 +37,10 @@ type Span struct {
 }
 
 type recorder struct {
-	mu    sync.Mutex
-	start time.Time
-	top   []*Span // spans made with Start, nested by time when written
+	mu      sync.Mutex
+	start   time.Time
+	top     []*Span // spans made with Start, nested by time when written
+	metrics [metricCount]atomic.Int64
 }
 
 var active atomic.Pointer[recorder]
@@ -139,6 +140,15 @@ func Write(w io.Writer) {
 	var b strings.Builder
 	b.WriteString("agent-archive trace (start offset, duration):\n")
 	writeLevel(&b, rec.start, roots, 0, now)
+	var totals []string
+	for metric, name := range metricNames {
+		if value := rec.metrics[metric].Load(); value != 0 {
+			totals = append(totals, fmt.Sprintf("%s %d", name, value))
+		}
+	}
+	if len(totals) > 0 {
+		fmt.Fprintf(&b, "native totals: %s\n", strings.Join(totals, ", "))
+	}
 	rec.mu.Unlock()
 	_, _ = io.WriteString(w, b.String())
 }

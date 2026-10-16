@@ -312,8 +312,8 @@ func TestHandoffRowsMarkLiveSessionsByActiveSourceWindow(t *testing.T) {
 	}
 }
 
-// Through the picker, the dot is drawn before a live session's title, and the
-// other titles leave room for it.
+// Through the picker, a live session's WHEN reads "live" in place of its
+// time, and no title carries a mark for it.
 func TestHandoffPickerDrawsTheLiveDot(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
@@ -324,13 +324,13 @@ func TestHandoffPickerDrawsTheLiveDot(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
-	if line := pickerLine(t, out, live); !strings.Contains(line, liveMark+" Working right now") {
-		t.Fatalf("live row: %q", line)
+	if fields := strings.Fields(pickerLine(t, out, live)); len(fields) < 2 || fields[1] != liveWhen || !strings.Contains(strings.Join(fields, " "), " Working right now") {
+		t.Fatalf("live row: %q", fields)
 	}
-	if strings.Count(out, liveMark) != 1 {
-		t.Fatalf("%d dots:\n%s", strings.Count(out, liveMark), out)
+	if strings.Count(out, " "+liveWhen+" ") != 1 || strings.Contains(out, "●") {
+		t.Fatalf("one live row, no dot:\n%s", out)
 	}
-	if line := pickerLine(t, out, f.archiveOnly); strings.Contains(line, liveMark) || !strings.Contains(line, "  Archived elsewhere") {
-		t.Fatalf("idle row: %q", line)
+	if fields := strings.Fields(pickerLine(t, out, f.archiveOnly)); len(fields) < 2 || fields[1] == liveWhen {
+		t.Fatalf("idle row: %q", fields)
 	}
 }

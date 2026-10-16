@@ -51,7 +51,7 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 		p.fail(id, unchangedSinceFailureError{message: failure, cursor: reg.SourceKind == archive.SourceKindCursorSQLite})
 		return true
 	}
-	if entry, ok := p.opts.labels[id]; ok && entry.Label.Fingerprint() != signature.PublishedLabel && (signature.Blocked == "" || signature.Blocked == state.BlockedReasonTranscriptMissing) {
+	if entry, ok := p.opts.labels[id]; ok && entry.Label.Fingerprint() != signature.PublishedLabel && (signature.Blocked == "" || (signature.Blocked == state.BlockedReasonTranscriptMissing || sizeLimitGap(signature.Blocked)) && !p.retainedHistorySet(id)) {
 		if p.labelStates[id] != nil {
 			return false
 		}
@@ -61,10 +61,11 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 		p.labelBytes += n
 		if err == nil {
 			p.labelStates[id] = published
-			return false
 		}
-		// Keep the durable observation owed, without blocking normal capture.
-		delete(p.opts.labels, id)
+		// A publication too large for the narrow decode (a long thread, or a
+		// history source set) is loaded by the scan itself, which publishes
+		// the name with the session's own read ceiling.
+		return false
 	}
 	// Settled, or a recorded gap at the same state. A request on the gap is
 	// completed without a read, as a block completes it: the chat is still
@@ -80,6 +81,15 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 	p.result.Skipped = append(p.result.Skipped, id)
 	p.opts.progress(id, false)
 	return true
+}
+
+// retainedHistorySet reports whether the session's publication is a history
+// source set, or cannot be told apart from one. refreshLabels renames only an
+// ordinary retained source, so rescanning a history set whose transcript is
+// gone, for a name, would never settle: its rename waits for the transcript.
+func (p *pass) retainedHistorySet(id string) bool {
+	summary, _, err := p.local.LoadPublishedSummary(id)
+	return err != nil || summary.CurrentRevision != "" || summary.SourceSchemaVersion == archive.HistorySourceSchemaVersion || summary.MetadataSchemaVersion == archive.HistoryMetadataSchemaVersion
 }
 
 // unchangedSinceLastScan answers the spec's "transcript changed?" question

@@ -140,9 +140,11 @@ type costAcc struct {
 	priced      bool
 	unpriced    int64
 	approximate bool
+	excluded    int
 }
 
 func (c *costAcc) add(o costAcc) {
+	c.excluded += o.excluded
 	c.usd += o.usd
 	c.priced = c.priced || o.priced
 	c.unpriced = satAdd(c.unpriced, o.unpriced)
@@ -155,22 +157,26 @@ func (c *costAcc) cost() Cost {
 		value := c.usd
 		usd = &value
 	}
-	return Cost{USD: usd, Partial: c.unpriced > 0, UnpricedTokens: c.unpriced, Approximate: c.approximate}
+	return Cost{USD: usd, Partial: c.unpriced > 0 || c.excluded > 0, ObservationOnlySessions: c.excluded, UnpricedTokens: c.unpriced, Approximate: c.approximate}
 }
 
 // bucket is a running total over sessions: the overview, one agent, one
 // project, one day, or one group.
 type bucket struct {
-	sessions     int
-	dataSessions int
-	promptSess   int
-	prompts      int64
-	tokens       tokenSet
-	cost         costAcc
+	sessions            int
+	dataSessions        int
+	promptSess          int
+	prompts             int64
+	tokens              tokenSet
+	cost                costAcc
+	observations        archive.ObservationAccumulator
+	observationSessions int
 }
 
 func (b *bucket) add(u *unit) {
 	b.sessions++
+	b.observations.AddSummary(u.observations.Summary())
+	b.observationSessions += u.observationSessions
 	if u.prompts != nil {
 		b.promptSess++
 		b.prompts = satAdd(b.prompts, *u.prompts)

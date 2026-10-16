@@ -145,7 +145,7 @@ func loadGenerationPreview(store *state.Store, cfg config.Config, id string, env
 		return generationPreview{}, errors.New("settle pending publication with agent-archive sync before recovery")
 	}
 	closeLocal() // retained authority validation has no remaining data consumer
-	opts := collector.Options{CodexRollouts: lookup, ConfiguredCodexHomes: homes, Sources: registryFor(env), Parsers: parsersFor(env), MachineID: cfg.MachineID, SkillEvidence: cfg.EffectiveSkillEvidence(), RequireSkillUse: cfg.RequireSkillUse, RepoKey: env.repoKey}
+	opts := collector.Options{CodexRollouts: lookup, ConfiguredCodexHomes: homes, NativeRoots: cfg.NativeRoots, Sources: registryFor(env), Parsers: parsersFor(env), MachineID: cfg.MachineID, SkillEvidence: cfg.EffectiveSkillEvidence(), RequireSkillUse: cfg.RequireSkillUse, RepoKey: env.repoKey}
 	at := env.now().UTC()
 	builder, closeData, err := collector.PrepareGenerationRecovery(context.Background(), reg, at, opts)
 	if err != nil {

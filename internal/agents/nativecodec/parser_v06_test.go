@@ -181,7 +181,9 @@ func TestParserV06DerivesCursorTurnsAndOutcome(t *testing.T) {
 	countIs(t, "turns", metadata.Counts.Turns, 1)
 	countIs(t, "messages", metadata.Counts.Messages, 2)
 	countIs(t, "tool calls", metadata.Counts.ToolCalls, 1)
-	countIs(t, "tool results", metadata.Counts.ToolResults, 0)
+	if metadata.Counts.ToolResults != nil {
+		t.Fatalf("unavailable Cursor results = %v", metadata.Counts.ToolResults)
+	}
 	if metadata.State != MetadataStateIdle || metadata.TurnOutcome != TurnOutcomeCompleted {
 		t.Fatalf("lifecycle = %q/%q", metadata.State, metadata.TurnOutcome)
 	}
@@ -417,5 +419,22 @@ func TestParserV06TextBundlesLeaveCountsUnknown(t *testing.T) {
 	}
 	if counts.ExplicitFeedback == nil {
 		t.Fatal("explicit feedback is evidence-derived and should stay known")
+	}
+}
+
+// Codex 0.160 sends a project's AGENTS.md as the thread's first user message,
+// under a "# AGENTS.md instructions for DIR" heading, and again after
+// compaction. Neither is a prompt the person wrote.
+func TestCodexProjectInstructionsAreNotTheTitleOrAPrompt(t *testing.T) {
+	t.Parallel()
+	view, metadata := parsedFixture(t, "codex", "codex-project-instructions.jsonl")
+	if metadata.Title != "Review the widget parser's error handling." {
+		t.Fatalf("title = %q", metadata.Title)
+	}
+	countIs(t, "turns", metadata.Counts.Turns, 2)
+	for _, turn := range view.Turns {
+		if strings.Contains(turn.Text, "AGENTS.md") || strings.Contains(turn.Text, "INSTRUCTIONS") {
+			t.Fatalf("injected instructions kept as a turn: %#v", turn)
+		}
 	}
 }

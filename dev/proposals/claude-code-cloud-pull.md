@@ -9,23 +9,26 @@ session tokens — sign-in to a Claude account must complete through
 Anthropic's own flow". Every design below reads the Claude Code login and calls
 Anthropic's API with it, so agent-archive cannot ship it. Anthropic has enforced
 this rule against other third-party tools without notice. Claude Code cloud
-capture instead uses an account plugin whose hooks run inside the cloud session;
+capture instead proposes an account plugin whose hook delivery was observed inside cloud sessions;
 see [cloud capture](cloud-capture.md#verified-behavior-account-plugins). This
 document stays useful if Anthropic offers a supported export, and its API facts
 explain what the cloud service stores.
 
-Prepared 2026-10-13 as the Claude Code part of [cloud capture](cloud-capture.md). Facts marked *verified* come
+Prepared 2026-10-13 as the Claude Code part of [cloud capture](cloud-capture.md). Facts marked *verified* are historical author reports
 from probes of the owner's account on 2026-10-13 with Claude Code CLI 2.1.287.
 Facts marked *from the CLI* were read from that CLI's bundled code. All seven
-[pre-build checks](#pre-build-checks) are done.
+[pre-build checks](#pre-build-checks) have reported results. This reconciliation
+did not repeat those account probes. The design and implementation plan below
+are preserved historical proposals; every implementation step remains blocked.
 
 ## Purpose
 
 Claude Code on the web (claude.ai/code, `claude --cloud`, routines) runs
 sessions on Anthropic-hosted VMs. They never touch the user's Mac, so the local
-collector never sees them. Push capture needs hooks committed to every
-repository, or pasted environment variables, and storage credentials inside
-the VM. That is too much onboarding for most users.
+collector never sees them. At preparation, the investigated push route required repository hooks or pasted
+environment variables, plus storage credentials inside the VM. Later account-plugin
+observations provide a proposed onboarding alternative; see
+[cloud capture](cloud-capture.md#proposed-onboarding-a-personal-plugin).
 
 Pull capture fetches the sessions from the same API that `claude --teleport`
 uses, from the machine that already runs agent-archive, with the Claude Code
@@ -265,9 +268,12 @@ metadata schema 2 work in [cloud capture](cloud-capture.md#4-identity-and-metada
 
 ## Pre-build checks
 
-Run with [`dev/probes/claude_cloud_checks.py`](../probes/claude_cloud_checks.py),
-which doubles as a compatibility check when Claude Code changes. It writes raw
-transcripts to `dev/probes/out/`, which git ignores; delete it after use.
+The historical source is preserved in
+[`dev/probes/claude_cloud_checks.py`](../probes/claude_cloud_checks.py). Its
+command-line entry point is disabled because the pull approach is blocked. It
+previously read local login state and wrote unfiltered transcripts to
+`dev/probes/out/`; ignored files are not a privacy boundary. Do not run it on
+a real account or treat its retained code as an approved compatibility check.
 
 | # | Question | Result |
 | --- | --- | --- |
@@ -283,7 +289,7 @@ transcripts to `dev/probes/out/`, which git ignores; delete it after use.
 
 | PR | Scope | Exit criteria |
 | --- | --- | --- |
-| 1 | This proposal and the probe script | Done: every check has a result |
+| 1 | This proposal and the archived probe source | Historical record: every check has a reported result; executable entry point disabled |
 | 2 | `claudeauth` (CLI login only) and `claudecloud` | Unit tests with recorded responses; no token in any output; expired, forbidden and wrong-scope logins mapped to statuses |
 | 3 | Poll step, high-water mark, scope, registration, `repo_key` from URL | A fake API drives registrations; failure leaves the mark unchanged; local capture unaffected by API outage |
 | 4 | `claude-cloud-events` codec and filter version, incremental fetch with stored cursors and filtered staging, subagent split | Sanitized recorded event logs filter and publish; a 200 MB log resumes across passes; no raw event reaches disk |
@@ -298,7 +304,7 @@ transcripts to `dev/probes/out/`, which git ignores; delete it after use.
   Anthropic offers one.
 - **Undocumented API.** Endpoints, headers and record formats can change with
   any Claude Code release. Decoding stays narrow, failures become statuses, and
-  the probe script doubles as a compatibility check.
+  the archived probe source is not an approved compatibility check.
 - **Device trust.** The CLI sends a trusted-device header on some calls. If the
   server starts requiring it for transcript reads, pull capture stops and
   `status` must say why.
