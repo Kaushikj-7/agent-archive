@@ -12,6 +12,11 @@ follow [Semantic Versioning](https://semver.org/).
   publish after the native source disappears. Live Cursor/platform qualification
   remains unverified; unknown capabilities and exhausted budgets stay pending.
 
+- When Codex discovery is unavailable but every published automatic session has
+  recorded read-back verification, status says “discovery unknown; archive
+  verified at recorded time”. Restore source access and run sync to check
+  current capture health.
+
 - A long Codex thread whose history spans more than one rollout needs far less
   read memory to capture, so it is captured at sizes that were recorded as too
   large to read (`transcript_too_large`, per-session read memory, from about
@@ -53,6 +58,13 @@ follow [Semantic Versioning](https://semver.org/).
   Codex thread whose ID starts `01a10e11`.
 
 ### Local native validation foundation
+
+- Muse retains own committed tool-call identities and validates exact prior
+  result batch/index/call joins after native loss. Nonempty enriched sources
+  expose observed call counts; legacy or mixed coverage stays unavailable.
+  Tool names, arguments, result bodies/status and result/error counts remain
+  omitted; narrative handoff keeps explicit unavailable detail. Capture stays
+  disabled and complete tool parity remains pending.
 
 - Add opt-in offline-tested Muse read success, missing-file and two-call
   qualification controls with finite provider/process bounds and joined cleanup.

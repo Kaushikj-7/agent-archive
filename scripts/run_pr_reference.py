@@ -45,6 +45,8 @@ def bodies(raw, packages, names):
     if any(actions not in (['run','pass'],['run','skip'],['run','pause','cont','pass'],['run','pause','cont','skip'])
            for actions in lifecycles.values()):
         raise shards.Failure('invalid unrestricted reference body lifecycle')
+    import go_parent_shards
+    go_parent_shards.verify_lifecycle_containment(shards.json_stream(raw))
     tier.verify_owned_audit_skip(raw)
     return actual
 
@@ -141,10 +143,17 @@ def compare(reference,workers,audit):
         observed_skips=skips(actual);reference_skips=skips(reference_report['body_evidence']['actual'])
         if observed_skips != reference_skips:
             raise shards.Failure('unexpected/missing short or platform skip compared with unrestricted reference')
+        # A parent pass cannot substitute for a missing successful descendant.
+        # Runtime-generated names/statuses must agree in both directions; a
+        # dynamic difference refuses this comparison instead of being ignored.
+        def all_bodies(records):
+            return Counter((row['package'],row['test'],row['status']) for row in records)
+        if all_bodies(actual) != all_bodies(reference_report['body_evidence']['actual']):
+            raise shards.Failure('shard body identity/status union differs from same-source unrestricted reference')
         return {'schema':1,'success':True,'source_proof':expected,'workers':count,
                 'packages':len(catalog['packages']),'parents':sum(tops.values()),
                 'matching_short_platform_skips':[{'package':p,'test':t,'count':n} for (p,t),n in sorted(observed_skips.items())],
-                'note':'Actual same-source unrestricted parent/package union and skip identities match; plain audit is independently verified. Full-scale restorations and fuzz mutation campaigns remain separate.'}
+                'note':'Actual same-source unrestricted complete body identity/status union and skip identities match; plain audit is independently verified. Full-scale restorations and fuzz mutation campaigns remain separate.'}
 
 
 def main():

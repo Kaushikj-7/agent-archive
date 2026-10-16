@@ -104,6 +104,77 @@ discard-writer samples are not equivalent. Preserve exact production/harness
 commits, fixture hashes, toolchain/build settings and raw samples. Controlled
 matched measurements of this repaired harness remain pending.
 
+## Bounded matched command harness
+
+This complements the scoped picker harness below: it retains full-output
+validation for default list, exact/short-ID and linked show, multi-window JSON
+stats and interactive stats. Historical measurements of earlier production
+commits are not measurements of current main; rerun a frozen harness on both
+source pins before claiming a current performance difference. The current-source
+adaptation uses the day-grouping option and explicit plain-table width introduced
+by the newer list renderer; the old project-grouping harness cannot compile on
+current main unchanged. Treat that adaptation as part of the harness identity,
+and use one identical compatible harness for any new paired comparison.
+
+`BenchmarkMatchedCLI` measures the same captured `CLI.Run` invocation that its
+validators inspect after timing. Its default fixture has 800 synthetic sessions;
+`AGENT_ARCHIVE_MATCHED_LARGE=1` adds 10,000. It covers actual default list-50 and
+text and JSON, exact/short-ID show, a parent with 50 direct children, one-shot
+JSON stats at 1/7/30/90 days, and interactive stats at 7/30/90 days. Every case
+runs cold and warm; interactive stats uses an injected 80x24 terminal. Stats has
+400 days of token metadata and 100 projects. There are no transcripts or provider calls.
+
+```sh
+go test ./internal/cli -run '^TestMatchedPerformanceRejectsPartialOutput$' -count=1
+go test ./internal/cli -run '^$' -bench '^BenchmarkMatchedCLI$' -benchtime=1x -count=3
+AGENT_ARCHIVE_MATCHED_LARGE=1 go test ./internal/cli -run '^$' -bench '^BenchmarkMatchedCLI/sessions=10000/' -benchtime=1x -count=3
+```
+
+Cold removes the private disk cache before each invocation; warm first runs and
+validates the same command, outside timing and counters. Interactive warmup uses
+the same terminal dimensions and independent fake window/quit keys. Warm show
+measures the command after prior use without assuming that every show read is
+cacheable. Every measured call starts a fresh Run and reader; warm retains only
+the private disk cache. Neither state flushes the operating system page cache.
+
+List validation checks all selected metadata, ordering, counts, truncation and
+the absent project scope expected for this all-projects fixture.
+Show validation checks every metadata field and linked availability. One-shot
+stats validates the full JSON against exhaustive computation over the fixture;
+each interactive frame checks every visible body row against exhaustive
+computation and checks its shape/window/quit footer. Diagnostics fail validation.
+Validation and exhaustive oracle work are outside measured time and allocations;
+buffer capture is inside. Fixture, all stored key/body bytes, expected JSON and measured output SHA-256 fingerprints are
+printed with verbose benchmark output, so a baseline/candidate comparison can
+identify schema or semantic changes before interpreting its timings.
+
+Freeze this file byte-for-byte on both source pins, with identical seed/store
+helpers, compiler/build settings, invocation counts and fixture hashes. Any
+adapter changes must be recorded separately and reviewed; never move production
+optimizations into the control. Run only after correctness validation succeeds
+on both sources, on an otherwise quiet host, with one benchmark process at a
+time. Keep raw samples and exact source/harness hashes. These zero-delay samples
+include MemoryStore sorting/copying and private disk-cache I/O. They measure
+in-process startup and command work, not OS process execution or real-provider
+latency. `B/op` and `allocs/op` cover the timed operation; external maximum RSS
+covers the whole worker, including fixtures, validation and cleanup, and cannot
+be called per-command memory.
+
+The common harness adapter pins LIST header timestamps and exposes the same
+bounded-versioned GET protocol on both sources, using the existing measured
+versioned getter exactly once. It checks the limit after copying tiny synthetic
+bodies, unlike a provider's admission check; no oversized body case is measured.
+The older wrapper lacked this counted method. No catalog is seeded or enabled,
+and no optimized production reader or stats code is copied into the baseline.
+
+The seed's randomized revision nonces are replaced by deterministic 26-character
+hash-derived fixture identities. The common harness retains every summary and
+its capture-time prefix, re-encodes the public v3 JSON in 255-byte path
+components, and validates the result through each source's `PutRevision`.
+Any protocol incompatibility fails fixture setup. This fixture-only replacement
+makes the full stored key/body fingerprint reproducible, without normalizing
+away output differences.
+
 ## Scoped interactive picker measurements
 
 The [picker qualification harness](../maintainers/picker-qualification/README.md)

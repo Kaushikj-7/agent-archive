@@ -228,6 +228,40 @@ class ParentScheduling(unittest.TestCase):
             path.write_text(original)
             p.verify_logs(worker, c, c['assignments'][index])
 
+    def test_enclosing_parent_lifecycle_is_required_without_virtual_slash_nodes(self):
+        c = catalog(4)
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); evidence(root, c)
+            index, package = next((i, n) for i, a in enumerate(c['assignments']) for n in a['parents'])
+            worker = root/str(index); path = worker/p.log_name(package)
+            original = path.read_text(); events = r.json_stream(original)
+            parent = events[0]['Test']; child = events[1]['Test']
+            parent_end = next(e for e in events if e.get('Test') == parent and e.get('Action') == 'pass')
+            bad = [e for e in events if e is not parent_end]; bad.insert(1, parent_end)
+            # Every node still has run/pass; only enclosing order is invalid.
+            for name in (parent, child):
+                self.assertEqual([e['Action'] for e in bad if e.get('Test') == name], ['run', 'pass'])
+            path.write_text(rows(bad))
+            with self.assertRaisesRegex(r.Failure, 'lifecycle|parent terminal'):
+                p.verify_logs(worker, c, c['assignments'][index])
+            path.write_text(original)
+            p.verify_logs(worker, c, c['assignments'][index])
+        package = p.HEAVY[0]
+        # A slash-containing name need not emit intermediate runtime nodes.
+        events = [event(package, 'run', Test='TestA'),
+                  event(package, 'run', Test='TestA/virtual/name'),
+                  event(package, 'pause', Test='TestA/virtual/name'),
+                  event(package, 'cont', Test='TestA/virtual/name'),
+                  event(package, 'pass', Test='TestA/virtual/name'),
+                  event(package, 'pass', Test='TestA')]
+        p.verify_lifecycle_containment(events)
+        # A completed sibling can share the lexical prefix of a later slash name.
+        sibling = [event(package, 'run', Test='TestA'),
+                   event(package, 'run', Test='TestA/virtual'),
+                   event(package, 'pass', Test='TestA/virtual'),
+                   *events[1:-1], event(package, 'pass', Test='TestA')]
+        p.verify_lifecycle_containment(sibling)
+
     def test_timing_report_includes_new_parent_logs_with_shared_lifecycle_semantics(self):
         import report_ci_timing
         c=catalog(4)

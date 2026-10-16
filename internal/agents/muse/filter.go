@@ -24,7 +24,7 @@ type Filter struct{}
 func (Filter) Name() string { return "muse" }
 
 // Version identifies the current privacy projection.
-func (Filter) Version() string { return "0.24.0" }
+func (Filter) Version() string { return "0.28.0" }
 
 // LeasedFilterFor refuses decorators which may change filtering semantics.
 func (Filter) LeasedFilterFor(a archive.Adapter) bool { _, ok := a.(Filter); return ok }
@@ -113,7 +113,15 @@ func (Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 					err = archive.ErrRecordTooLarge
 					break
 				}
-				n := int64(len(encoded))*8 + 512
+				multiplier := int64(8)
+				if safe.ordinary != nil && enrichedTools(safe.ordinary.Fields) {
+					// Keep the existing decoded-value expansion allowance alive for
+					// tool arrays after the physical raw reservation is released.
+					// It covers retained maps plus later call/batch/source joins and
+					// normalized call slices, before rows take persistent ownership.
+					multiplier = 128
+				}
+				n := int64(len(encoded))*multiplier + 512
 				if !reservation.Reserve(n) {
 					err = errBudget
 					break
@@ -194,7 +202,7 @@ func privacyWithGaps(r retained, record int, addGap func(string, int, string)) (
 	for k, v := range original.Fields {
 		switch fieldName(k) {
 		case fieldPrompt, fieldText, fieldNewName, fieldPreviousName, fieldObservedModel:
-		case fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence, fieldResume, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldModelCallIndex, fieldObservedInput, fieldObservedOutput:
+		case fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence, fieldResume, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldModelCallIndex, fieldObservedInput, fieldObservedOutput, fieldToolCalls, fieldToolResults:
 			fallthrough
 		default:
 			if !reflect.DeepEqual(v, r.Fields[k]) {
@@ -208,10 +216,19 @@ func privacyWithGaps(r retained, record int, addGap func(string, int, string)) (
 func filtered(rows []logicalRow, limits agentapi.ReadLimits, gaps []archive.CaptureGap) (archive.FilteredTranscript, error) {
 	slots := ordinarySlots(rows)
 	out := archive.FilteredTranscript{Format: "muse-jsonl", SessionIDs: []string{slots[0].Stream.ID}, NativeStartAt: time.UnixMicro(slots[0].Timestamp).UTC(), NativeStartComplete: true, LocalIdentity: archive.NativeSessionIdentity{ID: slots[0].Stream.ID}, Gaps: []archive.CaptureGap{{Code: "muse_local_conversation_only", Detail: "Own visible conversation only"}, {Code: "usage_cache_reasoning_cost_unavailable"}, {Code: "tool_facts_unavailable"}, {Code: "model_switches_unavailable"}, {Code: "child_coverage_unavailable"}}}
-	if _, observations, err := conversationObserved(slots); err != nil {
+	view, observations, err := conversationObserved(slots)
+	if err != nil {
 		return archive.FilteredTranscript{}, err
-	} else if observations != nil {
+	}
+	if len(view.ToolCalls) > 0 {
+		out.Gaps[2].Detail = "Tool names, arguments, result bodies and status unavailable"
+		out.Gaps[0].Detail = "Own visible conversation and committed tool identities only"
+	}
+	if observations != nil {
 		out.Gaps[0].Detail = "Own visible conversation and input/output observations only"
+		if len(view.ToolCalls) > 0 {
+			out.Gaps[0].Detail = "Own visible conversation, committed tool identities and input/output observations only"
+		}
 		out.Gaps[1] = archive.CaptureGap{Code: "own_usage_observations_partial", Detail: "Observed input/output only; complete usage unavailable"}
 		out.Gaps = append(out.Gaps, archive.CaptureGap{Code: "cache_reasoning_cost_unqualified"})
 	}
@@ -384,7 +401,7 @@ var _ agentapi.LeasedTranscriptRefilter = Filter{}
 var _ agentapi.TranscriptParser = Parser{}
 
 var retainedKeys = func() map[string]bool {
-	keys := strings.Fields("v pos line child id stream kind seq ts_us schema type payload_schema record_type durability causation_id fields schema_version format permission_epoch cause workspace_root provider_id model_id tool_surface_version session_id resume selection publication_id command_id command_kind activation_source cwd intent_id source_session_id surface semantic_kind envelope_record_id envelope_sequence run_id run_started_session_record_id run_started_source_record_id outcome_kind new_name previous_name source operation_id root_agent_id root_session_id event_kind source_run_record_id source_run_record_sequence prompt message_id response_id text position sequence marker omitted_record payload_type payload_schema_version payload_kind omission_class pending_action_id task_id tool_call_id review_id effect_id model_call_index model input_tokens output_tokens")
+	keys := strings.Fields("v pos line child id stream kind seq ts_us schema type payload_schema record_type durability causation_id fields schema_version format permission_epoch cause workspace_root provider_id model_id tool_surface_version session_id resume selection publication_id command_id command_kind activation_source cwd intent_id source_session_id surface semantic_kind envelope_record_id envelope_sequence run_id run_started_session_record_id run_started_source_record_id outcome_kind new_name previous_name source operation_id root_agent_id root_session_id event_kind source_run_record_id source_run_record_sequence prompt message_id response_id text position sequence marker omitted_record payload_type payload_schema_version payload_kind omission_class pending_action_id task_id tool_call_id review_id effect_id model_call_index model input_tokens output_tokens tool_calls call_id batch_id results tool_call_index")
 	out := map[string]bool{}
 	for _, key := range keys {
 		out[key] = true
