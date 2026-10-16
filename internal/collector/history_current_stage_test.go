@@ -10,9 +10,18 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
+type currentHistoryStageFault string
+
+const (
+	currentStageMissing currentHistoryStageFault = "missing"
+	currentStageCorrupt currentHistoryStageFault = "corrupt"
+	currentStageSwap    currentHistoryStageFault = "swap"
+	currentStageForeign currentHistoryStageFault = "foreign"
+)
+
 func TestCurrentHistoryStageRefusesMissingCorruptAndForeignPayloads(t *testing.T) {
-	for _, kind := range []string{"missing", "corrupt", "swap", "foreign"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []currentHistoryStageFault{currentStageMissing, currentStageCorrupt, currentStageSwap, currentStageForeign} {
+		t.Run(string(kind), func(t *testing.T) {
 			scan, p := privacyJournal(t)
 			defer scan.releaseRetained()
 			if len(p.SourceBytes) != 0 || p.Sources[0].Payload.Kind != state.PublicationHistoryStage {
@@ -27,16 +36,16 @@ func TestCurrentHistoryStageRefusesMissingCorruptAndForeignPayloads(t *testing.T
 				t.Fatal(err)
 			}
 			switch kind {
-			case "missing":
+			case currentStageMissing:
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
 				}
-			case "corrupt":
+			case currentStageCorrupt:
 				before = bytes.Repeat([]byte{'x'}, len(before))
 				if err := os.WriteFile(path, before, 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "swap":
+			case currentStageSwap:
 				other := p.History.Sources[1]
 				before, err = scan.local.ReadPendingSource(scan.id(), other)
 				if err != nil {
@@ -45,7 +54,7 @@ func TestCurrentHistoryStageRefusesMissingCorruptAndForeignPayloads(t *testing.T
 				if err := os.WriteFile(path, before, 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "foreign":
+			case currentStageForeign:
 				handle := *p.Sources[0].Payload.Stage
 				handle.OwnerSHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 				p.Sources[0].Payload.Stage = &handle
@@ -59,7 +68,7 @@ func TestCurrentHistoryStageRefusesMissingCorruptAndForeignPayloads(t *testing.T
 			if _, found, err := scan.local.LoadPending(scan.id()); err != nil || !found {
 				t.Fatal("refusal discharged pending work", found, err)
 			}
-			if kind != "missing" {
+			if kind != currentStageMissing {
 				after, err := os.ReadFile(path)
 				if err != nil || !bytes.Equal(after, before) {
 					t.Fatal("refusal replaced staged evidence", err)

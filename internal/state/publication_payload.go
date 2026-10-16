@@ -103,12 +103,7 @@ func selectedPublicationSources(p PendingPublication, destination, admission str
 			payload = PublicationPayload{Kind: PublicationInline, Inline: p.SourceBytes}
 		}
 		if p.History != nil && (i != 0 || len(p.SourceBytes) == 0 || preferCurrentStage) {
-			for _, stage := range p.History.Sources {
-				if stage.Reference == ref {
-					payload = PublicationPayload{Kind: PublicationHistoryStage, Stage: &ImmutableStageHandle{Version: 1, Kind: PublicationHistoryStage, Namespace: "session-pending-sources", SessionID: m.SessionID, OwnerSHA256: publicationOwner(m, destination, admission), DestinationID: destination, AdmissionContext: admission, SourceSHA256: ref.SHA256, CompressedBytes: ref.CompressedBytes, Selection: selection}}
-					break
-				}
-			}
+			payload = selectedHistoryStagePayload(p.History, PublicationSource{Reference: ref, Selection: selection, Payload: payload}, m, destination, admission)
 		}
 		if payload.Kind == "" {
 			payload.Kind = PublicationRemote
@@ -131,6 +126,18 @@ func selectedPublicationSources(p PendingPublication, destination, admission str
 	}
 
 	return out, nil
+}
+
+// selectedHistoryStagePayload keeps the first exact staged reference, retaining
+// the caller's payload when no matching stage exists.
+func selectedHistoryStagePayload(history *PendingHistory, source PublicationSource, m archive.Metadata, destination, admission string) PublicationPayload {
+	for _, stage := range history.Sources {
+		if stage.Reference == source.Reference {
+			ref := source.Reference
+			return PublicationPayload{Kind: PublicationHistoryStage, Stage: &ImmutableStageHandle{Version: 1, Kind: PublicationHistoryStage, Namespace: "session-pending-sources", SessionID: m.SessionID, OwnerSHA256: publicationOwner(m, destination, admission), DestinationID: destination, AdmissionContext: admission, SourceSHA256: ref.SHA256, CompressedBytes: ref.CompressedBytes, Selection: source.Selection}}
+		}
+	}
+	return source.Payload
 }
 
 func validatePublicationPayload(source PublicationSource, m archive.Metadata, destination, admission string) error {
