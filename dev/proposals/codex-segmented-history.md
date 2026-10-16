@@ -123,8 +123,9 @@ existing physical ordinals (the spans of today's manifest, cut finer):
   lone record above roughly 40 MiB filtered still meets the 160 MiB session
   ceiling and records the existing read-ceiling gap, exactly as one does in an
   unsegmented session today. PR 3 measures that bound. The rule applies to
-  earlier rollouts as well as the tip, so a first (migration) read or a checkpoint-invalidating re-read of
-  a large ancestor produces several chunks, never one oversized segment.
+  earlier rollouts as well as the tip, so a first (migration) read or a
+  checkpoint-invalidating re-read of a large ancestor produces several chunks,
+  never one oversized segment.
 - An earlier rollout contributes the span its successor's `history_base`
   boundary includes, as one or more chunks. They are **sealed** when that
   boundary is proved: they never change again for this chain.
