@@ -1,7 +1,6 @@
 package discovery
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"os"
@@ -62,8 +61,9 @@ func rolloutDirectories(id string) []string {
 // in each approved native home. Only a few directories are listed, and each
 // at most once per pass while the pass's listing allowance lasts; past it, a
 // directory is searched for id alone without keeping its listing. A directory
-// that cannot be searched does not stop the others: its failure is returned
-// only when no directory holds the rollout.
+// that cannot be searched leaves uniqueness unresolved even when another
+// directory holds the rollout. Cached listings remain a bounded pass view;
+// they do not establish absence of copies created after a listing was read.
 func (l *CodexRolloutLookup) locate(ctx context.Context, id string) ([]string, error) {
 	var out []string
 	var failed error
@@ -84,17 +84,29 @@ func (l *CodexRolloutLookup) locate(ctx context.Context, id string) ([]string, e
 				if agentapi.HasFailure(err, agentapi.Limit) {
 					return nil, err
 				}
-				failed = cmp.Or(failed, err)
+				if failed == nil {
+					failed = err
+				}
 				continue
 			}
 			for _, path := range paths {
-				if rolloutPresent(path) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				present, err := physicalLocatorPresent(path)
+				if err != nil {
+					return nil, err
+				}
+				if present && !slices.Contains(out, path) {
+					if len(out) >= archive.MaxHistorySpans {
+						return nil, agentapi.Wrap(agentapi.Limit, errors.New("physical locator limit"))
+					}
 					out = append(out, path)
 				}
 			}
 		}
 	}
-	if len(out) == 0 && failed != nil {
+	if failed != nil {
 		return nil, failed
 	}
 	slices.Sort(out)
@@ -194,4 +206,17 @@ func walkRollouts(ctx context.Context, root, dir string, visit func(id, path str
 func rolloutPresent(path string) bool {
 	info, err := os.Lstat(path)
 	return err == nil && info.Mode().IsRegular()
+}
+
+// physicalLocatorPresent distinguishes a stale renamed locator from a path
+// whose current state cannot safely exclude another physical candidate.
+func physicalLocatorPresent(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil || !info.Mode().IsRegular() {
+		return false, agentapi.Wrap(agentapi.Unavailable, errors.New("native rollout locator unavailable"))
+	}
+	return true, nil
 }

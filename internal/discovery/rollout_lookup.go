@@ -278,7 +278,7 @@ func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (
 }
 
 // Rollout returns the locators of one physical rollout, found by its ID: its
-// observed locators that still exist, or else the rollout files named for it
+// observed locators that still exist, together with rollout files named for it
 // in the day directories its UUIDv7 creation time selects and in
 // archived_sessions/. The source provider reopens each and checks its header
 // identity. A Key is the observed thread, or empty for a locator found by
@@ -298,7 +298,14 @@ func (l *CodexRolloutLookup) Rollout(ctx context.Context, id string) (_ []agenta
 	}
 	paths := map[string]string{}
 	for path := range l.byPhysical[id] {
-		if !rolloutPresent(path) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		present, err := physicalLocatorPresent(path)
+		if err != nil {
+			return nil, err
+		}
+		if !present {
 			continue
 		}
 		if len(paths) >= archive.MaxHistorySpans {
@@ -306,17 +313,21 @@ func (l *CodexRolloutLookup) Rollout(ctx context.Context, id string) (_ []agenta
 		}
 		paths[path] = l.observations[path].identity.ThreadID
 	}
-	if len(paths) == 0 {
-		located, err := l.locate(ctx, id)
-		if err != nil {
-			return nil, err
+	// An observed locator is a hint, never evidence that a second copy does
+	// not exist in the bounded native directories. Preserve observed paths
+	// outside those directories as well as their validated thread hints.
+	located, err := l.locate(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range located {
+		if _, observed := paths[path]; observed {
+			continue
 		}
-		for _, path := range located {
-			if len(paths) >= archive.MaxHistorySpans {
-				return nil, agentapi.Wrap(agentapi.Limit, errors.New("physical locator limit"))
-			}
-			paths[path] = ""
+		if len(paths) >= archive.MaxHistorySpans {
+			return nil, agentapi.Wrap(agentapi.Limit, errors.New("physical locator limit"))
 		}
+		paths[path] = ""
 	}
 	refs := make([]agentapi.SourceRef, 0, len(paths))
 	for path, thread := range paths {
