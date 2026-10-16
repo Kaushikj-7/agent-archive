@@ -63,7 +63,7 @@ seven-day import and the status prompt for existing installations. See the
 | Proposal | Scope and follow-ups |
 | --- | --- |
 | [Setup and CLI experience](implemented/setup-and-cli-ux.md) | Shared prompts, setup and guided commands (#354, #357, #358); platform acceptance remains separate. |
-| [Native session names](implemented/native-session-names.md) | Claude titles, Codex file providers and optional native API, retained evidence and refresh (#346, #350, #353); producer restrictions, history-source name refresh and UI acceptance remain. |
+| [Native session names](implemented/native-session-names.md) | Claude titles and injected-context cleanup; Codex index names including imported/continued threads and Cursor chat names including imports (#346, #350, #353, #611, #614). Native UI and desktop coexistence acceptance remain separate. |
 | [Local session discovery](implemented/local-session-discovery.md) | Codex consent, admission, collector scans and explicit scope (#305, #306, #309–#311, #316, #327); other agents and cloud deferred. |
 | [First local handoff before bucket setup](implemented/local-handoff-before-setup.md) | Read-only native selection, filtering and launch (#277, #280, #288); actual-platform acceptance limits remain. |
 | [Coding-agent integration abstraction](implemented/agent-integration-abstraction.md) | Phases 0–6 merged; [contracts](implemented/agent-integration-contracts.md), [historical performance evidence](implemented/agent-integration-baseline.md) and raw data stay together. Historical relative timing gate remains unresolved. |

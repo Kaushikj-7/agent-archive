@@ -1,6 +1,6 @@
 # Native session names in Agent Archive
 
-Status: Implemented for supported ordinary-session publication; history-source name refresh and broader native acceptance remain incomplete. Prepared October 6, 2026; status reconciled October 11, 2026. Claude generated/custom titles, Codex external label evidence and collector refresh, and injected-context cleanup are implemented. Codex defaults to verified settled file lookup; bounded native metadata lookup requires explicit `codex_name_lookup: "native"` opt-in because startup can write native state and desktop coexistence remains unverified. Real sidebar/picker comparisons remain pending in the linked acceptance record. The design below preserves the original plan; current code and user documentation own the shipped contract.
+Status: Implemented for admitted Claude, Codex and Cursor sessions; broader native UI acceptance remains incomplete. Prepared October 6, 2026; source status reconciled October 16, 2026. Claude generated/custom titles and injected-context cleanup are implemented. Codex reads `$CODEX_HOME/session_index.jsonl` for admitted top-level threads, including imported sessions and threads continued into later rollouts, without starting Codex or opening its databases. Cursor reads each admitted chat's `composerData` name read-only from its database, imported sessions included. Codex history-source labels are retained and refreshed through the history publication path; continued threads publish a rename with a fresh capture. Real sidebar/picker comparisons remain pending in the linked acceptance record. The design below preserves the original plan, including its superseded settled-file/native-process lookup and history deferrals; current code and user documentation own the shipped contract.
 
 Source status checked against main
 `c8dcf2a88e0479eb63cf682d8d76e1428ff7609a` on 2026-10-14. Implementations
@@ -11,7 +11,8 @@ publication path. The [comparison record](../../maintainers/native-session-name-
 remains PARTIAL: it records historical sandbox synthetic checks; native UI
 acceptance is blocked. Narrow disposable metadata lookup probes do not establish
 sidebar parity, desktop coexistence, authentication or a latency distribution.
-History-source refresh and desktop coexistence remain separate acceptance gaps.
+Desktop coexistence and native UI comparisons remain separate acceptance gaps;
+the historical history-name deferral below has been superseded by #614.
 The producer versions and implementation descriptions below are historical
 observations from preparation, not new runtime probes. Source rechecked
 2026-10-16 at main `0966523baa7c0ea6cbce7704b85569519bb443dc`: #611 adds
