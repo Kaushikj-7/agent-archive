@@ -11,7 +11,7 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 `agent-archive` solves these problems, and can perform the following:
 
 - Automatically upload Claude Code, Codex, and Cursor transcripts into a cloud object storage like S3 or R2.
-- Hand off a session to another coding agent or computer without losing context. Run `agent-archive handoff`, pick a session, and continue where you left off. Useful when you hit rate limits or want to switch models ([handoff guide](docs/guides/handoff.md)).
+- Hand off a session to another coding agent or computer without losing context. Run `agent-archive handoff` and pick a session. After setup, you can also ask Claude Code or Codex to continue a previous session by name; the agent uses the CLI to find it and load its context. Useful when you hit rate limits or want to switch models ([handoff guide](docs/guides/handoff.md)).
 
   <img src="docs/assets/demos/handoff.gif" alt="Browse sessions, select a Claude Code session, and continue the work in Codex" width="800">
 
@@ -21,7 +21,7 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 
 - See how you're using your coding agents with `agent-archive stats`. Track session counts, tokens, and estimated spend, and compare usage across agents, models, and projects ([usage guide](docs/guides/stats.md)).
 
-*Demos use synthetic sessions, with loading waits trimmed.*
+  <img src="docs/assets/demos/stats.gif" alt="Agent Archive stats showing 150 sessions, estimated spend, and usage across agents" width="800">
 
 ## Quickstart
 
@@ -50,8 +50,6 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 ## Understand your usage
 
 Run `agent-archive stats` to explore session counts, tokens, estimated spend, and breakdowns by agent, model, and project. Switch views with a keypress ([usage guide](docs/guides/stats.md)).
-
-![Agent Archive stats showing 150 synthetic sessions, estimated spend, and usage across agents](docs/assets/demos/stats.gif)
 
 ## Find and revisit sessions
 
