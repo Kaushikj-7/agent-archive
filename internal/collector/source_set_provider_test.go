@@ -19,7 +19,7 @@ func TestOrdinarySourceSetAttemptKeepsCapturedProvider(t *testing.T) {
 		t.Run(map[bool]string{false: "source-verifier", true: "nested-publication"}[nestedPublication], func(t *testing.T) {
 			t.Parallel()
 			local, actual, reg, opts, pending, _ := ordinaryPrivacyFixture(t)
-			if err := actual.MemoryStore.Delete(t.Context(), pending.SourceKey); err != nil {
+			if err := actual.Delete(t.Context(), pending.SourceKey); err != nil {
 				t.Fatal(err)
 			}
 			if err := actual.MemoryStore.Put(t.Context(), pending.MetadataKey, pending.MetadataBytes); err != nil {
@@ -58,11 +58,11 @@ func TestOrdinarySourceSetAttemptKeepsCapturedProvider(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			source, err := actual.MemoryStore.Get(t.Context(), pending.SourceKey)
+			source, err := actual.Get(t.Context(), pending.SourceKey)
 			if err != nil || !bytes.Equal(source, pending.SourceBytes) {
 				t.Fatal("ambient checksum hid missing source in captured provider", err)
 			}
-			selected, err := actual.MemoryStore.Get(t.Context(), pending.MetadataKey)
+			selected, err := actual.Get(t.Context(), pending.MetadataKey)
 			if err != nil || !bytes.Equal(selected, pending.MetadataBytes) {
 				t.Fatal("captured metadata changed", err)
 			}
@@ -97,7 +97,7 @@ func TestFreshSelectedSourceSetAcknowledgmentRequiresActualReferences(t *testing
 				t.Fatal(err)
 			}
 			if missing {
-				if err := actual.MemoryStore.Delete(t.Context(), pending.SourceKey); err != nil {
+				if err := actual.Delete(t.Context(), pending.SourceKey); err != nil {
 					t.Fatal(err)
 				}
 			}

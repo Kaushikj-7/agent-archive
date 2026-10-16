@@ -63,32 +63,38 @@ func TestSourceSetPublicationWriterRefusesDowngradeAndMissingProtection(t *testi
 	}
 }
 
+type sourceSetLowerCapability string
+
+const (
+	lowerLegacy       sourceSetLowerCapability = "legacy"
+	lowerOrdinary     sourceSetLowerCapability = "ordinary"
+	lowerStaged       sourceSetLowerCapability = "staged"
+	lowerSettled      sourceSetLowerCapability = "settled"
+	lowerScoped       sourceSetLowerCapability = "scoped"
+	lowerSearch       sourceSetLowerCapability = "search"
+	lowerNativeSearch sourceSetLowerCapability = "native-search"
+)
+
 func TestSourceSetPublicationPreservesLowerCapabilities(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"legacy", "ordinary", "staged", "settled", "scoped", "search", "native-search"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []sourceSetLowerCapability{lowerLegacy, lowerOrdinary, lowerStaged, lowerSettled, lowerScoped, lowerSearch, lowerNativeSearch} {
+		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
-			cfg := Config{MachineID: "synthetic", RetentionDays: 90, DurableStorageProtection: true}
-			if kind != "legacy" {
-				cfg.PublicationCompositionProtection = true
+			var format destination.ArchiveFormat
+			if kind == lowerScoped {
+				format = destination.FormatCatalogV4
 			}
-			if kind == "staged" || kind == "settled" || kind == "scoped" {
-				cfg.ImportStagingProtection = true
-				cfg.StagedSelectionProtection = true
-			}
-			if kind == "settled" || kind == "scoped" {
-				cfg.SettledCursorSelectionProtection = true
-			}
-			if kind == "scoped" {
-				cfg.ScopedPickerProtection = true
-				cfg.Storage.ArchiveFormat = destination.FormatCatalogV4
-			}
-			if kind == "search" || kind == "native-search" {
-				cfg.SearchLifecycleProtection = true
-				cfg.SearchIndexing = true
-			}
-			if kind == "native-search" {
-				cfg.NativeAuthorityProtection = true
+			cfg := Config{
+				MachineID: "synthetic", RetentionDays: 90, DurableStorageProtection: true,
+				PublicationCompositionProtection: kind != lowerLegacy,
+				ImportStagingProtection:          kind == lowerStaged || kind == lowerSettled || kind == lowerScoped,
+				StagedSelectionProtection:        kind == lowerStaged || kind == lowerSettled || kind == lowerScoped,
+				SettledCursorSelectionProtection: kind == lowerSettled || kind == lowerScoped,
+				ScopedPickerProtection:           kind == lowerScoped,
+				Storage:                          destination.Config{ArchiveFormat: format},
+				SearchLifecycleProtection:        kind == lowerSearch || kind == lowerNativeSearch,
+				SearchIndexing:                   kind == lowerSearch || kind == lowerNativeSearch,
+				NativeAuthorityProtection:        kind == lowerNativeSearch,
 			}
 			if err := prepareDiscoveryConfig(&cfg); err != nil {
 				t.Fatal(err)

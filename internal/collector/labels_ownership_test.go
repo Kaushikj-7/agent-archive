@@ -31,6 +31,7 @@ func TestExternalRenameRequiresCurrentPublishedOwnerBeforeLookup(t *testing.T) {
 }
 
 func testExternalRenameRequiresCurrentPublishedOwner(t *testing.T, selecting bool) {
+	t.Helper()
 	for _, tc := range []struct {
 		name   string
 		warm   bool
