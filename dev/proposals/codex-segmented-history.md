@@ -293,7 +293,19 @@ state, and an equivalence test (iterator over the segment list == `ParseCodex`
 over the assembled bundle) proves it. A checkpoint is a follow-up
 only if profiles show derivation CPU matters.
 
-### Reading: show, handoff, search, verification
+Reading one segment at a time bounds *input*, not *output*. Today
+`nativecodec.ParseCodex` appends every visible turn, tool-call candidate,
+tool result and skill use to `Analysis.View`, and `BuildMetadataWithAnalysis`
+consumes that whole view, so an iterator that returned the same `Analysis`
+would still hold O(thread) data. Segmented derivation therefore uses an
+**aggregate-only** path: each record updates bounded metadata accumulators
+(counts, per-model tokens, capped tool/MCP/skill/PR/file lists, first and last
+timestamps, title candidate, gaps) and its normalized per-record data is
+discarded before the next record. The equivalence test compares the
+resulting metadata, not `Analysis.View`. Consumers that need per-record views
+(handoff, eval export) get their own bounded paths below.
+
+### Reading: show, handoff, search, verification, eval export
 
 - `internal/reader` gains a segment iterator: open the head, then each segment
   in order, each decoded under today's per-object `Limits` and checked against
@@ -304,14 +316,32 @@ only if profiles show derivation CPU matters.
   that it returns a named error telling the caller to use the iterator.
 - `cli/show_transcript.go` streams segments into the pager; memory is one
   segment plus the rendered window.
-- `cli/picker_handoff.go` builds the handoff from the tail backwards: it reads
-  segments newest first until the handoff's own size bound is met, taking the
-  title and counts from metadata, so a handoff of a 1 GB thread reads only its
-  recent segments.
+- `cli/picker_handoff.go` keeps the `archive.FitHandoff` contract: no prompt
+  is ever dropped, and the first prompt keeps its body up to its cap. The
+  output bound is not a source-read cutoff. Handoff streams every segment in
+  order into a bounded summary state that keeps every prompt (each capped as
+  `FitHandoff` caps it), one condensed line per older exchange, and full
+  detail only for a trailing window of recent exchanges; detail leaving the
+  window is condensed as it leaves. Memory is one segment plus that state.
+  When even the prompts and one-line exchanges exceed the handoff bound,
+  handoff reports it does not fit, as `FitHandoff` does today.
 - `internal/search/projection.go` projects each sealed segment once, keyed by
   its checksum, and re-projects only the tail.
 - Publication verification (`verifyPublication` in `cli/verification.go`)
-  loads each segment of the active and preserved heads one at a time.
+  validates every new head and the source-set digest each time, but reads
+  each immutable segment only once: a local verification receipt keyed by
+  segment checksum and compressed length records that the remote object
+  decoded and validated. Later verifications read only objects without a
+  receipt, so an append costs one segment, not the whole set (re-reading a
+  set near 1 GiB within its five-minute timeout would fail on slow links and
+  block privacy cleanup that waits on verification). A segment listed by
+  several heads is read at most once per verification. Receipts are
+  invalidated when the session's privacy policy or the destination changes.
+- Eval export (`exportArchivedSession` in `cli/eval_export.go`, through
+  `loadArchiveSelection`, including `--revision`) gets a bounded segmented
+  path that streams segments and keeps what `EvalExportDetailFull` needs
+  (prompts, final response, edited files, feedback) under explicit caps,
+  instead of calling `LoadSource`/`LoadRevision`.
 
 ### Size limits
 
@@ -435,17 +465,20 @@ Each PR has one concern and is merged in order unless marked parallel.
    versions.md; schema tests. No code paths.
 2. **Archive types and reader.** `internal/archive` segment types and
    validators; `internal/reader` segment iterator, bounded `LoadSource`
-   assembly; show, handoff, browse, search and verification consume the
-   iterator. Synthetic fixtures only. Ships in a release before PR 6 enables a
-   writer.
+   assembly; show, browse and search consume the iterator; verification
+   with checksum-keyed segment receipts; bounded handoff summary state that
+   keeps every prompt; segmented eval export (including `--revision`).
+   Synthetic fixtures only. Ships in a release before PR 8 enables a writer.
 3. **Filter equivalence and segmented provider read** (parallel with 2).
    Codex provider read from raw checkpoints; chunk sealing; tests and a fuzz
    target proving that concatenated segment filtering equals whole-chain
    filtering (records, ordinals, gaps union) for the same input, including
    child/fork boundaries, rollbacks and records straddling a chunk target.
-4. **Streaming Codex parse** (parallel with 2–3). Record-iterator form of
-   `ParseCodex`; equivalence tests and benchmark against the assembled-bundle
-   parse on 10k/100k/1M-record synthetic threads.
+4. **Streaming Codex parse** (parallel with 2–3). Aggregate-only,
+   record-iterator derivation that keeps no per-record view; metadata
+   equivalence tests against the assembled-bundle parse, and a benchmark on
+   10k/100k/1M-record synthetic threads asserting peak heap stays bounded as
+   records grow.
 5. **Local state.** Raw checkpoints in the native binding, sealed segment
    stages and quota accounting, the new `PendingHistory` journal version and
    `Published` cache shape, with crash-recovery tests for every checkpoint
