@@ -137,10 +137,6 @@ func (s *Store) stageRegistrationRemovalRevision(id string, key agentmeta.Sessio
 
 // Retention prestages before the request lock and syncs after releasing it. An
 // unexpected new member cannot be removed without a prepared durable revision.
-func (s *Store) removeRegistrationWithRevision(path string, revision *local.Staged) error {
-	return s.removeRegistrationWithRevisionUsing(path, revision, os.Remove)
-}
-
 func (s *Store) removeRegistrationWithRevisionUsing(path string, revision *local.Staged, remove func(string) error) error {
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 		return nil
