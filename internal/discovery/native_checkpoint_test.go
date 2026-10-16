@@ -294,20 +294,21 @@ func TestNativeCatalogRefusesUnsupportedOutputMemberCount(t *testing.T) {
 	}
 	for _, nativeOnly := range []bool{true, false} {
 		t.Run(fmt.Sprintf("nativeOnly=%v", nativeOnly), func(t *testing.T) {
+			t.Parallel()
 			path := filepath.Join(t.TempDir(), "discovery-catalog.json")
 			if err := os.WriteFile(path, before, 0600); err != nil {
 				t.Fatal(err)
 			}
-			replacement := []byte(`{"version":1}`)
-			if !nativeOnly {
-				replacement, err = json.Marshal(catalog{Version: 6})
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
 			budget := agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
-			if err := mergeNativeCatalog(t.Context(), path, nil, replacement, nativeOnly, budget); !errors.Is(err, errCatalogTooLarge) {
-				t.Fatal("unsupported output committed", err)
+			var updateErr error
+			if nativeOnly {
+				updateErr = mergeNativeCatalog(t.Context(), path, nil, []byte(`{"version":1}`), true, budget)
+			} else {
+				lookup := &CodexRolloutLookup{readBudget: budget}
+				updateErr = lookup.writeCatalog(t.Context(), path, catalog{Version: 6})
+			}
+			if !errors.Is(updateErr, errCatalogTooLarge) {
+				t.Fatal("unsupported output committed", updateErr)
 			}
 			raw, err := os.ReadFile(path)
 			if err != nil || !bytes.Equal(raw, before) {
