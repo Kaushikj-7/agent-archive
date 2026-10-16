@@ -20,7 +20,12 @@ and atomic local commit. Provisional startup facts read bounded raw physical
 lines with the existing strict decoder and root predicates, including exec,
 MSP and the exact two-metadata lane. They grant neither consent nor uniqueness.
 Binding facts require independently supplied binding context; arbitrary explicit
-files can supply content equality without inventing a root revision. Native
+files can supply content equality without inventing a root revision. Selected
+local handoff reuses an attested live snapshot for its final named-path/content
+verification and refuses changed size or modification time, replacement and
+same-stamp rewrites after filtering. Its baseline and final content hashes each
+stream the raw boundary; this does not grant native capture authority. Ordinary
+providers retain their independent second-handle local recheck. Native
 binding facts require the ordinary dated UUID/session.jsonl layout and matching
 body owner. Production native-root/capture contexts still refuse before reads.
 
@@ -69,3 +74,7 @@ The owner must carry a nonempty destination ID exactly matching a configured
 current provider/bucket identity. A zero legacy DestinationSince is compatible
 only under that exact explicit identity; a nonzero boundary also fences actual
 native birth. Hook time cannot manufacture a later native creation or consent.
+
+Native validation's destination window is a separate pure configuration predicate.
+The general destination ownership check keeps its ID-first switch-away/back
+semantics for existing sessions, frozen publication, imports and retention.

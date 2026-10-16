@@ -131,7 +131,7 @@ func (s *Store) nativeValidationFence(ctx context.Context, owner archive.Session
 // destination fallbacks. Both actual native birth and owner admission must fit
 // the current explicit project window; physical mapping already ran outside locks.
 func nativeCapturePolicyAllows(cfg config.Config, owner archive.SessionRegistration, binding *archive.NativeSourceBinding) bool {
-	if owner.Imported() || owner.NativeChild || owner.CaptureFrozen || !slices.Contains(cfg.Harnesses, binding.Agent) || !cfg.Archive.Eligible(owner.ProjectRoot, binding.NativeCreatedAt) || !cfg.AcceptSession(owner) || owner.DestinationID == "" || owner.DestinationID != cfg.DestinationID() || binding.NativeCreatedAt.Before(cfg.DestinationSince) || !nativeDestinationConfigured(cfg.Storage) {
+	if owner.Imported() || owner.NativeChild || owner.CaptureFrozen || !slices.Contains(cfg.Harnesses, binding.Agent) || !cfg.Archive.Eligible(owner.ProjectRoot, binding.NativeCreatedAt) || !cfg.AcceptSession(owner) || !cfg.NativeValidationInCurrentDestination(owner, binding) || !nativeDestinationConfigured(cfg.Storage) {
 		return false
 	}
 	var selected archive.ProjectActivation
