@@ -5,6 +5,23 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 24
+
+Global adapter 0.24.0, Muse filter 0.24.0 and Muse parser 0.4.0 retain qualified
+own completion model/input/output observations plus minimal run/source identity.
+The closed native branch validates duration and all six counters, then drops
+duration/cache/reasoning/private context. Every string uses shared privacy rules;
+identity changes refuse rather than merge owners. Older event-only rows remain
+readable; older exact retained schemas refuse enriched rows. Other agents' parser
+versions and filtered record payloads are unchanged. Reservations20–22 remain
+independent and are not included here.
+
+The additive shared `token_observations` envelope leaves legacy token counts and
+`model_tokens` absent. Matching a known model or custom price cannot price these
+observations. Full usage, composition and cost remain unavailable. Mixed stats
+show qualified spend as a priced subset with excluded observation-only session
+counts, including observed zero; no unpriced token amount is invented.
+
 ## Source filter version 23
 
 Global adapter 0.23.0 and Muse parser 0.3.0 accompany this change. Versions20,21,22

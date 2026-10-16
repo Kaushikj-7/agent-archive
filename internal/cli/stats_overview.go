@@ -62,7 +62,11 @@ func (p *statsPrinter) spendCell() headCell {
 		}
 		return headCell{p.bold(text), sub}
 	case o.Tokens.Value == nil:
-		return headCell{p.bold("spend unknown"), p.dim("needs token data")}
+		text := "needs token data"
+		if p.s.TokenObservations != nil {
+			text = "needs qualified accounting"
+		}
+		return headCell{p.bold("spend unknown"), p.dim(text)}
 	}
 	return headCell{p.bold("spend unknown"), p.dim("no price for its models")}
 }
@@ -560,6 +564,7 @@ func (p *statsPrinter) unmeteredText(n stats.Note) string {
 	if *n.Sessions == 1 {
 		text = "1 session has no token data"
 	}
+	text = p.observationAccountingContext(text)
 	var by []string
 	for _, a := range n.ByAgent {
 		by = append(by, fmt.Sprintf("%s %d", nameOf(a.Label), a.Sessions))
