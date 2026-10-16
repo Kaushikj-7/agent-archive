@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -486,12 +487,23 @@ func TestPublicationNewRequestCannotReplaceObsoletePendingEvidence(t *testing.T)
 			}
 			remote.failMetadata = false
 			result, err := Run(t.Context(), local, remote, opts)
-			if err != nil || result.Errors[reg.ArchiveSessionID] == nil || len(result.Published) != 0 {
+			if err != nil || len(result.Published) != 0 || (result.Errors[reg.ArchiveSessionID] != nil) != (mode == publicationDestinationChange) {
 				t.Fatal("new request replaced incompatible pending evidence", result, err)
 			}
 			after, err := os.ReadFile(pendingPath)
-			if err != nil || string(before) != string(after) {
-				t.Fatal("pending evidence changed", err)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == publicationDestinationChange {
+				if !bytes.Equal(before, after) {
+					t.Fatal("changed destination replaced pending evidence")
+				}
+			} else {
+				requireFrozenPublicationOriginal(t, local, reg.ArchiveSessionID, before)
+				next, found, err := local.LoadPublicationPending(reg.ArchiveSessionID)
+				if err != nil || !found || next.Commit == nil || next.Commit.Purpose != state.PublicationPrivacyRewrite || next.RequestToken != pending.RequestToken {
+					t.Fatal("privacy successor replaced request ownership", found, err)
+				}
 			}
 			if _, found, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || !found {
 				t.Fatal("request acknowledged", found, err)

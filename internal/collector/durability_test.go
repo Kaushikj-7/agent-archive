@@ -62,9 +62,9 @@ func editPublishedState(t *testing.T, local *state.Store, edit func(state map[st
 		t.Fatal(err)
 	}
 	// These fixtures model legacy published files, which had neither the new
-	// selecting source-set identity nor a version-2 preparation projection.
-	// Malformed version-2 controls are injected directly by their own tests.
-	for _, field := range []string{"publication_version", "commit", "sources", "predecessor_unknown", "preparation", "payloads", "privacy_receipts", "settled_privacy", "cleanup"} {
+	// selecting source-set identity nor a source-set preparation projection.
+	// Malformed selecting controls are injected directly by their own tests.
+	for _, field := range []string{"publication_version", "source_set_commit5", "commit", "sources", "predecessor_unknown", "preparation", "payloads", "privacy_receipts", "settled_privacy", "cleanup"} {
 		delete(state, field)
 	}
 	edit(state)

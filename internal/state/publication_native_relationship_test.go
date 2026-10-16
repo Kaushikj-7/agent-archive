@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -12,6 +13,26 @@ import (
 
 func TestPublicationNativeTargetLoanAndSelectingReplay(t *testing.T) {
 	p := publicationFixture(t, publicationThread, time.Now())
+	// This selecting fixture already has the admitted child header. Legacy
+	// absent markers must instead pass through the typed preparation factory.
+	p.Bundle.NativeChild = true
+	compressed, err := archive.BuildCompressedSource(p.Bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SourceKey, err = archive.SourceObjectKey(p.Bundle, compressed.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SourceSHA256, p.SourceBytes = compressed.SHA256, compressed.Bytes
+	metadata, err := archive.BuildMetadataWithAnalysis(p.Bundle, archive.Analysis{}, nil, "synthetic-machine", p.Bundle.Capture.CapturedAt, p.Bundle.Capture.CapturedAt, p.SourceReference(), archive.ParserInfo{Name: "codex", Version: "synthetic-v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.MetadataBytes, err = json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p.History = &PendingHistory{Version: 1}
 	reg := archive.SessionRegistration{ArchiveSessionID: p.Bundle.ArchiveSessionID, NativeSessionID: p.Bundle.NativeSessionID, ProjectID: p.Bundle.ProjectID, Harness: p.Bundle.Capture.Harness, NativeChild: true}
 	budget := agentapi.NewNativeReadBudget(128 << 10)
@@ -47,7 +68,7 @@ func TestPublicationNativeTargetLoanAndSelectingReplay(t *testing.T) {
 		t.Fatal("foreign rebound target accepted")
 	}
 	target.ParentSessionID = ""
-	target.NativeChild = true
+	target.NativeChild = false
 	authority.SHA256 = preparationSHA(authority)
 	commit.PreparationSHA256 = authority.SHA256
 	if err = selecting.validateSelectingPublished(); err == nil {

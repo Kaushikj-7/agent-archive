@@ -149,8 +149,22 @@ func TestStricterHistoryPriorStagesAllOriginalsAndLeavesRequestsOwed(t *testing.
 	if err != nil || len(objects) != 0 {
 		t.Fatal("stricter preparation uploaded", err)
 	}
+	originalPath := filepath.Join(scan.local.Home(), "publication-evidence", scan.id(), "original.json")
+	original, err := os.ReadFile(originalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = scan.local.SettleHistoryPublicationPrivacy(scan.id(), next); err == nil {
+		t.Fatal("unpublished successor released original evidence")
+	}
+	if after, err := os.ReadFile(originalPath); err != nil || !bytes.Equal(after, original) {
+		t.Fatalf("premature settlement changed evidence: %v", err)
+	}
 	if outcome, err := scan.publishPending(scan.ctx, next); err != nil || outcome != outcomePublished {
 		t.Fatal("prepared successor failed", err)
+	}
+	if _, err = os.Stat(originalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("selected privacy successor retained original obligation: %v", err)
 	}
 	assertCompleteHistory(t, scan, next, scan.remote)
 }
@@ -215,7 +229,14 @@ func TestStricterHistoryCommittedQueuesSuccessorWithoutReupload(t *testing.T) {
 			t.Fatal("broader publication reuploaded", key)
 		}
 	}
-	next, found, err := scan.local.LoadPending(scan.id())
+	if _, found, err := scan.local.LoadPending(scan.id()); !found || !errors.Is(err, state.ErrDurableStorageRecovery) {
+		t.Fatalf("generic reader ignored privacy original: %v %v", found, err)
+	}
+	restarted, err := state.Open(scan.local.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, found, err := restarted.LoadPublicationPending(scan.id())
 	if err != nil || !found || next.History.ExpectedMetadataSHA256 != metadataSHA(p.MetadataBytes) || next.History.MaintenanceOwed || next.Attempted {
 		t.Fatal(next.History, err)
 	}

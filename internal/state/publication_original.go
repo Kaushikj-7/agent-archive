@@ -292,7 +292,7 @@ func (s *Store) savePublicationPendingGuard(g config.DurableStorageGuard, id str
 		if target == installed {
 			return s.savePendingGuard(s.durableContext(), g, id, p)
 		}
-		if p.Preparation.Purpose == PublicationPrivacyRewrite && previous.JournalVersion == 5 && evidence.PrivacyOrigin == nil {
+		if replacesReadyPrivacyOriginal(p, previous) && evidence.PrivacyOrigin == nil {
 			role, e := originalRole(previous, old, p.Preparation.DestinationID, p.Preparation.AdmissionContext)
 			if e != nil {
 				return e
@@ -308,7 +308,7 @@ func (s *Store) savePublicationPendingGuard(g config.DurableStorageGuard, id str
 			return e
 		}
 		evidence = PublicationOriginalEvidence{Version: 2, Kind: OriginalEvidence, SessionID: id, OwnerSHA256: role.FrozenContextSHA256, DestinationID: p.Preparation.DestinationID, AdmissionContext: p.Preparation.AdmissionContext, MigrationOrigin: role, Link: EvidenceReplacement{Version: 1, Target: target, PreviousTarget: evidenceTarget(previous, old)}}
-	} else if p.Preparation.Purpose == PublicationPrivacyRewrite && previous.JournalVersion == 5 {
+	} else if replacesReadyPrivacyOriginal(p, previous) {
 		role, e := originalRole(previous, old, p.Preparation.DestinationID, p.Preparation.AdmissionContext)
 		if e != nil {
 			return e
@@ -579,4 +579,13 @@ func (s *Store) closePublicationRoot(root *os.Root) error {
 		return s.publicationRootClose(root)
 	}
 	return root.Close()
+}
+
+// replacesReadyPrivacyOriginal distinguishes a new privacy successor from a
+// checkpoint within its immutable preparation. Preparing journals have no ready
+// commit and remain protected by their existing original-evidence roles.
+func replacesReadyPrivacyOriginal(next, previous PendingPublication) bool {
+	return next.Preparation != nil && next.Preparation.Purpose == PublicationPrivacyRewrite &&
+		previous.JournalVersion == 5 && previous.Phase == PublicationReady && previous.Commit != nil &&
+		previous.Preparation != nil && previous.Preparation.SHA256 != next.Preparation.SHA256
 }

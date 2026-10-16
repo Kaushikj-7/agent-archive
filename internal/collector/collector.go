@@ -1116,7 +1116,7 @@ func (p *pass) repairListingIndex() {
 		}
 		scan := newSessionScan(p.ctx, p.local, p.remote, reg, state.Request{}, nil, p.now, p.opts)
 		err = scan.repairListingRevision(repair.MetadataKey)
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, errListingMetadataAbsent) {
 			_ = p.local.RemoveListingRepair(id)
 			continue
 		}

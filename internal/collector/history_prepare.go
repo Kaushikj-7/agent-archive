@@ -22,8 +22,15 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 	if p.Attempted {
 		return errors.New("attempted history publication cannot be prepared again")
 	}
+	if p.JournalVersion == 0 {
+		// Freeze legacy original headers and bytes before the first private
+		// transformation can replace their active selecting reference.
+		if err := s.sealPending(p); err != nil {
+			return fmt.Errorf("freeze legacy history originals: %w", err)
+		}
+	}
 	if err := p.ValidateHistoryBudgeted(s.id(), s.readBudget()); err != nil {
-		return err
+		return fmt.Errorf("validate frozen history inputs: %w", err)
 	}
 	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
 	if err != nil {
@@ -44,7 +51,7 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 	if p.History.PrivacyCursor < len(p.History.Inputs) {
 		input := p.History.Inputs[p.History.PrivacyCursor]
 		if err := s.prepareHistoryInput(p, &metadata, input); err != nil {
-			return err
+			return fmt.Errorf("prepare historical input %d: %w", p.History.PrivacyCursor, err)
 		}
 		p.History.PrivacyCursor++
 		encoded, err := s.marshalRetained(metadata)
@@ -80,7 +87,10 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 			}
 		}
 	}
-	return s.savePending(p)
+	if err := s.savePending(p); err != nil {
+		return fmt.Errorf("checkpoint prepared history: %w", err)
+	}
+	return nil
 }
 
 // historyInputBundle is input's bundle. The current source of a publication

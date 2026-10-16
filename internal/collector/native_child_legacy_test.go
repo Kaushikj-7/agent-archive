@@ -103,6 +103,8 @@ func TestLegacyNativeChildMigrationRefusesChangedAuthorityWithoutWrites(t *testi
 func TestLegacyNativeChildPreparationFreezesParentAndDoesNotReadNative(t *testing.T) {
 	t.Parallel()
 	scan, p := privacyJournal(t)
+	p.JournalVersion, p.Phase = 0, ""
+	p.Commit, p.Preparation, p.Progress, p.Cleanup, p.Sources = nil, nil, nil, nil, nil
 	facts := *scan.reg.CodexBinding
 	facts.Child, facts.RootID = true, ""
 	scan.reg.CodexBinding, scan.reg.NativeChild, scan.reg.NativeSourceHome = &facts, true, facts.Home

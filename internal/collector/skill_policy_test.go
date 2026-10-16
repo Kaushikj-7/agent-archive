@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/evidence"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -111,6 +112,10 @@ func TestStricterPolicyRetainsFrozenPendingEvidence(t *testing.T) {
 	if !strings.Contains(old.Bundle.SupplementalEvidence[len(old.Bundle.SupplementalEvidence)-1].Payload["snapshot"].(string), "private-skill-body") {
 		t.Fatal("body setup failed")
 	}
+	before, err := os.ReadFile(filepath.Join(local.Home(), "pending", reg.ArchiveSessionID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	mode = config.SkillEvidenceNone
 	options.SkillEvidence = mode
 	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", options.Now()); err != nil {
@@ -118,13 +123,14 @@ func TestStricterPolicyRetainsFrozenPendingEvidence(t *testing.T) {
 	}
 	remote.failMetadata = false
 	result, err := Run(t.Context(), local, remote, options)
-	if err != nil || result.Errors[reg.ArchiveSessionID] == nil {
-		t.Fatal("changed policy did not report pending refilter", result, err)
+	if err != nil || result.Errors[reg.ArchiveSessionID] != nil || len(result.Published) != 0 {
+		t.Fatal("changed policy did not prepare retained pending work", result, err)
 	}
-	next, found, err := local.LoadPending(reg.ArchiveSessionID)
-	if err != nil || !found || next.SourceSHA256 != old.SourceSHA256 || !bytes.Equal(next.SourceBytes, old.SourceBytes) {
-		t.Fatal("changed policy discarded frozen evidence", found, err)
+	next, found, err := local.LoadPublicationPending(reg.ArchiveSessionID)
+	if err != nil || !found || next.Commit == nil || next.Commit.Purpose != state.PublicationPrivacyRewrite || next.Preparation == nil || len(next.Preparation.Inputs) != 1 || next.Preparation.Inputs[0].Reference != old.SourceReference() {
+		t.Fatal("changed policy lost exact retained input authority", found, err)
 	}
+	requireFrozenPublicationOriginal(t, local, reg.ArchiveSessionID, before)
 	if _, found, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || !found {
 		t.Fatal("obsolete-policy request completed prematurely", found, err)
 	}

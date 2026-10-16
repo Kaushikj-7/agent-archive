@@ -79,8 +79,8 @@ func (p *PendingPublication) initializeOrdinaryPrivacyProgress(sources []Publica
 
 // RetireOrdinaryPrivacySources journals cleanup separately from selecting
 // authority. Currently selected bytes are always protected.
-func (p *PendingPublication) RetireOrdinaryPrivacySources(refs []archive.SourceReference, at time.Time) error {
-	if p.History != nil || p.Commit == nil || p.Commit.Purpose != PublicationPrivacyRewrite || p.Cleanup == nil || at.IsZero() {
+func (p *PendingPublication) RetireOrdinaryPrivacySources(ctx context.Context, budget *agentapi.NativeReadBudget, refs []archive.SourceReference, at time.Time) error {
+	if p.History != nil || p.Commit == nil || p.Commit.Purpose != PublicationPrivacyRewrite || p.Cleanup == nil || p.Preparation == nil || at.IsZero() {
 		return ErrDurableStorageRecovery
 	}
 	var metadata archive.Metadata
@@ -91,12 +91,31 @@ func (p *PendingPublication) RetireOrdinaryPrivacySources(refs []archive.SourceR
 	if err != nil {
 		return err
 	}
+	allowed := make(map[archive.SourceReference]bool, len(p.Preparation.Inputs)+1)
+	for _, input := range p.Preparation.Inputs {
+		allowed[input.Reference] = true
+	}
+	if body := privacyPreviousBody(*p.Preparation); len(body) > 0 {
+		var previous archive.Metadata
+		if err := json.Unmarshal(body, &previous); err != nil {
+			return err
+		}
+		priorRefs, err := previous.SourceReferences()
+		if err != nil {
+			return err
+		}
+		for _, ref := range priorRefs {
+			allowed[ref] = true
+		}
+	}
+	for _, ref := range refs {
+		if !allowed[ref] || !validSourceReference(ref) {
+			return ErrDurableStorageRecovery
+		}
+	}
 	for _, ref := range refs {
 		if slices.Contains(selected, ref) {
 			continue
-		}
-		if !validSourceReference(ref) {
-			return ErrDurableStorageRecovery
 		}
 		duplicate := false
 		for _, old := range p.Cleanup.Retired {
@@ -107,5 +126,5 @@ func (p *PendingPublication) RetireOrdinaryPrivacySources(refs []archive.SourceR
 		}
 	}
 	p.Cleanup.SHA256 = cleanupSHA(*p.Cleanup)
-	return p.ValidatePublication()
+	return p.ValidatePublicationBudgeted(ctx, budget)
 }

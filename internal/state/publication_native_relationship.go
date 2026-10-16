@@ -23,6 +23,8 @@ type PublicationNativeTarget struct {
 
 // FreezePublicationNativeTarget snapshots only the existing admitted registration.
 // Its facts are checked against decoded retained headers by the transform factory.
+// A legacy absent marker may be upgraded only through those admitted-owner checks;
+// the original parent target stays frozen even if the registration later resolves it.
 func FreezePublicationNativeTarget(ctx context.Context, p *PendingPublication, reg archive.SessionRegistration, budget *agentapi.NativeReadBudget) (func(), error) {
 	owner := budget.Reservation()
 	if p.Preparation != nil || p.Commit != nil || p.History == nil || !reg.NativeChild {
@@ -31,7 +33,7 @@ func FreezePublicationNativeTarget(ctx context.Context, p *PendingPublication, r
 	if budget == nil || p.Bundle.ArchiveSessionID != reg.ArchiveSessionID || p.Bundle.NativeSessionID != reg.NativeSessionID || p.Bundle.ProjectID != reg.ProjectID || p.Bundle.Capture.Harness.Name != reg.Harness.Name {
 		return nil, ErrDurableStorageRecovery
 	}
-	target := PublicationNativeTarget{ParentSessionID: p.Bundle.ParentSessionID, NativeChild: p.Bundle.NativeChild, Binding: reg.CodexBinding, ParentNativeSessionID: reg.ParentNativeSessionID, NativeRootSessionID: reg.NativeRootSessionID, NativeSourceHome: reg.NativeSourceHome}
+	target := PublicationNativeTarget{ParentSessionID: p.Bundle.ParentSessionID, NativeChild: reg.NativeChild, Binding: reg.CodexBinding, ParentNativeSessionID: reg.ParentNativeSessionID, NativeRootSessionID: reg.NativeRootSessionID, NativeSourceHome: reg.NativeSourceHome}
 	if target.Binding != nil && target.Binding.Validate() != nil {
 		target.Binding = nil
 	}

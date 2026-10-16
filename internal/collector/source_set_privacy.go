@@ -49,7 +49,7 @@ func (s *sessionScan) resumeSourceSetPrivacy(p state.PendingPublication) (sessio
 	if err := s.local.SavePending(s.id(), next); err != nil {
 		return outcomeSkipped, true, err
 	}
-	return outcomeSkipped, true, archive.ErrHistoryMutationPending
+	return outcomeSkipped, true, nil
 }
 
 func (s *sessionScan) ordinaryPrivacyPredecessor(p state.PendingPublication) (state.PublicationPredecessor, []byte, error) {
@@ -133,6 +133,10 @@ func (s *sessionScan) ordinaryPrivacySuccessor(p state.PendingPublication, prior
 	if err != nil {
 		return next, err
 	}
+	// The final progress certificate owns a second metadata copy.
+	if err := s.retainCharge(int64(len(metadata)) + 16<<10); err != nil {
+		return next, err
+	}
 	next.Bundle, next.SourceKey, next.SourceSHA256, next.SourceBytes = filtered, ref.Key, ref.SHA256, packed.Bytes
 	next.MetadataBytes, next.Sources, next.SkillEvidence = metadata, nil, string(s.opts.skillEvidence())
 	next, err = state.PreparePublicationV2Budgeted(s.ctx, s.readBudget(), next, prior, s.reg.DestinationID, s.publicationAdmission(), policy.Context(), state.PublicationPrivacyRewrite)
@@ -147,7 +151,7 @@ func (s *sessionScan) ordinaryPrivacySuccessor(p state.PendingPublication, prior
 		}
 		retired = append(retired, previous.SourceBundle)
 	}
-	err = next.RetireOrdinaryPrivacySources(retired, s.now)
+	err = next.RetireOrdinaryPrivacySources(s.ctx, s.readBudget(), retired, s.now)
 	return next, err
 }
 

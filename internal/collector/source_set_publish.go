@@ -193,6 +193,11 @@ func (s *sessionScan) sourceSetAcknowledgeReadback(pending state.PendingPublicat
 				return outcomeSkipped, err
 			}
 		}
+		if pending.History != nil && pending.Commit.Purpose == state.PublicationPrivacyRewrite {
+			if err := s.local.SettleHistoryPublicationPrivacy(s.id(), pending); err != nil {
+				return outcomeSkipped, fmt.Errorf("settle history privacy original: %w", err)
+			}
+		}
 		if err := s.local.SettlePublicationMigration(s.id(), pending); err != nil {
 			return outcomeSkipped, err
 		}
@@ -204,7 +209,7 @@ func (s *sessionScan) sourceSetAcknowledgeReadback(pending state.PendingPublicat
 			}
 		}
 		if err := s.removeCompletedCatalogJournal(pending); err != nil {
-			return outcomeSkipped, err
+			return outcomeSkipped, fmt.Errorf("remove completed source-set journal: %w", err)
 		}
 	}
 	return outcomePublished, nil

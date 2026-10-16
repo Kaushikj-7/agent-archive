@@ -2,11 +2,14 @@ package collector
 
 import (
 	"bytes"
+	"errors"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
+
+var errListingMetadataAbsent = errors.New("listing repair metadata is absent")
 
 // repairListingRevision borrows every metadata/source response from the same
 // pass ledger. A source proof never authorizes a different metadata winner.
@@ -14,6 +17,9 @@ func (s *sessionScan) repairListingRevision(key string) error {
 	mark := len(s.retainedReleases)
 	defer s.releaseRetainedAfter(mark)
 	body, _, err := s.historyGetRevision(s.ctx, key, historyMetadataLimit)
+	if errors.Is(err, storage.ErrNotFound) {
+		return errListingMetadataAbsent
+	}
 	if err != nil {
 		return err
 	}
@@ -30,6 +36,9 @@ func (s *sessionScan) repairListingRevision(key string) error {
 	// A later concurrent replacement may leave an advisory stale hint; it
 	// cannot make a different winner inherit these source proofs.
 	current, etag, err := s.historyGetRevision(s.ctx, key, int64(len(body)))
+	if errors.Is(err, storage.ErrNotFound) {
+		return errListingMetadataAbsent
+	}
 	if err != nil {
 		return err
 	}
