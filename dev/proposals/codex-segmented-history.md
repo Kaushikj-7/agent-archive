@@ -578,28 +578,13 @@ new one is complete.
    `handoff` by ID reports no matching session or the generic schema error.
    The user docs and CHANGELOG for PR 8 say so plainly; nothing in this
    design relies on old builds explaining it.
-2. **Destination reader gate.** Waiting a release does not prove every
-   machine reading the bucket has upgraded. So the writer is not enabled by
-   release alone: PR 8 adds an explicit per-destination opt-in. Before turning
-   it on, the CLI reads the destination's machine records
-   (`machines/<machine_id>.json`). PR 2 adds an optional `reader_capabilities`
-   list to the record, which builds from PR 2 on write with
-   `codex-segments-v1`. The CLI names every paired machine whose record lacks
-   that capability, including source builds (`dev-<commit>`) and any version
-   it cannot order, so an unknown reader is always treated as unable to read
-   segmented sessions, never assumed able. The owner confirms knowing those
-   machines will hide segmented sessions until upgraded, or upgrades them first.
-   A machine with no record (an unpaired reader using shared keys) cannot be
-   detected, which the prompt says. The opt-in is recorded in configuration
-   under the writer capability below, never inferred. The gate is not
-   one-time: once per pass, before any segmented publication, the collector
-   re-reads the destination's machine records (one listing of `machines/`,
-   skipped when unchanged since the last check). A newly seen machine
-   without `codex-segments-v1` defers segmented publications (not gaps; the
-   last published snapshots stay), and `status` names that machine and says
-   to upgrade it or confirm the opt-in again. Pairing a machine from a
-   current build warns the same way.
-3. **Writer capability.** The writer is enabled behind a new permanent
+2. **Release gate only.** The writer is enabled by the release containing
+   PR 8, at least one release after PR 2, with no per-destination opt-in or
+   machine-capability check (decision D8). Only the owner's machines read the
+   bucket, so the owner upgrades them all before installing the PR 8 release.
+   A machine still on a pre-PR-2 build afterwards hides segmented sessions as
+   described above; upgrading it restores them, and nothing is lost.
+3. **Writer capability.** The writer is guarded by a new permanent
    configuration writer capability (the next unreserved configuration version
    in `internal/config/wire.go`, coordinated with open reservations), so an
    older collector on the same configuration refuses to write rather than
@@ -645,15 +630,12 @@ read the whole chain anyway; recapture is simpler and gives the same result.
 
 A session in a `SizeLimitReadBudget` or `SizeLimitFiltered` gap (like
 `87b47b56`) must be read again once the writer is enabled, but nothing in its
-recorded gap changes then: the read ceiling stays 160 MiB, and a build
-installed with the opt-in still off may already have refreshed its signature
-to the new versions while recording the same gap. So the scan signature
-records whether segmentation was enabled for the session's destination when
-it was taken, and unchanged-source skipping (`unchangedSinceLastScan`) treats
-a signature taken with segmentation off as stale once it is on. Enabling the
-opt-in additionally requeues every Codex session currently in a size-limit
-gap, so the change takes effect on the next pass rather than on the next
-native change.
+recorded gap changes then: the read ceiling stays 160 MiB. So the scan
+signature records whether it was taken by a segmented writer, and
+unchanged-source skipping (`unchangedSinceLastScan`) treats a signature from a
+non-segmented build as stale. The first pass of the PR 8 build also requeues,
+once, every Codex session currently in a size-limit gap, so the change takes
+effect on that pass rather than on the next native change.
 
 ## PR breakdown
 
@@ -699,11 +681,11 @@ Each PR has one concern and is merged in order unless marked parallel.
    fail-closed tests for an unreadable head. Privacy maintenance, retention,
    delete, purge and GC over segment sets, with tests that a shared segment
    survives the deletion of one revision. Must merge before PR 8.
-8. **Enable and migrate.** The per-destination opt-in, its machine-version check
-   and the requeue of Codex sessions in size-limit gaps; turn the writer on for
-   threads selected by D1; migration of schema-3 and selected schema-2 sessions
-   by recapture; adapter/filter/parser bumps, CHANGELOG, privacy changelog, user
-   docs (`docs/` size-limit and status wording), versions.md.
+8. **Enable and migrate.** Turn the writer on for threads selected by D1, with
+   the one-time requeue of Codex sessions in size-limit gaps; migration of
+   schema-3 and selected schema-2 sessions by recapture; adapter/filter/parser
+   bumps, CHANGELOG, privacy changelog, user docs (`docs/` size-limit and status
+   wording), versions.md.
 
 ## Validation and live checks
 
@@ -735,8 +717,8 @@ Synthetic (every PR, CI):
 - Five unseen rollouts totalling more than 512 MiB of new input are captured
   over several passes, each resuming from the last sealed checkpoint, with no
   gap recorded.
-- A session gapped by a build with the opt-in off is read on the first pass
-  after the opt-in is turned on, with no native change.
+- A session gapped by a pre-PR-8 build is read on the first pass of the PR 8
+  build, with no native change.
 - More than 512 MiB of raw input that the filter drops entirely advances by
   progress checkpoints across passes and reaches publication, with the same
   gap set as one uninterrupted read.
@@ -751,12 +733,8 @@ Synthetic (every PR, CI):
 - A `show --json` process killed mid-spool leaves a file the next command
   removes; purge removes a session's spool.
 - A session gapped for unpublished stage bytes holds no staging quota.
-- A newly paired machine without the reader capability defers segmented
-  publication and is named by `status`.
 - A rollback that leaves a segmented thread's active chain under 16 MiB
   still publishes schema M with the old revision preserved as a head.
-- A paired machine whose record lacks `codex-segments-v1` (including a
-  `dev-<commit>` build) is named by the opt-in check.
 - A receipt written under an older verification-algorithm version does not
   skip re-validation.
 
@@ -777,8 +755,9 @@ against the owner's real archive.
 
 ## Owner decisions
 
-The owner accepted every recommendation below on 2026-10-16; the column
-records the decision.
+The owner accepted every recommendation below on 2026-10-16, and after
+review chose the release gate alone for D8 (no opt-in); the column records
+the decision.
 
 | | Question | Decision |
 | --- | --- | --- |
@@ -789,7 +768,7 @@ records the decision.
 | D5 | Keep sealed segments locally (counted in the 1 GiB staging quota), or drop past a bound and fetch from the bucket when needed. | Keep locally up to 256 MiB per session, fetch with checksum verification beyond it. |
 | D6 | Verify sealed raw prefixes by full streaming re-hash on each changed pass, or trust file identity and size for sealed rollouts with periodic full checks. Same question for remote readback of kept segments. | Full re-hash locally (it is O(1) memory and only on changed passes); HEAD-size plus checksum metadata for kept remote segments, full readback for new ones. |
 | D7 | New ceilings: per-thread total filtered, segments per revision, total raw. | 1 GiB filtered, 256 segments, 4 GiB raw. |
-| D8 | Release spacing: how long the reader ships before the writer is enabled, given older builds cannot read segmented sessions. | One release between PR 2 and PR 8. Review revised this: since released builds cannot gain an upgrade message, PR 8 also needs the per-destination opt-in that names paired machines on pre-reader builds. |
+| D8 | Release spacing: how long the reader ships before the writer is enabled, given older builds cannot read segmented sessions. | One release between PR 2 and PR 8, with no per-destination opt-in or machine-capability check: only the owner's machines read the bucket, and the owner upgrades them before installing PR 8. Pre-PR-2 builds hide segmented sessions (documented), and upgrading restores them. |
 | D9 | Migrate schema-3 sessions by recapture, or by splitting retained objects. | Recapture (splitting yields no raw checkpoints). |
 
 ## Risks
@@ -804,8 +783,9 @@ records the decision.
   correct but slow; the pinned producer references in the codex-history spec
   are rechecked in PR 3.
 - **Old readers.** Builds from before PR 2 hide segmented sessions (they skip
-  newer sidecars rather than explain them). The destination opt-in names the
-  paired machines still on such builds, but cannot see unpaired readers.
+  newer sidecars rather than explain them). With no opt-in, the release notes
+  and the owner upgrading every reading machine before PR 8 are the only
+  guard; nothing is lost if one is missed.
 - **Scope.** This touches capture, state, reader and lifecycle. The PR order
   keeps the writer off until the readers and lifecycle that understand
   segments have merged.
