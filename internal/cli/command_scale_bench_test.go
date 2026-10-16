@@ -667,10 +667,12 @@ func validateReadPathOutput(command readPathCommand, size, code int, out []byte)
 		if !bytes.Contains(out, []byte("00000001000000000000000000000001")) || !bytes.Contains(out, []byte("native-00000001")) {
 			return errors.New("incorrect selected identity")
 		}
-	default:
+	case readPathListPicker, readPathShowPicker, readPathHandoffPicker:
 		if !bytes.Contains(out, []byte("synthetic")) {
 			return errors.New("picker omitted synthetic sessions")
 		}
+	default:
+		return fmt.Errorf("unknown read path benchmark command %q", command)
 	}
 	return nil
 }
