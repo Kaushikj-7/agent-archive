@@ -63,7 +63,7 @@ func streamable(t reflect.Type) bool {
 		return true
 	case reflect.Slice:
 		if t.Elem().Kind() == reflect.Uint8 {
-			return true // base64, unless the element type has a marshaler (below)
+			return true // base64; no reachable byte slice has an element marshaler
 		}
 		switch t.Elem().Kind() {
 		case reflect.Map, reflect.Struct, reflect.Slice, reflect.Interface, reflect.Pointer, reflect.String:

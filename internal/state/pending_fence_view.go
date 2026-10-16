@@ -41,6 +41,8 @@ var pendingFenceFields = jsonProjection{
 	"progress":         nil,
 	"cleanup":          nil,
 	"admission_stage":  nil,
+	// The staged-selection shape check compares the covered request with it.
+	"request_token": nil,
 }
 
 // pendingFenceView reads only the fence fields (pendingFenceFields) of a
