@@ -424,6 +424,9 @@ Pass:
 Initial measurement code revision: `b441ed88`. Review follow-ups repair the
 legacy-versus-post-PR1 scheduling labels, eviction timing, picker result oracle,
 synthetic registration inventory/counters and output-visible changed handoffs.
+Command/state discovery ceilings follow independent legacy/post-PR1 fixture
+plans, with captured modeled service schedules and explicit duplicate-work
+and excess-wave negative controls.
 The original observed-size 20-case command matrix passed with exact Go 1.27.2,
 alongside synthetic S3 provider-page conformance. The current matrix adds four
 scoped late-match cases (24 total), with ordinary 1,800-session operation/output

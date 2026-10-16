@@ -5,7 +5,14 @@ command benchmarks with separate LIST-page and per-key delay, transferred and
 discarded header bytes, and GET delay. Deterministic operation counts are the
 regression gates; modeled time is supplementary. Content-free trace counters
 separate local row validation, summary decoding and cache inventory from remote
-requests. The historical baselines below retain their original constants and
+requests. Ordinary command gates derive separate legacy and post-PR1 ceilings
+from the fixture headers and their independently specified range policies;
+duplicated discovery and excess modeled page waves must fail. Recorded
+per-range services use the explicit topology with independent auxiliary listings
+or one shared 16-slot pool.
+Modeled critical page waves and longest single-range chains are separate
+metrics, and request-record collection runs outside benchmark timing.
+The historical baselines below retain their original constants and
 source pins; new modeled runs do not revise that evidence or qualify live R2
 performance. See the [read-path plan](../proposals/sublinear-read-paths.md).
 
