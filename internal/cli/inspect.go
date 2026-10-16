@@ -175,12 +175,19 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if *rebuildIndex && !rebuildListingIndex(env, store, stderr) {
 		return 1
 	}
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
+	browsing := !opts.jsonOut && browseInteractive(env, stdin, stdout)
+	if browsing {
+		var stopDiscovery func()
+		ctx, stopDiscovery = startReadDiscovery(ctx, env, store, opts.noCache)
+		defer stopDiscovery()
+	}
 	scope, err := scopeFor(env, *project, *allProjects)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
 	}
-	browsing := !opts.jsonOut && browseInteractive(env, stdin, stdout)
 	// Revision summaries support the implicit repository scope before limit.
 	// Explicit project names, searches and interactive scope switching still
 	// need exhaustive metadata. Text activity and child counts use summaries.
@@ -192,8 +199,6 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if full {
 		listLimit = 0
 	}
-	ctx, stopReads := readCommandContext(env)
-	defer stopReads()
 	ctx = withListProgress(ctx, progress)
 	if browsing && q.empty() {
 		if used, code := runBoundedListBrowser(catalog.WithReadView(ctx), env, store, cfg, opts, scope, stdin, stdout, stderr, stopList); used {
