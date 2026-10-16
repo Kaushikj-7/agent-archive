@@ -76,7 +76,9 @@ func TestCatalogPendingFenceRefusalKeepsBytesAndBudget(t *testing.T) {
 			if err := local.WriteBytes(s.pendingPath("owned"), raw); err != nil {
 				t.Fatal(err)
 			}
-			budget := agentapi.NewNativeReadBudget(2*int64(len(raw)) - 1)
+			// Too little even for the fence view's read buffer, which is
+			// the file's size for a file this small.
+			budget := agentapi.NewNativeReadBudget(int64(len(raw)) - 1)
 			scoped, closeScope := s.WithReadBudget(t.Context(), budget)
 			err := checkCatalogFence(t, scoped, check, PendingPublication{})
 			if !agentapi.HasFailure(err, agentapi.Limit) || !errors.Is(err, ErrDurableStorageRecovery) {

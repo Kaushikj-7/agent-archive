@@ -204,3 +204,28 @@ func TestOffChainCandidatesPastTheLimitDoNotRefuseCapture(t *testing.T) {
 		t.Fatalf("revision candidates: chain %v, %d best effort", set.Chain, len(set.BestEffort))
 	}
 }
+
+// The revision candidates name the chain's tip, the rollout the snapshot
+// read as the thread's current revision, so a reconciliation that holds the
+// snapshot's records need not read it again; the tip is still in the chain.
+func TestRevisionCandidatesNameTheTipTheSnapshotRead(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	base, leaf, _ := chainFixture(t, dir)
+	l := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf, Revision: "one"}, rollouts: map[string][]agentapi.SourceRef{threadA: {base}}}
+	s, err := historyPass(t, dir, l).Read(t.Context(), base, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	set, err := s.(agentapi.SourceRevisionCandidates).RevisionCandidates(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.Active.Path != leaf.Path {
+		t.Fatalf("active candidate = %q, want the tip %q", set.Active.Path, leaf.Path)
+	}
+	if !slices.ContainsFunc(set.Chain, func(ref agentapi.SourceRef) bool { return ref.Path == leaf.Path }) {
+		t.Fatal("the tip left the chain")
+	}
+}

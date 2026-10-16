@@ -73,6 +73,14 @@ func (r providerReader) revisions(ctx context.Context, adapter agentapi.Transcri
 	// Raw, retained records, and filtered bytes have independent aggregate bounds.
 	budget := revisionBudget{raw: maxRawBytes(r.harness, maxBytes), filtered: 128 << 20, records: archive.MaxHistoryRecords}
 	for _, ref := range set.Chain {
+		// The chain's tip is the current revision, which the scan's own read
+		// already holds and which the consumer would only drop. Reading it
+		// again would hold a second filtered copy of the whole chain (the
+		// tip's history includes every segment before it), so a long thread
+		// would need about twice its size to reconcile.
+		if set.Active.Path != "" && ref.Path == set.Active.Path {
+			continue
+		}
 		if err := r.readRevision(ctx, historical, adapter, ref, limits, maxBytes, &budget, consume); err != nil {
 			return read, err
 		}
