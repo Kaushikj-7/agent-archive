@@ -185,6 +185,13 @@ something below, that part is dropped and needs its own proposal.
 
 ## PR 1: Balanced listing across all three header prefixes
 
+The source change is implemented. Synthetic differential, shared-budget and
+S3 page-boundary controls pass; the page-boundary regression fails against the
+original implementation. The provider-page model favors approximately
+page-sized balanced ranges over sixteen ranges at the measured archive size,
+including transferred suffixes and all three prefixes. Matched live-command
+latency and the reference wall-time goals remain unmeasured.
+
 Goal: reduce the measured critical path while accounting for actual provider
 pages, bytes and the shared concurrency budget.
 
