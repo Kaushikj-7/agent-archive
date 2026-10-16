@@ -29,6 +29,17 @@ const (
 	handoffQuit
 )
 
+// handoffConfirmation names the yes/no aliases of a single-agent prompt.
+type handoffConfirmation string
+
+const (
+	handoffConfirmYesKey  handoffConfirmation = "y"
+	handoffConfirmYesWord handoffConfirmation = "yes"
+	handoffConfirmNoKey   handoffConfirmation = "n"
+	handoffConfirmNoWord  handoffConfirmation = "no"
+	handoffConfirmQuitKey handoffConfirmation = "q"
+)
+
 // handoffChoice is an answer to the destination prompt: an agent to launch,
 // or what to do with the handoff instead.
 type handoffChoice struct {
@@ -151,10 +162,10 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 	// resolve turns an answer into an agent or a handoffLetters word.
 	resolve := func(key string) string {
 		if confirm {
-			switch key {
-			case "y", "yes":
+			switch handoffConfirmation(key) {
+			case handoffConfirmYesKey, handoffConfirmYesWord:
 				return string(agents[0])
-			case "n", "no", "q":
+			case handoffConfirmNoKey, handoffConfirmNoWord, handoffConfirmQuitKey:
 				return "quit"
 			}
 		}
