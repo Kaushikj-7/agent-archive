@@ -1,8 +1,9 @@
 # Read paths at realistic scale: implementation plan
 
 Status: proposed 2026-10-15, revised 2026-10-16 after real-command
-measurements and design review. PR 6 measurement infrastructure is implemented;
-the optimization and provider-activation work remains pending. This plan takes the
+measurements and design review. Per-PR source and synthetic validation status is
+recorded below. Production qualification, conditional follow-ups and end-to-end
+latency acceptance remain open. This plan takes the
 remaining read-path work from [CLI performance](cli-performance.md) PRs 7 and 9 and
 [archive listing at scale](listing-at-scale.md) phase 4 down to per-PR scope
 and acceptance gates. It does not change any output, search rule, retention
