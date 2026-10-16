@@ -309,3 +309,19 @@ func TestPendingWriteObservationDefersToGlobalSelectionProtection(t *testing.T) 
 		t.Fatal(err)
 	}
 }
+
+func TestPendingWriteObservationExcludesOriginalEvidenceAuthority(t *testing.T) {
+	t.Parallel()
+	_, p, _, _ := observedPendingFixture(t)
+	if !ordinaryPendingObservation(p) {
+		t.Fatal("ordinary fixture is not eligible")
+	}
+	// This is the eligibility boundary itself, not a claim that changing a
+	// frozen preparation would pass complete new-candidate validation.
+	preparation := *p.Preparation
+	preparation.OriginalEvidenceSHA256 = strings.Repeat("a", 64)
+	p.Preparation = &preparation
+	if ordinaryPendingObservation(p) {
+		t.Fatal("original-evidence obligation entered observation protocol")
+	}
+}

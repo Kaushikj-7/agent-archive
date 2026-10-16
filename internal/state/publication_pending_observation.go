@@ -35,7 +35,7 @@ type pendingWriteObservation struct {
 }
 
 func ordinaryPendingObservation(p PendingPublication) bool {
-	return p.JournalVersion == 5 && p.Preparation != nil && p.Selection == nil && p.StagedProof() == nil && p.Catalog == nil
+	return p.JournalVersion == 5 && p.Preparation != nil && p.Preparation.OriginalEvidenceSHA256 == "" && p.Selection == nil && p.StagedProof() == nil && p.Catalog == nil
 }
 
 func (s *Store) pendingObservation() *pendingWriteObservation {
@@ -110,7 +110,12 @@ func (s *Store) writeObservedPending(ctx context.Context, g config.DurableStorag
 // protocols take the existing complete decoder, never a projected authority.
 func (s *Store) rewriteObservedPending(g config.DurableStorageGuard, id string, p PendingPublication) (bool, error) {
 	w := s.pendingObservation()
-	if w == nil || w.home == nil || w.id != id || !ordinaryPendingObservation(p) || p.Preparation.SHA256 != w.preparation || p.Phase != w.phase {
+	if w == nil || w.home == nil || w.id != id || !ordinaryPendingObservation(p) || p.Preparation.SHA256 != w.preparation {
+		return false, nil
+	}
+	// Completing the same immutable preparation is monotonic. A ready
+	// publication can never roll back through this absence-only observation.
+	if p.Phase != w.phase && !(w.phase == PublicationPreparing && p.Phase == PublicationReady) {
 		return false, nil
 	}
 	home, err := g.RootedHome(s.home)
