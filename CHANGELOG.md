@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Interrupted history privacy preparation now reads each retained revision's
+  original parent before applying a later resolved parent. Older pending
+  journals can resume without replacing the original provenance.
+
 - A long Codex thread whose history spans more than one rollout needs far less
   read memory to capture, so it is captured at sizes that were recorded as too
   large to read (`transcript_too_large`, per-session read memory, from about
