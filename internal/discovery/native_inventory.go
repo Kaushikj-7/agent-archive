@@ -183,11 +183,11 @@ func NewNativeInventory(ctx context.Context, home string, roots []archive.Native
 	}
 	sort.Strings(owners)
 	owners = slices.Compact(owners)
-	release, err := nativeCatalogScratch(l.path, 0, budget)
+	release, inputLimit, err := nativeCatalogScratch(l.path, 0, budget)
 	if err != nil {
 		return nil, l.failConstruction(err)
 	}
-	raw, err := boundedCatalogBytes(l.path)
+	raw, err := boundedCatalogBytes(l.path, inputLimit)
 	defer release()
 	if ctx.Err() != nil {
 		return nil, l.failConstruction(ctx.Err())
@@ -195,12 +195,13 @@ func NewNativeInventory(ctx context.Context, home string, roots []archive.Native
 	if err != nil && !errors.Is(err, errCatalogTooLarge) {
 		return nil, l.failConstruction(err)
 	}
-	var object map[string]json.RawMessage
-	if json.Unmarshal(raw, &object) == nil {
+	object, objectOK := nativeCatalogMembers(raw)
+	if objectOK {
 		if len(object["native_inventory"]) > maxCatalogBytes/32 {
 			return nil, l.failConstruction(errCatalogTooLarge)
 		}
-		l.expected = object["native_inventory"]
+		// Retain only the bounded member, not its whole-catalog backing array.
+		l.expected = bytes.Clone(object["native_inventory"])
 	}
 	sum := sha256.Sum256([]byte(strings.Join(owners, "\x00")))
 	query := hex.EncodeToString(sum[:])
