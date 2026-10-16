@@ -20,7 +20,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
-// testTempPrefix names the folder under /tmp that holds one test run's
+// testTempPrefix names the folder that holds one test run's
 // temporary files.
 const testTempPrefix = "agent-archive-cli-test-"
 
@@ -75,9 +75,11 @@ func isolateProcessForTesting() func() {
 		parent = "/tmp"
 	}
 	// A test binary this one starts (the terminal tests' child) inherits
-	// $TMPDIR and nests its folder there, so this run's removal covers it
+	// $TMPDIR and nests its folder there. Managed scratch runs do the same,
+	// so their owner can remove all fixtures after an interrupted test,
+	// and this run's removal covers a nested test binary
 	// even when the child is killed before it can clean up.
-	if inherited := os.Getenv("TMPDIR"); strings.HasPrefix(filepath.Base(filepath.Clean(inherited)), testTempPrefix) {
+	if inherited := managedTestTempParent(os.Getenv("TMPDIR"), os.Getenv("AGENT_SCRATCH_DIR")); inherited != "" {
 		parent = inherited
 	}
 	tmp, err := os.MkdirTemp(parent, testTempPrefix)
@@ -124,6 +126,39 @@ func isolateProcessForTesting() func() {
 	}
 	openTerminalKeys = func(io.Reader) (keyTerminal, bool) { return nil, false }
 	return func() { _ = os.RemoveAll(home); _ = os.RemoveAll(tmp) }
+}
+
+// managedTestTempParent keeps nested test binaries and managed scratch runs
+// inside their owner's temporary tree. Ordinary macOS TMPDIR remains excluded.
+func managedTestTempParent(inherited, scratch string) string {
+	if inherited == "" {
+		return ""
+	}
+	if strings.HasPrefix(filepath.Base(filepath.Clean(inherited)), testTempPrefix) ||
+		(scratch != "" && filepath.Clean(inherited) == filepath.Join(filepath.Clean(scratch), "tmp")) {
+		return inherited
+	}
+	return ""
+}
+
+func TestManagedScratchTempParent(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, inherited, scratch, want string
+	}{
+		{"managed", "/owned/run-abcdefgh/tmp", "/owned/run-abcdefgh", "/owned/run-abcdefgh/tmp"},
+		{"nested", "/tmp/agent-archive-cli-test-123", "", "/tmp/agent-archive-cli-test-123"},
+		{"ordinary", "/var/folders/user/tmp", "", ""},
+		{"outside-owner", "/other/tmp", "/owned/run-abcdefgh", ""},
+		{"owner-without-temp", "", "/owned/run-abcdefgh", ""},
+		{"temp-without-owner", "/owned/run-abcdefgh/tmp", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := managedTestTempParent(tc.inherited, tc.scratch); got != tc.want {
+				t.Fatalf("temporary parent = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
 // TestIsolationFailsClosed pins isolateProcessForTesting: every default that

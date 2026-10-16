@@ -88,3 +88,23 @@ integration defects.
 
 Do not enable GitHub's "Require branches to be up to date before merging",
 change bypass settings, or change any repository protection settings.
+
+## Worktree resources and disk usage
+
+- Ordinary local Go builds/reviews share the user's default compiler and module
+  caches. Do not allocate a separate `GOCACHE` for every worktree, PR or agent.
+- Preserve explicit CI/qualification/security/cold-cache isolation requirements.
+  For required local isolation, use `scripts/worktree_scratch.py run
+  --isolated-go-cache --reason '<requirement>' -- COMMAND`; routine commands use
+  `run -- COMMAND`. Run it from the intended worktree/service directory with the
+  appropriate script path. Do not bypass its managed cache with another override.
+- Read [dev/contributing/worktree-storage.md](dev/contributing/worktree-storage.md) for managed scratch, storage budgets, dry-run pruning, and worktree
+  lifecycle rules. The registry is shared across worktrees; unknown or active
+  directories are never eligible for automatic cleanup.
+- Keep small evidence outside scratch, stop owned background work at completion,
+  and release disposable test resources. Give retained databases, simulators and
+  containers an explicit owner and cleanup action. Never remove another task's
+  resources or unmerged/untracked work to free space.
+- Use `status --budget-gib 20` before/after large parallel runs and preview
+  `prune --older-than-days 7` before applying cleanup. Resource isolation does not
+  justify retaining unbounded compiler caches. Keep required fresh test execution.
