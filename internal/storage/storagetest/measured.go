@@ -3,6 +3,7 @@ package storagetest
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
@@ -33,10 +34,14 @@ type MeasuredStore struct {
 	Delay time.Duration
 	// ListingModel optionally models provider pagination instead of per-call LIST delay.
 	ListingModel *ListingLatencyModel
+	// CaptureListingCosts retains request services for untimed observations or
+	// deterministic gates; leave false during benchmark timing.
+	CaptureListingCosts bool
 	// GetDelay overrides Delay for body requests when nonzero.
 	GetDelay time.Duration
 	mu       sync.Mutex
 	metrics  ReadMetrics
+	listings []ListingRequestCost
 	active   int64
 }
 
@@ -97,6 +102,7 @@ func (s *MeasuredStore) Reset() {
 		panic("reset with active benchmark reads")
 	}
 	s.metrics = ReadMetrics{}
+	s.listings = nil
 }
 
 // Metrics returns a concurrency-safe snapshot.
@@ -104,6 +110,15 @@ func (s *MeasuredStore) Metrics() ReadMetrics {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.metrics
+}
+
+// ListingCosts returns a private snapshot of modeled List/ListRange services.
+// These page services support an explicit analytical dispatch model; they do
+// not measure elapsed critical-path time or infer production slot ownership.
+func (s *MeasuredStore) ListingCosts() []ListingRequestCost {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.listings)
 }
 
 func (s *MeasuredStore) begin(ctx context.Context, list bool) error {
