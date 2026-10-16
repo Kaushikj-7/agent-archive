@@ -61,7 +61,7 @@ explicitly rejected below.
 |---|---|---|
 | `list --limit L` eligible filters, warm catalog | Theta(N) summary decodes + sort | O(log N + L) rows decoded |
 | `list` model/skill/coverage filters | Theta(N) | Theta(N) retained (summary predicates), no body reads |
-| `show` short-ID / prefix | Theta(N) bodies cold | O(log N + matches); at most 2 final candidates decoded |
+| `show` short-ID / prefix | Theta(N) bodies cold | Indexed candidate pages; unique results avoid unrelated summaries, ambiguous results retain complete counts and choices |
 | `show`/`handoff` topic words | Theta(N) | Bounded overscan pages until 2 final matches or exhaustion |
 | Cold exhaustive list/show | Theta(N) bodies + Theta(N) cache prunes | Theta(N) bodies; zero per-put directory scans |
 | Catalog-v4 text/prefix fallback | All rows loaded via `lazyCatalogRows` | Delta-synced local SQLite query; no full row materialization |
@@ -174,14 +174,18 @@ single-file cache; that is out of scope here.
 
 ## PR 3: Bounded show/handoff candidate resolution
 
-Goal: resolving one session never decodes the archive.
+Goal: resolving a unique session avoids unrelated summaries; ambiguous queries preserve complete candidate counts, ordering and picker choices.
 
 `resolveShowQuery` (internal/cli) classifies the query before reading
 candidates: exact ID keeps today's per-harness probes; a short ID or ID
 prefix uses PR 1's `IDPrefix` query; topic words use the existing `Words`
-superset. Both bounded forms page with the overscan rule from PR 1 and stop
-after **two** final matches, which is sufficient to preserve today's
-ambiguity errors exactly. Cases the bounded query cannot represent
+superset. Both forms page with the overscan rule from PR 1. Two final
+matches establish ambiguity but do not preserve today's output by themselves:
+`show` and `handoff` print the complete match count and ordered candidate
+rows, and interactive pickers offer all matches. After finding a second match,
+continue the candidate query to exhaustion or use the existing complete path;
+never report a two-row prefix as the full result. A future bounded picker or
+count-only query needs a separate output and ordering contract. Cases the query cannot represent
 (configured project labels that only exist at query time, scope tiers,
 unlabeled-name gaps in `catalogSearch`) detect that from the query shape and
 use today's complete candidate path. The selected session's metadata is
@@ -195,7 +199,8 @@ local-transcript label reads (at most 50 files) stay bounded and unchanged.
 
 Pass: cold and warm operation-count tests (`BenchmarkCommandReads` cases and
 new PR 5 cases) show short-ID resolution performing O(matches) GETs after
-catalog warm, ambiguity and not-found output unchanged, and an ID prefix
+catalog warm, ambiguity with three or more matches preserves the exact count, ordered
+candidate rows and all interactive choices; not-found output is unchanged; an ID prefix
 never outranking a text match it does not also satisfy.
 
 ## PR 4: Generalized bounded catalog-v4 selection
