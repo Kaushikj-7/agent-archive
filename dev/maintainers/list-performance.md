@@ -1,5 +1,33 @@
 # Listing performance target
 
+Provider-page measurement work extends the existing synthetic stores and
+command benchmarks with separate LIST-page and per-key delay, transferred and
+discarded header bytes, and GET delay. Deterministic operation counts are the
+regression gates; modeled time is supplementary. Content-free trace counters
+separate local row validation, summary decoding and cache inventory from remote
+requests. The historical baselines below retain their original constants and
+source pins; new modeled runs do not revise that evidence or qualify live R2
+performance. See the [read-path plan](../proposals/sublinear-read-paths.md).
+
+`BenchmarkCommandReadPaths` covers the six list/show/handoff read paths at
+1,800 sessions by default, with 10k/25k/50k behind `AGENT_ARCHIVE_PERF=1`.
+Cold, warm and one-percent-changed fixtures reset to the same exact object
+snapshot for each iteration; `--no-cache` cases apply to list, which supports
+that flag. Local trace accounting uses a separate untimed invocation so trace
+recording does not inflate the benchmark's time and allocation measurements.
+Ordinary tests retain 1,800-session command-result and operation-budget gates.
+`AGENT_ARCHIVE_READ_LATENCY=1` enables a modeled timing replay: 200 ms per page,
+400 microseconds per transferred key, and 160 ms per GET. These values are one
+explicit sensitivity decomposition within the observed full-page and GET ranges,
+not a calibration of the provider's page overhead and per-key cost.
+
+`BenchmarkReadPathListingPolicies` compares sequential, eight-range,
+sixteen-range and page-sized schedules across all three prefixes sharing
+sixteen slots. Its page/key delay decompositions are sensitivity assumptions:
+the observed full-page timings do not calibrate small-page latency. Qualified
+catalog root/delta scale accounting accompanies the catalog-reader work;
+mixed and maximum-body RSS/concurrency trials remain a separate measured step.
+
 On the default legacy destination format, ordinary noninteractive
 `list --limit N` and `list --json --limit N`
 use session-addressed revision-qualified `listing/v3/` entries; existing

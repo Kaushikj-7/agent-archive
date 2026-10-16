@@ -14,22 +14,30 @@ import (
 // bodies; ListBytes estimates header payload as key/ETag bytes plus 16 bytes for
 // size/time. It is not an estimate of provider XML, HTTP, or TLS overhead.
 type ReadMetrics struct {
-	Lists     int64
-	Gets      int64
-	Bytes     int64
-	ListBytes int64
-	PeakReads int64
+	Lists              int64
+	Gets               int64
+	Bytes              int64
+	ListBytes          int64
+	PeakReads          int64
+	ListPages          int64
+	ListKeys           int64
+	DiscardedListBytes int64
+	LongestListPages   int64
 }
 
 // MeasuredStore preserves MemoryStore's reader extensions while measuring each
 // LIST/GET once. Delay applies to both request kinds and honors cancellation.
 type MeasuredStore struct {
 	*MemoryStore
-	Store   storage.ObjectStore
-	Delay   time.Duration
-	mu      sync.Mutex
-	metrics ReadMetrics
-	active  int64
+	Store storage.ObjectStore
+	Delay time.Duration
+	// ListingModel optionally models provider pagination instead of per-call LIST delay.
+	ListingModel *ListingLatencyModel
+	// GetDelay overrides Delay for body requests when nonzero.
+	GetDelay time.Duration
+	mu       sync.Mutex
+	metrics  ReadMetrics
+	active   int64
 }
 
 // NewMeasuredStore wraps a synthetic store without recording fixture writes.
@@ -108,10 +116,21 @@ func (s *MeasuredStore) begin(ctx context.Context, list bool) error {
 	s.active++
 	s.metrics.PeakReads = max(s.metrics.PeakReads, s.active)
 	s.mu.Unlock()
-	if s.Delay == 0 {
+	delay := s.Delay
+	if !list && s.GetDelay != 0 {
+		delay = s.GetDelay
+	}
+	if list && s.ListingModel != nil {
+		delay = 0
+	}
+	return waitMeasuredDelay(ctx, delay)
+}
+
+func waitMeasuredDelay(ctx context.Context, delay time.Duration) error {
+	if delay == 0 {
 		return ctx.Err()
 	}
-	timer := time.NewTimer(s.Delay)
+	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-timer.C:
@@ -170,6 +189,9 @@ func (s *MeasuredStore) List(ctx context.Context, prefix string) (objects []stor
 	if err = s.begin(ctx, true); err != nil {
 		return
 	}
+	if s.ListingModel != nil {
+		return s.modeledListing(ctx, prefix, "", "")
+	}
 	return s.base().List(ctx, prefix)
 }
 
@@ -178,6 +200,9 @@ func (s *MeasuredStore) ListRange(ctx context.Context, prefix, after, through st
 	defer func() { s.end(nil, objects) }()
 	if err = s.begin(ctx, true); err != nil {
 		return
+	}
+	if s.ListingModel != nil {
+		return s.modeledListing(ctx, prefix, after, through)
 	}
 	if p, ok := s.base().(storage.RangeLister); ok {
 		return p.ListRange(ctx, prefix, after, through)
@@ -192,7 +217,16 @@ func (s *MeasuredStore) ListPage(ctx context.Context, prefix, continuation strin
 		return
 	}
 	if p, ok := s.base().(storage.PageLister); ok {
-		return p.ListPage(ctx, prefix, continuation, limit)
+		page, err = p.ListPage(ctx, prefix, continuation, limit)
+		if err == nil && s.ListingModel != nil {
+			s.mu.Lock()
+			s.metrics.ListPages++
+			s.metrics.ListKeys += int64(len(page.Objects))
+			s.metrics.LongestListPages = max(s.metrics.LongestListPages, 1)
+			s.mu.Unlock()
+			err = waitMeasuredDelay(ctx, s.ListingModel.ListPageDelay+time.Duration(len(page.Objects))*s.ListingModel.ListKeyDelay)
+		}
+		return page, err
 	}
 	return storage.ObjectPage{}, errors.New("underlying store has no page listing capability")
 }

@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // CacheMaintenance records progress through disposable cache directories.
@@ -22,10 +24,17 @@ const maintenanceFile = ".maintenance"
 const cacheMaintenanceDirectoryBudget = 64
 
 func (c *MetadataCache) directoryEntries(dir string) ([]os.DirEntry, error) {
+	span := trace.Start("cache directory inventory")
+	defer span.End()
+	var entries []os.DirEntry
+	var err error
 	if c.readDir != nil {
-		return c.readDir(dir)
+		entries, err = c.readDir(dir)
+	} else {
+		entries, err = os.ReadDir(dir)
 	}
-	return os.ReadDir(dir)
+	span.Count("entries-visited", len(entries))
+	return entries, err
 }
 
 // maintain visits at most 64 key directories once per opened command cache.
@@ -120,7 +129,11 @@ func (c *MetadataCache) maintainDirectory(dir string) {
 	}
 	for _, entry := range entries {
 		if cacheValidatorFile(entry) && entry.Name() != latest {
-			_ = os.Remove(filepath.Join(dir, entry.Name()))
+			if os.Remove(filepath.Join(dir, entry.Name())) == nil {
+				span := trace.Start("cache eviction")
+				span.Count("evictions", 1)
+				span.End()
+			}
 		}
 	}
 }
@@ -135,7 +148,11 @@ func removeStaleCacheTemp(dir string, entry os.DirEntry) {
 	}
 	info, err := entry.Info()
 	if err == nil && info.ModTime().Before(time.Now().Add(-staleCacheTempAge)) {
-		_ = os.Remove(filepath.Join(dir, entry.Name()))
+		if os.Remove(filepath.Join(dir, entry.Name())) == nil {
+			span := trace.Start("cache eviction")
+			span.Count("evictions", 1)
+			span.End()
+		}
 	}
 }
 
@@ -147,7 +164,11 @@ func (c *MetadataCache) pruneVersions(dir, current string) {
 	}
 	for _, entry := range entries {
 		if entry.Name() != current && cacheValidatorFile(entry) {
-			_ = os.Remove(filepath.Join(dir, entry.Name()))
+			if os.Remove(filepath.Join(dir, entry.Name())) == nil {
+				span := trace.Start("cache eviction")
+				span.Count("evictions", 1)
+				span.End()
+			}
 		}
 	}
 }
