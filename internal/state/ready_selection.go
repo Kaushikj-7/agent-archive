@@ -89,7 +89,8 @@ func readyDigestValid(h string) bool {
 	return err == nil && len(data) == sha256.Size && hex.EncodeToString(data) == h
 }
 
-func (p PendingPublication) validateReadySelectionShape() error {
+func (owned *PendingPublication) validateReadySelectionShape() error {
+	p := *owned
 	if p.JournalVersion == 5 {
 		if p.Selection != nil || p.StagedProof() != nil {
 			return ErrReadySelectionFrozen
@@ -495,7 +496,7 @@ func (s *Store) checkSelectingPendingRemoval(id string) error {
 // checks to the candidate state, then binds the full retained bundle and set.
 func (p *Published) validateReadyPublished(ctx context.Context, next *publishedState) error {
 	q := next.LastPublished.Selection
-	if err := (PendingPublication{JournalVersion: 2, Selection: q}).validateReadySelectionShape(); err != nil {
+	if err := (&PendingPublication{JournalVersion: 2, Selection: q}).validateReadySelectionShape(); err != nil {
 		return err
 	}
 	if err := q.validateProofDigest(); err != nil {
@@ -540,7 +541,8 @@ func readySelectionOwnerMatches(reg archive.SessionRegistration, bundle archive.
 // ValidateReadySlot binds selecting authority to the requested journal/session
 // slot independently of the owner recorded inside its recomputable wire data.
 // Existing legacy publication wire keeps its current identity rules.
-func (p PendingPublication) ValidateReadySlot(id string) error {
+func (owned *PendingPublication) ValidateReadySlot(id string) error {
+	p := *owned
 	if (p.Selection != nil || p.StagedProof() != nil || p.JournalVersion != 0) && id != p.Bundle.ArchiveSessionID {
 		return ErrDurableStorageRecovery
 	}
