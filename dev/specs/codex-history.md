@@ -249,16 +249,21 @@ inside the same held private root before a new journal is emitted. Its distinct
 ordinary ReadySelection2, staged3, Cursor4 and catalog authority remain separate;
 all prior configuration protections are preserved. It preserves existing native consent and
 history ownership checks; it does not enable historical import admission or
-future native ancestor authority. Unchanged settled admission keeps its bounded
-summary/signature path. Generation recovery validates the exact frozen successor.
+future native ancestor authority. Unchanged settled admission uses exact-byte validated summary reuse and existing
+scan signatures. Summary reuse still reads the complete file; cold processes
+validate and decode in full. Generation recovery validates the exact frozen successor.
 
 Private pending state retains legacy active-source fields and adds a versioned
 commit identity plus up to 65 exact source payload references: one current and
 64 preserved revisions. The revision-reference limit is independent of the
-64 physical graph-span limit. Inline compressed replay payloads are capped at
-128 MiB in aggregate; the active payload is stored once. Ref-only remote sources
-may exceed that aggregate, but each is verified sequentially with a 128 MiB
-object bound and caller cancellation. Owned history-stage handles resolve serially under the same shared memory and
+64 physical graph-span limit. Inline compressed replay payload descriptors are capped at
+128 MiB in aggregate; the active payload is stored once. The collector preserves
+its existing 32 MiB compressed-object producer, resolver and retained-reader
+ceiling, independently of the 128 MiB filtered-data ceiling. Generic ref-only
+state/storage descriptors can exceed that aggregate and retain a 128 MiB
+descriptor bound. Descriptor validity does not expand the collector read allowance;
+over-ceiling references retain pending evidence rather than authorizing larger
+reads. Owned history-stage handles resolve serially under the same shared memory and
 1 GiB physical disk budget. Protocol-5 admission-stage handles remain unsupported; existing typed import
 staging retains its own selecting protocol and cleanup authority. Malformed journals remain visible pending
 evidence and block replacement; older quarantined copies remain visible to status
