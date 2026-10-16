@@ -247,22 +247,10 @@ func (p *projector) trailing() error {
 // object reads an object whose opening brace is next (or, when open is
 // false, already read) and copies the members projection keeps.
 func (p *projector) object(projection jsonProjection, open bool) error {
-	if p.depth++; p.depth > 10000 {
-		return errPendingFenceView
-	}
-	defer func() { p.depth-- }()
-	if open {
-		c, err := p.nonSpace()
-		if err != nil {
-			return err
-		}
-		if c != '{' {
-			return errPendingFenceView
-		}
-	}
-	if err := p.emit('{'); err != nil {
+	if err := p.startObject(open); err != nil {
 		return err
 	}
+	defer func() { p.depth-- }()
 	kept := 0
 	c, err := p.nonSpace()
 	if err != nil {
@@ -338,6 +326,22 @@ func (p *projector) object(projection jsonProjection, open bool) error {
 			return errPendingFenceView
 		}
 	}
+}
+
+func (p *projector) startObject(open bool) error {
+	if p.depth++; p.depth > 10000 {
+		return errPendingFenceView
+	}
+	if open {
+		c, err := p.nonSpace()
+		if err != nil {
+			return err
+		}
+		if c != '{' {
+			return errPendingFenceView
+		}
+	}
+	return p.emit('{')
 }
 
 // value reads one value whose first byte is first, passing its bytes to
@@ -456,45 +460,10 @@ func (p *projector) scalar(first byte, copyOut func(...byte) error) error {
 			}
 			position++
 		} else {
-			switch state {
-			case 's', '-':
-				switch {
-				case c == '-' && state == 's':
-					state = '-'
-				case c == '0':
-					state = '0'
-				case c >= '1' && c <= '9':
-					state = 'i'
-				default:
-					return errPendingFenceView
-				}
-			case '0', 'i', 'f':
-				switch {
-				case c >= '0' && c <= '9' && state != '0':
-				case c == '.' && state != 'f':
-					state = '.'
-				case c == 'e' || c == 'E':
-					state = 'e'
-				default:
-					return errPendingFenceView
-				}
-			case '.', 'e', '+':
-				switch {
-				case (c == '+' || c == '-') && state == 'e':
-					state = '+'
-				case c >= '0' && c <= '9':
-					if state == '.' {
-						state = 'f'
-					} else {
-						state = 'x'
-					}
-				default:
-					return errPendingFenceView
-				}
-			case 'x':
-				if c < '0' || c > '9' {
-					return errPendingFenceView
-				}
+			var err error
+			state, err = numberState(state, c)
+			if err != nil {
+				return err
 			}
 		}
 		if err := copyOut(c); err != nil {
@@ -511,6 +480,51 @@ func (p *projector) scalar(first byte, copyOut func(...byte) error) error {
 			}
 			return p.in.UnreadByte()
 		}
+	}
+}
+
+// numberState advances JSON number grammar without retaining digits.
+func numberState(state, c byte) (byte, error) {
+	switch state {
+	case 's', '-':
+		switch {
+		case c == '-' && state == 's':
+			return '-', nil
+		case c == '0':
+			return '0', nil
+		case c >= '1' && c <= '9':
+			return 'i', nil
+		}
+	case '0', 'i', 'f':
+		return numberMantissaState(state, c)
+	case '.', 'e', '+':
+		if (c == '+' || c == '-') && state == 'e' {
+			return '+', nil
+		}
+		if c >= '0' && c <= '9' {
+			if state == '.' {
+				return 'f', nil
+			}
+			return 'x', nil
+		}
+	case 'x':
+		if c >= '0' && c <= '9' {
+			return 'x', nil
+		}
+	}
+	return 0, errPendingFenceView
+}
+
+func numberMantissaState(state, c byte) (byte, error) {
+	switch {
+	case c >= '0' && c <= '9' && state != '0':
+		return state, nil
+	case c == '.' && state != 'f':
+		return '.', nil
+	case c == 'e' || c == 'E':
+		return 'e', nil
+	default:
+		return 0, errPendingFenceView
 	}
 }
 
