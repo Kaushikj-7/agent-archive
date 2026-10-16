@@ -46,8 +46,10 @@ batch. Whole-directory `ReadDir` acquisition remains a limitation of the current
 browse path, not qualified bounded capture traversal. Large synthetic inventories
 may exhaust the byte budget and report incomplete discovery. Benchmarks report
 actual reads, opens, allocations and verified IDs without latency promises or
-increased caps. A real injected Filter counter distinguishes census/preview
-zero full filters from selected-source exactly one full filter.
+increased caps. Muse preview passes open confined file snapshots without hashing
+the whole source; only the reserved head/tail windows read transcript bytes. They supply
+no whole-source content proof. A real injected Filter counter distinguishes
+census/preview zero full filters from selected-source exactly one full filter.
 
 Import capability remains separate: the existing selected-discovery projection
 limits backfill/project/recovery discovery to providers with real Imports ports.
@@ -56,8 +58,9 @@ access. Existing stale Cursor-snapshot housekeeping predates argument validation
 this refusal does not claim zero process-wide I/O. Capture remains refused before
 native reads/filtering/PUT even for injected registrations.
 
-Selected handoff opens one additional confined verification snapshot on the same
-serial source pass after analysis. It compares pathname identity, size and time
-with the filtered descriptor, checks both snapshots and closes verification
-without reading transcript bytes. This is a point-in-time check, not an atomic
-guarantee against a later external pathname change.
+Selected handoff opens a fresh ordinary Muse source pass, hashes its complete
+captured boundary before filtering, then independently rehashes that boundary
+on the same live descriptor after analysis. It checks pathname identity and
+refuses appends, replacement and same-stamp rewrites. Preview snapshots cannot
+satisfy this proof. These are point-in-time checks, not an atomic guarantee
+against a later external pathname change.

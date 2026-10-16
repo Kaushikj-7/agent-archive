@@ -9,7 +9,6 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
-	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 var errCatalogBudget = agentapi.ReadBudgetLimit(errors.New("native catalog exceeds shared data budget"))
@@ -158,7 +157,11 @@ func (l *CodexRolloutLookup) writeCatalogWithin(ctx context.Context, path string
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return local.WriteCompact(path, c)
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	return mergeNativeCatalog(ctx, path, nil, raw, false, l.readBudget)
 }
 
 // retainObservation keeps an observation only when the pass has room for
