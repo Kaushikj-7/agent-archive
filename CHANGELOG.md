@@ -18,6 +18,13 @@ follow [Semantic Versioning](https://semver.org/).
   decoded again. Capturing such a thread's growth needs about 5 times its
   filtered size in read memory instead of about 12.
 
+- Codex sessions are no longer titled with their injected AGENTS.md
+  instructions. Codex 0.160 sends a project's AGENTS.md as the first user
+  message (`# AGENTS.md instructions for …`); it is now dropped like other
+  injected instructions (filter 25), so the title and the handoff's first
+  prompt are what you typed. Existing sessions are refiltered on the next
+  collection.
+
 - `list`, `show` and `handoff` find a session by the agent's own session ID
   as well as the archive's: `handoff 01a10e11 --harness codex` finds the
   Codex thread whose ID starts `01a10e11`.

@@ -80,6 +80,9 @@
   "codex-pairing-bundles.jsonl": {
     "sha256": "4bbddd3fead673a238ef41bbf413b1efaff6a6b8738d2022b03e21220b6a9589"
   },
+  "codex-project-instructions.jsonl": {
+    "sha256": "4dab6e74220998a0ca10d4bab24a856b96be564861c85c3dc93d7fdfbc36cbbc"
+  },
   "codex-safe-and-sensitive.jsonl": {
     "sha256": "4b9c2c4490ff96c4699b72eba181623610d053d7a0a2d59c3f0b28a4bc3305c5"
   },
