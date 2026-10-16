@@ -9,8 +9,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
-// rangeSidecars is how many cached sidecars one planned listing range
-// covers. A session is about 3.5 listed keys (its sidecar, its current
+// rangeSidecars is the fallback size when no complete-key hint exists. A session is about 3.5 listed keys (its sidecar, its current
 // source, and superseded sources in their grace period), so a range is about
 // 700 keys: one provider page of 1,000.
 const rangeSidecars = 200
@@ -21,23 +20,39 @@ const rangeSidecars = 200
 const rangeConcurrency = 16
 
 // listObjects lists everything under listPrefix. When the store can list key
-// ranges and the keys known from the metadata cache are enough to split it,
-// the listing is cut into contiguous ranges listed concurrently (planRanges,
-// listRanges); otherwise it is the store's single sequential List. Both
+// ranges, it prefers boundaries balanced from the previous complete listing,
+// falling back to cached sidecar boundaries. Without boundaries it uses the
+// store's single sequential List. Both
 // return the same objects in the same key order.
-func listObjects(ctx context.Context, store storage.ObjectStore, listPrefix string, known []string) ([]storage.Object, error) {
+func listObjects(ctx context.Context, store storage.ObjectStore, listPrefix string, known []string, cache *MetadataCache) ([]storage.Object, error) {
+	return listObjectsWithSlots(ctx, store, listPrefix, known, cache, make(chan struct{}, rangeConcurrency))
+}
+
+func listObjectsWithSlots(ctx context.Context, store storage.ObjectStore, listPrefix string, known []string, cache *MetadataCache, slots chan struct{}) ([]storage.Object, error) {
 	span := trace.Start("list objects")
 	defer span.End()
-	ranger, ok := store.(storage.RangeLister)
-	if !ok {
-		return store.List(ctx, listPrefix)
+	bounds, hinted := cache.rangeBounds(listPrefix)
+	if !hinted {
+		bounds = planRanges(known)
 	}
-	bounds := planRanges(known)
-	if len(bounds) == 0 {
-		return store.List(ctx, listPrefix)
+	var objects []storage.Object
+	var err error
+	if ranger, ok := store.(storage.RangeLister); ok && len(bounds) > 0 {
+		span.Count("ranges", len(bounds)+1)
+		objects, err = listRangesWithSlots(ctx, ranger, listPrefix, bounds, span, slots)
+	} else {
+		select {
+		case slots <- struct{}{}:
+			defer func() { <-slots }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		objects, err = store.List(ctx, listPrefix)
 	}
-	span.Count("ranges", len(bounds)+1)
-	return listRanges(ctx, ranger, listPrefix, bounds, span)
+	if err == nil && ctx.Err() == nil {
+		cache.saveRangeBounds(listPrefix, objects)
+	}
+	return objects, err
 }
 
 // planRanges picks the boundaries that split a listing into ranges of about
@@ -68,21 +83,30 @@ func planRanges(known []string) []string {
 // after it, whatever they wrap, may be only the echo of that cancellation.
 // It returns only after every range it started has finished.
 func listRanges(ctx context.Context, store storage.RangeLister, prefix string, bounds []string, span *trace.Span) ([]storage.Object, error) {
+	return listRangesWithSlots(ctx, store, prefix, bounds, span, make(chan struct{}, rangeConcurrency))
+}
+
+func listRangesWithSlots(ctx context.Context, store storage.RangeLister, prefix string, bounds []string, span *trace.Span, slots chan struct{}) ([]storage.Object, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	count := len(bounds) + 1
 	results := make([][]storage.Object, count)
 	var failed sync.Once
 	var failure error
-	slots := make(chan struct{}, rangeConcurrency)
 	var wg sync.WaitGroup
 	dispatched := 0
 	for index := range count {
 		select {
 		case slots <- struct{}{}:
 		case <-ctx.Done():
+			wg.Wait()
+			if failure != nil {
+				return nil, failure
+			}
+			return nil, ctx.Err()
 		}
 		if ctx.Err() != nil {
+			<-slots
 			break
 		}
 		after, through := "", ""
