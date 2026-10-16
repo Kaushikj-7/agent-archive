@@ -15,9 +15,15 @@ unchanged at `sources/metadata.json`; each source is retained at
 verified before entering the destructive phase. Unknown owner, schema, temporary
 control, source, or selector evidence grants no new authority.
 
-The phases are prepared, deleting, absent, cleaned, finalizing, restoring,
-restored and cancelled. Prepared has not granted a remote delete; a newer hook
-can cancel it without inventing absent predecessor evidence. Deleting is durable
+The phases are preparing, prepared, deleting, absent, cleaned, finalizing,
+restoring, restored and cancelled. Preparing selects the small owner-bound
+control before any retained metadata or source write. It pins the exact metadata
+checksum and complete references, admitted owner, reason, request token and
+original deletion time. Cancellation can leave missing metadata in this explicit
+phase; only an exact matching owner and selecting wire can finish preparation.
+Unknown stages still refuse recovery. Prepared requires the immutable metadata
+to be durable and verified. Neither phase grants remote deletion or restoration;
+a newer hook can cancel them without inventing absent predecessor evidence. Deleting is durable
 before sending metadata deletion, so a missing response can be reconciled after
 restart. Metadata goes before namespace sources. Every destructive boundary
 rechecks the exact immutable intent and current selector; a different winner

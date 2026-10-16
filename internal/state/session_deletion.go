@@ -31,6 +31,7 @@ var ErrDeletionWorkChanged = errors.New("session work changed during removal; pr
 type SessionDeletionPhase string
 
 const (
+	DeletionPreparing  SessionDeletionPhase = "preparing"
 	DeletionPrepared   SessionDeletionPhase = "prepared"
 	DeletionDeleting   SessionDeletionPhase = "deleting"
 	DeletionAbsent     SessionDeletionPhase = "absent"
@@ -101,7 +102,7 @@ func (j SessionDeletion) validateControl(id string) error {
 		return err
 	}
 	switch j.Phase {
-	case DeletionPrepared, DeletionDeleting, DeletionAbsent, DeletionCleaned, DeletionRestoring, DeletionRestored, DeletionCancelled, DeletionFinalizing:
+	case DeletionPreparing, DeletionPrepared, DeletionDeleting, DeletionAbsent, DeletionCleaned, DeletionRestoring, DeletionRestored, DeletionCancelled, DeletionFinalizing:
 	default:
 		return ErrDurableStorageRecovery
 	}
@@ -220,7 +221,7 @@ func (s *Store) loadProtectedSessionDeletion(id string) (SessionDeletion, bool, 
 	}
 	if j.MetadataSHA256 != "" && !j.LocalRemoved {
 		sources, e := privateDirectory(home.Root, filepath.Join(deletionDirectory, id, "sources"), false)
-		if errors.Is(e, os.ErrNotExist) && (j.Phase == DeletionFinalizing || j.Phase == DeletionRestored || j.Phase == DeletionCancelled) {
+		if errors.Is(e, os.ErrNotExist) && j.allowsMissingMetadata() {
 			sources = nil
 			e = nil
 		}
@@ -229,7 +230,7 @@ func (s *Store) loadProtectedSessionDeletion(id string) (SessionDeletion, bool, 
 		}
 		if sources != nil {
 			j.MetadataBytes, e = s.readDeletionObject(home, sources, "metadata.json", 32<<20)
-			if errors.Is(e, os.ErrNotExist) && (j.Phase == DeletionFinalizing || j.Phase == DeletionRestored || j.Phase == DeletionCancelled) {
+			if errors.Is(e, os.ErrNotExist) && j.allowsMissingMetadata() {
 				e = nil
 			}
 			e = errors.Join(e, sources.Close())
@@ -326,7 +327,10 @@ func (s *Store) saveSessionDeletionContext(ctx context.Context, j SessionDeletio
 		return errors.Join(ErrDurableStorageCapacity, err)
 	}
 	return config.WithDeletionProtection(s.home, func(g config.DurableStorageGuard) error {
-		if len(j.MetadataBytes) > 0 {
+		if err := s.checkDeletionControl(g, j, previousSHA, true); err != nil {
+			return err
+		}
+		if len(j.MetadataBytes) > 0 && j.Phase != DeletionPreparing {
 			if err := s.retainDeletionMetadata(ctx, g, j); err != nil {
 				return err
 			}
@@ -353,7 +357,7 @@ func (s *Store) saveSessionDeletionContext(ctx context.Context, j SessionDeletio
 					return ErrDeletionWorkChanged
 				}
 			}
-			if err := s.checkDeletionControl(g, j, previousSHA); err != nil {
+			if err := s.checkDeletionControl(g, j, previousSHA, false); err != nil {
 				return err
 			}
 			return rename()
@@ -372,48 +376,92 @@ func (s *Store) PrepareSessionDeletion(reg archive.SessionRegistration, reason R
 	if err != nil {
 		return old, err
 	}
-	if found && old.Phase != DeletionRestored && old.Phase != DeletionCancelled {
-		if reason == RemovalReasonUndo && old.Reason == RemovalReasonRetention {
-			old.Reason = reason
-			old.RestoringToken = ""
-			old.RestorationSHA256 = ""
-			if old.Phase == DeletionRestoring {
-				old.Phase = DeletionAbsent
-			}
-			err = s.saveSessionDeletion(old, nil)
+	if found && (old.Phase == DeletionRestored || old.Phase == DeletionCancelled) {
+		if err := s.RemoveRestoredDeletionStages(reg.ArchiveSessionID); err != nil {
 			return old, err
 		}
-		if old.Reason != reason {
-			return old, ErrRemovalPending
+		old, found, err = s.LoadSessionDeletion(reg)
+		if err != nil || found {
+			return old, errors.Join(ErrRemovalPending, err)
 		}
-		return old, nil
 	}
-	j := SessionDeletion{Version: 1, Registration: reg, OwnerSHA256: deletionOwner(reg), Reason: reason, Phase: DeletionPrepared, MetadataBytes: raw, RequestToken: token, At: at.UTC()}
+	if found {
+		return s.prepareExistingDeletion(old, reason, raw)
+	}
+	return s.prepareNewDeletion(reg, reason, raw, at, token)
+}
+
+func (s *Store) prepareExistingDeletion(old SessionDeletion, reason RemovalReason, raw []byte) (SessionDeletion, error) {
+	if reason == RemovalReasonUndo && old.Reason == RemovalReasonRetention {
+		old.Reason = reason
+		old.RestoringToken = ""
+		old.RestorationSHA256 = ""
+		if old.Phase == DeletionRestoring {
+			old.Phase = DeletionAbsent
+		}
+		if err := s.saveSessionDeletion(old, nil); err != nil {
+			return old, err
+		}
+		old.SHA256 = deletionSHA(old)
+	}
+	if old.Reason != reason {
+		return old, ErrRemovalPending
+	}
+	if old.Phase == DeletionPreparing {
+		return s.finishDeletionPreparation(old, raw)
+	}
+	return old, nil
+}
+
+func (s *Store) prepareNewDeletion(reg archive.SessionRegistration, reason RemovalReason, raw []byte, at time.Time, token string) (SessionDeletion, error) {
+	j := SessionDeletion{Version: 1, Registration: reg, OwnerSHA256: deletionOwner(reg), Reason: reason, Phase: DeletionPreparing, MetadataBytes: raw, RequestToken: token, At: at.UTC()}
 	if len(raw) > 0 {
 		var m archive.Metadata
-		if err = json.Unmarshal(raw, &m); err != nil {
+		if err := json.Unmarshal(raw, &m); err != nil {
 			return j, err
 		}
-		j.References, err = m.SourceReferences()
+		refs, err := m.SourceReferences()
 		if err != nil {
 			return j, err
 		}
+		j.References = refs
 		j.MetadataSHA256 = publicationSHA256(raw)
 	}
 	j.SHA256 = deletionSHA(j)
-	if err = j.validate(reg.ArchiveSessionID); err != nil {
+	if err := j.validate(reg.ArchiveSessionID); err != nil {
 		return j, err
 	}
 	var expected *string
 	if reason == RemovalReasonRetention {
 		expected = &token
 	}
-	if found {
-		j.SHA256 = old.SHA256
+	// Selecting this small owner-bound control is the first retained mutation.
+	// A partial metadata write can now be retried against an immutable intent.
+	if err := s.saveSessionDeletion(j, expected); err != nil {
+		return j, err
 	}
-	err = s.saveSessionDeletion(j, expected)
-	j.SHA256 = deletionSHA(j)
-	return j, err
+	return s.finishDeletionPreparation(j, raw)
+}
+
+func (s *Store) finishDeletionPreparation(j SessionDeletion, raw []byte) (SessionDeletion, error) {
+	if j.Phase != DeletionPreparing || (j.MetadataSHA256 != "" || len(raw) > 0) && publicationSHA256(raw) != j.MetadataSHA256 {
+		return j, ErrDurableStorageRecovery
+	}
+	candidate := j
+	candidate.MetadataBytes = raw
+	if err := candidate.validate(candidate.Registration.ArchiveSessionID); err != nil {
+		return j, err
+	}
+	candidate.Phase = DeletionPrepared
+	var expected *string
+	if candidate.Reason == RemovalReasonRetention {
+		expected = &candidate.RequestToken
+	}
+	if err := s.saveSessionDeletion(candidate, expected); err != nil {
+		return j, err
+	}
+	candidate.SHA256 = deletionSHA(candidate)
+	return candidate, nil
 }
 
 // AdvanceSessionDeletion rechecks exact immutable intent before each transition.
@@ -525,7 +573,7 @@ func (s *Store) CancelUnstartedDeletion(reg archive.SessionRegistration, req Req
 	if err != nil {
 		return err
 	}
-	if !found || j.Phase != DeletionPrepared || j.Reason != RemovalReasonRetention || !validRestorationRequest(j, req) {
+	if !found || (j.Phase != DeletionPreparing && j.Phase != DeletionPrepared) || j.Reason != RemovalReasonRetention || !validRestorationRequest(j, req) {
 		return ErrRemovalPending
 	}
 	j.Phase = DeletionCancelled
@@ -653,25 +701,35 @@ func (j SessionDeletion) validateReferences(id string) error {
 }
 
 func (j SessionDeletion) allowsMissingMetadata() bool {
-	return j.MetadataSHA256 == "" || j.LocalRemoved || j.Phase == DeletionFinalizing || j.Phase == DeletionRestored || j.Phase == DeletionCancelled
+	return j.MetadataSHA256 == "" || j.Phase == DeletionPreparing || j.LocalRemoved || j.Phase == DeletionFinalizing || j.Phase == DeletionRestored || j.Phase == DeletionCancelled
 }
 
 // Check under the durable writer lock immediately before selecting the new
 // control. Immutable payload staging does not grant permission to overwrite a
 // different phase, a replacement owner, or an absent active journal.
-func (s *Store) checkDeletionControl(g config.DurableStorageGuard, next SessionDeletion, previousSHA string) (err error) {
+func (s *Store) checkDeletionControl(g config.DurableStorageGuard, next SessionDeletion, previousSHA string, staging bool) (err error) {
 	home, err := g.RootedHome(s.home)
 	if err != nil {
 		return err
 	}
 	dir, err := privateDirectory(home.Root, filepath.Join(deletionDirectory, next.Registration.ArchiveSessionID), false)
+	initial := next.Phase == DeletionPreparing && previousSHA == next.SHA256
+	if errors.Is(err, os.ErrNotExist) && staging && initial {
+		return home.Check()
+	}
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, dir.Close()) }()
 	raw, err := s.readDeletionObject(home, dir, "intent.json", durableControlBytes/2)
-	if errors.Is(err, os.ErrNotExist) && next.Phase == DeletionPrepared && previousSHA == next.SHA256 {
-		return nil
+	if errors.Is(err, os.ErrNotExist) && initial {
+		if staging {
+			present, e := rootHasEntries(home.Root, filepath.Join(deletionDirectory, next.Registration.ArchiveSessionID))
+			if e != nil || present {
+				return errors.Join(ErrDurableStorageRecovery, e)
+			}
+		}
+		return home.Check()
 	}
 	if err != nil {
 		return errors.Join(ErrDurableStorageRecovery, err)

@@ -49,7 +49,7 @@ func DeleteOwnedSession(ctx context.Context, local *state.Store, store storage.O
 	if err != nil {
 		return err
 	}
-	if !found || (j.Phase == state.DeletionRestored || j.Phase == state.DeletionCancelled) || reason == state.RemovalReasonUndo && j.Reason == state.RemovalReasonRetention {
+	if !found || j.Phase == state.DeletionPreparing || (j.Phase == state.DeletionRestored || j.Phase == state.DeletionCancelled) || reason == state.RemovalReasonUndo && j.Reason == state.RemovalReasonRetention {
 		j, err = local.PrepareSessionDeletion(reg, reason, raw, now, token)
 		if err != nil {
 			return err

@@ -33,6 +33,7 @@ func (s *Store) FinishDeletedSession(regID string) error {
 		if err := s.saveSessionDeletion(j, nil); err != nil {
 			return err
 		}
+		j.SHA256 = deletionSHA(j)
 	}
 	if err := s.removeDeletionStages(j); err != nil {
 		return err
@@ -135,6 +136,9 @@ func checkDeletionDirectory(home *local.RootedHome, id string, held *os.Root) er
 
 func (s *Store) removeDeletionStages(j SessionDeletion) error {
 	return config.WithDeletionProtection(s.home, func(g config.DurableStorageGuard) (err error) {
+		if err := s.checkDeletionControl(g, j, j.SHA256, true); err != nil {
+			return err
+		}
 		q, err := s.openDurableQuota(g)
 		if err != nil {
 			return err

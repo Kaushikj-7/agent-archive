@@ -34,7 +34,7 @@ func (s *sessionScan) resumeRetentionDeletion() (sessionOutcome, bool, error) {
 	if j.LocalRemoved || j.Reason != state.RemovalReasonRetention {
 		return outcomeSkipped, true, state.ErrRemovalPending
 	}
-	if j.Phase == state.DeletionPrepared {
+	if j.Phase == state.DeletionPreparing || j.Phase == state.DeletionPrepared {
 		if err := s.local.CancelUnstartedDeletion(s.reg, s.req); err != nil {
 			return outcomeSkipped, true, err
 		}
