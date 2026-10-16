@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Protected Cursor backfill can stage selected root chats from a live WAL using
+  a bounded private SQLite image. Scratch capacity is reserved before copying,
+  and cleanup must succeed before admission. Existing staged evidence can then
+  publish after the native source disappears. Live Cursor/platform qualification
+  remains unverified; unknown capabilities and exhausted budgets stay pending.
+
 - A long Codex thread whose history spans more than one rollout needs far less
   read memory to capture, so it is captured at sizes that were recorded as too
   large to read (`transcript_too_large`, per-session read memory, from about

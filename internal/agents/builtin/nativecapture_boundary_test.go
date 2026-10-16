@@ -1312,7 +1312,7 @@ func captureCheckLiveFactsShape(t *testing.T, pkg *types.Package, fset *token.Fi
 		}
 	}
 	captureCheckLiveIssuerSignature(t, pkg)
-	for name, methods := range map[string]map[string]bool{"CapturePolicy": {}, "CaptureSkillMode": {}, "SettledImportFacts": {"UnmarshalJSON": true}, "CaptureRequest": {"Borrow": true, "Close": true, "MatchesBudget": true, "MatchesPolicy": true}, "RequestLease": {"Context": true, "Budget": true, "Reservation": true, "Registration": true, "Reviewed": true, "Locator": true, "At": true, "Policy": true, "Check": true, "Close": true}, "CapturedScope": {"Reserve": true, "Release": true, "Available": true, "Refuse": true}, "LiveCaptureRequest": {"Borrow": true, "Close": true}, "LiveCaptureLease": {"Original": true, "Context": true, "Err": true, "Reserve": true, "OpenWorkspace": true, "Close": true}} {
+	for name, methods := range map[string]map[string]bool{"CapturePolicy": {}, "CaptureSkillMode": {}, "SettledImportFacts": {"UnmarshalJSON": true}, "CaptureRequest": {"Borrow": true, "Close": true, "MatchesBudget": true, "MatchesPolicy": true}, "RequestLease": {"Context": true, "Budget": true, "Reservation": true, "Registration": true, "Reviewed": true, "Locator": true, "At": true, "Policy": true, "Check": true, "Close": true}, "CapturedScope": {"Reserve": true, "Release": true, "Available": true, "Refuse": true}, "LiveCaptureRequest": {"Borrow": true, "Close": true}, "LiveCaptureCleanupError": {"Error": true, "Unwrap": true, "Close": true}, "LiveCaptureLease": {"Original": true, "Context": true, "Err": true, "Reserve": true, "OpenWorkspace": true, "Close": true}} {
 		obj, ok := pkg.Scope().Lookup(name).(*types.TypeName)
 		if !ok || obj.IsAlias() {
 			t.Errorf("live binding %s must be concrete", name)
@@ -1323,17 +1323,14 @@ func captureCheckLiveFactsShape(t *testing.T, pkg *types.Package, fset *token.Fi
 			t.Error("live binding not named")
 			continue
 		}
-		if name == "CaptureRequest" || name == "RequestLease" || name == "CapturedScope" || name == "LiveCaptureRequest" || name == "LiveCaptureLease" {
+		if name == "CaptureRequest" || name == "RequestLease" || name == "CapturedScope" || name == "LiveCaptureRequest" || name == "LiveCaptureLease" || name == "LiveCaptureCleanupError" {
 			structure, ok := named.Underlying().(*types.Struct)
 			if !ok || structure.NumFields() != 1 || structure.Field(0).Exported() {
 				t.Errorf("live binding %s exposes owner mutation", name)
 			}
 		}
-		for i := range named.NumMethods() {
-			method := named.Method(i)
-			if method.Exported() && !methods[method.Name()] {
-				t.Errorf("unexpected live authority method %s.%s", name, method.Name())
-			}
+		if err := captureLiveFactsMethodError(named, methods); err != nil {
+			t.Error(err)
 		}
 	}
 }
@@ -1385,7 +1382,7 @@ func TestLiveCaptureIssuerTypedReferenceControls(t *testing.T) {
 }
 
 func captureLiveFactsExportAllowed(obj types.Object, fset *token.FileSet) bool {
-	allowed := map[string]bool{"CapturePolicy": true, "CaptureRequest": true, "FreezeCaptureRequest": true, "RequestLease": true, "CapturedScope": true, "CaptureSkillMode": true, "CaptureSkillNone": true, "CaptureSkillMetadata": true, "CaptureSkillBody": true, "SettledImportFacts": true, "LiveCaptureRequest": true, "LiveCaptureLease": true, "BindLiveCaptureRequest": true}
+	allowed := map[string]bool{"CapturePolicy": true, "CaptureRequest": true, "FreezeCaptureRequest": true, "RequestLease": true, "CapturedScope": true, "CaptureSkillMode": true, "CaptureSkillNone": true, "CaptureSkillMetadata": true, "CaptureSkillBody": true, "SettledImportFacts": true, "LiveCaptureRequest": true, "LiveCaptureLease": true, "BindLiveCaptureRequest": true, "LiveCaptureCleanupError": true}
 	if allowed[obj.Name()] {
 		return true
 	}
@@ -1432,6 +1429,29 @@ func TestLiveCaptureFactsRejectsUnlistedFactoryExports(t *testing.T) {
 		fn := types.NewFunc(token.NoPos, facts, name, types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false))
 		if captureLiveFactsExportAllowed(fn, nil) {
 			t.Fatalf("unlisted production factory accepted %s", name)
+		}
+	}
+}
+
+func captureLiveFactsMethodError(named *types.Named, allowed map[string]bool) error {
+	for i := range named.NumMethods() {
+		method := named.Method(i)
+		if method.Exported() && !allowed[method.Name()] {
+			return fmt.Errorf("unexpected live authority method %s.%s", named.Obj().Name(), method.Name())
+		}
+	}
+	return nil
+}
+
+func TestLiveCaptureNeutralFactsCannotExportFactoryMethods(t *testing.T) {
+	facts := types.NewPackage(captureFactsPath, "nativefacts")
+	for _, name := range []string{"CapturePolicy", "CaptureSkillMode", "SettledImportFacts"} {
+		object := types.NewTypeName(token.NoPos, facts, name, nil)
+		named := types.NewNamed(object, types.NewStruct(nil, nil), nil)
+		method := types.NewFunc(token.NoPos, facts, "ForgeLive", types.NewSignatureType(types.NewVar(token.NoPos, facts, "owner", types.NewPointer(named)), nil, nil, types.NewTuple(), types.NewTuple(), false))
+		named.AddMethod(method)
+		if err := captureLiveFactsMethodError(named, map[string]bool{"UnmarshalJSON": true}); err == nil {
+			t.Fatalf("neutral %s admitted a new factory method", name)
 		}
 	}
 }

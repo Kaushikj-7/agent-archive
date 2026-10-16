@@ -22,6 +22,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/nativefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 	"github.com/wangjohn/agent-archive/internal/trace"
@@ -134,6 +135,7 @@ var errCollectorBusy = errors.New("a collector pass is still running")
 // sessions registered before it are recorded in the import, which a run
 // with the same options finishes.
 type importStoppedError struct {
+	cause    error
 	batchID  string
 	sessions int
 }
@@ -141,6 +143,8 @@ type importStoppedError struct {
 func (e *importStoppedError) Error() string {
 	return fmt.Sprintf("stopped after %s registered as import %s", countNoun(e.sessions, "session"), e.batchID)
 }
+
+func (e *importStoppedError) Unwrap() error { return e.cause }
 
 // importRegistrationError is a registration that failed between holds,
 // after registering sessions: the import record keeps them, and a run with
@@ -164,6 +168,18 @@ func (e *importRegistrationError) Unwrap() error { return e.err }
 // to finish, and returns errCollectorBusy when one is still running. The
 // returned import's release is always called.
 func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan backfill.Plan, fingerprint string, collectorWait time.Duration, capacityUploads bool) (reg *registeredImport, resultErr error) {
+	// This function's callers eventually render an exit status (including setup's
+	// optional import). Retry retained cleanup before that terminal UI boundary,
+	// while preserving the typed handle and all original causes for error callers.
+	defer func() {
+		var cleanup *nativefacts.LiveCaptureCleanupError
+		if errors.As(resultErr, &cleanup) {
+			if err := cleanup.Close(); err != nil {
+				resultErr = errors.Join(resultErr, err)
+			}
+		}
+	}()
+
 	span := trace.Start("backfill admission and registration")
 	defer span.End()
 	reg = &registeredImport{out: stdout}
@@ -276,7 +292,7 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 		}
 		reg.batch = batch
 		if errors.Is(err, backfill.ErrStopped) {
-			return reg, &importStoppedError{batchID: batch.ID, sessions: len(batch.Sessions)}
+			return reg, &importStoppedError{batchID: batch.ID, sessions: len(batch.Sessions), cause: err}
 		}
 		return reg, &importRegistrationError{err: err, registered: len(result.Sessions)}
 	}
