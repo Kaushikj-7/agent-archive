@@ -545,16 +545,14 @@ func (m promptModel) answerKey(answer string, choices []option) string {
 		}
 	}
 	if !m.Confirm {
-		key, _ := matchOption(answer, append(choices, m.Aliases...))
-		return key
+		return matchOption(answer, append(choices, m.Aliases...))
 	}
 	for _, o := range slices.Concat(m.Primary, m.Aliases) {
 		if answer == o.Key {
 			return o.Key
 		}
 	}
-	key, _ := matchOption(answer, choices[len(m.Primary):])
-	return key
+	return matchOption(answer, choices[len(m.Primary):])
 }
 
 // confirmAnswers are a Confirm question's yes and no answers.

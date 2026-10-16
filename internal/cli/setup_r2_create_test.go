@@ -1819,12 +1819,12 @@ func TestMatchOptionExactThenUniquePrefixThenAmbiguous(t *testing.T) {
 	t.Parallel()
 	options := []option{{"r2", "R2"}, {"s3", "S3"}, {"s3-new", "Create S3"}, {"r2-create", "Create R2"}, {"help", "Help"}}
 	for answer, want := range map[string]string{"r2": "r2", "R2": "r2", "s3": "s3", "s3-new": "s3-new", "r2-c": "r2-create", "r2-create": "r2-create", "h": "help", "HELP": "help"} {
-		if got, ok := matchOption(answer, options); !ok || got != want {
-			t.Errorf("%q chose %q (%v), want %q", answer, got, ok, want)
+		if got := matchOption(answer, options); got != want {
+			t.Errorf("%q chose %q, want %q", answer, got, want)
 		}
 	}
 	for _, answer := range []string{"", "r", "s", "x", "r3", "r2-x"} {
-		if got, ok := matchOption(answer, options); ok {
+		if got := matchOption(answer, options); got != "" {
 			t.Errorf("%q chose %q", answer, got)
 		}
 	}
