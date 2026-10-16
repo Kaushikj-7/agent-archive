@@ -39,6 +39,7 @@ func OpenRemoteSessionCatalog(ctx context.Context, store storage.ObjectStore, op
 // using verified remote deltas and the private local query engine when available.
 // Refresh still validates all local row tuples and inventories cached bodies in
 // O(N). Without a cache it retains the complete in-memory remote fallback.
+// Results retain newest activity/capture order, with harness and ID breaking ties.
 func CatalogSummariesWithOptions(ctx context.Context, store storage.ObjectStore, filter Filter, opts ListOptions) ([]archive.Metadata, error) {
 	ctx = catalog.WithReadView(ctx)
 	// The private projection omits token observations, which may carry the
@@ -62,6 +63,9 @@ func CatalogSummariesWithOptions(ctx context.Context, store storage.ObjectStore,
 	for _, row := range rows {
 		result = append(result, row.Summary.Metadata())
 	}
+	// SQL ties use full object keys. Punctuation before the slash separator
+	// can change prefix identity ordering, so retain the API's exact comparator.
+	sortCatalogSummaries(result)
 	return result, nil
 }
 

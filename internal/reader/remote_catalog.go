@@ -209,8 +209,16 @@ func catalogSummariesUncached(ctx context.Context, store storage.ObjectStore, fi
 			result = append(result, summarize(row.Entry.Summary).Metadata())
 		}
 	}
-	sort.SliceStable(result, func(i, j int) bool {
-		a, b := result[i], result[j]
+	sortCatalogSummaries(result)
+	return result, nil
+}
+
+func sortCatalogSummaries(summaries []archive.Metadata) {
+	span := trace.Start("catalog summary ordering")
+	defer span.End()
+	span.Count("summaries", len(summaries))
+	sort.SliceStable(summaries, func(i, j int) bool {
+		a, b := summaries[i], summaries[j]
 		at, bt := listingindex.ActivityTime(a), listingindex.ActivityTime(b)
 		if !at.Equal(bt) {
 			return at.After(bt)
@@ -223,7 +231,6 @@ func catalogSummariesUncached(ctx context.Context, store storage.ObjectStore, fi
 		}
 		return a.SessionID < b.SessionID
 	})
-	return result, nil
 }
 
 // RefreshRemote reconciles one verified prior-root to new-root delta. Unknown

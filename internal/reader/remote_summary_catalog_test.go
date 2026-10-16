@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/catalog"
@@ -231,5 +232,59 @@ func TestRemoteSummaryModelFilterRetainsObservationOnlyEvidence(t *testing.T) {
 	expected, expectedErr = SelectMetadata(t.Context(), remote, "sessions", q, ListOptions{})
 	if err != nil || expectedErr != nil || len(expected.Sessions) != 1 || !reflect.DeepEqual(actual, expected) {
 		t.Fatal("root-child model selection differs from uncached oracle", actual, expected, err, expectedErr)
+	}
+}
+
+// The summary API orders activity first even when archive capture is later.
+// Imported activity and ordinary activity/capture ties share the same policy.
+func TestRemoteSummaryCachePreservesActivityCaptureAndIdentityOrder(t *testing.T) {
+	t.Parallel()
+	ids := []string{"session-0000", "session-0001", "session-0002", "session-0003", "session-0004", "a", "a-"}
+	remote, legacy := remoteReaderNamedFixture(t, ids)
+	for i, id := range ids {
+		rewriteRemoteFixtureMetadata(t, remote, legacy, "sessions/claude/"+id+"/metadata.json", func(m *archive.Metadata) {
+			captureMinute := i
+			if i == 3 || i >= 5 {
+				captureMinute = 2
+			}
+			m.CapturedAt = baseTime.Add(24*time.Hour + time.Duration(captureMinute)*time.Minute)
+			if i == 1 {
+				m.Origin = archive.SessionOriginImport
+				m.EndedAt = nil
+				m.StartedAt = baseTime.Add(3 * time.Hour)
+			} else if i != 4 {
+				ended := baseTime.Add(2 * time.Hour)
+				m.EndedAt = &ended
+			}
+		})
+	}
+	filter := Filter{Harness: "claude", Replays: ReplaysIncluded}
+	uncached, err := CatalogSummaries(t.Context(), remote, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summaryIDs := func(summaries []archive.Metadata) []string {
+		result := make([]string, len(summaries))
+		for i, summary := range summaries {
+			result[i] = summary.SessionID
+		}
+		return result
+	}
+	expected := []string{"session-0004", "session-0001", "a", "a-", "session-0002", "session-0003", "session-0000"}
+	if actual := summaryIDs(uncached); !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("uncached activity/capture/identity order = %v, want %v", actual, expected)
+	}
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		cached, err := CatalogSummariesWithOptions(t.Context(), remote, filter, ListOptions{Cache: cache})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(cached, uncached) {
+			t.Fatalf("cached activity/capture/identity order = %v, uncached = %v", summaryIDs(cached), expected)
+		}
 	}
 }
