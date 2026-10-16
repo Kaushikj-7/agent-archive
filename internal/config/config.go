@@ -73,6 +73,8 @@ const (
 // private file elsewhere; see destination.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	// DeletionProtection fences owner-bound deletion and exact retention restoration.
+	DeletionProtection bool `json:"deletion_protection,omitempty"`
 	// SourceSetPublicationProtection fences history source-set publication writers.
 	SourceSetPublicationProtection bool `json:"source_set_publication_protection,omitempty"`
 	// SearchIndexing is this machine's explicit background indexing consent.

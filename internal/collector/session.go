@@ -200,6 +200,9 @@ func (s *sessionScan) forgetForRunWithoutOffChain() {
 
 // scanOnce is one scan of the session, the steps above.
 func (s *sessionScan) scanOnce(ctx context.Context) (sessionOutcome, error) {
+	if out, handled, err := s.resumeRetentionDeletion(); handled || err != nil {
+		return out, err
+	}
 	if err := s.prepareRetainedOwnership(); err != nil {
 		return outcomeSkipped, err
 	}

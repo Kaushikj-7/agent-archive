@@ -123,7 +123,7 @@ var storeDirs = []string{"registrations", "requests", "request-locks", "publishe
 
 // lazyStoreDirs are the directories the store creates under home on first
 // use rather than up front.
-var lazyStoreDirs = []string{generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir}
+var lazyStoreDirs = []string{generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir, deletionDirectory}
 
 // OwnedEntries lists every top-level entry a Store can create under its
 // home: its directories, its status file, and the storage clock reading
@@ -938,6 +938,9 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 		return err
 	}
 	if pending.JournalVersion == 5 {
+		if pending.Preparation != nil && pending.Preparation.Retention != nil {
+			return config.WithDeletionProtection(s.home, func(g config.DurableStorageGuard) error { return s.savePublicationPendingGuard(g, id, pending) })
+		}
 		return config.WithPublicationComposition(s.home, func(g config.PublicationCompositionGuard) error {
 			storage, err := g.Storage(s.home)
 			if err != nil {

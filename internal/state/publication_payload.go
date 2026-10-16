@@ -148,7 +148,7 @@ func validatePublicationPayloadWithFacts(source PublicationSource, m archive.Met
 		}
 	case PublicationHistoryStage:
 		h := p.Stage
-		if len(p.Inline) != 0 || h == nil || h.Version != 1 || h.Kind != p.Kind || h.Namespace != "session-pending-sources" || h.SessionID != m.SessionID || h.OwnerSHA256 != publicationOwner(m, destination, admission) || h.DestinationID != destination || h.AdmissionContext != admission || h.SourceSHA256 != source.Reference.SHA256 || h.CompressedBytes != source.Reference.CompressedBytes || h.Selection != source.Selection {
+		if len(p.Inline) != 0 || h == nil || h.Version != 1 || h.Kind != p.Kind || (h.Namespace != "session-pending-sources" && h.Namespace != "session-deletion-sources") || h.SessionID != m.SessionID || h.OwnerSHA256 != publicationOwner(m, destination, admission) || h.DestinationID != destination || h.AdmissionContext != admission || h.SourceSHA256 != source.Reference.SHA256 || h.CompressedBytes != source.Reference.CompressedBytes || h.Selection != source.Selection {
 			return errors.New("history stage authority mismatch")
 		}
 	case PublicationAdmissionStage:

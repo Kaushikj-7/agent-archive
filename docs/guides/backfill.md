@@ -364,3 +364,13 @@ The first committed historical permission installs the permanent
 `historical-projects-v10` writer fence. Upgrade installed hooks and collectors
 before using it; earlier writers refuse rather than discard import-only ownership.
 The fence remains after disable, undo, expiry or setup rollback.
+
+
+Interrupted whole-session undo keeps its exact removal journal until cleanup
+finishes. Run undo again to resume it. A hook arriving during retention can keep
+its session alive by restoring the exact retained archive baseline, including
+preserved revisions, even if the native files have disappeared. The new hook's
+evidence remains queued for its normal capture or capture-gap decision. Explicit
+undo grants no such restoration: it continues removing the selected session.
+If recovery reports changed authority or damaged local evidence, preserve that
+evidence and repair the reported condition before retrying.

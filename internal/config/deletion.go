@@ -1,0 +1,148 @@
+package config
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"strings"
+
+	"github.com/wangjohn/agent-archive/internal/local"
+)
+
+const deletionWriter configWriter = "owned-deletion-v18"
+
+// Deletion retains the exact underlying writer fence in memory. Version18 is an
+// outer capability, so all ordinary/staged/Cursor/catalog guards keep their base.
+func wrapDeletionConfig(raw []byte, protected bool) []byte {
+	if !protected || raw == nil {
+		return raw
+	}
+	var doc map[string]json.RawMessage
+	if json.Unmarshal(raw, &doc) != nil {
+		return nil
+	}
+	base := doc["schema_version"]
+	if bytes.Equal(base, []byte("0")) {
+		base = []byte("1")
+	}
+	version, _ := json.Marshal(nativeAuthorityVersion{Version: 18, Writer: deletionWriter, Base: base})
+	doc["schema_version"] = version
+	result, _ := json.Marshal(doc)
+	return result
+}
+
+func unwrapDeletionConfig(raw []byte) ([]byte, bool, error) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, false, err
+	}
+	v := bytes.TrimSpace(doc["schema_version"])
+	var peek struct {
+		Version int          `json:"version"`
+		Writer  configWriter `json:"writer"`
+	}
+	_ = json.Unmarshal(v, &peek)
+	flag := bytes.TrimSpace(doc["deletion_protection"])
+	if peek.Version != 18 && peek.Writer != deletionWriter {
+		if len(flag) > 0 {
+			return nil, false, errors.New("deletion protection requires its permanent writer fence")
+		}
+		return raw, false, nil
+	}
+	if err := checkDeletionSelectors(raw); err != nil {
+		return nil, false, err
+	}
+	if err := exactAuthorityObject(v, []string{"version", "writer", "base"}); err != nil {
+		return nil, false, err
+	}
+	var wrapper nativeAuthorityVersion
+	if err := json.Unmarshal(v, &wrapper); err != nil {
+		return nil, false, err
+	}
+	if wrapper.Version != 18 || wrapper.Writer != deletionWriter || !bytes.Equal(flag, []byte("true")) {
+		return nil, false, errors.New("unsupported owned deletion writer fence")
+	}
+	// The complete base decoder below validates the nested native/base contract.
+	var nested struct {
+		Version int          `json:"version"`
+		Writer  configWriter `json:"writer"`
+	}
+	_ = json.Unmarshal(wrapper.Base, &nested)
+	if nested.Version == 18 || nested.Writer == deletionWriter {
+		return nil, false, errors.New("nested deletion fence")
+	}
+	doc["schema_version"] = wrapper.Base
+	result, err := json.Marshal(doc)
+	return result, true, err
+}
+
+// WithDeletionProtection persists the sticky deletion floor under the existing
+// configuration lock before handing a storage capability to its owner.
+func WithDeletionProtection(home string, fn func(DurableStorageGuard) error) error {
+	err := WithPublicationComposition(home, func(g PublicationCompositionGuard) error {
+		storage, err := g.Storage(home)
+		if err != nil {
+			return err
+		}
+		held, err := storage.RootedHome(home)
+		if err != nil {
+			return err
+		}
+		cfg, found, err := LoadRooted(held)
+		if err != nil || !found {
+			return errors.Join(errors.New("deletion requires a readable configuration"), err)
+		}
+		if !cfg.DeletionProtection {
+			cfg.DeletionProtection = true
+			if err := local.RootedWrite(held.Root, "config.json", cfg); err != nil {
+				return err
+			}
+		}
+		// The original guard binds the old config inode; reacquire a verified guard
+		// after releasing the config lock rather than using it across replacement.
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return WithDurableStorage(home, func(g DurableStorageGuard) error {
+		held, err := g.RootedHome(home)
+		if err != nil {
+			return err
+		}
+		cfg, found, err := LoadRooted(held)
+		if err != nil || !found || !cfg.DeletionProtection {
+			return errors.Join(errors.New("deletion writer fence changed before write"), err)
+		}
+		return fn(g)
+	})
+}
+
+func checkDeletionSelectors(raw []byte) error {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	token, err := d.Token()
+	if err != nil || token != json.Delim('{') {
+		return errors.New("invalid deletion configuration")
+	}
+	seen := map[string]bool{}
+	for d.More() {
+		token, err = d.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := token.(string)
+		if !ok {
+			return errors.New("invalid configuration selector")
+		}
+		canonical := strings.ToLower(key)
+		if seen[canonical] || (canonical == "schema_version" || canonical == "deletion_protection") && key != canonical {
+			return errors.New("ambiguous deletion configuration selector")
+		}
+		seen[canonical] = true
+		var value json.RawMessage
+		if err = d.Decode(&value); err != nil {
+			return err
+		}
+	}
+	return nil
+}

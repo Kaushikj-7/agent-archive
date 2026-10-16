@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-archive.dev/schemas/session-deletion.schema.json",
+  "title": "Owner-bound local session deletion intent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "registration",
+    "owner_sha256",
+    "reason",
+    "phase",
+    "at",
+    "sha256"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "registration": {
+      "type": "object",
+      "description": "Exact typed local registration; runtime validates its independent identity/provenance contract."
+    },
+    "owner_sha256": {
+      "$ref": "#/$defs/digest"
+    },
+    "reason": {
+      "enum": [
+        "retention",
+        "undo"
+      ]
+    },
+    "phase": {
+      "enum": [
+        "prepared",
+        "deleting",
+        "absent",
+        "cleaned",
+        "finalizing",
+        "restoring",
+        "restored",
+        "cancelled"
+      ]
+    },
+    "metadata_sha256": {
+      "$ref": "#/$defs/digest"
+    },
+    "references": {
+      "type": "array",
+      "maxItems": 65,
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "request_token": {
+      "type": "string"
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "restoring_token": {
+      "type": "string"
+    },
+    "restoration_sha256": {
+      "$ref": "#/$defs/digest"
+    },
+    "local_removed": {
+      "type": "boolean"
+    },
+    "sha256": {
+      "$ref": "#/$defs/digest"
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "sha256",
+        "compressed_bytes"
+      ],
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "compressed_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 134217728
+        }
+      }
+    }
+  }
+}

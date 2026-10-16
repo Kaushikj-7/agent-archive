@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Interrupted owned retention keeps the complete selecting source set and exact
+  metadata for recovery. A newer hook can restore that same baseline after native
+  files disappear; its new evidence stays queued. Explicit undo cannot restore
+  the removed session. Deletion preserves catalog snapshots and refuses changed
+  winners or unsafe local ownership.
+
 - Recover complete historical source-set publications from exact private retained evidence,
   with one shared disk/memory budget and permanent source-set writer protection.
   Stronger privacy replaces all selected revisions and retires obsolete private

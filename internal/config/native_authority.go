@@ -49,7 +49,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	}
 	raw, err := c.marshalBaseJSON()
 	if err != nil || !c.NativeAuthorityProtection {
-		return raw, err
+		return wrapDeletionConfig(raw, c.DeletionProtection), err
 	}
 	var doc map[string]json.RawMessage
 	if err = json.Unmarshal(raw, &doc); err != nil {
@@ -67,7 +67,8 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	doc["schema_version"] = version
-	return json.Marshal(doc)
+	result, err := json.Marshal(doc)
+	return wrapDeletionConfig(result, c.DeletionProtection), err
 }
 
 func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {

@@ -14,6 +14,9 @@ import (
 )
 
 func (s *sessionScan) sourceSetPublishPending(pending state.PendingPublication) (sessionOutcome, error) {
+	if err := s.local.ValidateRetentionRestoration(s.reg, pending); err != nil {
+		return outcomeSkipped, err
+	}
 	endAttempt, attemptErr := s.beginPublicationAttempt()
 	if attemptErr != nil {
 		return outcomeSkipped, attemptErr
@@ -32,7 +35,7 @@ func (s *sessionScan) sourceSetPublishPending(pending state.PendingPublication) 
 	if err := s.checkHistoryPublicationLocal(pending); err != nil {
 		return outcomeSkipped, err
 	}
-	if !pending.CarriesNoSource() && !storage.VerifySHA256(pending.SourceBytes, pending.SourceSHA256) {
+	if len(pending.SourceBytes) > 0 && !storage.VerifySHA256(pending.SourceBytes, pending.SourceSHA256) {
 		return outcomeSkipped, errors.New("pending source checksum does not match its persisted bytes")
 	}
 	// Marking it attempted rewrites the whole file, source bytes and bundle
@@ -86,6 +89,9 @@ func (s *sessionScan) sourceSetPublishPending(pending state.PendingPublication) 
 }
 
 func (s *sessionScan) sourceSetAcknowledgePublication(pending state.PendingPublication, keepPending bool) (sessionOutcome, error) {
+	if err := s.local.ValidateRetentionRestoration(s.reg, pending); err != nil {
+		return outcomeSkipped, err
+	}
 	endAttempt, attemptErr := s.beginPublicationAttempt()
 	if attemptErr != nil {
 		return outcomeSkipped, attemptErr
@@ -103,6 +109,9 @@ func (s *sessionScan) sourceSetAcknowledgePublication(pending state.PendingPubli
 }
 
 func (s *sessionScan) sourceSetAcknowledgeReadback(pending state.PendingPublication, keepPending bool, body []byte, etag string) (sessionOutcome, error) {
+	if err := s.local.ValidateRetentionRestoration(s.reg, pending); err != nil {
+		return outcomeSkipped, err
+	}
 	endAttempt, attemptErr := s.beginPublicationAttempt()
 	if attemptErr != nil {
 		return outcomeSkipped, attemptErr
@@ -158,6 +167,9 @@ func (s *sessionScan) sourceSetAcknowledgeReadback(pending state.PendingPublicat
 	if err := s.published.SaveCommittedPublication(pending, s.now); err != nil {
 		return outcomeSkipped, fmt.Errorf("update published cache: %w", err)
 	}
+	if err := s.local.CompleteRetentionRestoration(s.reg, pending, s.published); err != nil {
+		return outcomeSkipped, err
+	}
 	// C may have indexed the exact response before a competing writer changes
 	// metadata. Keep its repair obligation until D and the full local save have
 	// both succeeded; neither a closing conflict nor a failed save settles it.
@@ -211,11 +223,19 @@ func (s *sessionScan) sourceSetAcknowledgeReadback(pending state.PendingPublicat
 		if err := s.removeCompletedCatalogJournal(pending); err != nil {
 			return outcomeSkipped, fmt.Errorf("remove completed source-set journal: %w", err)
 		}
+		if pending.Preparation != nil && pending.Preparation.Retention != nil {
+			if err := s.local.RemoveRestoredDeletionStages(s.id()); err != nil {
+				return outcomeSkipped, err
+			}
+		}
 	}
 	return outcomePublished, nil
 }
 
 func (s *sessionScan) sourceSetUpload(pending state.PendingPublication) (*storage.ValidatedPublicationReadback, error) {
+	if err := s.local.ValidateRetentionRestoration(s.reg, pending); err != nil {
+		return nil, err
+	}
 	if err := s.local.SaveListingRepair(s.id(), state.ListingRepair{MetadataKey: pending.MetadataKey, DestinationID: s.reg.DestinationID}); err != nil {
 		return nil, fmt.Errorf("journal listing repair: %w", err)
 	}
@@ -256,6 +276,12 @@ func (s *sessionScan) sourceSetUpload(pending state.PendingPublication) (*storag
 		case state.PublicationAdmissionStage:
 			return nil, nil, state.ErrDurableStorageRecovery
 		case state.PublicationHistoryStage:
+			if source.Payload.Stage != nil && source.Payload.Stage.Namespace == "session-deletion-sources" {
+				scoped, closeScope := s.local.WithReadBudget(s.ctx, s.readBudget())
+				s.retainedReleases = append(s.retainedReleases, closeScope)
+				data, err = scoped.ReadDeletionSource(s.id(), source.Reference)
+				break
+			}
 			stage := state.PendingSource{Reference: source.Reference, Name: source.Reference.SHA256 + ".gz"}
 			data, err = s.historyStage(stage)
 			if errors.Is(err, os.ErrNotExist) {

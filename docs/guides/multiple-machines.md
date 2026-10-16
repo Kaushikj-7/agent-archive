@@ -598,3 +598,11 @@ be retried once or replaced with hidden token input during an explicit interacti
 invocation. Missing apps offer a recheck after installation or a deliberate skip.
 Pairing success is printed once setup commits, before housekeeping and any import
 offer; failed draft removal is reported as pending cleanup of committed setup.
+
+
+Owned deletion and exact retention restoration install the permanent
+`owned-deletion-v18` writer fence while retaining the underlying storage and
+capture permission floors. Upgrade writers sharing that local archive state
+before using it. This local fence cannot stop an independently credentialed
+machine from changing bucket objects; a changed selecting winner stops deletion
+or restoration and leaves its evidence for reconciliation.
