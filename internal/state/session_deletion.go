@@ -491,14 +491,22 @@ func (s *Store) StageDeletionSource(j SessionDeletion, ref archive.SourceReferen
 	if !found || deletionIntentSHA(current) != deletionIntentSHA(j) || current.Phase != DeletionPrepared || !slices.Contains(j.References, ref) || len(data) != ref.CompressedBytes || publicationSHA256(data) != ref.SHA256 {
 		return ErrDurableStorageRecovery
 	}
-	return config.WithDeletionProtection(s.home, func(g config.DurableStorageGuard) (err error) {
-		q, err := s.openDurableQuota(g)
-		if err != nil {
-			return err
-		}
-		defer func() { err = errors.Join(err, q.Close()) }()
-		return q.write(filepath.Join(deletionDirectory, j.Registration.ArchiveSessionID, "sources", ref.SHA256+".gz"), int64(len(data)), func(w io.Writer) error { _, err := w.Write(data); return err })
+	return config.WithDeletionProtection(s.home, func(g config.DurableStorageGuard) error {
+		return s.stageDeletionSourceGuarded(g, current, ref, data)
 	})
+}
+
+func (s *Store) stageDeletionSourceGuarded(g config.DurableStorageGuard, current SessionDeletion, ref archive.SourceReference, data []byte) (err error) {
+	if err := s.checkDeletionControl(g, current, current.SHA256, true); err != nil {
+		return err
+	}
+	q, err := s.openDurableQuota(g)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, q.Close()) }()
+	return q.write(filepath.Join(deletionDirectory, current.Registration.ArchiveSessionID, "sources", ref.SHA256+".gz"), int64(len(data)), func(w io.Writer) error { _, err := w.Write(data); return err })
+
 }
 
 // ReadDeletionSource accepts only a member of a validated exact intent.
