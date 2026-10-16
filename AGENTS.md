@@ -91,20 +91,18 @@ change bypass settings, or change any repository protection settings.
 
 ## Worktree resources and disk usage
 
-- Ordinary local Go builds/reviews share the user's default compiler and module
-  caches. Do not allocate a separate `GOCACHE` for every worktree, PR or agent.
-- Preserve explicit CI/qualification/security/cold-cache isolation requirements.
-  For required local isolation, use `scripts/worktree_scratch.py run
-  --isolated-go-cache --reason '<requirement>' -- COMMAND`; routine commands use
-  `run -- COMMAND`. Run it from the intended worktree/service directory with the
-  appropriate script path. Do not bypass its managed cache with another override.
-- Read [dev/contributing/worktree-storage.md](dev/contributing/worktree-storage.md) for managed scratch, storage budgets, dry-run pruning, and worktree
-  lifecycle rules. The registry is shared across worktrees; unknown or active
-  directories are never eligible for automatic cleanup.
-- Keep small evidence outside scratch, stop owned background work at completion,
-  and release disposable test resources. Give retained databases, simulators and
-  containers an explicit owner and cleanup action. Never remove another task's
-  resources or unmerged/untracked work to free space.
-- Use `status --budget-gib 20` before/after large parallel runs and preview
-  `prune --older-than-days 7` before applying cleanup. Resource isolation does not
-  justify retaining unbounded compiler caches. Keep required fresh test execution.
+- Ordinary local Go builds and reviews use the user's configured shared build
+  and module caches. Do not create a separate `GOCACHE` or `GOMODCACHE` for every
+  worktree, PR, reviewer, or agent.
+- Preserve isolation explicitly required by CI, qualification, security, or
+  cold-cache measurements. For exceptional local caches, reuse an existing
+  self-cleaning runner or a temporary directory with cleanup on success,
+  failure, and cancellation. Record why isolation is required.
+- Keep small logs, reports, and patches separately from compiler output. Do not
+  retain a whole cache or build tree merely to preserve evidence.
+- Stop owned background processes before removing their scratch. Track the owner
+  and cleanup action for disposable databases, simulators, and containers.
+  Remove only task-owned resources after checking that they are no longer in use;
+  preserve shared caches, other tasks' resources, and unmerged/untracked work.
+- At completion, report any retained large directories, why they remain, and how
+  to clean them. Follow [worktree storage and cleanup](dev/contributing/worktree-storage.md) when running many worktrees.

@@ -2,8 +2,8 @@
 
 For local parallel worktrees, follow [worktree storage and cleanup](worktree-storage.md).
 Ordinary development shares the default Go caches; required hosted, qualification
-and cold-cache isolation remains in effect. Use managed disposable scratch for
-local isolated runs, and retain reports separately from compiler caches.
+and cold-cache isolation remains in effect. Give exceptional local caches a temporary
+owner and cleanup lifecycle; retain reports separately from compiler caches.
 
 What CI checks, run locally from the repository root (the
 [Levenshtein checks](#levenshtein-checks) below run too):
@@ -28,7 +28,6 @@ python3 -B scripts/test_ci_lane_verdict.py                # mandatory script and
 python3 scripts/test_ci_tiers.py                         # cadence, source proof and body evidence
 python3 scripts/test_go_shards.py                         # discovery, coverage, verdict, and process cleanup
 python3 -B scripts/test_generate_go_shard_hints.py         # matched artifact medians and pause envelopes
-python3 -B scripts/test_worktree_scratch.py              # owned scratch, leases and safe pruning
 python3 -B scripts/test_go_cache_context.py               # cache identity and tracked source proof
 python3 -B scripts/test_go_cache_steps.py                 # cache failure paths and PR-only wiring
 python3 scripts/test_measure_hook.py                     # synthetic hook benchmark effect/cleanup checks
@@ -987,8 +986,7 @@ Check a change for order dependence and races with
 `go test -race -count=3 -shuffle=on ./internal/cli`, and for timing
 under load with `go test -race -cpu 1,4,18 -shuffle=on ./internal/cli`.
 `internal/cli`'s `TestMain` puts `$TMPDIR` (so every `t.TempDir`) in a
-folder of the run's own under `/tmp`, or inside the wrapper's managed scratch
-when launched with `scripts/worktree_scratch.py`: `local.CanonicalPath` lists each parent
+folder of the run's own under `/tmp`: `local.CanonicalPath` lists each parent
 of a path, and macOS's per-user temporary folder can hold thousands of
 entries. (The product calls it only from setup, status and uninstall, on
 paths under your home folder, never from a hook or a collector pass.)
