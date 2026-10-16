@@ -1312,7 +1312,7 @@ func captureCheckLiveFactsShape(t *testing.T, pkg *types.Package, fset *token.Fi
 		}
 	}
 	captureCheckLiveIssuerSignature(t, pkg)
-	for name, methods := range map[string]map[string]bool{"CaptureRequest": {"Borrow": true, "Close": true, "MatchesBudget": true, "MatchesPolicy": true}, "RequestLease": {"Context": true, "Budget": true, "Reservation": true, "Registration": true, "Reviewed": true, "Locator": true, "At": true, "Policy": true, "Check": true, "Close": true}, "CapturedScope": {"Reserve": true, "Release": true, "Available": true, "Refuse": true}, "LiveCaptureRequest": {"Borrow": true, "Close": true}, "LiveCaptureLease": {"Original": true, "Context": true, "Err": true, "Reserve": true, "OpenWorkspace": true, "Close": true}} {
+	for name, methods := range map[string]map[string]bool{"CapturePolicy": {}, "CaptureSkillMode": {}, "SettledImportFacts": {"UnmarshalJSON": true}, "CaptureRequest": {"Borrow": true, "Close": true, "MatchesBudget": true, "MatchesPolicy": true}, "RequestLease": {"Context": true, "Budget": true, "Reservation": true, "Registration": true, "Reviewed": true, "Locator": true, "At": true, "Policy": true, "Check": true, "Close": true}, "CapturedScope": {"Reserve": true, "Release": true, "Available": true, "Refuse": true}, "LiveCaptureRequest": {"Borrow": true, "Close": true}, "LiveCaptureLease": {"Original": true, "Context": true, "Err": true, "Reserve": true, "OpenWorkspace": true, "Close": true}} {
 		obj, ok := pkg.Scope().Lookup(name).(*types.TypeName)
 		if !ok || obj.IsAlias() {
 			t.Errorf("live binding %s must be concrete", name)
@@ -1323,9 +1323,11 @@ func captureCheckLiveFactsShape(t *testing.T, pkg *types.Package, fset *token.Fi
 			t.Error("live binding not named")
 			continue
 		}
-		structure, ok := named.Underlying().(*types.Struct)
-		if !ok || structure.NumFields() != 1 || structure.Field(0).Exported() {
-			t.Errorf("live binding %s exposes owner mutation", name)
+		if name == "CaptureRequest" || name == "RequestLease" || name == "CapturedScope" || name == "LiveCaptureRequest" || name == "LiveCaptureLease" {
+			structure, ok := named.Underlying().(*types.Struct)
+			if !ok || structure.NumFields() != 1 || structure.Field(0).Exported() {
+				t.Errorf("live binding %s exposes owner mutation", name)
+			}
 		}
 		for i := range named.NumMethods() {
 			method := named.Method(i)
