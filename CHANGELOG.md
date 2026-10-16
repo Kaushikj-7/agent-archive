@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Pending-publication cleanup refuses malformed JSON inside records it scans
+  without retaining, preserving damaged journals for recovery while keeping
+  the bounded-memory checks used for large Codex histories.
+
 - When Codex discovery is unavailable but every published automatic session has
   recorded read-back verification, status says “discovery unknown; archive
   verified at recorded time”. Restore source access and run sync to check

@@ -1,0 +1,20 @@
+{
+  "name": "aa-probe",
+  "version": "0.0.3",
+  "description": "agent-archive probe: records which hooks fire in cloud sessions, whether plugin options and a bundled binary reach them. Writes markers to /tmp only.",
+  "userConfig": {
+    "upload_note": {
+      "type": "string",
+      "title": "Probe note",
+      "description": "Any non-secret text, for example hello. Tests whether plain options reach cloud hooks.",
+      "required": false
+    },
+    "upload_secret": {
+      "type": "string",
+      "title": "Probe secret",
+      "description": "Type the test value probe-secret-123 (not a real secret). Tests whether sensitive options reach cloud hooks.",
+      "sensitive": true,
+      "required": false
+    }
+  }
+}
