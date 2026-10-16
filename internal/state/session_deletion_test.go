@@ -226,6 +226,7 @@ func TestDeletionOwnerFreezesSourceAndRelationshipAuthority(t *testing.T) {
 		"native-root":    func(r *archive.SessionRegistration) { r.NativeRootSessionID = "other-root" },
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			changed := reg
 			mutate(&changed)
 			if _, found, err := s.LoadSessionDeletion(changed); !found || !errors.Is(err, ErrDurableStorageRecovery) {
@@ -359,5 +360,49 @@ func TestDeletionOwnerGuardsNeverReadRetainedMetadata(t *testing.T) {
 	}
 	if _, err := s.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.TranscriptPath += "-moved"; return nil }); !errors.Is(err, ErrRemovalPending) {
 		t.Fatal("owner-only projection did not refuse", err)
+	}
+}
+
+func TestPinnedForgetRefusesReplacementAfterRemovingOwnedEmptyStage(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	reg := registration(t)
+	if err := s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	stage := filepath.Join(s.home, "sessions", reg.ArchiveSessionID, "import-stage", "stage.json")
+	if err := os.MkdirAll(filepath.Dir(stage), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stage, []byte("owned"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	registrationPath := s.registrationPath(reg.ArchiveSessionID)
+	records, err := s.pinDeletionRecords([]string{stage, registrationPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = records.close() }()
+	if err := records.remove(stage); err != nil {
+		t.Fatal(err)
+	}
+	if err := records.removeEmptyImportDirectory(reg.ArchiveSessionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Dir(stage), 0700); err != nil {
+		t.Fatal(err)
+	}
+	foreign := []byte("replacement owner")
+	if err := os.WriteFile(stage, foreign, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := records.remove(registrationPath); !errors.Is(err, ErrDurableStorageRecovery) {
+		t.Fatal("replacement adopted after owned directory removal", err)
+	}
+	if got, err := os.ReadFile(stage); err != nil || !bytes.Equal(got, foreign) {
+		t.Fatal("replacement changed", err)
+	}
+	if _, err := os.Stat(registrationPath); err != nil {
+		t.Fatal("registration removed after replacement", err)
 	}
 }

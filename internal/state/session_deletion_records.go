@@ -17,6 +17,7 @@ type deletionRecords struct {
 	home       string
 	dirs       map[string]*os.Root
 	files      map[string]os.FileInfo
+	removed    map[string]bool
 	syncParent func(*os.Root) error
 }
 
@@ -26,11 +27,11 @@ func (s *Store) pinDeletionRecords(paths []string) (_ *deletionRecords, err erro
 		return nil, err
 	}
 	root := held.Root
-	r := &deletionRecords{root: root, held: held, home: s.home, dirs: map[string]*os.Root{".": root}, files: map[string]os.FileInfo{}}
-	r.syncParent = syncDurableParent
+	syncParent := syncDurableParent
 	if s.deletionRecordsSync != nil {
-		r.syncParent = s.deletionRecordsSync
+		syncParent = s.deletionRecordsSync
 	}
+	r := &deletionRecords{root: root, held: held, home: s.home, dirs: map[string]*os.Root{".": root}, files: map[string]os.FileInfo{}, removed: map[string]bool{}, syncParent: syncParent}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, r.close())
@@ -90,6 +91,12 @@ func (r *deletionRecords) currentHome() error {
 		}
 		parent := r.dirs[filepath.Dir(path)]
 		named, err := parent.Lstat(filepath.Base(path))
+		if r.removed[path] {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return ErrDurableStorageRecovery
+		}
 		if err != nil {
 			return err
 		}
@@ -132,11 +139,34 @@ func (r *deletionRecords) remove(path string) error {
 }
 
 func (r *deletionRecords) removeEmptySession(id string) error {
-	dir, err := r.directory(filepath.Join("sessions", id))
-	if errors.Is(err, os.ErrNotExist) {
+	return r.removeEmptyDirectory(filepath.Join("sessions", id))
+}
+
+func (r *deletionRecords) close() (err error) {
+	for path, dir := range r.dirs {
+		if !r.removed[path] {
+			err = errors.Join(err, r.syncParent(dir))
+		}
+		if path != "." {
+			err = errors.Join(err, dir.Close())
+		}
+	}
+	err = errors.Join(err, r.held.Check(), r.held.Close())
+	return err
+}
+
+// Remove only the pinned, empty import directory after both guarded file
+// removals. Its held parent keeps the final directory-sync duty.
+func (r *deletionRecords) removeEmptyImportDirectory(id string) error {
+	return r.removeEmptyDirectory(filepath.Join("sessions", id, "import-stage"))
+}
+
+func (r *deletionRecords) removeEmptyDirectory(relative string) error {
+	dir := r.dirs[relative]
+	if dir == nil {
 		return nil
 	}
-	if err != nil {
+	if err := r.currentHome(); err != nil {
 		return err
 	}
 	file, err := dir.Open(".")
@@ -148,34 +178,21 @@ func (r *deletionRecords) removeEmptySession(id string) error {
 		err = nil
 	}
 	err = errors.Join(err, file.Close())
-	if err != nil {
+	if err != nil || len(entries) > 0 {
 		return err
 	}
-	if len(entries) > 0 {
-		return nil
-	}
-	parent := r.dirs["sessions"]
-	info, err := parent.Lstat(id)
+	parent := r.dirs[filepath.Dir(relative)]
+	named, err := parent.Lstat(filepath.Base(relative))
 	if err != nil {
 		return err
 	}
 	held, err := dir.Stat(".")
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() || !os.SameFile(info, held) {
+	if err != nil || !named.IsDir() || !os.SameFile(named, held) {
 		return ErrDurableStorageRecovery
 	}
-	return parent.Remove(id)
-}
-
-func (r *deletionRecords) close() (err error) {
-	for path, dir := range r.dirs {
-		err = errors.Join(err, r.syncParent(dir))
-		if path != "." {
-			err = errors.Join(err, dir.Close())
-		}
+	if err := parent.Remove(filepath.Base(relative)); err != nil {
+		return err
 	}
-	err = errors.Join(err, r.held.Check(), r.held.Close())
-	return err
+	r.removed[relative] = true
+	return nil
 }

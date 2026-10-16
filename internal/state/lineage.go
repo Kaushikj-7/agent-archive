@@ -518,10 +518,12 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 		s.invalidatePublishedAccounting(path)
 		remove := records.remove
 		if path == filepath.Join(s.home, importStageRelative(archiveSessionID)) {
-			remove = func(string) error { return s.RemoveImportStage(archiveSessionID) }
-		}
-		if path == filepath.Join(s.home, importCancelRelative(archiveSessionID)) {
-			remove = func(string) error { return s.removeImportCancellation(archiveSessionID) }
+			remove = func(path string) error {
+				if err := s.checkImportStageRemoval(s.durableContext(), archiveSessionID); err != nil {
+					return err
+				}
+				return records.remove(path)
+			}
 		}
 		if path == s.registrationPath(archiveSessionID) {
 			remove = func(path string) error { return s.removeRegistrationWithRevisionUsing(path, revision, records.remove) }
@@ -530,10 +532,16 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 			return errors.Join(fmt.Errorf("remove %q: %w", path, err), s.MarkSessionIndexRecoveryNeeded())
 		}
 	}
+	if err := records.removeEmptyImportDirectory(archiveSessionID); err != nil {
+		return err
+	}
 	if err := records.currentHome(); err != nil {
 		return err
 	}
-	for _, dir := range records.dirs {
+	for path, dir := range records.dirs {
+		if records.removed[path] {
+			continue
+		}
 		if err := syncDurableParent(dir); err != nil {
 			return err
 		}

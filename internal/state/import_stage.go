@@ -620,6 +620,13 @@ func (s *Store) RemoveImportStage(id string) error {
 }
 
 func (s *Store) removeImportStage(ctx context.Context, id string) error {
+	if err := s.checkImportStageRemoval(ctx, id); err != nil {
+		return err
+	}
+	return s.removeImportFile(id, "stage.json")
+}
+
+func (s *Store) checkImportStageRemoval(ctx context.Context, id string) error {
 	stage, found, err := s.loadPreparedImportStage(ctx, id)
 	if err != nil {
 		return err
@@ -627,7 +634,7 @@ func (s *Store) removeImportStage(ctx context.Context, id string) error {
 	if found && stage.TypedSelection {
 		return ErrReadySelectionFrozen
 	}
-	return s.removeImportFile(id, "stage.json")
+	return nil
 }
 
 func (s *Store) removeImportFile(id, name string) (err error) {

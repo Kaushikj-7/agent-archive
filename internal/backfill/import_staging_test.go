@@ -238,7 +238,7 @@ func TestUnadmittedStagedImportUndoPreventsRecovery(t *testing.T) {
 	}
 	result := plan.Remove(t.Context(), r.Store, storagetest.NewMemoryStore(), fixedNow)
 	if len(result.Failed) != 0 {
-		t.Fatalf("undo stage: %#v", result)
+		t.Fatalf("undo stage: %+v", result)
 	}
 	if err := r.Store.ResumeImportAdmissions(t.Context()); err != nil {
 		t.Fatal(err)
