@@ -149,15 +149,22 @@ covers are unchanged. For each sealed segment the collector keeps a private
 the precedent of the Muse successful-validation checkpoint (private native
 binding version 2: positive raw byte boundary plus SHA-256).
 
-Progress must also be durable where nothing is retained: the filter can drop
-a long run of raw records (large tool outputs) without producing a chunk. So
-the collector also writes a **progress checkpoint** at a newline-aligned raw
-boundary once 64 MiB of raw input has passed since the last checkpoint of
-either kind. It has the same fields with no `segment_sha256`, plus the
-content-free gap codes and omitted-key names the filter has accumulated since
-the last sealed chunk, so the next chunk's gap set comes out the same as an
-uninterrupted read. A pass that stops at the per-pass limit therefore always
-stops at a checkpoint, even when the last 512 MiB produced no output.
+Progress must also be durable where nothing is retained: the filter can drop a
+long run of raw records (large tool outputs) without producing a chunk. So the
+collector also writes a **progress checkpoint** at a newline-aligned raw
+boundary once 64 MiB of raw input has passed since the last checkpoint of either
+kind. It has the same fields with no `segment_sha256`, plus the content-free gap
+codes and omitted-key names the filter has accumulated since the last sealed
+chunk, so the next chunk's gap set comes out the same as an uninterrupted read.
+When the chunk in progress already holds retained records, the progress
+checkpoint also stages them as a private **partial stage** (checksum-named,
+durable, never uploaded) and records its checksum; the next pass reloads it and
+keeps appending, and the partial stage is replaced when the chunk seals. A
+checkpoint is valid only if its partial stage is present and matches, so a
+resumed pass never skips raw records whose retained output was not saved; if the
+partial stage is missing, the pass resumes from the previous checkpoint instead.
+A pass that stops at the per-pass limit therefore always stops at a checkpoint,
+even when the last 512 MiB produced no output.
 
 A pass:
 
@@ -321,8 +328,16 @@ segment list:
   from the first segment with own activity; `session_labels` (on history
   sources since filter 26) and native names come from the head's supplemental
   evidence, exactly as `archive.CurrentSessionLabel` reads them today.
-- Filter gaps are the union across segments, deduplicated by code and detail
-  as `addGap` does now.
+- Record-level filter gaps are the union across segments, deduplicated by
+  code and detail as `addGap` does now. The key-name gaps
+  (`unknown_field_omitted`, `sensitive_or_hidden_field_omitted`) are not
+  per-segment strings: `addOutputKeyGaps` joins every omitted or denied key
+  name into one detail for the whole transcript. Segments therefore record
+  their omitted and denied key-name sets as structured, content-free
+  evidence, and the head's derivation unions the sets across its segments
+  and emits one canonical gap of each kind, matching an assembled read. The
+  PR 3 equivalence test compares the assembled gap list, including a thread
+  whose segments omit different keys.
 
 Each publication streams every segment again (decision D4): memory bounded
 by one segment, CPU proportional to F, rate limited by the upload interval.
@@ -380,10 +395,14 @@ benchmark adds a thread with one million unique tool-call IDs.
 
 Consumers that need a whole per-record view use a **spooled view** instead of
 memory: segments are streamed through the existing normalization into a
-private temporary file under the agent-archive home (record per line,
-removed when the command exits, never uploaded), and the consumer renders
-from the spool with its own existing size rules. Memory is one segment plus
-one rendered record; disk is the normalized view's size.
+private file (mode 0600, record per line, never uploaded) in a managed
+`spool/` directory under the agent-archive home, named by session and owning
+process. The command removes it on exit; because a killed process or power loss
+skips that, every command sweeps `spool/` on entry and removes files whose
+owning process no longer exists or that are older than a day, and session delete
+and purge also remove any spool for that session. The consumer renders from the
+spool with its own existing size rules. Memory is one segment plus one rendered
+record; disk is the normalized view's size.
 
 ### Reading: show, handoff, search, verification, eval export
 
@@ -479,7 +498,11 @@ capture is the last fully published segment set.
   compresses well below that. A session that would need more records a
   size-limit gap of a new `unpublished_stage_bytes` kind (bytes, so a changed
   limit reads it again) rather than dropping work or starving other
-  sessions' staging. No segment is uploaded before the chain is covered:
+  sessions' staging. Recording that gap (or any other terminal gap during an
+  unpublished read) releases the session's unpublished stages, partial
+  stages and their checkpoints, so a gapped session holds no quota; if a
+  later build changes the limit, the session is read again from its last
+  published state. No segment is uploaded before the chain is covered:
   the existing rule that preparation makes no remote write until every input
   is staged is kept.
 - **Pending journal**: a new `PendingHistory` journal version carrying the head,
@@ -537,7 +560,14 @@ new one is complete.
    machines will hide segmented sessions until upgraded, or upgrades them first.
    A machine with no record (an unpaired reader using shared keys) cannot be
    detected, which the prompt says. The opt-in is recorded in configuration
-   under the writer capability below, never inferred.
+   under the writer capability below, never inferred. The gate is not
+   one-time: once per pass, before any segmented publication, the collector
+   re-reads the destination's machine records (one listing of `machines/`,
+   skipped when unchanged since the last check). A newly seen machine
+   without `codex-segments-v1` defers segmented publications (not gaps; the
+   last published snapshots stay), and `status` names that machine and says
+   to upgrade it or confirm the opt-in again. Pairing a machine from a
+   current build warns the same way.
 3. **Writer capability.** The writer is enabled behind a new permanent
    configuration writer capability (the next unreserved configuration version
    in `internal/config/wire.go`, coordinated with open reservations), so an
@@ -554,24 +584,29 @@ new one is complete.
 
 ### Migration of existing history sources
 
-A schema-3 session is migrated by its next capture, not by rewriting retained
-bytes: the first segmented pass has no checkpoints, so it reads the chain once
-from ordinal 0, sealing and staging chunks as it goes (memory one chunk), and
-publishes the segment set as the same current revision.
+A schema-3 session, and a single-rollout schema-2 session that D1 selects, is
+migrated by its next capture, not by rewriting retained bytes: the first
+segmented pass has no checkpoints, so it reads the chain once from ordinal 0,
+sealing and staging chunks as it goes (memory one chunk), and publishes the
+segment set as the same current revision.
 
 Migration is a representation change, so it must not make an old session look
-newly active and postpone its deletion. Every migrated segment whose records
-the prior publication already covered (same rollout, ordinals below the prior
-active span's end) takes the prior publication's `captured_at`, and the head
-takes it too, unless the pass also found genuinely new records. Only segments
-holding records past the prior coverage get the pass time. If the old object
-is unreadable, so that coverage cannot be established, the session stays
-pending rather than guessing a time. Carried-over preserved references keep
-their own `captured_at` and are written with `kind: source`. The old schema-3
-object becomes a retired reference after the new set's readback. Preserved
-schema-3 revisions stay as preserved references; readers keep reading them
-(prior schema-2 and schema-3 references are already permitted in metadata
-schema 2, and remain so in M).
+newly active and postpone its deletion. Every migrated segment whose records the
+prior publication already covered (same rollout, ordinals below the prior active
+span's end) takes the prior publication's `captured_at`, and the head takes it
+too, unless the pass also found genuinely new records. Only segments holding
+records past the prior coverage get the pass time. A schema-2 prior has no raw
+ordinals, so its coverage is established with the existing legacy check
+(`ownedRevisionProjection`: its ordered retained records must be a prefix of the
+same physical rollout's new records) and covers the segments holding those
+records; a schema-2 prior that is not such a prefix stays pending as a rewrite,
+as today. If the old object is unreadable, so that coverage cannot be
+established, the session stays pending rather than guessing a time. Carried-over
+preserved references keep their own `captured_at` and are written with `kind:
+source`. The old schema-2 or schema-3 active object becomes a retired reference
+after the new set's readback. Preserved schema-3 revisions stay as preserved
+references; readers keep reading them (prior schema-2 and schema-3 references
+are already permitted in metadata schema 2, and remain so in M).
 
 Splitting retained schema-3 objects into segments without a native read (D9)
 would keep capture times but produce no raw checkpoints, so the next pass would
@@ -631,12 +666,11 @@ Each PR has one concern and is merged in order unless marked parallel.
    fail-closed tests for an unreadable head. Privacy maintenance, retention,
    delete, purge and GC over segment sets, with tests that a shared segment
    survives the deletion of one revision. Must merge before PR 8.
-8. **Enable and migrate.** The per-destination opt-in, its machine-version
-   check and the requeue of Codex sessions in size-limit gaps; turn the
-   writer on for threads selected by D1;
-   migration of schema-3 sessions by recapture; adapter/filter/parser bumps,
-   CHANGELOG, privacy changelog, user docs (`docs/` size-limit and status
-   wording), versions.md.
+8. **Enable and migrate.** The per-destination opt-in, its machine-version check
+   and the requeue of Codex sessions in size-limit gaps; turn the writer on for
+   threads selected by D1; migration of schema-3 and selected schema-2 sessions
+   by recapture; adapter/filter/parser bumps, CHANGELOG, privacy changelog, user
+   docs (`docs/` size-limit and status wording), versions.md.
 
 ## Validation and live checks
 
@@ -658,8 +692,9 @@ Synthetic (every PR, CI):
   chunk target produces only segments within the per-segment ceiling.
 - Crash at each journal step; stricter privacy re-filter of a 32-segment
   thread with one segment in memory; delete/purge/GC of shared segments.
-- Migration of an unchanged schema-3 session keeps its prior `captured_at` on
-  every segment and the head, so retention age is unchanged; a session with
+- Migration of an unchanged schema-3 session, and of a single-rollout
+  schema-2 session over 16 MiB, keeps its prior `captured_at` on every
+  segment and the head, so retention age is unchanged; a session with
   preserved schema-3 revisions resolves them as `source` references and GC
   stays able to run.
 - A segment shared by heads with different ownership boundaries is searchable
@@ -672,6 +707,13 @@ Synthetic (every PR, CI):
 - More than 512 MiB of raw input that the filter drops entirely advances by
   progress checkpoints across passes and reaches publication, with the same
   gap set as one uninterrupted read.
+- A pass stopped at the per-pass limit with 8 MiB of retained output in an
+  unsealed chunk resumes from its partial stage and publishes every record.
+- A `show --json` process killed mid-spool leaves a file the next command
+  removes; purge removes a session's spool.
+- A session gapped for unpublished stage bytes holds no staging quota.
+- A newly paired machine without the reader capability defers segmented
+  publication and is named by `status`.
 - A rollback that leaves a segmented thread's active chain under 16 MiB
   still publishes schema M with the old revision preserved as a head.
 - A paired machine whose record lacks `codex-segments-v1` (including a
