@@ -53,6 +53,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Local native validation foundation
 
+- Muse's opt-in qualification endpoint accepts the observed exact model-catalog
+  GET route and records fixed, content-free first-refusal diagnostics. Existing
+  request bounds remain; this adds no native tool-status qualification.
+
 - Muse retains own committed tool-call identities and validates exact prior
   result batch/index/call joins after native loss. Nonempty enriched sources
   expose observed call counts; legacy or mixed coverage stays unavailable.
