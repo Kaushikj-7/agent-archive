@@ -6,11 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Protected Cursor backfill can stage selected root chats from a live WAL using
-  a bounded private SQLite image. Scratch capacity is reserved before copying,
-  and cleanup must succeed before admission. Existing staged evidence can then
-  publish after the native source disappears. Live Cursor/platform qualification
-  remains unverified; unknown capabilities and exhausted budgets stay pending.
+- Muse local handoff previews now read only their reserved head/tail windows,
+  avoiding whole-file hashes while browsing large histories. Selected sessions
+  retain complete filtering and independent content verification.
 
 - Interrupted history privacy preparation now reads each retained revision's
   original parent before applying a later resolved parent. Older pending
@@ -36,6 +34,12 @@ follow [Semantic Versioning](https://semver.org/).
   current source is prepared from the candidate it was frozen from rather than
   decoded again. Capturing such a thread's growth needs about 5 times its
   filtered size in read memory instead of about 12.
+
+- Protected Cursor backfill can stage selected root chats from a live WAL using
+  a bounded private SQLite image. Scratch capacity is reserved before copying,
+  and cleanup must succeed before admission. Existing staged evidence can then
+  publish after the native source disappears. Live Cursor/platform qualification
+  remains unverified; unknown capabilities and exhausted budgets stay pending.
 
 - Archived Cursor sessions now carry the chat's name. Sessions captured from
   Cursor's agent transcripts, which record no name, read it from the chat's
@@ -67,6 +71,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Local native validation foundation
 
+- Muse's opt-in qualification endpoint accepts the observed exact model-catalog
+  GET route and controlled tool-echo representation, with fixed, content-free
+  first-refusal diagnostics. Existing request bounds and call/result checks
+  remain; this adds no native tool-status qualification.
+
 - Muse retains own committed tool-call identities and validates exact prior
   result batch/index/call joins after native loss. Nonempty enriched sources
   expose observed call counts; legacy or mixed coverage stays unavailable.
@@ -80,8 +89,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 - Muse local snapshots now supply exact raw content proofs and bounded provisional
   startup facts. Protected native binding v2 can retain a successful raw validation
-  checkpoint through the collector's prepared commit. Real Muse capture and empty
-  locator resolution remain unavailable.
+  checkpoint through the collector's prepared commit. A shared bounded inventory
+  now resumes empty-locator work across collector processes and rechecks current
+  uniqueness before guarded first binding. Real Muse capture remains unavailable;
+  the positive collector composition uses an injected test producer.
 
 - Muse local handoff now shows recorded own input/output observations from
   qualified completions. Full usage, cache/reasoning composition and cost remain

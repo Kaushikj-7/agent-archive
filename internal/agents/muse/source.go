@@ -20,14 +20,30 @@ func (SourceProvider) Describe(ref agentapi.SourceRef) (agentapi.SourceSemantics
 
 // OpenPass refuses capture before opening or filtering any native content.
 func (SourceProvider) OpenPass(ctx context.Context, env agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
-	if err := ctx.Err(); err != nil {
+	if err := localSourceEnvironment(ctx, env); err != nil {
 		return nil, err
-	}
-	if env.RequireConfinedHistory || env.NativeRoot != nil || env.LegacyUnboundRegistration {
-		return nil, agentapi.Wrap(agentapi.Unsafe, errors.Join(agentapi.ErrInvalidSourceBinding, errors.New("muse capture unavailable: qualified native source binding required; use handoff --file for local reading")))
 	}
 	if env.Files == nil {
 		env.Files = transcriptio.OS{}
 	}
 	return &sourcePass{env: env, live: map[*sourceSnapshot]bool{}}, nil
+}
+
+// OpenPreviewPass uses confined file snapshots without hashing uninspected bytes.
+// It supplies no content proof and preserves the ordinary capture refusal.
+func (SourceProvider) OpenPreviewPass(ctx context.Context, env agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
+	if err := localSourceEnvironment(ctx, env); err != nil {
+		return nil, err
+	}
+	return (sourceio.FileProvider{}).OpenPass(ctx, env)
+}
+
+func localSourceEnvironment(ctx context.Context, env agentapi.SourceEnvironment) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if env.RequireConfinedHistory || env.NativeRoot != nil || env.LegacyUnboundRegistration {
+		return agentapi.Wrap(agentapi.Unsafe, errors.Join(agentapi.ErrInvalidSourceBinding, errors.New("muse capture unavailable: qualified native source binding required; use handoff --file for local reading")))
+	}
+	return nil
 }

@@ -5,11 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
-	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
@@ -45,29 +42,7 @@ type Header struct {
 // OpenRegular opens within an approved root without blocking on FIFOs or
 // permitting a symlink escape. The caller owns the returned file.
 func OpenRegular(root, path string) (*os.File, error) {
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return nil, errors.New("invalid source locator")
-	}
-	r, err := os.OpenRoot(root)
-	if err != nil {
-		return nil, errors.New("source root unavailable")
-	}
-	defer func() { _ = r.Close() }()
-	info, err := r.Lstat(rel)
-	if err != nil || !info.Mode().IsRegular() {
-		return nil, errors.New("source is not a regular file")
-	}
-	f, err := r.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, errors.New("source unavailable")
-	}
-	opened, err := f.Stat()
-	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
-		_ = f.Close()
-		return nil, errors.New("source changed while opening")
-	}
-	return f, nil
+	return transcriptio.OpenRootRegular(root, path)
 }
 
 // ReadHeader opens a bounded source safely. Paths and native IDs are never

@@ -46,7 +46,7 @@ func createDiscoveryCleanupState(t *testing.T) (string, Env) {
 	unlock()
 	must(t, err)
 	must(t, capture.ReplayAdmissionIntents(home, now.Add(2*time.Second), env.agentRegistry()))
-	names := []string{"discovery-health.json", "admission-replay-cursor.json"}
+	names := []string{"discovery-health.json", "discovery-catalog.lock", "admission-replay-cursor.json"}
 	for _, name := range names {
 		if _, err := os.Stat(filepath.Join(home, name)); err != nil {
 			t.Fatalf("producer did not create %s: %v", name, err)
@@ -59,14 +59,14 @@ func TestUninstallDiscoveryProducerState(t *testing.T) {
 	for _, mode := range []string{"delete", "ordinary", "unrelated"} {
 		t.Run(mode, func(t *testing.T) {
 			home, env := createDiscoveryCleanupState(t)
-			names := []string{"discovery-health.json", "admission-replay-cursor.json"}
+			names := []string{"discovery-health.json", "discovery-catalog.lock", "admission-replay-cursor.json"}
 			before := map[string][]byte{}
 			for _, name := range names {
 				raw, err := os.ReadFile(filepath.Join(home, name))
 				must(t, err)
 				before[name] = raw
 			}
-			unrelated := []string{"my-notes.txt", "discovery-health.json.bak", "admission-replay-cursor.json.bak"}
+			unrelated := []string{"my-notes.txt", "discovery-catalog.lock.bak", "discovery-health.json.bak", "admission-replay-cursor.json.bak"}
 			if mode == "unrelated" {
 				for _, name := range unrelated {
 					must(t, os.WriteFile(filepath.Join(home, name), []byte("user-owned"), 0600))
