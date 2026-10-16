@@ -1,9 +1,6 @@
 # Testing
 
-For local parallel worktrees, follow [worktree storage and cleanup](worktree-storage.md).
-Ordinary development shares the default Go caches; required hosted, qualification
-and cold-cache isolation remains in effect. Give exceptional local caches a temporary
-owner and cleanup lifecycle; retain reports separately from compiler caches.
+For local cache and resource cleanup, follow [worktree storage](worktree-storage.md).
 
 What CI checks, run locally from the repository root (the
 [Levenshtein checks](#levenshtein-checks) below run too):
