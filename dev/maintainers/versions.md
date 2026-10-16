@@ -336,6 +336,5 @@ Muse effect-body compatibility accepts the closed native `file_read` profile,
 `complete` task completion and `failed` outcome forms. Only validation of private
 omitted bodies changes: equivalent old and new bodies yield byte-identical
 retained rows and the same analysis. Subject/reason strings and outcome tags are
-not retained or interpreted as result/error facts. Filter28, global/Muse adapter
-0.28.0 and Muse parser0.5.0 remain unchanged; retained schemas and metadata
-algorithms do not change. No source recapture or richer metadata is implied.
+not retained or interpreted as result/error facts. This validation-only change allocates no additional filter, adapter or parser
+version; inherited retained schemas and metadata algorithms do not change. No source recapture or richer metadata is implied.
