@@ -91,7 +91,9 @@ func (s *Store) removeOwnedImportStageAt(ctx context.Context, home *local.Rooted
 	checkParent := func() error { return checkOwnedImportDirectory(home, parent, parentRelative, check) }
 	root, err := privateDirectory(parent, filepath.Base(relative), false)
 	if errors.Is(err, os.ErrNotExist) {
-		return syncAbsentOwnedImportDirectory(home, parent, parentRelative, filepath.Base(relative), check, syncParent)
+		return s.commitOwnedImportStageRelease(ctx, home, reg, checkParent, func() error {
+			return syncAbsentOwnedImportDirectory(home, parent, parentRelative, filepath.Base(relative), check, syncParent)
+		})
 	}
 	if err != nil {
 		return err
@@ -102,7 +104,7 @@ func (s *Store) removeOwnedImportStageAt(ctx context.Context, home *local.Rooted
 	}
 	info, err := root.Lstat("stage.json")
 	if errors.Is(err, os.ErrNotExist) {
-		return finish()
+		return s.commitOwnedImportStageRelease(ctx, home, reg, checkParent, finish)
 	}
 	if err != nil || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maxPendingHistoryBytes {
 		return errors.Join(ErrDurableStorageRecovery, err)
@@ -124,13 +126,39 @@ func (s *Store) removeOwnedImportStageAt(ctx context.Context, home *local.Rooted
 	if err := s.validateOwnedImportStage(ctx, reg, current, file, info.Size(), reservation); err != nil {
 		return err
 	}
-	if err := checkOwnedImportStage(ctx, home, root, relative, info, checkParent); err != nil {
+	return s.commitOwnedImportStageRelease(ctx, home, reg, checkParent, func() error {
+		if err := checkOwnedImportStage(ctx, home, root, relative, info, checkParent); err != nil {
+			return err
+		}
+		if err := root.Remove("stage.json"); err != nil {
+			return err
+		}
+		return finish()
+	})
+}
+
+// Decode outside the request lock; serialize only the final owner comparison,
+// unlink and durability barriers with registration updates and session removal.
+func (s *Store) commitOwnedImportStageRelease(ctx context.Context, home *local.RootedHome, reg archive.SessionRegistration, check, commit func() error) error {
+	if err := errors.Join(ctx.Err(), check()); err != nil {
 		return err
 	}
-	if err := root.Remove("stage.json"); err != nil {
+	unlock, err := local.RootedLockWait(home, requestLockName(reg.ArchiveSessionID), time.Second)
+	if err != nil {
+		return errors.Join(ctx.Err(), err)
+	}
+	defer unlock()
+	if err := errors.Join(ctx.Err(), check()); err != nil {
 		return err
 	}
-	return finish()
+	current, found, err := s.LoadRegistration(reg.ArchiveSessionID)
+	if err != nil {
+		return err
+	}
+	if !found || current.StagedImportSHA256 != reg.StagedImportSHA256 || !sameImportStageOwner(reg, current) {
+		return ErrDurableStorageRecovery
+	}
+	return commit()
 }
 
 func checkOwnedImportDirectory(home *local.RootedHome, root *os.Root, relative string, check func() error) error {

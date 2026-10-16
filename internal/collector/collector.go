@@ -315,9 +315,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if durableErr != nil {
 		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
 	}
-	admission, closeAdmission := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
-	admissionErr := admission.ResumeImportAdmissions(ctx)
-	closeAdmission()
+	admissionErr := resumeImportAdmissionsForPass(ctx, local, opts)
 	if admissionErr != nil {
 		return Result{Errors: map[string]error{"staged-imports": admissionErr}}, admissionErr
 	}
@@ -431,6 +429,13 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		return p.result, err
 	}
 	return p.result, p.saveStatus()
+}
+
+func resumeImportAdmissionsForPass(ctx context.Context, local *state.Store, opts Options) error {
+	admission, closeAdmission := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
+	err := admission.ResumeImportAdmissions(ctx)
+	closeAdmission()
+	return err
 }
 
 func (p *pass) orderedExecutionRegistrations() []archive.SessionRegistration {
