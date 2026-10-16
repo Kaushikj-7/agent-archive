@@ -96,9 +96,11 @@ func TestIndexHintsRejectOutsideRootAndEscapingSources(t *testing.T) {
 	db := hintDatabase(t, root, false)
 	addHint(t, db, "outside", external, at)
 	addHint(t, db, "link", link, at)
-	h, err := run(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, syntheticSupport)
+	var refusals []error
+	adapter := &diagnosticHintAdapter{codexAdapter: codexAdapter{supported: syntheticSupport}, refusals: &refusals}
+	h, err := runWithCensus(context.Background(), store, cfg, Options{Sources: builtin.NewBuiltins(), Now: func() time.Time { return at.Add(2 * time.Minute) }}, []SourceAdapter{adapter})
 	if err != nil || h.Registered != 0 || h.Probes != 0 || h.Outcomes["index_locator_rejected"] == 0 {
-		t.Fatalf("unsafe source read: %#v %v", h, err)
+		t.Fatalf("unsafe source read: %#v %v; original hint refusals: %v", h, err, refusals)
 	}
 }
 
@@ -230,9 +232,9 @@ func TestSettledIndexHintsLeaveDatabaseAndDirectoryUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hints, queries, bytes, outcome := indexHints(context.Background(), root)
+	hints, queries, bytes, outcome, refusal := indexHintsDetailed(context.Background(), root)
 	if outcome != "" || len(hints) != 1 || queries != 4 || bytes == 0 || bytes > 4<<20 {
-		t.Fatalf("bounded hint failed: %v %d %d %s", hints, queries, bytes, outcome)
+		t.Fatalf("bounded hint failed: %v %d %d %s; original refusal: %v", hints, queries, bytes, outcome, refusal)
 	}
 	after, err := os.ReadFile(path)
 	if err != nil || string(before) != string(after) {
@@ -248,4 +250,26 @@ func TestSettledIndexHintsLeaveDatabaseAndDirectoryUnchanged(t *testing.T) {
 		}
 	}
 	addHint(t, db, "two", "outside-source", time.Now())
+}
+
+// diagnosticHintAdapter observes the actual hint attempt; it does not repeat
+// the SQLite query, change its deadline, or alter the returned batch.
+type diagnosticHintAdapter struct {
+	codexAdapter
+	refusals *[]error
+}
+
+func (a *diagnosticHintAdapter) Hints(ctx context.Context, root string) HintBatch {
+	batch := a.codexAdapter.Hints(ctx, root)
+	if batch.refusal != nil {
+		*a.refusals = append(*a.refusals, batch.refusal)
+	}
+	return batch
+}
+
+// indexHints keeps the four-result synthetic test seam without an unused
+// production wrapper. It delegates to the same original-attempt reader.
+func indexHints(ctx context.Context, root string) ([]string, int, int64, string) {
+	hints, queries, bytes, outcome, _ := indexHintsDetailed(ctx, root)
+	return hints, queries, bytes, outcome
 }

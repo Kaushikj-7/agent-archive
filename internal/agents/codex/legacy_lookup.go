@@ -63,8 +63,10 @@ func (p *relatedSourcePass) genericLegacyRead(ctx context.Context, ref agentapi.
 
 type registeredLegacySnapshot struct {
 	agentapi.SourceSnapshot
-	owner    *relatedSourcePass
-	ref      agentapi.SourceRef
+	owner *relatedSourcePass
+	ref   agentapi.SourceRef
+	// revision is the token genericLegacySignature hashes, so the signature
+	// a read records matches the next pass's Signature of an unchanged source.
 	revision string
 	ctx      context.Context
 }
@@ -101,8 +103,26 @@ func (f registeredLegacyInput) Check() error {
 // wrapped ordinary input still checks its exact prefix and real lookup token.
 type legacyOrdinarySnapshot struct{ agentapi.SourceSnapshot }
 
+// RelocatedFrom reports the rollout this snapshot read when the lookup found
+// the registered rollout renamed: the same physical rollout ID and thread,
+// at another locator the source pass opened under its confinement policy.
+func (s legacyOrdinarySnapshot) RelocatedFrom(registered agentapi.SourceRef) (agentapi.SourceRef, bool) {
+	ordinary, ok := s.SourceSnapshot.(*ordinarySnapshot)
+	if !ok || ordinary.source == nil {
+		return agentapi.SourceRef{}, false
+	}
+	read := ordinary.source.ref
+	id := ordinary.source.identity
+	rollout := codexmeta.RolloutID(registered.Path)
+	moved := read.Path != registered.Path && rollout != "" && id.RolloutID == rollout && id.ThreadID == registered.Key
+	return read, moved
+}
+
 func (s legacyOrdinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.SourceAdmission) error {
-	if a.Binding != nil || !a.NativeCreatedAt.IsZero() {
+	if err := a.Binding.ValidateFor("codex"); err != nil {
+		return err
+	}
+	if a.Binding.CodexBinding() != nil || !a.NativeCreatedAt.IsZero() {
 		return sourceFailure(agentapi.Unavailable, "legacy compatibility requires unbound admission")
 	}
 	return s.SourceSnapshot.(agentapi.SourceAdmissionValidator).ValidateAdmission(ctx, a)
@@ -112,10 +132,11 @@ func (p *relatedSourcePass) validateGenericLegacyInput(input agentapi.NativeInpu
 	if input.File == nil {
 		return sourceFailure(agentapi.Unsafe, "legacy source is not a file")
 	}
-	if !p.reserve(sourceHeaderCharge) {
+	reservation := p.env.ReadBudget.Reservation()
+	if !p.reserve(reservation, sourceHeaderCharge) {
 		return sourceFailure(agentapi.Limit, "legacy metadata scratch budget exhausted")
 	}
-	defer p.release(sourceHeaderCharge)
+	defer p.release(reservation, sourceHeaderCharge)
 	raw := make([]byte, min(input.File.Length(), int64(64<<10)+1))
 	n, err := input.File.ReadAt(raw, 0)
 	if err != nil && !errors.Is(err, io.EOF) {

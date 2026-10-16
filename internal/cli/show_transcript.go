@@ -56,6 +56,9 @@ func renderTranscript(w io.Writer, view sessionView, t archive.Transcript, opts 
 		agent = "Agent"
 	}
 	terminal.Println(w, s.bold(summaryTitle(m)))
+	if view.SelectedRevisionID != "" {
+		terminal.Println(w, s.dim("Parent revision: "+archive.DisplayLine(view.SelectedRevisionID)))
+	}
 	header := []string{}
 	if agent := strings.TrimSpace(appName(archive.DisplayLine(m.Harness.Name)) + " " + archive.DisplayLine(m.Harness.Version)); agent != "" {
 		header = append(header, agent)
@@ -295,4 +298,12 @@ func describeBundleError(err error, sessionID, flag string) string {
 		return fmt.Sprintf("the session's source bundle is not available (it may have just been replaced or deleted by retention); retry, or run `agent-archive show %s` without %s for its metadata", shellWord(archive.DisplayLine(sessionID)), flag)
 	}
 	return err.Error()
+}
+
+func loadVerifiedMetadata(ctx context.Context, store storage.ObjectStore, selected reader.MetadataLookup) (sessionView, archive.SourceBundle, error) {
+	metadata, bundle, err := reader.RefreshAndLoadMetadata(ctx, store, selected.Key, selected.Metadata, reader.Limits{})
+	if err != nil {
+		return sessionView{}, archive.SourceBundle{}, err
+	}
+	return metadataWithLinks(ctx, store, metadata), bundle, nil
 }

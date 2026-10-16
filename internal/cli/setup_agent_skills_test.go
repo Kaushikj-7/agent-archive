@@ -303,7 +303,7 @@ func TestFailedSetupRestoresTheHandoffSkillItReplaced(t *testing.T) {
 		}
 		return nil
 	}
-	setupRun(t, env, "retention\n120\ny\n", 1)
+	setupRun(t, env, "retention\ncustom\n120\ny\n", 1)
 	if written == older || written == "" {
 		t.Fatal("setup did not replace the skill before it failed")
 	}

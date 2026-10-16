@@ -3,6 +3,9 @@ on:
   pull_request:
   push:
     branches: ['release-candidate/**']
+# Ignore persistent per-user Go configuration; all compiler flags are explicit.
+env:
+  GOENV: 'off'
 permissions:
   contents: read
 concurrency:
@@ -11,13 +14,77 @@ concurrency:
 # Every action is pinned to a full commit SHA (a tag can be moved); the
 # comment names the release it is. Dependabot proposes updates.
 jobs:
-  linux-race:
+  source-audit:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Validate captured PR topology and exact merge source
+        if: github.event_name == 'pull_request'
+        run: python3 -B scripts/ci_worker_topology.py --output "$RUNNER_TEMP/worker-topology.json"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        uses: ./.github/actions/verified-go-cache
+      - name: Require exact Go version
+        run: go version | grep -q ' go1\.27\.2 '
+      - name: Actual plain whole-source audit body
+        run: python3 -B scripts/run_ci_tier.py --tier pr --suite audit --own-plain-vet --seconds 780 --output source-audit-results
+      - name: Preserve exact-source plain audit evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-source-audit
+          path: source-audit-results
+          if-no-files-found: error
+          retention-days: 7
+
+  linux-short:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
+      SHARD: ${{ matrix.shard }}
+      WORKERS: ${{ matrix.workers }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    name: linux-short (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      # Captured same-repository branch metadata selects topology, never coverage.
+      # GitHub comparisons and startsWith are case insensitive; the guard agrees.
+      matrix: ${{ fromJSON(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'ci-qualification/workers-4/') && '{"workers":[4],"shard":[0,1,2,3]}' || '{"workers":[8],"shard":[0,1,2,3,4,5,6,7]}') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate captured PR topology and exact merge source
+        if: github.event_name == 'pull_request'
+        run: python3 -B scripts/ci_worker_topology.py --output "$RUNNER_TEMP/worker-topology.json"
+      - name: Set controlled worker Go cache paths
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Validate and clear owned cache paths before tool setup
+        run: python3 -B scripts/go_cache_steps.py paths
       # The Go version is pinned here rather than read from go.mod, so CI
       # never depends on how setup-go picks a toolchain. It must match
       # go.mod's toolchain line; the next step checks that.
@@ -29,53 +96,389 @@ jobs:
         run: |
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      # internal/cli takes 275 to 427 seconds under the race detector on CI
-      # runners, too close to go test's default of 10 minutes a package.
-      - run: go test -race -timeout 20m ./...
-      # The run above uses the race detector, under which the wall-clock
-      # assertions of the performance tests are skipped (the detector slows
-      # filtering by an order of magnitude). This plain run makes them count,
-      # at their documented size. See dev/contributing/testing.md.
-      - name: Performance assertions (no race detector)
-        run: go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/agents/nativecodec ./internal/capture
+      - name: Prepare exact-source PR worker cache identity
+        id: go-cache-key
+        run: python3 -B scripts/go_cache_steps.py prepare
+      - name: Restore PR worker Go dependencies and compilation
+        id: go-cache-restore
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.go-cache-key.outputs.primary }}
+          restore-keys: ${{ steps.go-cache-key.outputs.restore_prefix }}
+          path: |
+            ${{ runner.temp }}/pr-go-build
+          enableCrossOsArchive: false
+          fail-on-cache-miss: false
+      - name: Restore trusted-main seed when PR snapshot is unavailable
+        id: go-cache-seed
+        if: steps.go-cache-restore.outcome != 'success' || steps.go-cache-restore.outputs.cache-matched-key == ''
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.go-cache-key.outputs.seed }}
+          path: |
+            ${{ runner.temp }}/pr-go-build
+            ${{ runner.temp }}/pr-go-modules/cache
+          enableCrossOsArchive: false
+          fail-on-cache-miss: false
+      - name: Verify restored modules or compile with empty caches
+        id: go-cache-verify
         env:
-          AGENT_ARCHIVE_PERF: '1'
-      - run: go vet ./...
+          RESTORE_OUTCOME: ${{ steps.go-cache-restore.outcome == 'success' && steps.go-cache-restore.outputs.cache-matched-key != '' && steps.go-cache-restore.outcome || steps.go-cache-seed.outcome }}
+          MATCHED_KEY: ${{ steps.go-cache-restore.outcome == 'success' && steps.go-cache-restore.outputs.cache-matched-key || steps.go-cache-seed.outputs.cache-matched-key }}
+          EXACT_HIT: ${{ steps.go-cache-restore.outcome == 'success' && steps.go-cache-restore.outputs.cache-matched-key != '' && steps.go-cache-restore.outputs.cache-hit || 'false' }}
+        run: python3 -B scripts/go_cache_steps.py verify
+      - name: Discovered race-short shard
+        env:
+          CI_CACHE_RESTORE_STATE: ${{ steps.go-cache-verify.outputs.restore_state }}
+          SHARD: ${{ matrix.shard }}
+        run: python3 -B scripts/run_go_shard.py --workers "$WORKERS" --plain-audit-owned --plain-vet-owned --shard "$SHARD" --output shard-results
+      - name: Require unchanged source and current PR worker success before cache save
+        id: go-cache-complete
+        run: python3 -B scripts/go_cache_steps.py complete
+      # One publisher prevents eight full cache copies per source. Forks are read-only.
+      - name: Save one successful same-repository PR compilation snapshot
+        id: go-cache-save
+        if: success() && matrix.shard == 0 && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.go-cache-complete.outputs.save_ready == 'true' && steps.go-cache-verify.outputs.restore_state != 'exact'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ steps.go-cache-key.outputs.primary }}
+          path: |
+            ${{ runner.temp }}/pr-go-build
+          enableCrossOsArchive: false
+      - name: Report accelerator service failures
+        if: always() && (steps.go-cache-restore.outcome == 'failure' || steps.go-cache-seed.outcome == 'failure' || steps.go-cache-save.outcome == 'failure')
+        run: echo '::warning::Go cache service failed; current module/source/test verdicts remain authoritative'
+      - name: Preserve catalog and execution evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-shard-${{ matrix.shard }}
+          path: shard-results
+          if-no-files-found: error
+          retention-days: 7
+
+  linux-full:
+    # PR extras are distinct from the exhaustive representative shards.
+    # Focused protocol regressions exercise the real manager for scheduler PRs.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Resolve exact-source local tier before consumer work
+        id: plan
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -B scripts/run_ci_tier.py --plan --require-pr-proof --output "$RUNNER_TEMP/tier-plan/extra-plan.json"
+      - name: Preserve canonical exact-source plan without gating consumer eligibility
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-tier-plan
+          path: ${{ runner.temp }}/tier-plan/extra-plan.json
+          if-no-files-found: error
+          retention-days: 7
+      - if: github.event_name != 'pull_request' || steps.plan.outputs.linux == 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Start real manager for required platform extra coverage
+        if: github.event_name == 'pull_request' && steps.plan.outputs.systemd == 'true'
+        run: bash scripts/start_ci_systemd.sh
+      - name: Full candidate or focused PR regressions
+        env:
+          AGENT_ARCHIVE_REAL_SYSTEMD: ${{ steps.plan.outputs.systemd == 'true' && '1' || '0' }}
+          EVENT: ${{ github.event_name }}
+          FULL_LINUX: ${{ steps.plan.outputs.linux }}
+        run: |
+          if [ "$EVENT" != pull_request ] || [ "$FULL_LINUX" = true ]; then go version | grep -q ' go1\.27\.2 '; fi
+          if [ "$EVENT" = pull_request ]; then
+            python3 scripts/run_ci_tier.py --tier pr --suite extra --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json" --output tier-results --seconds 3300
+          else
+            # Soft Go-managed memory target; race/native allocations also need headroom.
+            export GOMEMLIMIT=3GiB
+            python3 scripts/run_ci_tier.py --tier full --suite linux --output tier-results
+            go vet ./...
+          fi
+      - name: Preserve source-bound full or focused body evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-full-tier
+          path: tier-results
+          if-no-files-found: error
+          retention-days: 7
+
+
+  script-static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create isolated script environment
+        run: |
+          mkdir -p "$RUNNER_TEMP/script-static-home" "$RUNNER_TEMP/script-static-xdg" "$RUNNER_TEMP/script-static-tmp"
+          printf 'HOME=%s/script-static-home\nXDG_CONFIG_HOME=%s/script-static-xdg\nTMPDIR=%s/script-static-tmp\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_release_assets.py
       - run: python3 scripts/test_release_candidate.py
-      - run: python3 scripts/test_install.py
-      - run: python3 scripts/test_install_from_source.py
-      - run: python3 scripts/test_purge_recipe.py
       # Extended's real-systemd backstop keeps its name and validated image.
       - run: python3 scripts/test_ci_workflow.py
+      - run: python3 scripts/test_stage_native_verify.py
+      - run: python3 -B scripts/test_git_identity_versions.py
+      - run: python3 -B scripts/test_scope_native_verify.py
+      - run: python3 -B scripts/test_stage_release_vulnerability_scan.py
       - run: python3 scripts/test_measure_hook.py
+      - run: python3 -B scripts/test_muse_qualification.py
       # Static and fake-Docker checks of the Linux live acceptance scripts;
       # the live run itself needs privileged Docker and is not run in CI.
       - run: python3 scripts/test_linux_acceptance.py
 
-  git-identity-compatibility:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
+      - run: python3 scripts/test_go_shards.py
+      - run: python3 -B scripts/test_go_parent_shards.py
+      - run: python3 -B scripts/test_pr_reference.py
+      - run: python3 -B scripts/test_generate_go_shard_hints.py
+      - run: python3 -B scripts/test_report_ci_timing.py
+      - run: python3 -B scripts/test_ci_worker_topology.py
+      - run: python3 -B scripts/test_ci_timing_history.py
+      - run: python3 -B scripts/test_ci_performance_gate.py
+      - run: python3 -B scripts/test_collect_ci_timing.py
+      - run: python3 -B scripts/test_benchmark_shared_verify.py
+      - run: python3 scripts/test_ci_tiers.py
+      - run: python3 -B scripts/test_local_ci_plan.py
+      - run: python3 -B scripts/test_historical_vet_contract.py
+      - run: python3 -B scripts/test_macos_smoke.py
+      - run: python3 -B scripts/test_native_smoke_reference.py
+      - run: python3 -B scripts/test_native_full.py
+      - run: python3 -B scripts/test_go_cache_context.py
+      - run: python3 -B scripts/test_go_cache_steps.py
+      - run: python3 -B scripts/test_ci_cache.py
+      - run: python3 -B scripts/test_warm_shared_module_graph.py
+
+      - run: python3 -B scripts/test_ci_lane_verdict.py
+      - run: python3 -B scripts/test_purge_ci.py
+      - name: Remove isolated script environment
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/script-static-home" "$RUNNER_TEMP/script-static-xdg" "$RUNNER_TEMP/script-static-tmp"
+
+  script-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create isolated script environment
+        run: |
+          mkdir -p "$RUNNER_TEMP/script-install-home" "$RUNNER_TEMP/script-install-xdg" "$RUNNER_TEMP/script-install-tmp"
+          printf 'HOME=%s/script-install-home\nXDG_CONFIG_HOME=%s/script-install-xdg\nTMPDIR=%s/script-install-tmp\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - run: python3 scripts/test_install.py
+      - run: python3 scripts/test_install_from_source.py
+      - name: Remove isolated script environment
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/script-install-home" "$RUNNER_TEMP/script-install-xdg" "$RUNNER_TEMP/script-install-tmp"
+
+  script-purge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # Exact upstream releases exercise optional-command absence even
-          # when the runner upgrades. This is not distribution-package proof.
-          - git: upstream-2.30.2
-            tag: v2.30.2
-            ref: 94f6e3e283f2adfc518b39cfc39291f1c2832ad0
-            expected: git version 2.30.2
-          - git: upstream-2.39.2
-            tag: v2.39.2
-            ref: cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6
-            expected: git version 2.39.2
-          - git: runner-current
-            tag: ''
-            ref: ''
-            expected: ''
-    name: Git identity (${{ matrix.git }})
+        shard: [0, 1]
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Resolve exact-source local tier before consumer work
+        id: plan
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -B scripts/run_ci_tier.py --plan --require-pr-proof --output "$RUNNER_TEMP/tier-plan/extra-plan.json"
+      - name: Create isolated script environment
+        run: |
+          mkdir -p "$RUNNER_TEMP/script-purge-home" "$RUNNER_TEMP/script-purge-xdg" "$RUNNER_TEMP/script-purge-tmp"
+          printf 'HOME=%s/script-purge-home\nXDG_CONFIG_HOME=%s/script-purge-xdg\nTMPDIR=%s/script-purge-tmp\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Install purge prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq zsh
+      - name: Representative purge or required full purge extras
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL_PURGE: ${{ steps.plan.outputs.purge }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          tier=pr
+          if [ "$EVENT" != pull_request ] || [ "$FULL_PURGE" = true ]; then tier=full; fi
+          python3 scripts/test_purge_recipe.py --workers 2 --shard "$SHARD" --tier "$tier" --evidence "$RUNNER_TEMP/purge-tier.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: purge-tier-${{ matrix.shard }}
+          path: ${{ runner.temp }}/purge-tier.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove isolated script environment
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/script-purge-home" "$RUNNER_TEMP/script-purge-xdg" "$RUNNER_TEMP/script-purge-tmp"
+
+  # Keep this required check stable and fail closed when a worker fails/skips.
+  linux-race:
+    # Fail closed on failed prerequisites while allowing superseded runs to cancel.
+    if: ${{ !cancelled() }}
+    needs: [linux-short, linux-full, script-static, script-install, script-purge, macos-smoke, source-audit]
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Resolve exact-source local tier before consumer work
+        id: plan
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -B scripts/run_ci_tier.py --plan --require-pr-proof --output "$RUNNER_TEMP/tier-plan/extra-plan.json"
+      - name: Validate captured PR topology and exact merge source
+        if: github.event_name == 'pull_request'
+        run: python3 -B scripts/ci_worker_topology.py --output "$RUNNER_TEMP/worker-topology.json"
+      - name: Retain exact run identity
+        if: github.event_name == 'pull_request'
+        run: python3 -B scripts/ci_run_identity.py --output "$RUNNER_TEMP/test-run-identity/identity.json"
+      - name: Preserve bounded run identity
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-run-identity-Test-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/test-run-identity/identity.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Require complete event-specific worker results
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/run_go_shard.py --verdict
+      - name: Download complete purge worker evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: purge-tier-*
+          path: ${{ runner.temp }}/purge-evidence
+      - name: Reconcile current-source complete purge method and case union
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL_PURGE: ${{ steps.plan.outputs.purge }}
+        run: |
+          tier=pr
+          if [ "$EVENT" != pull_request ] || [ "$FULL_PURGE" = true ]; then tier=full; fi
+          python3 -B scripts/purge_ci.py --tier "$tier" --evidence "$RUNNER_TEMP/purge-evidence"
+      - name: Download all successful shard catalogs
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: go-shard-*
+          path: shard-evidence
+      - name: Download required plain source audit evidence
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: go-source-audit
+          path: ${{ runner.temp }}/source-audit-evidence
+      # Reconciliation validates the actual workers' complete compiler contexts
+      # and raw receipts. It never executes Go on this aggregate host.
+      - name: Reconcile actual source and exhaustive shard coverage
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/run_go_shard.py --workers "$WORKERS" --audit-evidence "$RUNNER_TEMP/source-audit-evidence" --plain-vet-owned --reconcile shard-evidence
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ci-tier-plan
+          path: ${{ runner.temp }}/canonical-tier-plan
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: go-full-tier
+          path: full-evidence
+      - name: Require canonical plan to equal independent current-source plan
+        run: python3 -B scripts/run_ci_tier.py --verify-plan --output "$RUNNER_TEMP/canonical-tier-plan/extra-plan.json" --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json"
+      - name: Download actual native selection evidence
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: native-full-tier
+          path: ${{ runner.temp }}/native-plan-evidence
+      - name: Require actual native extras to match independent current-source plan
+        if: github.event_name == 'pull_request'
+        run: python3 -B scripts/run_ci_tier.py --verify-native-plan --output "$RUNNER_TEMP/native-plan-evidence" --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json"
+      - name: Require source-bound full or focused PR evidence
+        run: python3 scripts/run_ci_tier.py --verify --tier full --output full-evidence --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json"
+
+      - name: Required performance budgets from trusted tested base
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          trusted_base=$(git rev-parse HEAD^1)
+          export CI_PERFORMANCE_TRUSTED_BASE="$trusted_base"
+          if git cat-file -e "$trusted_base:scripts/ci_performance_gate.py" 2>/dev/null; then
+            mkdir -p "$RUNNER_TEMP/trusted-performance"
+            git archive "$trusted_base" scripts | tar -x -C "$RUNNER_TEMP/trusted-performance"
+            python3 -B "$RUNNER_TEMP/trusted-performance/scripts/ci_performance_gate.py" \
+              --policy "$RUNNER_TEMP/trusted-performance/scripts/ci_performance_policy.json" \
+              --exceptions scripts/ci_performance_exceptions.json \
+              --topology "$RUNNER_TEMP/worker-topology.json" \
+              --workers shard-evidence --output "$RUNNER_TEMP/performance-verdict.json"
+          else
+            echo '::warning::One-time performance gate installation: tested base has no enforcer. Subsequent PRs require trusted-base policy.'
+          fi
+      - name: Preserve bounded performance decision
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-performance-decision-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/performance-verdict.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Advisory partial CI resource snapshot
+        if: success() && github.event_name == 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/collect_ci_timing.py --live --topology "$RUNNER_TEMP/worker-topology.json" --output "$RUNNER_TEMP/ci-resource-snapshot.json"
+
+  git-identity-compatibility:
+    runs-on: ubuntu-24.04
+    # Three serial versions retain their individual 20-minute upper bound.
+    timeout-minutes: 60
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
+    # One verified compilation restore; all three versions still execute with
+    # separate PATH/install/HOME/XDG/TMP and separate test process lifetimes.
+    name: Git identity (all versions)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -84,72 +487,88 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
-      - name: Check out pinned upstream Git
-        if: matrix.ref != ''
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        uses: ./.github/actions/verified-go-cache
+      - name: All Git versions with isolated executable and configuration
+        run: python3 -B scripts/run_git_identity_versions.py --output "$RUNNER_TEMP/git-identity-versions"
+      - name: Preserve every version's receipt and raw test log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          repository: git/git
-          ref: ${{ matrix.ref }}
-          path: git-fixture
-          persist-credentials: false
-      - name: Build pinned upstream Git (local-only commands)
-        if: matrix.ref != ''
-        working-directory: git-fixture
-        env:
-          PINNED_GIT_TAG: ${{ matrix.tag }}
-          PINNED_GIT_COMMIT: ${{ matrix.ref }}
-        run: |
-          # Fetch only the release annotation for Git's version generator;
-          # the code remains at the immutable commit checked out above.
-          git fetch --depth=1 origin "refs/tags/$PINNED_GIT_TAG:refs/tags/$PINNED_GIT_TAG"
-          test "$(git rev-parse HEAD)" = "$PINNED_GIT_COMMIT"
-          make -j2 prefix="$RUNNER_TEMP/git-fixture" NO_TCLTK=YesPlease NO_GETTEXT=YesPlease NO_CURL=YesPlease NO_EXPAT=YesPlease all
-          make prefix="$RUNNER_TEMP/git-fixture" NO_TCLTK=YesPlease NO_GETTEXT=YesPlease NO_CURL=YesPlease NO_EXPAT=YesPlease install
-          echo "$RUNNER_TEMP/git-fixture/bin" >> "$GITHUB_PATH"
-      - name: Isolated identity regressions and exact executable version
-        env:
-          EXPECTED_GIT_VERSION: ${{ matrix.expected }}
-          HOME: ${{ runner.temp }}/git-identity-home
-          XDG_CONFIG_HOME: ${{ runner.temp }}/git-identity-xdg
-          GOCACHE: ${{ runner.temp }}/git-identity-go-cache
-          GOMODCACHE: ${{ runner.temp }}/git-identity-go-modules
-          GOMAXPROCS: '2'
-        run: |
-          mkdir -p "$HOME" "$XDG_CONFIG_HOME"
-          git --version | tee "$RUNNER_TEMP/git-identity-version.txt"
-          if [ -n "$EXPECTED_GIT_VERSION" ]; then
-            test "$(git --version)" = "$EXPECTED_GIT_VERSION"
-          fi
-          cat "$RUNNER_TEMP/git-identity-version.txt" >> "$GITHUB_STEP_SUMMARY"
-          go test -p 2 -count=1 -v ./internal/gitremote ./internal/sourcefacts
-          go test -p 2 -count=1 -v -run 'RecoveredImport|DeletedWorktree' ./internal/backfill
+          name: git-identity-versions
+          path: ${{ runner.temp }}/git-identity-versions
+          retention-days: 7
+          if-no-files-found: error
 
   macos-smoke:
     # Compile every Darwin/cgo package, then exercise the native Keychain,
     # launchd, terminal, and setup paths before merging. The full race suite
-    # runs on main and nightly in extended.yml.
+    # runs on candidates and weekly in extended.yml.
     runs-on: macos-14
-    timeout-minutes: 15
+    timeout-minutes: 45
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Resolve exact-source local tier before consumer work
+        id: plan
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -B scripts/run_ci_tier.py --plan --require-pr-proof --output "$RUNNER_TEMP/tier-plan/extra-plan.json"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        id: native_cache
+        uses: ./.github/actions/verified-go-cache
+      - name: Record final verified native cache state
+        env:
+          NATIVE_CACHE_STATE: ${{ steps.native_cache.outputs.restore-state }}
+        run: python3 -B scripts/native_smoke_reference.py observe --output native-tier-results/cache-observation.json
       - name: Require Go 1.27.2 (go.mod's toolchain line)
         run: |
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
-      - name: Darwin build and focused race tests
-        run: ./scripts/test_macos_smoke.sh
+      - name: Native production build, smoke and targeted sensitive regressions
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            python3 -B scripts/run_ci_tier.py --tier pr --suite macos --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json" --output native-tier-results
+          else
+            ./scripts/test_macos_smoke.sh --output native-tier-results
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && github.event_name == 'pull_request'
+        with:
+          name: native-full-tier
+          path: native-tier-results
+          if-no-files-found: error
+          retention-days: 7
 
-  cross-build:
-    # The Linux test sees linux/amd64, and macos-smoke sees Darwin with cgo.
-    # Build and vet the other release targets before a change reaches main.
+  cross-linux-arm64:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -158,6 +577,12 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        uses: ./.github/actions/verified-go-cache
       - name: Require Go 1.27.2 (go.mod's toolchain line)
         run: |
           go version
@@ -170,18 +595,66 @@ jobs:
         run: |
           go build ./...
           go vet ./...
-      # A macOS build without cgo uses the Keychain stand-in in
-      # internal/credentials/keychain_nocgo_darwin.go, which macos-smoke
-      # (cgo on) never compiles.
+
+  cross-darwin-nocgo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        uses: ./.github/actions/verified-go-cache
+      - name: Require Go 1.27.2 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Vet darwin without cgo
         env:
           GOOS: darwin
           GOARCH: arm64
           CGO_ENABLED: '0'
         run: go vet ./...
-      # The release workflow's Linux build and checks, on a placeholder
-      # version, so everything except tagging and publishing is exercised
-      # before a release.
+
+  cross-linux-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        uses: ./.github/actions/verified-go-cache
+      - name: Require Go 1.27.2 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Build and check the release's Linux binaries
         env:
           VERSION: v0.0.0-ci
@@ -189,11 +662,32 @@ jobs:
           ./scripts/build-release.sh linux
           ./scripts/verify-linux-release.sh
 
+
+  cross-build:
+    # Fail closed on failed prerequisites while allowing superseded runs to cancel.
+    if: ${{ !cancelled() }}
+    needs: [cross-linux-arm64, cross-darwin-nocgo, cross-linux-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require every independent lane to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 -B scripts/ci_lane_verdict.py cross-build
+
   lint:
     # macOS, the platform the tool ships for, so the cgo Keychain code is
     # linted too.
     runs-on: macos-14
     timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly'
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -204,15 +698,21 @@ jobs:
         with:
           go-version: '1.27.2'
           cache: false
+      - name: Set controlled compilation/module paths
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore verified trusted-main compilation seed
+        uses: ./.github/actions/verified-go-cache
       # Built with this job's Go (install-mode: goinstall) rather than
       # downloaded prebuilt, so it always understands go.mod's Go version.
       # Keep the version in step with the comment in .golangci.yml.
+      - name: Verified pinned lint and deadcode binaries
+        run: |
+          python3 -B scripts/verified_tools.py golangci-lint
+          python3 -B scripts/verified_tools.py deadcode
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          version: v2.14.0
-          install-mode: goinstall
-          args: --disable=revive
+        run: '"$GOCACHE/aa-pinned-tools/golangci-lint" run --disable=revive'
       # Production code only tests reach belongs in a _test.go file (or a
       # test-only package); deadcode finds it. It analyses one build at a
       # time, so it runs twice: for macOS, and for Linux (GOOS=linux with cgo
@@ -237,13 +737,12 @@ jobs:
       # remove each as it gains a caller, and the exception once none is left).
       - name: No unreachable production code
         run: |
-          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/tools/cmd/deadcode@v0.50.0
           shared='^internal/(state/statetest|storage/storagetest|cloudflare/cloudflaretest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(spin|spinEvery)|spinner\.stop)$|^internal/cloudflare/r2\.go:[0-9]+:[0-9]+: unreachable func: S3Credentials\.(String|GoString)$'
           linux_only='|^internal/credentials/keychain_errors\.go:[0-9]+:[0-9]+: unreachable func: errorForOSStatus$'
           # check LABEL EXCEPTIONS: deadcode's output for the current
           # GOOS/CGO_ENABLED, minus the exceptions, must be empty.
           check() {
-            "$RUNNER_TEMP/bin/deadcode" ./... > "$RUNNER_TEMP/deadcode-$1.txt"
+            "$GOCACHE/aa-pinned-tools/deadcode" ./... > "$RUNNER_TEMP/deadcode-$1.txt"
             # grep exits 1 when every line is an exception; 2 is a real failure.
             status=0
             grep -v -E "$2" "$RUNNER_TEMP/deadcode-$1.txt" > "$RUNNER_TEMP/unexpected-$1.txt" || status=$?
@@ -263,8 +762,8 @@ jobs:
       # or touches; existing gaps do not fail the build.
       - name: Doc comments on new exported identifiers
         if: github.event_name == 'pull_request'
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          version: v2.14.0
-          install-mode: goinstall
-          args: --enable-only=revive --new-from-merge-base=origin/${{ github.base_ref }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          python3 -B scripts/ci_worker_topology.py --lint-base-ref "$BASE_REF" --output "$RUNNER_TEMP/lint-topology.json"
+          "$GOCACHE/aa-pinned-tools/golangci-lint" run --enable-only=revive --new-from-merge-base="origin/$BASE_REF"

@@ -3,7 +3,7 @@
 The shared renderer in `internal/cli/prompt_render.go` is an opt-in contract.
 Setup's storage provider decision and R2 credential fields use it. Other flows
 keep their existing output until their migration in the
-[accepted CLI experience plan](../proposals/setup-and-cli-ux.md).
+[accepted CLI experience plan](../proposals/implemented/setup-and-cli-ux.md).
 
 Build a `promptModel` and call `p.guidedChoice` or `p.guidedText`. Keep business
 state, discovery, validation and consent in the command. The model holds the

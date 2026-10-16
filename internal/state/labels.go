@@ -31,22 +31,25 @@ type LabelEntry struct {
 	Scope          string                `json:"scope"`
 }
 
+// ErrNoLabelPublication is LabelRevision for a session never published: it
+// has no revision yet.
+var ErrNoLabelPublication = errors.New("label publication unavailable")
+
 // LabelRevision reads only the leading published summary and a content-free stat.
 func (s *Store) LabelRevision(id string) (string, string, error) {
 	if !safeFileComponent(id) {
 		return "", "", errors.New("invalid label state identity")
 	}
-	summary, found, head, info, err := s.publishedPrefix(id)
+	summary, found, _, info, err := s.publishedPrefix(id)
 	if err != nil {
 		return "", "", err
 	}
 	if !found {
-		return "", "", errors.New("label publication unavailable")
+		return "", "", ErrNoLabelPublication
 	}
+	// A history source set is named too, like an ordinary source
+	// (archive.ValidateSessionLabels).
 	token := sha256.Sum256([]byte(fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())))
-	if head && (summary.CurrentRevision != "" || summary.SourceSchemaVersion == archive.HistorySourceSchemaVersion || summary.MetadataSchemaVersion == archive.HistoryMetadataSchemaVersion) {
-		return "", "", errors.New("external labels cannot use a retained history source set")
-	}
 	checksum := summary.LabelSourceChecksum
 	if len(checksum) != 64 {
 		checksum = ""
@@ -56,6 +59,7 @@ func (s *Store) LabelRevision(id string) (string, string, error) {
 
 // LoadLabelPublication enforces an aggregate caller budget before a one-time context decode.
 func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64, error) {
+	reservation := s.readReservation()
 	if !safeFileComponent(id) {
 		return nil, 0, errors.New("invalid label state identity")
 	}
@@ -79,16 +83,16 @@ func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64
 		if err := s.resourceContext.Err(); err != nil {
 			return nil, 0, err
 		}
-		if !s.resourceBudget.Reserve(info.Size()) {
+		if !reservation.Reserve(info.Size()) {
 			return nil, 0, errStateBudget
 		}
-		defer s.resourceBudget.Release(info.Size())
-		if !s.resourceBudget.Reserve(info.Size()) {
+		defer reservation.Release(info.Size())
+		if !reservation.Reserve(info.Size()) {
 			return nil, 0, errStateBudget
 		}
 		defer func() {
 			if !keep {
-				s.resourceBudget.Release(info.Size())
+				reservation.Release(info.Size())
 			}
 		}()
 	}
@@ -107,12 +111,22 @@ func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64
 	if err := s.decodePublicationOwned(s.durableContext(), data, &p.state); err != nil {
 		return nil, int64(len(data)), err
 	}
+	if p.state.PublicationVersion == 3 || p.state.PublicationVersion == 4 {
+		if err := p.preserveStagedPublished(s.durableContext(), &p.state); err != nil {
+			return nil, int64(len(data)), err
+		}
+	}
+	if p.state.PublicationVersion == 2 {
+		if err := p.preserveReadyPublished(s.durableContext(), &p.state); err != nil {
+			return nil, int64(len(data)), err
+		}
+	}
 	if s.resourceBudget != nil {
 		if err := s.resourceContext.Err(); err != nil {
 			return nil, int64(len(data)), err
 		}
 		keep = true
-		*s.resourceReleases = append(*s.resourceReleases, func() { s.resourceBudget.Release(info.Size()) })
+		*s.resourceReleases = append(*s.resourceReleases, func() { reservation.Release(info.Size()) })
 	}
 	return p, int64(len(data)), nil
 }

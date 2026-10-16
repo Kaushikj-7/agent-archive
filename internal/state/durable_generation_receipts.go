@@ -26,6 +26,7 @@ type generationReceiptJSON generationRecovery
 // The census, replay and read eligibility share this bounded receipt proof.
 // Directory observation caching never proves in-place rewritten contents.
 func (s *Store) completedGenerationReceipt(home *local.RootedHome, id string) (complete bool, err error) {
+	reservation := s.readReservation()
 	if err := s.durableContext().Err(); err != nil {
 		return false, err
 	}
@@ -38,10 +39,10 @@ func (s *Store) completedGenerationReceipt(home *local.RootedHome, id string) (c
 		return false, nil
 	}
 	if s.resourceBudget != nil {
-		if !s.resourceBudget.Reserve(4 * durableControlBytes) {
+		if !reservation.Reserve(4 * durableControlBytes) {
 			return false, errStateBudget
 		}
-		defer s.resourceBudget.Release(4 * durableControlBytes)
+		defer reservation.Release(4 * durableControlBytes)
 	}
 	file, err := home.Root.Open(path)
 	if err != nil {

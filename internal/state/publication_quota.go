@@ -49,7 +49,17 @@ func (s *Store) readPublishedClassification(ctx context.Context, home *local.Roo
 }
 
 func publishedAccountingMode(p publishedState) int {
-	if p.PublicationVersion == 2 {
+	// These mature protocols keep their existing uncharged published-cache
+	// contract. The closed decoder has already validated their exact proof.
+	if p.LastPublished != nil {
+		if p.PublicationVersion == 2 && p.LastPublished.Selection != nil && p.LastPublished.Selection.validateProofDigest() == nil {
+			return 1
+		}
+		if proof := p.LastPublished.StagedProof(); proof != nil && (p.PublicationVersion == 3 || p.PublicationVersion == 4) && proof.Version == p.PublicationVersion && proof.validateDigest() == nil {
+			return 1
+		}
+	}
+	if p.PublicationVersion == 5 {
 		return 2
 	}
 	if legacyBlockedPublicationControl(p) {
@@ -65,6 +75,7 @@ func publishedAccountingMode(p publishedState) int {
 }
 
 func (s *Store) readPublishedDecoded(ctx context.Context, home *local.RootedHome, path string, expected os.FileInfo, p *publishedState) (sum [32]byte, release func(), err error) {
+	reservation := s.readReservation()
 	if err := ctx.Err(); err != nil {
 		return sum, func() {}, err
 	}
@@ -76,20 +87,20 @@ func (s *Store) readPublishedDecoded(ctx context.Context, home *local.RootedHome
 	}
 	n := expected.Size()
 	if s.resourceBudget != nil {
-		if !s.resourceBudget.Reserve(2 * n) {
+		if !reservation.Reserve(2 * n) {
 			return sum, func() {}, errStateBudget
 		}
-		defer s.resourceBudget.Release(n)
+		defer reservation.Release(n)
 		keep := false
 		defer func() {
 			if !keep {
-				s.resourceBudget.Release(n)
+				reservation.Release(n)
 			}
 		}()
 		defer func() {
 			if err == nil {
 				keep = true
-				release = func() { s.resourceBudget.Release(n) }
+				release = func() { reservation.Release(n) }
 			}
 		}()
 	}
@@ -117,7 +128,7 @@ func (s *Store) readPublishedDecoded(ctx context.Context, home *local.RootedHome
 		return sum, func() {}, errors.Join(ErrDurableStorageRecovery, e)
 	}
 	sum = sha256.Sum256(raw)
-	if err = decodePublishedState(raw, p, ctx, s.resourceBudget); err != nil {
+	if err = decodePublishedState(raw, p, ctx, s.resourceBudget, reservation); err != nil {
 		return sum, func() {}, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	finalOpened, err := f.Stat()

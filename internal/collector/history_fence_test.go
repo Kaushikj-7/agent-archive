@@ -47,7 +47,7 @@ func TestHistoryPublicationRemainsFencedAndMalformedRefilterRefuses(t *testing.T
 	if e := s.checkHistoryPublicationBody(pending, meta); !errors.Is(e, archive.ErrHistoryMutationPending) {
 		t.Fatalf("remote history body gate: %v", e)
 	}
-	if _, e := s.publishPending(pending); !errors.Is(e, storage.ErrPublicationConflict) {
+	if _, e := s.publishPending(s.ctx, pending); !errors.Is(e, storage.ErrPublicationConflict) {
 		t.Fatalf("foreign remote protected history: %v", e)
 	}
 	history := archive.SourceBundle{SchemaVersion: archive.HistorySourceSchemaVersion, History: &archive.SourceHistory{}}
@@ -55,7 +55,7 @@ func TestHistoryPublicationRemainsFencedAndMalformedRefilterRefuses(t *testing.T
 		t.Fatalf("refilter protection: %v", e)
 	}
 	pending.Bundle = history
-	if _, e := s.publishPending(pending); !errors.Is(e, archive.ErrHistoryMutationPending) {
+	if _, e := s.publishPending(s.ctx, pending); !errors.Is(e, archive.ErrHistoryMutationPending) {
 		t.Fatalf("new history publication: %v", e)
 	}
 	for key, want := range map[string][]byte{metadataKey: meta, sourceKey: protected} {
@@ -78,7 +78,7 @@ func TestHistoryCachedStateRefusesMaintenanceBeforeWrites(t *testing.T) {
 		t.Fatal(e)
 	}
 	s := sessionScan{published: p}
-	if _, e := s.run(); !errors.Is(e, archive.ErrHistoryMutationPending) {
+	if _, e := s.run(s.ctx); !errors.Is(e, archive.ErrHistoryMutationPending) {
 		t.Fatalf("cached history maintenance: %v", e)
 	}
 }

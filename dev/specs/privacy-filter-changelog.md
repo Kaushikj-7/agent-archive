@@ -5,6 +5,118 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 27
+
+Adapter 0.27.0 and Cursor parser 0.23.0 accompany this change.
+
+- **Cursor's chat name on every Cursor session.** A session captured from
+  Cursor's agent transcripts (`cursor-jsonl`), which record no name, now
+  retains a `session_labels` item with the chat's `name` from its
+  `composerData:<id>` row in Cursor's global `state.vscdb` (provenance
+  `native:cursor:session_labels`, source `database`, contract
+  `cursor-composer-name-v1`), read in place and read-only. Only that row's
+  `name` is read; message rows are not. A string name, trimmed, is present;
+  a missing, null or blank one is confirmed absence; anything else, a missing
+  row or an unreadable database is unavailable and keeps an earlier name.
+- What is newly uploaded: the filtered chat name on Cursor sessions that came
+  from agent transcripts (a database-only chat already carried it).
+
+This lands after filter 26; main reserved it as filter 22.
+
+## Source filter version 26
+
+Adapter 0.26.0 accompanies this change.
+
+- **Codex names on every Codex thread.** A Codex name is the last nonempty
+  `thread_name` in Codex's `session_index.jsonl` for the thread (contract
+  `codex-session-index-v3`), read for any Codex release and while Codex runs.
+  Filter 18's resolver read only Codex 0.159.2 threads from a settled
+  `state_5.sqlite`, which Codex keeps in WAL mode while it runs, so it named
+  no current thread. The retained `session_labels` shape is unchanged.
+- **History source sets carry the name.** A thread that continues into a later
+  rollout (a history source, schema 3) now retains the same `session_labels`
+  item an ordinary source does; earlier filters refused it there, so a thread lost
+  its name once it continued. A reader older than this filter refuses such a
+  history source.
+- What is newly uploaded: the filtered thread name (already uploaded for
+  ordinary sources) on history sources, and names of threads from Codex
+  releases after 0.159.2. Subagent threads are not looked up.
+
+This lands after filter 25; main reserved it as filter 21.
+
+## Source filter version 25
+
+Adapter 0.25.0 accompanies this change.
+
+- **Codex project instructions.** Codex 0.160 sends a project's AGENTS.md as
+  the first user message of a thread, and again after compaction, as a
+  `# AGENTS.md instructions for DIR` heading followed by an
+  `<INSTRUCTIONS>…</INSTRUCTIONS>` block, instead of the `<user_instructions>`
+  block earlier releases used. Earlier filters kept it as text the person wrote, so
+  it became the session's title and the first prompt in a handoff. The heading
+  and block are now dropped with a `hidden_instruction_omitted` gap, like
+  `<user_instructions>`. Only a heading at the start of a string, on its own
+  line and followed by the tag, counts: a message that quotes it later, or
+  indents it as a code example, keeps it. An unclosed block drops the rest of
+  the string. Less leaves the machine: nothing new is kept.
+
+This lands after filter 24; main reserved it as filter 20.
+
+## Source filter version 24
+
+Global adapter 0.24.0, Muse filter 0.24.0 and Muse parser 0.4.0 retain qualified
+own completion model/input/output observations plus minimal run/source identity.
+The closed native branch validates duration and all six counters, then drops
+duration/cache/reasoning/private context. Every string uses shared privacy rules;
+identity changes refuse rather than merge owners. Older event-only rows remain
+readable; older exact retained schemas refuse enriched rows. Other agents' parser
+versions and filtered record payloads are unchanged. Reservations20–22 remain
+independent and are not included here.
+
+The additive shared `token_observations` envelope leaves legacy token counts and
+`model_tokens` absent. Matching a known model or custom price cannot price these
+observations. Full usage, composition and cost remain unavailable. Mixed stats
+show qualified spend as a priced subset with excluded observation-only session
+counts, including observed zero; no unpriced token amount is invented.
+
+## Source filter version 23
+
+Global adapter 0.23.0 and Muse parser 0.3.0 accompany this change. Versions20,21,22
+are reserved by independent open PR611, PR613 and PR614 respectively; this entry
+does not include those policies.
+
+- Muse strictly validates newly qualified reasoning/schema3 approval/review,
+  wait/tool effect and task-output bodies, then discards them. Only the reviewed
+  minimal identity fields survive; typed prior-reference joins remain checkable.
+- Ordinary v1 serialization remains unchanged. A closed v2 native omission row
+  preserves the single qualified ephemeral task marker without any timestamp,
+  causation, run/task, visible text or tool/accounting fact. Its original identity,
+  stream sequence and physical position participate in validation and comparison.
+- Exact two-metadata model-resolution startup and an assistant's typed private
+  provider-item leaf are qualified; the leaf is dropped and own assistant graph
+  authority stays unchanged. Permission-frame time remains birth authority.
+- Deterministic private-body/ephemeral-task omission gaps cannot be hidden by
+  deleting bundle gaps: parser refuses; retained-only refilter reconstructs them.
+  Unknown shapes refuse whole-file with no partial artifact. Capture stays fenced.
+
+## Source filter version 19
+
+Adapter 0.19.0 accompanies the new Muse parser 0.1.0.
+
+- Explicit local Muse files require a complete supported ordinary exec/MSP root,
+  exact initial permission checksum and coherent reserved start/workspace.
+  Permission profiles, native child JSON, checksums, provider/context bodies and
+  hook diagnostics are validation inputs only and are never retained.
+- `muse-jsonl` v1 preserves bounded envelope/position and typed conversation joins,
+  minimal permission/startup authority, safe own text and names. All retained
+  strings pass shared privacy policy; changed identity refuses the file.
+  Fixed privacy gaps disclose redaction, hidden-context removal and truncation,
+  and survive retained-only privacy refresh without native strings or details.
+- Known optional events retain content-free provenance. Unknown authority,
+  forks, children, checkpoints, rewrites and incomplete startup refuse the whole
+  file. Usage, tools, model switches and child coverage remain unavailable.
+  Registered collection refuses Muse before native reading/filtering/publication.
+
 ## Source filter version 18
 
 Adapter 0.18.0 and Codex parser 0.25.0 accompany this change.
@@ -61,6 +173,8 @@ parser 0.23.0 derive the corrected labels and prompt fallback.
   Quoted markup, fenced and indented code examples (including after blank
   lines containing whitespace), and mentions in human prose remain intact. Human
   text outside the block remains a prompt; context-only text is omitted.
+  Sources filtered earlier keep the wrapper; Codex parser 0.27.0 applies the
+  same rule when deriving their metadata, so a refresh corrects their titles.
 - Head/tail previews keep name class precedence and report partial coverage
   when records between their bounded windows were not read.
 

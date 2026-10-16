@@ -31,6 +31,7 @@ func DecodeRevisionSourceLeased(ctx context.Context, metadata archive.Metadata, 
 var errDecodeBudget = ReadBudgetLimit(errors.New("retained source exceeds shared data budget"))
 
 func decodeSourceLeased(ctx context.Context, data []byte, limits SourceReadLimits, budget *NativeReadBudget, decode func() (archive.SourceBundle, error)) (archive.SourceBundle, func(), error) {
+	reservation := budget.Reservation()
 	noop := func() {}
 	if err := ctx.Err(); err != nil {
 		return archive.SourceBundle{}, noop, err
@@ -38,11 +39,11 @@ func decodeSourceLeased(ctx context.Context, data []byte, limits SourceReadLimit
 	// Reserve the bounded gzip/counting and scanner scratch before opening
 	// the stream. Preflight reads wire bytes only, never JSON objects.
 	const preflightScratch = 64 << 10
-	if !budget.Reserve(preflightScratch) {
+	if !reservation.Reserve(preflightScratch) {
 		return archive.SourceBundle{}, noop, errDecodeBudget
 	}
 	wire, longest, err := sourceWireSize(ctx, data, int64(limits.UncompressedLimit()))
-	budget.Release(preflightScratch)
+	reservation.Release(preflightScratch)
 	if err != nil {
 		return archive.SourceBundle{}, noop, err
 	}
@@ -54,17 +55,17 @@ func decodeSourceLeased(ctx context.Context, data []byte, limits SourceReadLimit
 	// The scanner and the decoded raw record line coexist before its map
 	// is adopted by the returned bundle. Charge both independent byte owners.
 	scratch := lineCapacity + longest + preflightScratch
-	if !budget.Reserve(wire + scratch) {
+	if !reservation.Reserve(wire + scratch) {
 		return archive.SourceBundle{}, noop, errDecodeBudget
 	}
 	bundle, err := decode()
-	budget.Release(scratch)
+	reservation.Release(scratch)
 	if err != nil {
-		budget.Release(wire)
+		reservation.Release(wire)
 		return archive.SourceBundle{}, noop, err
 	}
 	var once sync.Once
-	release := func() { once.Do(func() { budget.Release(wire) }) }
+	release := func() { once.Do(func() { reservation.Release(wire) }) }
 	return bundle, release, nil
 }
 

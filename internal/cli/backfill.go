@@ -112,6 +112,9 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	// temporary folder goes first, whatever this command is (history, undo,
 	// and --dry-run included). A copy in use is never removed.
 	cursorstore.RemoveStaleSnapshots()
+	if len(args) > 0 && args[0] == "projects" {
+		return runBackfillProjects(args[1:], stdout, stderr, env)
+	}
 	if len(args) > 0 && args[0] == "history" {
 		return runBackfillHistory(args[1:], stdout, stderr, env)
 	}
@@ -121,6 +124,12 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	opts, ok := parseBackfillOptions(args, stderr, env)
 	if !ok {
 		return 2
+	}
+	for _, name := range opts.filters.Harnesses {
+		if _, supported := env.agentRegistry().LookupImport(name); !supported {
+			terminal.Printf(stderr, "agent-archive: backfill: historical import is unavailable for %s\n", name)
+			return 2
+		}
 	}
 	home, err := env.readHome()
 	if err != nil {
@@ -205,6 +214,7 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 	fs.Var(&harnesses, "harness", "only sessions from this app (claude, codex, cursor); repeatable")
 	fs.Var(&projects, "project", "only sessions in this project directory; repeatable")
 	fs.Var(&mappings, "map-project", "map exact missing OLD_CWD=CONFIGURED_ROOT for this import; repeatable")
+	mappingFile := fs.String("mapping-file", "", "bounded JSON file assigning exact original cwds to configured or historical projects")
 	since := fs.String("since", "", "only sessions started on or after this local date (YYYY-MM-DD)")
 	until := fs.String("until", "", "only sessions started on or before this local date (YYYY-MM-DD)")
 	includeHome := fs.Bool("include-home", false, "import sessions run from the home directory")
@@ -213,7 +223,7 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 	dryRun := fs.Bool("dry-run", false, "print the plan and exit; nothing is written")
 	jsonOut := fs.Bool("json", false, "with --dry-run, print the plan as JSON")
 	yes := fs.Bool("yes", false, "skip the confirmation")
-	background := fs.Bool("background", false, "register the sessions and let the collector upload them")
+	background := fs.Bool("background", false, "stage and register sessions; the collector verifies uploads")
 	if !fs.parseFlagsOnly(args) {
 		return backfillCommandOptions{}, false
 	}
@@ -241,7 +251,13 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 		SinceArg: relativeTimeArg(*since), UntilArg: relativeTimeArg(*until),
 		IncludeHome: *includeHome, IncludeTemp: *includeTemp, IncludeRemoved: *includeRemoved,
 	}
-	filters, err = filters.Canonicalize(env.agentRegistry())
+	if *mappingFile != "" {
+		if err := readBackfillMappingFile(*mappingFile, &filters); err != nil {
+			return usageError(err.Error())
+		}
+		filters.MappingFile = *mappingFile
+	}
+	filters, err = filters.Canonicalize(selectedDiscoveryApps{DiscoveryLookup: env.agentRegistry(), apps: env.backfillDiscoveryAgents()})
 	if err != nil {
 		return usageError(err.Error())
 	}
@@ -259,10 +275,13 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 // before reporting an error or handing the completed plan to the next phase.
 func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg config.Config, opts backfillCommandOptions, style textStyle) (backfill.Plan, bool) {
 	var stopLooking func()
+	var progress func(backfill.PlanningProgress)
 	if !opts.jsonOut {
-		label := backfill.SearchLine(opts.filters, env.agentRegistry().DiscoveryAgents())
+		label := backfill.SearchLine(opts.filters, env.backfillDiscoveryAgents())
 		if style.live {
-			stopLooking = style.spin(stdout, label).stop
+			display := newPlanningDisplay(label)
+			progress = display.observe
+			stopLooking = style.spinLabelEvery(stdout, display.label, spinnerInterval).stop
 		} else {
 			terminal.Print(stdout, label+" ")
 			stopLooking = func() {}
@@ -275,13 +294,13 @@ func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg 
 	// folder. A second Ctrl-C, SIGTERM, SIGHUP, or SIGQUIT quits at once, removing
 	// the copy first.
 	planCtx, stopPlanning := interruptibleContext(env, stderr)
-	plan, err := buildBackfillPlan(planCtx, env, home, userHome, cfg, opts.filters)
+	plan, err := buildBackfillPlan(planCtx, env, home, userHome, cfg, opts.filters, progress)
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
 	stopLooking()
 	if err != nil {
 		if !opts.jsonOut {
-			label := backfill.SearchLine(opts.filters, env.agentRegistry().DiscoveryAgents())
+			label := backfill.SearchLine(opts.filters, env.backfillDiscoveryAgents())
 			switch {
 			case interrupted && style.live:
 				terminal.Println(stdout, label+" stopped.")
@@ -300,6 +319,9 @@ func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg 
 		terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
 		return backfill.Plan{}, false
 	}
+	if env.observeBackfillPlan != nil {
+		env.observeBackfillPlan(plan)
+	}
 	return plan, true
 }
 
@@ -315,7 +337,7 @@ func reportBackfillPlan(env Env, stdout, stderr io.Writer, home string, cfg conf
 		return true, 0
 	}
 	if style.live {
-		terminal.Printf(stdout, "%s %d found.\n", backfill.SearchLine(opts.filters, env.agentRegistry().DiscoveryAgents()), plan.Found())
+		terminal.Printf(stdout, "%s %d found.\n", backfill.SearchLine(opts.filters, env.backfillDiscoveryAgents()), plan.Found())
 	} else {
 		terminal.Printf(stdout, "%d found.\n", plan.Found())
 	}
@@ -458,12 +480,15 @@ func importRecentSessions(p *prompter, errOut io.Writer, home, userHome string, 
 	const label = "Looking for sessions from the last 7 days…"
 	releasePrompts := p.suspendPrompts()
 	stopLooking := func() {}
+	var progress func(backfill.PlanningProgress)
 	if p.style.live {
-		stopLooking = p.style.spin(p.out, label).stop
+		display := newPlanningDisplay(label)
+		progress = display.observe
+		stopLooking = p.style.spinLabelEvery(p.out, display.label, spinnerInterval).stop
 	}
 	// Ctrl-C while planning stops the import, never setup.
 	planCtx, stopPlanning := interruptibleContext(env, errOut)
-	full, err := buildBackfillPlan(planCtx, env, home, userHome, cfg, filters)
+	full, err := buildBackfillPlan(planCtx, env, home, userHome, cfg, filters, progress)
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
 	stopLooking()
@@ -482,15 +507,14 @@ func importRecentSessions(p *prompter, errOut io.Writer, home, userHome string, 
 		return
 	}
 	if len(plan.Imported()) > 0 {
-		reg, err := registerImportLocked(env, p.out, errOut, home, plan, configFingerprint(cfg), setupImportCollectorWait)
+		reg, err := registerImportLocked(env, p.out, errOut, home, plan, configFingerprint(cfg), setupImportCollectorWait, false)
 		reg.release()
 		if err != nil {
 			notImported(err)
 			return
 		}
-		if apps := registeredByApp(home, reg.batch.ID); len(reg.result.Sessions) > 0 {
-			terminal.Printf(p.out, "Imported %s from the last 7 days%s. Uploading in the background.\n", countNoun(len(reg.result.Sessions), "session"), apps)
-		}
+		printSetupImportResult(p, home, reg.result)
+		printChangedAtAdmission(p.out, reg.changed, p.style.cmd(setupImportRetryCommand))
 	}
 	if older > 0 {
 		them := "them"
@@ -501,21 +525,46 @@ func importRecentSessions(p *prompter, errOut io.Writer, home, userHome string, 
 	}
 }
 
-// registeredByApp is " (Codex 2, Claude Code 1)": the sessions import
-// batchID registered, by app, most first; "" when the store cannot say.
-func registeredByApp(home, batchID string) string {
+// printSetupImportResult reports this run, including independently registered
+// native children, without counting dependent subagent candidates as sessions.
+func printSetupImportResult(p *prompter, home string, result backfill.RegistrationResult) {
+	total, apps, err := registeredByApp(home, result)
+	if err != nil {
+		terminal.Println(p.out, "Recent session registration finished, but its totals could not be read. Check agent-archive status.")
+	} else if total > 0 {
+		terminal.Printf(p.out, "Imported %s from the last 7 days%s. Uploading in the background.\n", countNoun(total, "session"), apps)
+	}
+	printRegistrationSkips(p.out, result)
+	if result.Gone+result.NotAdmitted+result.StartInFuture+result.Invalid+result.SubagentsInvalid > 0 {
+		terminal.Println(p.out, "Some recent sessions were not imported. Check the reasons above, or run "+p.style.cmd(setupImportRetryCommand)+" to review and retry.")
+	}
+}
+
+// registeredByApp counts only authoritative independent registrations made
+// by this invocation. Prior members of a resumed batch and dependent subagent
+// candidates are excluded; a native child's parent link does not change its count.
+func registeredByApp(home string, result backfill.RegistrationResult) (int, string, error) {
+	if len(result.Sessions)+len(result.Subagents) == 0 {
+		return 0, "", nil
+	}
 	regs, err := state.OpenReadOnly(home).LoadRegistrations()
 	if err != nil {
-		return ""
+		return 0, "", err
+	}
+	ids := map[string]bool{}
+	for _, id := range result.Sessions {
+		ids[id] = true
+	}
+	for _, id := range result.Subagents {
+		ids[id] = true
 	}
 	counts := map[string]int{}
+	total := 0
 	for _, reg := range regs {
-		if reg.InBatch(batchID) && reg.ParentSessionID == "" {
+		if ids[reg.ArchiveSessionID] && independentImportedSession(reg) {
 			counts[appName(reg.Harness.Name)]++
+			total++
 		}
-	}
-	if len(counts) == 0 {
-		return ""
 	}
 	apps := make([]string, 0, len(counts))
 	for app := range counts {
@@ -531,7 +580,10 @@ func registeredByApp(home, batchID string) string {
 	for i, app := range apps {
 		parts[i] = fmt.Sprintf("%s %d", app, counts[app])
 	}
-	return " (" + strings.Join(parts, ", ") + ")"
+	if len(parts) == 0 {
+		return total, "", nil
+	}
+	return total, " (" + strings.Join(parts, ", ") + ")", nil
 }
 
 // interruptibleContext returns a context that the first Ctrl-C cancels,
@@ -668,8 +720,8 @@ func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan, configured i
 		case "y", "yes":
 			return true, nil
 		case "e", "edit":
-			if configured <= 0 {
-				terminal.Println(out, "Retention is off, so no session is deleted; there is nothing to keep longer.")
+			if configured == 0 {
+				terminal.Println(out, "Keep forever: there is no automatic expiry to extend. Explicit deletion and provider lifecycle rules still apply.")
 				continue
 			}
 			guidedExplanation(out, "Edit retention", "Retention applies to every session in the archive, not only these.", fmt.Sprintf("Here it can only be raised from %d days, and undo puts %d back. Shorten it in setup.", configured, configured))
@@ -677,10 +729,10 @@ func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan, configured i
 			if err != nil {
 				return false, err
 			}
-			if days < configured {
+			if config.RetentionShorter(days, configured) {
 				// A shorter retention deletes sessions already archived,
 				// hook-captured ones too, which an import never does.
-				terminal.Printf(out, "Retention stays at %d days: a shorter period would delete sessions\nalready in the archive. Shorten it in setup.\n", plan.RetentionDays)
+				terminal.Printf(out, "Retention stays at %s: a shorter period would delete sessions\nalready in the archive. Shorten it in setup.\n", config.RetentionLabel(plan.RetentionDays))
 				continue
 			}
 			plan.RetentionDays = days
@@ -723,6 +775,16 @@ func (e Env) backfillTempDirs() []string {
 	return temps
 }
 
+func (e Env) backfillDiscoveryAgents() []string {
+	var names []string
+	for _, name := range e.agentRegistry().DiscoveryAgents() {
+		if _, supported := e.agentRegistry().LookupImport(name); supported {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 // backfillEnvironment is what planning reads: the user's home, the
 // temporary directories, and the clock. Files are read from the real file
 // system, and Cursor's database is opened read-only to count the chats only
@@ -730,10 +792,11 @@ func (e Env) backfillTempDirs() []string {
 func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.Environment {
 	dirs := e.nativeSessionDirectories(userHome, cfg)
 	observer := &gitremote.IdentityObserver{}
+	importApps := e.backfillDiscoveryAgents()
 	env := backfill.Environment{
 		RepositoryIdentity:        observer.Lookup,
 		RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent,
-		Home:                      userHome, NativeDirectories: dirs, Sources: e.agentRegistry(), Discovery: e.agentRegistry(), DatabaseCatalogs: e.agentRegistry(), NativePaths: e.agentRegistry(), Worktrees: e.agentRegistry(), Workspaces: e.agentRegistry(), Children: e.agentRegistry(), Imports: e.agentRegistry(),
+		Home:                      userHome, NativeDirectories: dirs, Sources: e.agentRegistry(), Discovery: selectedDiscoveryApps{DiscoveryLookup: e.agentRegistry(), apps: importApps}, DatabaseCatalogs: e.agentRegistry(), NativePaths: e.agentRegistry(), Worktrees: e.agentRegistry(), Workspaces: e.agentRegistry(), Children: e.agentRegistry(), Imports: e.agentRegistry(),
 		TempDirs: e.backfillTempDirs(), Now: e.now, OS: e.OS,
 		// XDG_CONFIG_HOME places Cursor's data folder off macOS.
 		Getenv: e.getenv,
@@ -791,6 +854,11 @@ func newArchiveState(home string, cfg config.Config) archiveState {
 // registration does not count, as for hooks (capture.HasRegistration).
 func (s archiveState) Classify(harness, nativeSessionID string) (backfill.SkipReason, error) {
 	archiveID, found, err := s.store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(harness)), NativeID: nativeSessionID})
+	if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
+		// A read-only preview must neither repair the index nor guess absence.
+		// Retain this session as pending while planning other proven identities.
+		return backfill.SkipIndexRecovery, nil
+	}
 	if err != nil {
 		return "", err
 	}
@@ -816,4 +884,23 @@ func (s archiveState) Classify(harness, nativeSessionID string) (backfill.SkipRe
 		return backfill.SkipRemovedByUndo, nil
 	}
 	return backfill.SkipRemovedByRetention, nil
+}
+
+func readBackfillMappingFile(path string, filters *backfill.Filters) error {
+	before, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !before.Mode().IsRegular() || before.Size() > backfill.MappingFileLimit {
+		return errors.New("mapping file must be a regular file of at most 4 MiB")
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || !os.SameFile(before, info) {
+		return errors.Join(errors.New("mapping file changed before opening"), err, file.Close())
+	}
+	return errors.Join(backfill.ReadMappingFile(file, filters), file.Close())
 }

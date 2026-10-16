@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -11,15 +12,25 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/stateerrors"
 )
 
 const durableStorageQuota int64 = 1 << 30
 
 const durableControlBytes int64 = 64 << 10
+
+// Ordinary singleton Codex stages leave room for the standard collector's
+// entire 160 MiB pending wire, including source/metadata base64 and selection
+// proof, plus two 16 KiB staged release controls and their encoder newlines.
+// All terms keep the existing double charge for durable atomic writes.
+// Grouped and history selections retain their existing full-quota behavior.
+// See dev/contributing/durable-admission-capacity.md for scope and limitations.
+const importPublicationHeadroom int64 = 2*(agentapi.PassReadBudget-agentapi.PassCacheReserve) + 2*2*((16<<10)+1)
 
 const durableEntryLimit = 65536
 
@@ -27,7 +38,7 @@ const durableEntryLimit = 65536
 var ErrDurableStorageCapacity = errors.New("durable publication capacity exhausted; finish pending publication or recover retained evidence before retrying")
 
 // ErrDurableStorageRecovery preserves unknown or damaged obligations without native substitution.
-var ErrDurableStorageRecovery = errors.New("durable publication evidence requires recovery; native substitution and automatic cleanup are forbidden")
+var ErrDurableStorageRecovery = stateerrors.ErrDurableStorageRecovery
 
 type durableRootPath string
 
@@ -137,7 +148,11 @@ func privateDirectoryWithParentSync(root *os.Root, path string, create bool, syn
 	return current, nil
 }
 
-func (q *durableQuota) usage(ctx context.Context) (u durableUsage, err error) {
+func (q *durableQuota) usage() (durableUsage, error) {
+	return q.usageContext(q.store.durableContext())
+}
+
+func (q *durableQuota) usageContext(ctx context.Context) (u durableUsage, err error) {
 	remaining := durableEntryLimit
 	if err := q.scanPublished(ctx, &remaining, &u); err != nil {
 		return u, errors.Join(ErrDurableStorageRecovery, err)
@@ -200,6 +215,10 @@ func (q *durableQuota) usage(ctx context.Context) (u durableUsage, err error) {
 			if !safeFileComponent(entry.Name()) {
 				return u, ErrDurableStorageRecovery
 			}
+			e = q.scan(filepath.Join("sessions", entry.Name(), "import-stage"), 0, &remaining, &u)
+			if e != nil && !errors.Is(e, os.ErrNotExist) {
+				return u, e
+			}
 			e = q.scan(filepath.Join("sessions", entry.Name(), "pending-sources"), 0, &remaining, &u)
 			if e != nil && !errors.Is(e, os.ErrNotExist) {
 				return u, e
@@ -233,7 +252,7 @@ func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUs
 		return err
 	}
 	defer func() { err = errors.Join(err, d.Close()) }()
-	controlled := strings.HasPrefix(path, "publication-evidence/")
+	controlled := strings.HasPrefix(path, "publication-evidence/") || strings.HasSuffix(path, "/import-stage")
 	first := true
 	for {
 		entries, e := d.ReadDir(128)
@@ -271,16 +290,8 @@ func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUs
 			if !info.Mode().IsRegular() || info.Size() < 0 {
 				return ErrDurableStorageRecovery
 			}
-			if info.Size() > (durableStorageQuota-u.charged)/2 {
-				return ErrDurableStorageCapacity
-			}
-			if (protectedDurableRoot(path)) && !strings.HasSuffix(entry.Name(), ".json") {
-				u.recovery = true
-			}
-			u.physical += info.Size()
-			u.charged += 2 * info.Size()
-			if strings.HasSuffix(path, "pending-sources") && !stagedSourceName.MatchString(entry.Name()) && !stagedTempName.MatchString(entry.Name()) {
-				u.recovery = true
+			if err := chargeDurableFile(path, entry.Name(), info.Size(), u); err != nil {
+				return err
 			}
 		}
 		if errors.Is(e, io.EOF) {
@@ -289,11 +300,27 @@ func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUs
 	}
 }
 
-func (q *durableQuota) write(ctx context.Context, path string, n int64, write func(io.Writer) error) (err error) {
+func (q *durableQuota) write(path string, n int64, write func(io.Writer) error) error {
+	return q.writeChecked(path, n, write, nil)
+}
+
+func (q *durableQuota) writeContext(ctx context.Context, path string, n int64, write func(io.Writer) error) error {
+	return q.writeWithHeadroomContext(ctx, path, n, write, nil, 0)
+}
+
+func (q *durableQuota) writeChecked(path string, n int64, write func(io.Writer) error, commit func(func() error) error) error {
+	return q.writeWithHeadroom(path, n, write, commit, 0)
+}
+
+func (q *durableQuota) writeWithHeadroom(path string, n int64, write func(io.Writer) error, commit func(func() error) error, headroom int64) error {
+	return q.writeWithHeadroomContext(q.store.durableContext(), path, n, write, commit, headroom)
+}
+
+func (q *durableQuota) writeWithHeadroomContext(ctx context.Context, path string, n int64, write func(io.Writer) error, commit func(func() error) error, headroom int64) (err error) {
 	if n < 0 || n > durableStorageQuota/2 {
 		return ErrDurableStorageCapacity
 	}
-	u, err := q.usage(ctx)
+	u, err := q.usageContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -326,7 +353,28 @@ func (q *durableQuota) write(ctx context.Context, path string, n int64, write fu
 			additional += durableControlBytes
 		}
 	}
+	if strings.HasSuffix(filepath.Dir(path), "/import-stage") {
+		present, e := rootHasEntries(q.home.Root, filepath.Dir(path))
+		if e != nil && !errors.Is(e, os.ErrNotExist) {
+			return e
+		}
+		if !present {
+			additional += durableControlBytes
+		}
+		if filepath.Base(path) == "cancel.json" && present {
+			if n > durableControlBytes/2 {
+				return ErrDurableStorageCapacity
+			}
+			additional = 0
+		}
+	}
 	if additional > durableStorageQuota-u.charged {
+		return ErrDurableStorageCapacity
+	}
+	// The validated producer chooses this admission policy before entering
+	// the same quota lock used by the census and atomic commit. Generic
+	// writers and cancellation/release controls carry no extra headroom.
+	if n > old && additional > durableStorageQuota-headroom-u.charged {
 		return ErrDurableStorageCapacity
 	}
 	if err = q.guard.CheckHome(q.path); err != nil {
@@ -338,13 +386,13 @@ func (q *durableQuota) write(ctx context.Context, path string, n int64, write fu
 		return err
 	}
 	defer func() { err = errors.Join(err, dir.Close()) }()
-	return local.RootedAtomicWrite(q.home.Root, path, func(w io.Writer) error {
+	return local.RootedAtomicWriteChecked(q.home.Root, path, func(w io.Writer) error {
 		limited := &boundedDurableWriter{writer: w, remaining: n}
 		if e := write(limited); e != nil {
 			return e
 		}
 		return q.guard.CheckHome(q.path)
-	})
+	}, commit)
 }
 
 type boundedDurableWriter struct {
@@ -362,6 +410,21 @@ func (w *boundedDurableWriter) Write(p []byte) (int, error) {
 }
 
 func (s *Store) savePendingGuard(ctx context.Context, g config.DurableStorageGuard, id string, p PendingPublication) error {
+	if err := p.ValidateReadySlot(id); err != nil {
+		return err
+	}
+	if err := s.validateReadySelection(ctx, p); err != nil {
+		return err
+	}
+	if err := s.checkSelectingPendingWrite(ctx, id, p); err != nil {
+		return err
+	}
+	if err := g.CheckHome(s.home); err != nil {
+		return err
+	}
+	if err := s.checkCatalogPendingSave(ctx, id, p); err != nil {
+		return err
+	}
 	if len(p.SourceBytes) > maxPendingHistoryBytes {
 		return ErrDurableStorageCapacity
 	}
@@ -369,28 +432,110 @@ func (s *Store) savePendingGuard(ctx context.Context, g config.DurableStorageGua
 }
 
 func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGuard, path string, p any) error {
-	_, _, err := s.writeDurableGuardDigest(ctx, g, path, p)
-	return err
+	return s.writeDurableGuardChecked(ctx, g, path, p, nil)
 }
 
+func (s *Store) writeDurableGuardChecked(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit func(func() error) error) error {
+	return s.writeDurableGuardHeadroom(ctx, g, path, p, commit, 0)
+}
+
+func (s *Store) writeDurableGuardHeadroom(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit func(func() error) error, headroom int64) (err error) {
+	reservation := s.readReservation()
+	if err = g.CheckHome(s.home); err != nil {
+		return err
+	}
+	// A pending publication carries a session's whole source and records:
+	// it is streamed, holding one record's encoding at a time, never the
+	// whole file's (streamJSON).
+	_, streamed := p.(PendingPublication)
+	// Keep the existing independent encoder lease; disk quota never substitutes for memory.
+	const scratch = 32 << 10
+	limit := durableStorageQuota/2 - 1
+	if s.resourceBudget != nil && !streamed {
+		if !reservation.Reserve(scratch) {
+			return errStateBudget
+		}
+		limit = min(limit, reservation.Available()-1)
+	}
+	n, err := agentmeta.JSONWireBound(ctx, p, limit)
+	if s.resourceBudget != nil && !streamed {
+		if errors.Is(err, agentmeta.ErrJSONWireLimit) && limit < durableStorageQuota/2-1 {
+			// Memory, not the disk quota, refused the encoding.
+			reservation.Refuse(limit + 2)
+		}
+		reservation.Release(scratch)
+	}
+	if err != nil {
+		return errors.Join(errStateBudget, err)
+	}
+	n++
+	if s.resourceBudget != nil && !streamed {
+		if !reservation.Reserve(n) {
+			return errStateBudget
+		}
+		defer reservation.Release(n)
+	}
+	q, err := s.openDurableQuota(g)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, q.Close()) }()
+	encode := func(w io.Writer) error { return json.NewEncoder(w).Encode(p) }
+	if pending, ok := p.(PendingPublication); ok && pending.JournalVersion == 5 {
+		encode = func(w io.Writer) error { return jsonwire.Encode(ctx, w, p, reservation) }
+	} else if streamed {
+		encode = func(w io.Writer) error { return streamJSON(ctx, w, p, reservation) }
+	}
+	return q.writeWithHeadroom(path, n, encode, commit, headroom)
+}
+
+func (s *Store) stagePendingSourceGuard(g config.DurableStorageGuard, id string, ref archive.SourceReference, data []byte) (err error) {
+	q, err := s.openDurableQuota(g)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, q.Close()) }()
+	return q.write(filepath.Join("sessions", id, "pending-sources", ref.SHA256+".gz"), int64(len(data)), func(w io.Writer) error { _, e := w.Write(data); return e })
+}
+
+func chargeDurableFile(path, name string, size int64, u *durableUsage) error {
+	if strings.HasSuffix(path, "/import-stage") && name == "cancel.json" {
+		if size > durableControlBytes/2 {
+			return ErrDurableStorageRecovery
+		}
+		u.physical += size
+		return nil // Charged by the import directory's reserved control allowance.
+	}
+	if size > (durableStorageQuota-u.charged)/2 {
+		return ErrDurableStorageCapacity
+	}
+	if (protectedDurableRoot(path)) && !strings.HasSuffix(name, ".json") {
+		u.recovery = true
+	}
+	u.physical += size
+	u.charged += 2 * size
+	if strings.HasSuffix(path, "pending-sources") && !stagedSourceName.MatchString(name) && !stagedTempName.MatchString(name) {
+		u.recovery = true
+	}
+	return nil
+}
+
+// writeDurableGuardDigest retains the exact emitted digest only after guarded
+// atomic publication succeeds. It never substitutes disk quota for a memory lease.
 func (s *Store) writeDurableGuardDigest(ctx context.Context, g config.DurableStorageGuard, path string, p any) (sum [32]byte, n int64, err error) {
 	if err = g.CheckHome(s.home); err != nil {
 		return sum, n, err
 	}
-	// The physical bound funds the two atomic disk copies. Encoder scratch and
-	// live aliases use the existing independent memory ledger.
-	budget := s.resourceBudget
-	if budget == nil {
-		// Standalone APIs have no inherited read ledger; this operation-only
-		// fallback grants no read, authority, or disk quota credit.
-		budget = agentapi.NewNativeReadBudget(128 << 20)
+	reservation := s.readReservation()
+	if s.resourceBudget == nil {
+		reservation = agentapi.NewNativeReadBudget(128 << 20).Reservation()
 	}
 	const scratch = 32 << 10
-	if !budget.Reserve(scratch) {
+	if !reservation.Reserve(scratch) {
 		return sum, n, errStateBudget
 	}
 	n, err = jsonwire.Bound(ctx, p, durableStorageQuota/2-1)
-	budget.Release(scratch)
+	reservation.Release(scratch)
 	if err != nil {
 		return sum, n, errors.Join(errStateBudget, err)
 	}
@@ -407,15 +552,15 @@ func (s *Store) writeDurableGuardDigest(ctx context.Context, g config.DurableSto
 		}
 	}()
 	const digestScratch = 1024
-	if !budget.Reserve(digestScratch) {
+	if !reservation.Reserve(digestScratch) {
 		return sum, n, errStateBudget
 	}
-	defer budget.Release(digestScratch)
+	defer reservation.Release(digestScratch)
 	hash := sha256.New()
 	var emitted int64
-	err = q.write(ctx, path, n, func(w io.Writer) error {
+	err = q.writeContext(ctx, path, n, func(w io.Writer) error {
 		output := &publicationEmittedWriter{writer: io.MultiWriter(w, hash)}
-		e := jsonwire.Encode(ctx, output, p, budget)
+		e := jsonwire.Encode(ctx, output, p, reservation)
 		emitted = output.written
 		if errors.Is(e, jsonwire.ErrMemory) {
 			return errors.Join(errStateBudget, e)
@@ -438,13 +583,4 @@ func (w *publicationEmittedWriter) Write(p []byte) (int, error) {
 	n, err := w.writer.Write(p)
 	w.written += int64(n)
 	return n, err
-}
-
-func (s *Store) stagePendingSourceGuard(g config.DurableStorageGuard, id string, ref archive.SourceReference, data []byte) (err error) {
-	q, err := s.openDurableQuota(g)
-	if err != nil {
-		return err
-	}
-	defer func() { err = errors.Join(err, q.Close()) }()
-	return q.write(s.durableContext(), filepath.Join("sessions", id, "pending-sources", ref.SHA256+".gz"), int64(len(data)), func(w io.Writer) error { _, e := w.Write(data); return e })
 }

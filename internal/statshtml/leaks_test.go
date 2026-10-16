@@ -142,6 +142,11 @@ func TestHostileTextIsInertInEveryField(t *testing.T) {
 	base := computeFixture(t, fixtureSessions(), 30, stats.GroupProject)
 	leaves := stringLeaves(&base)
 	for p, payload := range hostilePayloads {
+		if testing.Short() && len(payload) > 4096 {
+			// Scale only repeated long strings; every attack, every field and
+			// both privacy modes still render and pass the same safety checks.
+			payload = payload[:4096]
+		}
 		t.Run(strconv.Itoa(p), func(t *testing.T) {
 			t.Parallel()
 			where := ""

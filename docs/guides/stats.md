@@ -532,7 +532,11 @@ spend it has, marked `+`), and says how many more there are;
   `backfill` shows on the day it was imported. `--hook-captured` leaves
   imports out; `--imported` shows only them.
 - **Subagents.** A subagent's tokens and cost count with its parent session,
-  which is one session; the share they used is shown separately.
+  which is one session; the share they used is shown separately. Descendants
+  of sessions in the fetched capture window are retained even when their own
+  capture time falls outside it. Harness, model and replay filters still apply
+  to each session. An ancestor outside that window is not added; a session
+  without its parent in the filtered inventory keeps its existing orphan rules.
 - **Scope.** This archive only: every session in your bucket, including
   those from other machines that share it, and nothing that was never captured.
 - **MCP.** Claude Code and Cursor only; Codex MCP calls are not recorded.
@@ -546,3 +550,20 @@ sessions counted, the previous period included. Sessions a replay tool ran
 used the model, and counts all of that session's tokens, models included.
 Give the full model id (`claude-opus-5`), as `list` does, not the family the
 screen groups it under (`opus`).
+
+Own input/output observations use an optional `token_observations` object with
+`input`, `output`, bounded `models`, and explicit `observed`, `coverage`,
+`composition`, `pricing` availability (`state`, optional fixed `reason`). They are
+recorded observations, not complete usage or billed tokens. A known model or
+`--prices` file cannot turn them into cost. Legacy normalized token fields remain
+absent for observation-only sessions. Stats JSON also reports
+`observation_sessions` and `coverage.observation_only_sessions`; each cost has an
+optional `observation_only_sessions` count. Mixed spend is the qualified priced
+subset and is partial even when an excluded session recorded zero input/output.
+No unpriced token total is inferred from observations. Terminal and HTML show a
+compact observation and coverage note; handoff JSON includes the same summary in
+its session and Markdown keeps values with their unavailable-accounting context.
+
+`--model` also selects explicitly available recorded observation model labels;
+selection does not enable pricing. The bounded `other` fold is not a selectable
+model label, and names folded away beyond the first 31 cannot be selected.

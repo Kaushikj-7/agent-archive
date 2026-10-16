@@ -79,7 +79,8 @@ func TestNativeHeaderFactoryChecksClaimsAndFrozenOwner(t *testing.T) {
 			marker := tc.positive
 			input := state.PreparationInput{ParentSessionID: &parent, NativeChild: &marker, Reference: ref, Selection: state.PublicationSelection{Role: state.PublicationCurrent, RevisionID: metadata.History.CurrentRevision, CapturedAt: original.Capture.CapturedAt, SourceSchemaVersion: original.SchemaVersion}, FilterVersion: original.Capture.FilterVersion, AdapterVersion: original.Capture.AdapterVersion, SkillPolicy: "body"}
 			budget := agentapi.NewNativeReadBudget(128 << 20)
-			if !budget.Reserve(int64(len(packed.Bytes))) {
+			reservation := budget.Reservation()
+			if !reservation.Reserve(int64(len(packed.Bytes))) {
 				t.Fatal("original byte loan")
 			}
 			targetBundle := original
@@ -127,7 +128,7 @@ func TestNativeHeaderFactoryChecksClaimsAndFrozenOwner(t *testing.T) {
 			held := int64(0)
 			if tc.pressure {
 				held = budget.Available() - 1024
-				if !budget.Reserve(held) {
+				if !reservation.Reserve(held) {
 					t.Fatal("pressure")
 				}
 			}
@@ -153,11 +154,11 @@ func TestNativeHeaderFactoryChecksClaimsAndFrozenOwner(t *testing.T) {
 				t.Fatal("transform loan leaked", before, budget.Available())
 			}
 			if held != 0 {
-				budget.Release(held)
+				reservation.Release(held)
 			}
 			targetRelease()
 			targetRelease()
-			budget.Release(int64(len(packed.Bytes)))
+			reservation.Release(int64(len(packed.Bytes)))
 			if used, _ := budget.Charged(); used != 0 {
 				t.Fatal("original/target loans leaked", used)
 			}

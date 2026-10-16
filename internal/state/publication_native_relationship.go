@@ -24,6 +24,7 @@ type PublicationNativeTarget struct {
 // FreezePublicationNativeTarget snapshots only the existing admitted registration.
 // Its facts are checked against decoded retained headers by the transform factory.
 func FreezePublicationNativeTarget(ctx context.Context, p *PendingPublication, reg archive.SessionRegistration, budget *agentapi.NativeReadBudget) (func(), error) {
+	owner := budget.Reservation()
 	if p.Preparation != nil || p.Commit != nil || p.History == nil || !reg.NativeChild {
 		return func() {}, nil
 	}
@@ -38,15 +39,15 @@ func FreezePublicationNativeTarget(ctx context.Context, p *PendingPublication, r
 		return nil, ErrDurableStorageRecovery
 	}
 	const scratch = 32 << 10
-	if !budget.Reserve(scratch) {
+	if !owner.Reserve(scratch) {
 		return nil, errStateBudget
 	}
 	n, err := jsonwire.Bound(ctx, target, min(int64(64<<10), budget.Available()/2))
-	budget.Release(scratch)
+	owner.Release(scratch)
 	if err != nil {
 		return nil, err
 	}
-	if !budget.Reserve(2 * n) {
+	if !owner.Reserve(2 * n) {
 		return nil, errStateBudget
 	}
 	raw, err := json.Marshal(target)
@@ -57,14 +58,14 @@ func FreezePublicationNativeTarget(ctx context.Context, p *PendingPublication, r
 	if err == nil {
 		err = closedPublicationDecode(raw, &owned)
 	}
-	budget.Release(n)
+	owner.Release(n)
 	if err != nil {
-		budget.Release(n)
+		owner.Release(n)
 		return nil, err
 	}
 	p.nativeTarget = &owned
 	var once sync.Once
-	return func() { once.Do(func() { budget.Release(n) }) }, nil
+	return func() { once.Do(func() { owner.Release(n) }) }, nil
 }
 
 func (t PublicationNativeTarget) validate() error {
@@ -93,22 +94,23 @@ func nativeTargetDigest(target *PublicationNativeTarget) string {
 }
 
 func nativeTargetSHA(ctx context.Context, target *PublicationNativeTarget, budget *agentapi.NativeReadBudget) (string, error) {
+	owner := budget.Reservation()
 	if target == nil {
 		return "", nil
 	}
 	const scratch = 32 << 10
-	if !budget.Reserve(scratch) {
+	if !owner.Reserve(scratch) {
 		return "", errStateBudget
 	}
 	n, err := jsonwire.Bound(ctx, target, min(int64(64<<10), budget.Available()/2))
-	budget.Release(scratch)
+	owner.Release(scratch)
 	if err != nil {
 		return "", err
 	}
-	if !budget.Reserve(2 * n) {
+	if !owner.Reserve(2 * n) {
 		return "", errStateBudget
 	}
-	defer budget.Release(2 * n)
+	defer owner.Release(2 * n)
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}

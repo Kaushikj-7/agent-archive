@@ -73,6 +73,21 @@ const (
 // private file elsewhere; see destination.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	// SourceSetPublicationProtection fences history source-set publication writers.
+	SourceSetPublicationProtection bool `json:"source_set_publication_protection,omitempty"`
+	// SearchIndexing is this machine's explicit background indexing consent.
+	SearchIndexing bool `json:"search_indexing,omitempty"`
+	// SearchLifecycleProtection stays set after opt-in, including after disabling.
+	SearchLifecycleProtection bool `json:"search_lifecycle_protection,omitempty"`
+	// NativeAuthorityProtection permanently refuses writers unable to preserve native roots and bindings.
+	NativeAuthorityProtection        bool                 `json:"native_authority_protection,omitempty"`
+	NativeRoots                      []archive.NativeRoot `json:"native_roots,omitempty"`
+	ScopedPickerProtection           bool                 `json:"scoped_picker_protection,omitempty"`
+	SettledCursorSelectionProtection bool                 `json:"settled_cursor_selection_protection,omitempty"`
+	StagedSelectionProtection        bool                 `json:"staged_selection_protection,omitempty"`
+	PublicationCompositionProtection bool                 `json:"publication_composition_protection,omitempty"`
+	HistoricalProjects               []HistoricalProject  `json:"historical_projects,omitempty"`
+	HistoricalProjectProtection      bool                 `json:"historical_project_protection,omitempty"`
 	// CodexNameLookup selects files (default) or explicitly opted-in native startup.
 	CodexNameLookup CodexNameLookup     `json:"codex_name_lookup,omitempty"`
 	CodexCapture    *CodexCaptureConfig `json:"codex_capture,omitempty"`
@@ -100,8 +115,6 @@ type Config struct {
 
 	// DurableStorageProtection permanently protects rooted publication obligations.
 	DurableStorageProtection bool `json:"durable_storage_protection,omitempty"`
-	// PublicationCompositionProtection permanently protects protocol2 publication.
-	PublicationCompositionProtection bool `json:"publication_composition_protection,omitempty"`
 	// CodexHistoryProtection permanently fences writers without revision lifecycle support.
 	CodexHistoryProtection bool `json:"codex_history_protection,omitempty"`
 	// GenerationProtection permanently fences writers that cannot freeze archive generations.
@@ -188,6 +201,9 @@ type Config struct {
 	// RetentionDays is whole-session retention, proposed as 90 by setup.
 	// Enforcing it is the Retention slice's job, not this package's.
 	RetentionDays int `json:"retention_days"`
+	// RetentionProtection is sticky: older setup must never reset forever to 90 days.
+	ImportStagingProtection bool `json:"import_staging_protection,omitempty"`
+	RetentionProtection     bool `json:"retention_protection,omitempty"`
 	// Handoff holds preferences for `agent-archive handoff`. Setup never
 	// asks for them; they are edited by hand and carried through
 	// reconfiguration like the rest of this file.
@@ -286,6 +302,9 @@ func decodeLoadedConfig(data []byte, readErr error, name string, c agentmeta.Cat
 	if err := cfg.ValidateSpares(); err != nil {
 		return Config{}, false, false, err
 	}
+	if err := cfg.ValidateHistoricalProjects(); err != nil {
+		return Config{}, false, false, err
+	}
 	if err := cfg.ValidateMachine(); err != nil {
 		return Config{}, false, false, err
 	}
@@ -309,6 +328,17 @@ func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
 	}
 	if found {
 		PreserveWriterFence(&cfg, previous)
+		if err := validateNativeRootTransition(cfg, previous); err != nil {
+			return err
+		}
+	}
+	if (cfg.NativeAuthorityProtection || len(cfg.NativeRoots) > 0) && (!previous.NativeAuthorityProtection || !slices.Equal(cfg.NativeRoots, previous.NativeRoots)) {
+		if _, err := os.Lstat(filepath.Join(home, "setup-transaction.json")); !errors.Is(err, os.ErrNotExist) {
+			return errors.New("setup pending before native source authority change")
+		}
+	}
+	if cfg.RetentionDays == 0 {
+		cfg.RetentionProtection = true
 	}
 	if err := prepareDiscoveryConfig(&cfg); err != nil {
 		return err
@@ -320,6 +350,12 @@ func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
 		return err
 	}
 	if err := cfg.ValidateSpares(); err != nil {
+		return err
+	}
+	if len(cfg.HistoricalProjects) > 0 {
+		cfg.HistoricalProjectProtection = true
+	}
+	if err := cfg.ValidateHistoricalProjects(); err != nil {
 		return err
 	}
 	if err := cfg.ValidateMachine(); err != nil {
@@ -411,6 +447,9 @@ func (c Config) AcceptSession(r archive.SessionRegistration) bool {
 	if !c.acceptsHarness(r) {
 		return false
 	}
+	if r.HistoricalProject != nil {
+		return c.AcceptHistoricalProject(r)
+	}
 	admitted := r.Admitted()
 	if r.CodexAdmission != nil && r.Harness.Name == "codex" && !r.Imported() && r.CodexAdmission.Generation != "" && r.CodexAdmission.Revision != "" && filepath.IsAbs(r.CodexAdmission.Cwd) && slices.Contains(c.Harnesses, "codex") && c.Archive.Enabled && r.ProjectID == archive.ProjectID(r.ProjectRoot) {
 		if c.EffectiveCodexCaptureScope() == CodexIncludedProjects {
@@ -435,7 +474,7 @@ func (c Config) AcceptSession(r archive.SessionRegistration) bool {
 			return p.ActivatedAt.IsZero() || !admitted.Before(p.ActivatedAt)
 		}
 	}
-	return c.CodexCapture == nil && len(c.Archive.Projects) == 0 // older programmatic configurations
+	return !c.HistoricalProjectProtection && c.CodexCapture == nil && len(c.Archive.Projects) == 0 // older programmatic configurations
 }
 
 // InCurrentDestination reports whether a registration published to the

@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -17,6 +18,9 @@ import (
 // resumeStricterHistory resolves exact remote status before preparing any
 // replacement. Unknown status keeps the attempted descriptor and its evidence.
 func (s *sessionScan) resumeStricterHistory(p state.PendingPublication) (sessionOutcome, error) {
+	if p.Catalog != nil {
+		return outcomeSkipped, state.ErrCatalogJournalFrozen
+	}
 	endAttempt, attemptErr := s.beginPublicationAttempt()
 	if attemptErr != nil {
 		return outcomeSkipped, attemptErr
@@ -30,7 +34,7 @@ func (s *sessionScan) resumeStricterHistory(p state.PendingPublication) (session
 		if p.History.Preparing {
 			return outcomeSkipped, errors.New("remote sidecar matches incomplete private preparation; refuse acknowledgement")
 		}
-		if p.JournalVersion != 2 {
+		if p.JournalVersion != 5 {
 			legacyPolicy := (state.PublicationPolicy{FilterVersion: p.Bundle.Capture.FilterVersion, AdapterVersion: p.Bundle.Capture.AdapterVersion, SkillEvidence: pendingSkillMode(p.SkillEvidence)}).Context()
 			prior := s.published.PublicationPredecessor()
 			sealed, e := state.PreparePublicationV2(p, prior, s.reg.DestinationID, s.publicationAdmission(), legacyPolicy, state.PublicationCapture)
@@ -61,7 +65,7 @@ func (s *sessionScan) resumeStricterHistory(p state.PendingPublication) (session
 		// with neither an exact retry nor a durable maintenance obligation.
 		if !p.History.MaintenanceOwed {
 			p.History.MaintenanceOwed = true
-			if p.JournalVersion == 2 {
+			if p.JournalVersion == 5 {
 				if err := s.local.SavePending(s.id(), p); err != nil {
 					return outcomeSkipped, err
 				}
@@ -195,7 +199,7 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 	if err := boundFrozenReferences(derived); err != nil {
 		return state.PendingPublication{}, err
 	}
-	next.JournalVersion = 2
+	next.JournalVersion = 5
 	next.Phase = state.PublicationReady
 	next, err = state.PreparePublicationV2(next, prior, s.reg.DestinationID, s.publicationAdmission(), next.Preparation.PolicyContext, state.PublicationPrivacyRewrite)
 	if err != nil {
@@ -315,7 +319,7 @@ func (s *sessionScan) retainedManifestInputs(metadata archive.Metadata, pending 
 // prepareRetainedHistoryWork runs before the temporary mutation fence, enabling
 // only private preparation and exact already-committed acknowledgement. Actual
 // publication, retention and generation changes still require checkpoint 5.
-func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error) {
+func (s *sessionScan) prepareRetainedHistoryWork(ctx context.Context) (sessionOutcome, bool, error) {
 	if len(s.published.Metadata()) == 0 {
 		return outcomeSkipped, false, nil
 	}
@@ -329,8 +333,8 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 	if err := s.validateAuthorityIdentity(metadata); err != nil {
 		return outcomeSkipped, true, err
 	}
-	if s.reg.CaptureFrozen {
-		if err := s.local.FrozenGeneration(s.reg); err != nil {
+	if s.reg.RetainedOnly() {
+		if err := s.retainedOnlyAuthority(); err != nil {
 			return outcomeSkipped, true, err
 		}
 	} else if err := s.local.GenerationCaptureAllowed(s.reg); err != nil {
@@ -342,8 +346,8 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 		if p.History == nil {
 			return outcomeSkipped, true, errors.New("ordinary pending journal cannot replace retained history")
 		}
-		outcome, err := s.resumeHistory(p)
-		if err == nil && s.reg.CaptureFrozen {
+		outcome, err := s.resumeHistory(ctx, p)
+		if err == nil && (s.reg.RetainedOnly()) {
 			err = s.recordFrozenSignature()
 		}
 		return outcome, true, err
@@ -365,8 +369,7 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 	// A newly resolved native parent changes every retained source header. Reuse
 	// sequential maintenance against the original authority before native
 	// reconciliation can combine old-parent inputs with a new-parent sidecar.
-	parentResolved := nativeParentResolved(s.reg, bundle)
-	needed := parentResolved || nativeChildMarkerPending(s.reg, bundle) || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) || authority.Parser.Version != s.parserVersion() || s.reg.CaptureFrozen && s.req.Token != "" || headFingerprint(s.reg.LastHead) != s.publishedLastHead()
+	needed := s.retainedHistoryMaintenanceNeeded(authority, bundle, adapter.Version())
 	for _, revision := range authority.History.Preserved {
 		needed = needed || revision.FilterVersion != archive.FilterVersion
 	}
@@ -382,6 +385,11 @@ func (s *sessionScan) prepareRetainedHistoryWork() (sessionOutcome, bool, error)
 		return outcomeSkipped, true, err
 	}
 	return outcomeSkipped, true, archive.ErrHistoryMutationPending
+}
+
+func (s *sessionScan) retainedHistoryMaintenanceNeeded(authority archive.Metadata, bundle archive.SourceBundle, adapterVersion string) bool {
+	projectRenamed := s.reg.HistoricalProject != nil && authority.ProjectName != s.opts.historicalProjectName(s.reg)
+	return projectRenamed || nativeParentResolved(s.reg, bundle) || nativeChildMarkerPending(s.reg, bundle) || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapterVersion || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) || authority.Parser.Version != s.parserVersion() || s.reg.RetainedOnly() && s.req.Token != "" || headFingerprint(s.reg.LastHead) != s.publishedLastHead()
 }
 
 func (s *sessionScan) prepareStricterHistoryInput(next *state.PendingPublication, index int, input state.HistoryInput, finalMetadata archive.Metadata, finalBody []byte, finalInputs []state.HistoryInput, acknowledged archive.Metadata, acknowledgedBody []byte, ackInputs []state.HistoryInput, adapter agentapi.TranscriptFilter, ceiling config.SkillEvidence, total *int) (archive.SourceBundle, archive.SourceReference, state.PendingSource, func(), error) {
@@ -466,7 +474,7 @@ func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bund
 	}
 	// Live requests still owe native reads; frozen requests cover retained observations.
 	requestToken := ""
-	if s.reg.CaptureFrozen {
+	if s.reg.RetainedOnly() {
 		requestToken = s.req.Token
 	}
 	p := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), Bundle: bundle, MetadataKey: key, MetadataBytes: append([]byte(nil), s.published.Metadata()...), RequestToken: requestToken, ReadyAt: s.now, History: &state.PendingHistory{Version: 1, Preparing: true, Inputs: inputs, FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion, ExpectedMetadataSHA256: metadataSHA(s.published.Metadata())}}

@@ -24,7 +24,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/listingindex"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -33,13 +33,17 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
-	labelReadObserver func(int64)
+	CollectorGuard     *local.CollectorGuard
+	CatalogDestination string
+	// HistoricalSourceAllowed vetoes explicitly excluded native dependencies at staging.
+	HistoricalSourceAllowed func(string) bool
+	// HistoricalProjectLabel resolves mutable display state without filesystem access.
+	HistoricalProjectLabel func(string) string
+	labelReadObserver      func(int64)
 	// Labels supplies optional bounded native metadata for existing retained sessions.
 	Labels           agentapi.LabelsLookup
 	LabelEnvironment agentapi.LabelEnvironment
 	labels           map[string]state.LabelEntry
-	// PrepareCodexCoverage advances caller-owned qualified coverage once after admission work loads.
-	PrepareCodexCoverage func(context.Context, []archive.SessionRegistration) error
 	// CodexRollouts is one caller-owned bounded locator view shared by the pass.
 	CodexRollouts agentapi.CodexRolloutLookup
 	// PendingCodexRollouts observes locator evidence only after a history fence.
@@ -48,6 +52,9 @@ type Options struct {
 	// ConfiguredCodexHomes supplies confined migration roots from configuration,
 	// independently of current-locator hints. Native evidence still validates identity.
 	ConfiguredCodexHomes []string
+	// NativeRoots are committed setup roots, never launch-environment defaults.
+	NativeRoots    []archive.NativeRoot
+	NativeLocators agentapi.NativeLocatorLookup
 	// ResolveCodexReadHomes revalidates trusted default/hook/import/config roots
 	// against current configuration; lookup observations never supply authority.
 	ResolveCodexReadHomes func(config.Config) ([]string, error)
@@ -143,13 +150,48 @@ const rawSizeFactor = 4
 // reports both.
 const DefaultMaxRawTranscriptBytes = DefaultMaxTranscriptBytes * rawSizeFactor
 
-// maxRawBytes is the raw size ceiling for a filtered size limit.
-func maxRawBytes(maxFiltered int64) int64 {
-	if maxFiltered > (1<<62)/rawSizeFactor {
+// codexRawSizeFactor is rawSizeFactor for a Codex thread, whose rollouts keep
+// every tool call's full output (see archive.MaxCodexRawTranscriptBytes).
+const codexRawSizeFactor = archive.MaxCodexRawTranscriptBytes / DefaultMaxTranscriptBytes
+
+// MaxRawTranscriptBytes is the raw size past which the collector, with its
+// default limits, records harness's transcript as too large
+// (archive.MaxRawTranscriptBytesFor). Planners use it so they refuse no
+// transcript capture would read.
+func MaxRawTranscriptBytes(harness string) int64 {
+	return maxRawBytes(harness, DefaultMaxTranscriptBytes)
+}
+
+// maxRawBytes is the raw size ceiling for a filtered size limit and the
+// harness whose transcript it bounds.
+func maxRawBytes(harness string, maxFiltered int64) int64 {
+	factor := int64(rawSizeFactor)
+	if harness == archive.HarnessCodex {
+		factor = codexRawSizeFactor
+	}
+	if maxFiltered > (1<<62)/factor {
 		return 1 << 62
 	}
-	return maxFiltered * rawSizeFactor
+	return maxFiltered * factor
 }
+
+// SessionReadCeiling bounds the bytes one session's scan may hold in the
+// pass's shared read ledger (agentapi.PassReadBudget, 256 MiB): its record
+// buffers, decoded rows, filtered output, and the retained state it rewrites,
+// together: 160 MiB. The rest, agentapi.PassCacheReserve, holds what the pass
+// keeps between sessions, so a session within its ceiling always fits and
+// one large session cannot leave the others without room. The largest
+// session measured needed 107 MiB (see agentapi.PassReadBudget). Peak memory
+// is roughly the pass ledger plus the decoded value of the one record being
+// filtered beyond its raw length, which is all it is charged. A session that
+// needs more than this is recorded as a size-limit gap (SizeLimitReadBudget)
+// once, rather than failing every pass; one refused because others held the
+// ledger is deferred to a later pass.
+const SessionReadCeiling = agentapi.PassReadBudget - agentapi.PassCacheReserve
+
+// sessionReadCeiling is SessionReadCeiling, a variable only so a test can
+// lower it.
+var sessionReadCeiling = SessionReadCeiling
 
 // recordLimit is the largest single transcript record the collector reads,
 // archive.MaxRecordBytes; a variable only so a test can lower it.
@@ -160,6 +202,11 @@ func (o Options) maxTranscriptBytes() int64 {
 		return o.MaxTranscriptBytes
 	}
 	return DefaultMaxTranscriptBytes
+}
+
+// maxRawBytes is the raw transcript limit for harness under these options.
+func (o Options) maxRawBytes(harness string) int64 {
+	return maxRawBytes(harness, o.maxTranscriptBytes())
 }
 
 func (o Options) now() time.Time {
@@ -176,10 +223,23 @@ func (o Options) minUploadInterval() time.Duration {
 	return 3 * time.Minute
 }
 
+// PublicationCandidate is content-free evidence that a publication completed.
+// Retention or a later error can follow it; consumers must recheck authority.
+type PublicationCandidate struct {
+	Harness          string
+	ArchiveSessionID string
+}
+
 // Result summarizes one Run call. It never includes transcript content.
+// CloseStagedResults ends copied staged diagnostic ownership after all result
+// aliases and diagnostic consumers finish; it is a no-op for legacy results.
 type Result struct {
+	stagedDiagnostics *stagedDiagnosticResult
+
 	Scanned   int
 	Published []string
+	// PublicationCandidates bounds best-effort follow-up identities independently of Published.
+	PublicationCandidates []PublicationCandidate
 	// Skipped lists sessions with nothing new to publish.
 	Skipped []string
 	// Waiting lists sessions whose new evidence is saved and held for the
@@ -204,6 +264,30 @@ type Result struct {
 	NativeLinkPendingReasons map[string]int
 	RejectedSubagents        map[string]string
 	Errors                   map[string]error
+	// Deferred maps each session whose scan was put off this pass to why (a
+	// Deferred* reason): its source could not be read completely yet for a
+	// reason the next pass is expected to clear, so it is not a failure and
+	// is not in Errors. Like a failed scan, the session keeps its scan
+	// journal and is counted as pending; that journal still does not defer
+	// its expiry (see state.Outstanding.DefersExpiry).
+	Deferred map[string]string
+	// Unreached maps each session with a pending request that the pass
+	// ended before (Options.Stop, or the context ending) to how many such
+	// sessions it ordered ahead of it. Its request is untouched and the next
+	// pass carries on with it; it is counted as pending, and not being
+	// reached is neither a failure nor a deferral. A session in Errors (a
+	// failure found before or after the pass's run of sessions) can be here
+	// too; sync counts it as failed only.
+	Unreached map[string]int
+	// RetryLater maps each Codex session this pass held unopened on its
+	// backoff schedule to when its next attempt is due: its wait on the
+	// Codex lookup allowance outlasted MaxDeferral, a pass failed it for
+	// that, and no attempt was due on this pass (or another session took
+	// the one attempt, or the pass ended before its attempt was done, when
+	// the time is no later than now: the attempt is still due). It is
+	// pending and still failing (status carries its issue), but this pass
+	// records no new failure for it, so it is not in Errors.
+	RetryLater map[string]time.Time
 }
 
 // Run performs one collector pass over every registered session: for each,
@@ -220,6 +304,22 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
+	beginCodexLookupAllowance(opts)
+	if err := recoverCatalogRemovals(ctx, local, store, opts); err != nil {
+		return Result{}, err
+	}
+	_, durableErr := local.DurableStorageObligations()
+	if durableErr != nil {
+		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
+	}
+	admission, closeAdmission := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
+	admissionErr := admission.ResumeImportAdmissions(ctx)
+	closeAdmission()
+	if admissionErr != nil {
+		return Result{Errors: map[string]error{"staged-imports": admissionErr}}, admissionErr
+	}
+	// Recovery can finish cancellation or establish selected admissions. Report
+	// their current obligations, rather than the pre-recovery orphan snapshot.
 	durableObligations, durableErr := local.DurableStorageObligations()
 	if durableErr != nil {
 		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
@@ -297,30 +397,81 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}
+	p.loadDeferredSince()
 	p.reconcileNativeLinks()
-	if p.opts.PrepareCodexCoverage != nil {
-		if err := p.opts.PrepareCodexCoverage(ctx, p.registrations); err != nil {
-			p.result.Errors["native-coverage"] = err
-		}
-
-	}
 	p.observeLabels(ctx)
 	p.repairListingIndex()
-	orderOldestRequestsFirst(p.registrations, p.requests)
-	for i, reg := range p.registrations {
+	registrations := p.executionRegistrations()
+	orderRequests(registrations, p.requests)
+	p.orderLookupAllowanceDeferralsLast(registrations)
+	for i, reg := range registrations {
 		// A pass past its deadline ends like a stopped one: nothing more can
 		// reach storage, so the rest keep their work rather than each
 		// failing on the expired context.
 		if (p.opts.Stop != nil && p.opts.Stop()) || ctx.Err() != nil {
-			p.leaveForNextPass(p.registrations[i:])
+			p.holdDueLookupRetries(registrations[i:])
+			p.leaveForNextPass(registrations[i:])
 			break
 		}
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
-		p.scan(reg)
+		if p.leaveUnopenedForLookupAllowance(reg) {
+			p.leaveForNextPass(registrations[i : i+1])
+			continue
+		}
+		p.scan(ctx, reg)
+	}
+	if err := p.resumeStagedReleasesIfActive(ctx, local, store, opts); err != nil {
+		return p.result, err
 	}
 	return p.result, p.saveStatus()
+}
+
+// executionRegistrations reserves scheduling slots only for eligible sessions.
+// The full registration census remains available for diagnostics and maintenance.
+func (p *pass) executionRegistrations() []archive.SessionRegistration {
+	registrations := p.registrations
+	if p.opts.AcceptSession != nil {
+		registrations = make([]archive.SessionRegistration, 0, len(p.registrations))
+		for _, reg := range p.registrations {
+			if p.opts.AcceptSession(reg) {
+				registrations = append(registrations, reg)
+			}
+		}
+	}
+	return registrations
+}
+
+// resumeStagedReleasesIfActive skips fresh work after ordinary recovery ends.
+// The direct helper still treats cancellation during staged work as fatal.
+func (p *pass) resumeStagedReleasesIfActive(ctx context.Context, local *state.Store, store storage.ObjectStore, opts Options) error {
+	if ctx.Err() == nil {
+		return p.resumeStagedReleases(ctx, local, store, opts)
+	}
+	return nil
+}
+
+// resumeStagedReleases transfers diagnostic ownership before ending its read scope.
+func (p *pass) resumeStagedReleases(ctx context.Context, local *state.Store, store storage.ObjectStore, opts Options) error {
+	if remote, ok := store.(state.StagedReadback); ok {
+		scoped, closeSchedule := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
+		holds, closeDiagnostics, err := scoped.ResumeStagedReleases(ctx, remote, opts.CollectorGuard)
+		if closeDiagnostics != nil {
+			p.result.stagedDiagnostics = &stagedDiagnosticResult{close: closeDiagnostics}
+		}
+		closeSchedule()
+		for id, hold := range holds {
+			addError(p.result.Errors, id, hold)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err != nil {
+			addError(p.result.Errors, "staged-releases", err)
+		}
+	}
+	return nil
 }
 
 // Cancellation remains fatal even when a refusal also identifies owed work.
@@ -352,6 +503,12 @@ type pass struct {
 	// sizeLimited lists the sessions sitting in a size-limit gap, which
 	// status reports: capture of them has stopped.
 	sizeLimited []string
+	// sizeLimits names the limits those sessions stopped at, where known
+	// (SizeLimitLabel), for the pass's problem.
+	sizeLimits []string
+	// cacheErr holds failures to close the source passes' idle caches
+	// before a session (see sourcePassSet.releaseCaches).
+	cacheErr error
 	// pending counts the sessions left with outstanding work.
 	pending int
 	// expiredSubagents lists the subagents this pass stopped waiting for
@@ -360,6 +517,33 @@ type pass struct {
 	result             Result
 	durableObligations []state.DurableStorageObligation
 	durableCounted     map[string]bool
+	// priorDeferred is the previous pass's state.Status.DeferredSessions
+	// (see orderLookupAllowanceDeferralsLast).
+	priorDeferred map[string]string
+	// priorUnreached is the previous pass's state.Status.UnreachedSessions
+	// (see orderLookupAllowanceDeferralsLast).
+	priorUnreached map[string]int
+	// priorScanAt is the previous pass's state.Status.LastScanAt (see
+	// joinedLastPass).
+	priorScanAt time.Time
+	// priorDeferredSince is the previous pass's state.Status.DeferredSince,
+	// and deferredAt this pass's (see deferredSince, keepDeferredSince).
+	priorDeferredSince map[string]time.Time
+	deferredAt         map[string]time.Time
+	// priorRetryAt is the previous pass's state.Status.NextRetryAt, and
+	// retryAt this pass's (see scheduleLookupRetry). lookupRetryHeld holds
+	// the sessions on that schedule this pass leaves unopened, with their
+	// next attempt (holdForLookupRetry), and lookupWaiters the requested
+	// Codex sessions waiting on the lookup allowance this pass
+	// (markLookupWaiter).
+	priorRetryAt    map[string]time.Time
+	retryAt         map[string]time.Time
+	lookupRetryHeld map[string]time.Time
+	lookupWaiters   map[string]bool
+	// unreachedAhead counts the sessions this pass has left for the next
+	// one so far, so each later call of leaveForNextPass numbers its
+	// sessions after those.
+	unreachedAhead int
 }
 
 // loadWork lists the registered sessions and their pending requests. One
@@ -453,10 +637,43 @@ func (p *pass) loadWork() error {
 }
 
 // leaveForNextPass counts the sessions an early end did not reach whose
-// work (a request) is left for the next pass.
+// work (a request) is left for the next pass, and records each of them in
+// Result.Unreached with how many sessions this pass had already left for the
+// next one ahead of it. It may be called more than once in a pass.
+//
+// A session left this way whose run of deferred scans has already lasted
+// MaxDeferral fails as deferScan fails it (DeferralExpiredProblem): a
+// session the pass never opens is never deferred, so without this one left
+// unopened on every pass would wait as queued for good, never reported.
+// It stays in Result.Unreached, so the next pass still knows its place.
+// When it was waiting on the Codex lookup allowance, it goes on the backoff
+// schedule (scheduleLookupRetry). A session on that schedule with no
+// attempt this pass is held instead (holdForLookupRetry): no failure, and
+// not in Result.Unreached.
 func (p *pass) leaveForNextPass(rest []archive.SessionRegistration) {
 	for _, reg := range rest {
-		if !p.durableCounted[reg.ArchiveSessionID] && p.requests[reg.ArchiveSessionID].Token != "" && (p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)) {
+		accepted := p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)
+		if accepted {
+			p.carryDeferredSince(reg.ArchiveSessionID)
+		}
+		if p.requests[reg.ArchiveSessionID].Token == "" || !accepted {
+			continue
+		}
+		if p.holdForLookupRetry(reg.ArchiveSessionID) {
+			continue
+		}
+		if p.result.Unreached == nil {
+			p.result.Unreached = map[string]int{}
+		}
+		p.result.Unreached[reg.ArchiveSessionID] = p.unreachedAhead
+		p.unreachedAhead++
+		if since, running := p.deferredAt[reg.ArchiveSessionID]; running && p.now.Sub(since) >= MaxDeferral {
+			addError(p.result.Errors, reg.ArchiveSessionID, fmt.Errorf("%s: %w", DeferralExpiredProblem, errLeftUnopened))
+			if p.lookupWaiters[reg.ArchiveSessionID] {
+				p.scheduleLookupRetry(reg.ArchiveSessionID, since)
+			}
+		}
+		if !p.durableCounted[reg.ArchiveSessionID] {
 			p.pending++
 		}
 	}
@@ -470,11 +687,57 @@ func (p *pass) fail(id string, err error) {
 	p.opts.progress(id, false)
 }
 
+// deferScan ends a session's turn in the pass without a failure: its source
+// could not be read completely yet (see deferralReason). Like a failure, it
+// leaves the scan journal standing for the next pass to retry, and counts
+// as pending. A session that already has a failure recorded this pass, or
+// whose scans have been deferred on every pass for MaxDeferral, fails with
+// err instead (see deferredSince).
+func (p *pass) deferScan(id, reason string, err error) {
+	since := p.deferredSince(id)
+	// The clock runs on through a failure for it: the next pass that defers
+	// the session fails it again rather than starting a new run of
+	// "rechecking" passes.
+	p.keepDeferredSince(id, since)
+	if reason == DeferredLookupAllowance && p.requests[id].Token != "" && p.now.Sub(since) >= MaxDeferral {
+		// It fails below; later attempts of a requested session follow
+		// the backoff schedule (orderLookupAllowanceDeferralsLast).
+		p.scheduleLookupRetry(id, since)
+	}
+	if p.result.Errors[id] != nil {
+		// One failure already makes it a failed session; it is counted once.
+		p.fail(id, err)
+		return
+	}
+	if p.now.Sub(since) >= MaxDeferral {
+		p.fail(id, fmt.Errorf("%s: %w", DeferralExpiredProblem, err))
+		return
+	}
+	if p.result.Deferred == nil {
+		p.result.Deferred = map[string]string{}
+	}
+	p.result.Deferred[id] = reason
+	p.pending++
+	p.opts.progress(id, false)
+}
+
 // scan gives one session its turn in the pass: skip it if nothing about it
 // changed, otherwise scan it (sessionScan.run) and account for the outcome.
-func (p *pass) scan(reg archive.SessionRegistration) {
+func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 	priorLocal := p.local
-	scopedLocal, closeLocal := p.local.WithReadBudget(p.ctx, (&sessionScan{opts: p.opts}).readBudget())
+	budget := (&sessionScan{opts: p.opts}).readBudget()
+	// Every pass-lifetime cache is bounded by agentapi.PassCacheReserve, so
+	// the session's full ceiling is free; the source passes' idle caches are
+	// dropped first should anything else have taken that room.
+	// A cache that fails to close is the pass's problem, not the session's.
+	if cacheErr := p.opts.sourcePasses.releaseCaches(budget, sessionReadCeiling); cacheErr != nil && p.cacheErr == nil {
+		p.cacheErr = cacheErr // the first is reported; later ones repeat it
+	}
+	// Everything the session's scan charges counts against its own ceiling
+	// too, so one large session cannot leave the others without room, and
+	// its own excess is told from pressure others put on the ledger.
+	defer budget.BeginScope(sessionReadCeiling)()
+	scopedLocal, closeLocal := p.local.WithReadBudget(ctx, budget)
 	p.local = scopedLocal
 	defer func() { closeLocal(); p.local = priorLocal }()
 	id := reg.ArchiveSessionID
@@ -502,36 +765,60 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		published, err = p.local.LoadPublishedState(id)
 	}
 	if err != nil {
-		p.fail(id, fmt.Errorf("load published cache: %w", err))
+		err = fmt.Errorf("load published cache: %w", err)
+		if onlyReadBudget(err) && (budget.ScopeExceeded() || budget.ScopePressured()) {
+			// Too little read memory even to load what was published: a
+			// deferral, which fails once it has lasted MaxDeferral, rather
+			// than a failure every pass.
+			p.deferScan(id, DeferredReadBudget, err)
+			return
+		}
+		p.fail(id, err)
 		return
 	}
 	if err := announceSubagent(p.local, reg, published); err != nil {
 		addError(p.result.Errors, id, err)
 		p.pending++
 	}
-	scan := newSessionScan(p.ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
+	scan := newSessionScan(ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
 	defer scan.releaseRetained()
-	outcome, err := scan.run()
+	outcome, err := scan.run(ctx)
+	if err != nil && p.ctx.Err() == nil {
+		outcome, err = scan.overCeiling(err)
+	}
 	for _, warning := range scan.warnings {
 		addError(p.result.Errors, id, warning)
 	}
 	if err != nil && p.ctx.Err() != nil {
 		// The pass ran out of time (or was cancelled) with this session in
 		// flight. That is not the session failing: its pending publication
-		// is intact and the next pass carries on with it.
+		// is intact and the next pass carries on with it. A session on the
+		// backoff schedule keeps an attempt due for the next pass.
+		p.carryDeferredSince(id)
+		// It is listed as held, so its carried issue is still counted.
+		if _, retrying := p.priorRetryAt[id]; retrying {
+			p.retryLater(id, p.now)
+		}
 		p.pending++
 		p.opts.progress(id, false)
+		return
+	}
+	if reason, deferred := deferralReason(err); deferred {
+		p.deferScan(id, reason, err)
 		return
 	}
 	if err != nil {
 		p.fail(id, err)
 		return
 	}
-	p.noteGap(id, scan.gap)
+	p.noteGap(reg, scan.gap, scan.sizeLimit)
 	p.finishScan(reg)
 	switch outcome {
 	case outcomePublished:
 		p.result.Published = append(p.result.Published, id)
+		if len(p.result.PublicationCandidates) < 256 {
+			p.result.PublicationCandidates = append(p.result.PublicationCandidates, PublicationCandidate{Harness: reg.Harness.Name, ArchiveSessionID: reg.ArchiveSessionID})
+		}
 		if err := announceSubagent(p.local, reg, published); err != nil {
 			addError(p.result.Errors, id, err)
 			p.pending++
@@ -577,23 +864,6 @@ func (p *pass) finishScan(reg archive.SessionRegistration) {
 	}
 }
 
-// SizeLimitProblem is the problem a pass records in its Status when n
-// sessions sit in a size-limit gap: not a failure, and nothing to do, but
-// capture of them has stopped at their last snapshot.
-func SizeLimitProblem(n int) string {
-	return fmt.Sprintf("%d session(s) stopped being captured: over the transcript size limit, kept at their last snapshot", n)
-}
-
-// IsSizeLimitProblem reports whether problem is a SizeLimitProblem, for any
-// count.
-func IsSizeLimitProblem(problem string) bool {
-	var n int
-	if _, err := fmt.Sscanf(problem, "%d ", &n); err != nil || n < 1 {
-		return false
-	}
-	return problem == SizeLimitProblem(n)
-}
-
 // FailedSessionsProblem is the problem a pass records in its Status when n
 // sessions failed to scan or publish. A caller that reports those sessions
 // again, with a fuller count, replaces this entry rather than adding one.
@@ -617,11 +887,14 @@ func (p *pass) saveStatus() error {
 	if len(p.result.Errors) > 0 {
 		problems = append(problems, FailedSessionsProblem(len(p.result.Errors)))
 	}
+	if p.cacheErr != nil {
+		problems = append(problems, fmt.Sprintf("release source caches: %v", p.cacheErr))
+	}
 	// A size-limit gap is not a failure, but capture of the session has
 	// stopped at its last snapshot, which status must say rather than look
 	// healthy.
 	if len(p.sizeLimited) > 0 {
-		problems = append(problems, SizeLimitProblem(len(p.sizeLimited)))
+		problems = append(problems, SizeLimitProblem(len(p.sizeLimited), p.sizeLimits...))
 	}
 	status := state.Status{
 		LastScanAt:             p.now.UTC(),
@@ -630,8 +903,13 @@ func (p *pass) saveStatus() error {
 		QuarantinedFiles:       p.local.QuarantinedFiles(),
 		UnrefreshableSummaries: p.countRefreshSkips(),
 		PendingNativeLinks:     p.result.PendingNativeLinks, NativeLinkPendingReasons: p.result.NativeLinkPendingReasons,
-		WaitingSubagents: len(p.result.WaitingSubagents),
-		RunningSubagents: len(p.result.RunningSubagents),
+		DeferredSessions:  p.result.Deferred,
+		DeferredSince:     p.deferredAt,
+		NextRetryAt:       p.retryAt,
+		SessionIssues:     carriedIssues(previous.SessionIssues, p.retryAt, p.result.Errors),
+		UnreachedSessions: p.result.Unreached,
+		WaitingSubagents:  len(p.result.WaitingSubagents),
+		RunningSubagents:  len(p.result.RunningSubagents),
 		// The pass rebuilds everything else from scratch; this list is a
 		// week of history, so it carries the previous pass's forward.
 		ExpiredSubagents: state.CarryExpiredSubagents(previous.ExpiredSubagents, p.expiredSubagents, p.now),
@@ -641,6 +919,25 @@ func (p *pass) saveStatus() error {
 		return fmt.Errorf("save status: %w", err)
 	}
 	return nil
+}
+
+// carriedIssues is the previous pass's issue for each session on the lookup
+// allowance's backoff schedule (retrying) that this pass recorded no failure
+// for (failed): it held the session (Result.RetryLater), or ended with its
+// attempt in flight, so the failure the last attempt recorded still stands.
+// The caller records this pass's own failures beside them (internal/cli's
+// recordSessionIssues).
+func carriedIssues(previous map[string]string, retrying map[string]time.Time, failed map[string]error) map[string]string {
+	var issues map[string]string
+	for id := range retrying {
+		if code := previous[id]; code != "" && failed[id] == nil {
+			if issues == nil {
+				issues = map[string]string{}
+			}
+			issues[id] = code
+		}
+	}
+	return issues
 }
 
 func (o Options) progress(archiveSessionID string, published bool) {
@@ -658,19 +955,101 @@ func addError(errs map[string]error, archiveSessionID string, err error) {
 	errs[archiveSessionID] = err
 }
 
-// orderOldestRequestsFirst puts the sessions with a pending request first,
-// oldest start first, and leaves the rest in archive session ID order. An
-// import queues its whole history at once; the oldest transcripts are the
-// ones the apps delete next, so they are uploaded first.
-func orderOldestRequestsFirst(registrations []archive.SessionRegistration, requests map[string]state.Request) {
+// orderRequests puts the sessions with a pending request first and leaves
+// the rest in archive session ID order. A pass that runs out of time
+// (Options.Stop) reaches only the front of this order, so it decides which
+// sessions wait; Result.Unreached records the ones that did.
+//
+// Requested sessions run oldest start first: an import queues its whole
+// history at once, and the oldest transcripts are the ones the apps delete
+// next, so they are uploaded first. Two things keep that order from
+// starving everything behind a backlog:
+//
+//   - A native child not linked to a registered parent (no ParentSessionID
+//     once reconcileNativeLinks has run) goes after every other requested
+//     session. It cannot be linked yet, and publishing it now only means
+//     publishing it again once its parent registers; Codex discovery can
+//     queue hundreds of them at once.
+//   - The first slot, and every liveLaneEvery-th after it, goes to the
+//     most recently started requested top-level session that was not
+//     imported, if any is left (reserveLiveLane), so a live session waits
+//     at most a few slots however long the backlog in front of it is, and
+//     however many subagents it has started. A backlog of imports
+//     alone keeps its strict oldest-first order.
+func orderRequests(registrations []archive.SessionRegistration, requests map[string]state.Request) {
+	requested := func(reg archive.SessionRegistration) bool { return requests[reg.ArchiveSessionID].Token != "" }
 	sort.SliceStable(registrations, func(i, j int) bool {
 		a, b := registrations[i], registrations[j]
-		aRequested, bRequested := requests[a.ArchiveSessionID].Token != "", requests[b.ArchiveSessionID].Token != ""
+		aRequested, bRequested := requested(a), requested(b)
 		if aRequested != bRequested {
 			return aRequested
 		}
-		return aRequested && a.SessionStartedAt.Before(b.SessionStartedAt)
+		if !aRequested {
+			return false
+		}
+		if aWaits, bWaits := waitsForParent(a), waitsForParent(b); aWaits != bWaits {
+			return bWaits
+		}
+		return a.SessionStartedAt.Before(b.SessionStartedAt)
 	})
+	ready := 0
+	for ready < len(registrations) && requested(registrations[ready]) && !waitsForParent(registrations[ready]) {
+		ready++
+	}
+	reserveLiveLane(registrations[:ready])
+}
+
+// waitsForParent reports a native child whose parent is not registered yet,
+// which orderRequests puts after the other requested sessions.
+func waitsForParent(reg archive.SessionRegistration) bool {
+	return reg.NativeChild && reg.ParentSessionID == ""
+}
+
+// liveLaneEvery is how often orderRequests gives a slot to the newest
+// requested session that was not imported: one slot in every four,
+// starting with the first, so a pass begins with the live session most
+// likely to be looked for and three of every four slots still go to the
+// oldest.
+const liveLaneEvery = 4
+
+// reserveLiveLane reorders queue, which is oldest start first, so that the
+// first slot and every liveLaneEvery-th after it take the most recently
+// started top-level session left that was not imported, then, once none is
+// left, the most recently started such child (a subagent), and every other
+// slot (or a lane slot with neither left) takes the oldest left. Top-level
+// sessions come before children in the lane because a live session's own
+// subagents start after it: newest-first alone would give the lane to each
+// of them before the session itself.
+func reserveLiveLane(queue []archive.SessionRegistration) {
+	lane := make([]int, 0, len(queue))
+	for _, children := range []bool{false, true} {
+		for i := len(queue) - 1; i >= 0; i-- {
+			if !queue[i].Imported() && queue[i].IsChild() == children {
+				lane = append(lane, i)
+			}
+		}
+	}
+	ordered := make([]archive.SessionRegistration, 0, len(queue))
+	taken := make([]bool, len(queue))
+	front, next := 0, 0
+	for len(ordered) < len(queue) {
+		if len(ordered)%liveLaneEvery == 0 {
+			for next < len(lane) && taken[lane[next]] {
+				next++
+			}
+			if next < len(lane) {
+				taken[lane[next]] = true
+				ordered = append(ordered, queue[lane[next]])
+				continue
+			}
+		}
+		for taken[front] {
+			front++
+		}
+		taken[front] = true
+		ordered = append(ordered, queue[front])
+	}
+	copy(queue, ordered)
 }
 
 // cursorTextSourceFormat labels a Cursor transcript captured as plain text.
@@ -727,34 +1106,38 @@ func (p *pass) repairListingIndex() {
 		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
-		_, ok := p.remote.(storage.VersionedGetter)
-		if !ok {
+		if remote, ok := p.remote.(storage.CatalogPublisher); ok && remote.CatalogMetadataAuthority() {
+			// Catalog indexes commit together with metadata in the head. A
+			// crash journal cannot authorize auxiliary legacy publication.
+			if err := p.local.RemoveListingRepair(id); err != nil {
+				p.result.Errors["listing-maintenance"] = err
+			}
 			continue
 		}
-		data, err := storage.ReadPublicationMetadata(p.ctx, p.remote, repair.MetadataKey)
+		scan := newSessionScan(p.ctx, p.local, p.remote, reg, state.Request{}, nil, p.now, p.opts)
+		err = scan.repairListingRevision(repair.MetadataKey)
 		if errors.Is(err, storage.ErrNotFound) {
 			_ = p.local.RemoveListingRepair(id)
 			continue
 		}
-		if err == nil {
-			_, refs, identityErr := archive.PublicationIdentity(data, reg.DestinationID, "", "", "listing_repair")
-			err = identityErr
-			if err == nil {
-				sources := make([]storage.SourcePublication, len(refs))
-				for i, ref := range refs {
-					sources[i] = storage.SourcePublication{Key: ref.Key, SHA256: ref.SHA256, Size: ref.CompressedBytes}
-				}
-				err = storage.VerifySourceSet(p.ctx, p.remote, sources, p.opts.Retry)
-			}
-			if err == nil {
-				err = listingindex.PublishRevision(p.ctx, p.remote, repair.MetadataKey, data)
-			}
-		}
+
 		if err == nil {
 			err = p.local.RemoveListingRepair(id)
 		}
 		if err != nil {
 			p.result.Errors["listing-maintenance"] = err
 		}
+	}
+}
+
+// A value copy of Result shares this owner. Close only after every diagnostic
+// consumer and alias is finished; legacy results have no staged owner.
+type stagedDiagnosticResult struct{ close func() }
+
+// CloseStagedResults is idempotent and ends only staged diagnostic ID ownership.
+// No result alias may use those diagnostics after the shared owner is closed.
+func (r Result) CloseStagedResults() {
+	if r.stagedDiagnostics != nil {
+		r.stagedDiagnostics.close()
 	}
 }

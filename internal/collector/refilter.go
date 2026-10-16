@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -55,6 +56,76 @@ func (s *sessionScan) rewrittenSinceCapture(read sourceRead) (bool, error) {
 		return false, nil
 	}
 	return read.observed.size() < signature.TranscriptSize, nil
+}
+
+func refilterBundleBounded(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle, limits agentapi.ReadLimits) (archive.SourceBundle, error) {
+	if err := ctx.Err(); err != nil {
+		return archive.SourceBundle{}, err
+	}
+	if bundle.SchemaVersion != archive.SourceSchemaVersion && bundle.SchemaVersion != archive.HistorySourceSchemaVersion {
+		return archive.SourceBundle{}, errors.New("unsupported retained source schema")
+	}
+	if bundle.ArchiveSessionID != reg.ArchiveSessionID || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name || !(bundle.ParentSessionID == reg.ParentSessionID || agentapi.RetainedNativeChildOwned(reg, bundle) && bundle.ParentSessionID == "") {
+		return archive.SourceBundle{}, errors.New("retained refilter identity mismatch")
+	}
+	if err := bundle.ValidateHistory(); err != nil {
+		return archive.SourceBundle{}, err
+	}
+	var filtered archive.FilteredTranscript
+	var err error
+	if limits.FilteredBytes > 0 {
+		f, ok := adapter.(agentapi.BoundedTranscriptRefilter)
+		if !ok {
+			return archive.SourceBundle{}, errRetainedBudget
+		}
+		filtered, err = f.RefilterBounded(ctx, bundle, reg.SessionStartedAt, limits)
+	} else {
+		filtered, err = refilterNative(ctx, reg, adapter, bundle)
+	}
+	if err != nil {
+		return archive.SourceBundle{}, err
+	}
+	if reg.StagedImportSHA256 != "" {
+		filtered.Format = bundle.Capture.SourceFormat
+	}
+	refiltered, err := archive.NewSourceBundle(reg, adapter, filtered, bundle.Capture.CapturedAt, bundle.SupplementalEvidence)
+	if err != nil {
+		return archive.SourceBundle{}, err
+	}
+	// Retained maintenance cannot adopt current producer/version observations.
+	refiltered.Capture.Harness = bundle.Capture.Harness
+	if err := refiltered.ValidateHistory(); err != nil {
+		return archive.SourceBundle{}, err
+	}
+	originalGaps := bundle.Capture.Gaps
+	if nativeParentResolved(reg, bundle) {
+		originalGaps = withoutNativeParentPendingGap(originalGaps)
+	}
+	refiltered.Capture.Gaps = mergeCaptureGaps(originalGaps, refiltered.Capture.Gaps)
+	return refiltered, nil
+}
+
+// refilterNative runs a snapshot's native records, or its native text, back
+// through the filter.
+func refilterNative(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.FilteredTranscript, error) {
+	f, ok := adapter.(agentapi.TranscriptFilter)
+	if !ok {
+		return archive.FilteredTranscript{}, errors.New("native refilter port required")
+	}
+	return f.Refilter(ctx, bundle, reg.SessionStartedAt)
+}
+
+// mergeCaptureGaps is first followed by each gap of second not already in
+// it: the snapshot's own gaps, which filtering it again cannot rediscover
+// (they describe the raw transcript), plus any the new filter reports.
+func mergeCaptureGaps(first, second []archive.CaptureGap) []archive.CaptureGap {
+	out := append([]archive.CaptureGap(nil), first...)
+	for _, gap := range second {
+		if !slices.Contains(out, gap) {
+			out = append(out, gap)
+		}
+	}
+	return out
 }
 
 // refilterRewritten replaces candidate, a rewritten transcript's evidence

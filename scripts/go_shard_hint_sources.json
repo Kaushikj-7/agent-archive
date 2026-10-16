@@ -1,0 +1,1350 @@
+{
+  "attribution": {
+    "actual_head": "3c6ec79309d21dfa90721d809a97dba7f230472e",
+    "allocation": "independent-lanes-lpt-v1",
+    "artifact_archives": [
+      {
+        "compressed_bytes": 592,
+        "id": 12010278877,
+        "name": "ci-run-identity-Levenshtein-1",
+        "sha256": "537f30c1c2939b453e1d446b82765e93792167286f9bf1dcad34614afe8203eb"
+      },
+      {
+        "compressed_bytes": 586,
+        "id": 12011555501,
+        "name": "ci-run-identity-Test-1",
+        "sha256": "2e0e3d99e5dbffc2942e964ae6f4876c0076b1c2d0d12d26bad8fd670b8f7f34"
+      },
+      {
+        "compressed_bytes": 540105,
+        "id": 12010539038,
+        "name": "go-shard-0",
+        "sha256": "2c36cfa3df9321e26213700536aadcaaa85ea9bddc838f90bbb93d52caa563c5"
+      },
+      {
+        "compressed_bytes": 642316,
+        "id": 12011560449,
+        "name": "go-shard-1",
+        "sha256": "5534bfa12b8047ecbf2f5d11d027a005d199b5169b9db8b129989326e3c0e49c"
+      },
+      {
+        "compressed_bytes": 616669,
+        "id": 12011210775,
+        "name": "go-shard-2",
+        "sha256": "f0e64803760aec0c5f2a2baced5de5506954da98257386fbf04ed091ef0915ef"
+      },
+      {
+        "compressed_bytes": 528258,
+        "id": 12010938045,
+        "name": "go-shard-3",
+        "sha256": "89fa4eb8f7c38002d87f7d4e9407275c8f7db176f1e52ab81f59251be2686a07"
+      },
+      {
+        "compressed_bytes": 495715,
+        "id": 12011092297,
+        "name": "go-shard-4",
+        "sha256": "a7ee3f146c2d3b6c08115baac8df1cca68aa75b1370d021d4a737a0d574e8a69"
+      },
+      {
+        "compressed_bytes": 476030,
+        "id": 12011092172,
+        "name": "go-shard-5",
+        "sha256": "81745fb38274f8a40eda7f61675cba1865bebfd3b82e965162afcc484c90fdce"
+      },
+      {
+        "compressed_bytes": 605623,
+        "id": 12011495323,
+        "name": "go-shard-6",
+        "sha256": "c923cd73e3d9c9f5742b5a01d5dc7812e05ca44ee12be60ff4221825a916c6f8"
+      },
+      {
+        "compressed_bytes": 619032,
+        "id": 12010039990,
+        "name": "go-shard-7",
+        "sha256": "3c169788c9668065e1abe3936f40802b029eaf3e6c5590c8cd27b87d0f02eef0"
+      },
+      {
+        "compressed_bytes": 2853,
+        "id": 12010738098,
+        "name": "go-source-audit",
+        "sha256": "4687e8538db4369fa7f2b0837f2010982130ebbbc102d6a1d588b95a496052a7"
+      }
+    ],
+    "auxiliary_policy": "Own-vet and independent plain audit remain freshly verified by existing strict reconciliation; invocation phases retained separately, not added to parent weights.",
+    "cache_cohort": {
+      "0": "prefix",
+      "1": "prefix",
+      "2": "prefix",
+      "3": "prefix",
+      "4": "prefix",
+      "5": "prefix",
+      "6": "prefix",
+      "7": "prefix"
+    },
+    "catalog_schema": 4,
+    "catalog_sha256": "b6dbc3c817fbaf79949da83da13cc8bc979614932411fc2a81806225367a2627",
+    "comparison_group": "eight-standard-workers-schema4-independent-lanes-prefix",
+    "compiled_inventory": {
+      "cli_parents": 2343,
+      "heavy_parents": 930,
+      "packages": 88,
+      "units": 3356,
+      "whole_packages": 83
+    },
+    "event_base": "ed8da985be05e1178647681b64dd972a120e3a0e",
+    "matched_workload_advisory_balance": {
+      "after": [
+        {
+          "cli_ms": 978695,
+          "ordinary_ms": 162187
+        },
+        {
+          "cli_ms": 978695,
+          "ordinary_ms": 162187
+        },
+        {
+          "cli_ms": 978695,
+          "ordinary_ms": 162187
+        },
+        {
+          "cli_ms": 978695,
+          "ordinary_ms": 162187
+        },
+        {
+          "cli_ms": 978695,
+          "ordinary_ms": 162187
+        },
+        {
+          "cli_ms": 978695,
+          "ordinary_ms": 162187
+        },
+        {
+          "cli_ms": 978695,
+          "ordinary_ms": 162187
+        },
+        {
+          "cli_ms": 978695,
+          "ordinary_ms": 162186
+        }
+      ],
+      "before": [
+        {
+          "cli_ms": 1228375,
+          "ordinary_ms": 88892
+        },
+        {
+          "cli_ms": 713720,
+          "ordinary_ms": 293160
+        },
+        {
+          "cli_ms": 1184053,
+          "ordinary_ms": 146991
+        },
+        {
+          "cli_ms": 834402,
+          "ordinary_ms": 166903
+        },
+        {
+          "cli_ms": 851354,
+          "ordinary_ms": 172921
+        },
+        {
+          "cli_ms": 781627,
+          "ordinary_ms": 129722
+        },
+        {
+          "cli_ms": 1358920,
+          "ordinary_ms": 164687
+        },
+        {
+          "cli_ms": 877109,
+          "ordinary_ms": 134219
+        }
+      ],
+      "policy": "Both assignments evaluated with the same refreshed measured weights and compiled workload; sums are logical advisory loads, not elapsed forecasts.",
+      "units": 3356
+    },
+    "measured_scripts_sha256": {
+      "scripts/benchmark_shared_verify.py": "df8c3525249d19cd6c17e041ffc616c9f2e5d5e5893948679771cefcda022408",
+      "scripts/ci_cache.py": "29df67f99af66d40c2933d4d7b0bdfe8f1374904284c22b2fb884a304c0f98ae",
+      "scripts/ci_lane_verdict.py": "a8f39c8086214091dd4860ab10c1b106e88343dd648eb1710a611eebbb7b269b",
+      "scripts/ci_run_identity.py": "07e7992f678aebf3ef3cb44ef4ea25a21d2533f3731fe432d38fcde1686f4868",
+      "scripts/ci_timing_history.py": "f56e0e0c5c60e6cd23439bf6ff2ddce6bb009b7a2c798c88a95924cb039afe2f",
+      "scripts/ci_worker_qualification.py": "55294b01b6c8a89753d0773c23b38c566f14b2de7b43d4596ab49ec27eccd154",
+      "scripts/ci_worker_topology.py": "aa9323c0ebf5a2058599ddaa0330c424b966141f29fadf23f4eec414c8762ae7",
+      "scripts/collect_ci_timing.py": "cbf9b3241d03af10811f841a189db76914393a2da421797f7aa1de65714dbdbf",
+      "scripts/compare_backfill.py": "a5bb49688ee4acb2cc55f1aea257f1fc9188043966419fd2c6ad4d0d58b072f9",
+      "scripts/full_race.py": "ec8645121a3ab71eb1152eacf351898b82612301255e3c8db6d1691c0554c090",
+      "scripts/generate_go_shard_hints.py": "f9eac753ac3d3ea6cf68a92e922db6426a52c07cbf48fc9d88b134bc9115dce6",
+      "scripts/generate_native_full_hints.py": "34b9c228677ff3e828612d76bbcfbd09294f1c02decbc9dd7fbe9bff3c91cc14",
+      "scripts/go_cache_context.py": "3854efcbb53343d26302ee1a232833370ca5b88a9f9a54b7674f92804b45a92f",
+      "scripts/go_cache_steps.py": "7a3dd4af0796874e50c43ce114045361d116415957757d55946ddaaa065c5646",
+      "scripts/go_parent_shards.py": "231307b43a542509e95f4f0617d2d7356fcd5b49ec39821e1b39286310880d37",
+      "scripts/historical_vet_contract.py": "ed8f8bb9c15e63badfc143d0fda820384c2583f69d563621517689e4341dae48",
+      "scripts/measure-hook.py": "29d0b860bea4c2387aa8367359680373f44da8b1401e41b597df3be9481245cc",
+      "scripts/measure_backfill.py": "5700b934c62306ca8d19f7a6e9ba9069b07bb4f4a67c14b03d52defa57b28401",
+      "scripts/measure_picker_process.py": "f0dbd629ea9886378561ec0e23b957931f43286f575a695e983d32e991a47ab4",
+      "scripts/measure_picker_qualification.py": "f8c56fc421bf21d89536dd2f6e3e95344bc1646e0c4126c7c737cbe52909f1a8",
+      "scripts/muse_corpus.py": "31532f4690ef9e6d056ce84f9333ab20ce1a823a3cda4cb860b923c053a39bb8",
+      "scripts/muse_qualification.py": "70fc31096b61c55b2e86c28bdb1b17835fadb6eb9a8dea7d0f17bc4e7b25c8cc",
+      "scripts/native_smoke_reference.py": "d73b349c4f3f62055080e4573f18377747fbd8ccafbfd848a7df5f7f14adc07b",
+      "scripts/normalize_ci_timing.py": "4f4c68860838cd9d297a60ed14f502a586dc441d6c87325b5bb72699a6f88c05",
+      "scripts/pinned_git.py": "e8755418593f792058898af077ec63cb37a0ce1dc5f4d2e06d8d2b57ca4eb344",
+      "scripts/prepare_picker_qualification.py": "1f260a3ec82a29e4adb4c2e0232dd774df35ca8e363989275734ef3ad71ddc06",
+      "scripts/purge_ci.py": "51a73508db1dffd9554fad7b7d01d08583835789b82fd6a4cdf85f3c51234f3f",
+      "scripts/release_candidate.py": "6c532fd32ebcf5b2790a4955940e3cf137c2457dcbaec667aa02cf759c9815c4",
+      "scripts/report_ci_timing.py": "34703ac49c8fbe920de34644088f8b23e3f3a662a4935fa70352b86e7e60fa9a",
+      "scripts/run_ci_tier.py": "f20085318c4ba6d0464472abc2c0e63b0479a1f2626190877291f2cf86340fcd",
+      "scripts/run_git_identity_versions.py": "9f5040691dc3374002db412f3f4fc34cb979b89558d1004413dabf1fb9077567",
+      "scripts/run_go_shard.py": "363254050c3fac69437998327957d672a7ddb11d74eeab965ac3cb3cec2570bf",
+      "scripts/run_macos_smoke.py": "990d4297471945d0b48b3571173a28871521fb04e9a197acaa11d3b9bb32dcd8",
+      "scripts/run_native_full.py": "9a9f2783e8282c4999a2e995169b012be03f9c869f5dfcd8eb0c5df315ac9117",
+      "scripts/run_pr_reference.py": "9d4a22ed75dd45184b6f1ec33eac6f81b5c3266dcdba8a72d5a1fba4d4063211",
+      "scripts/run_shared_verify.py": "1fb691a040b23cbba7efe5b58e03728d41c23211659e9658266a9c7cbfcf8c79",
+      "scripts/scope_native_verify.py": "51a16730022855eae8e140e9ed7b60d74e6c7b2b2b92f6053a932118b3ee7e62",
+      "scripts/stage_native_verify.py": "da753ff05f4d5da7d664bed22f6a6ec7a1b73bdf461c6f36bec898a9559640ad",
+      "scripts/stage_release_vulnerability_scan.py": "2c2259901dcb76274ac010c0fedb3c36a7d49f4f2117bf089487e61efac82d76",
+      "scripts/summarize_picker_qualification.py": "3fbd459734a7b1a93a33ff4890be9f0ca598f5ddb7fb5ab73e9d7f71849d57a0",
+      "scripts/test_backfill_measurement.py": "ed894c03a1a79ce541ce1981382f856400876a59b2a898162adb7a2f16662257",
+      "scripts/test_benchmark_shared_verify.py": "3dd5c76cf54a3b5bada7029d5f3c907a587f713f6331fa56e2a4a9ca21e889bb",
+      "scripts/test_ci_cache.py": "0724df5d07b6d6f12652eb5cce2ce02ade565afc2cdd28e39be06d86fe0549c4",
+      "scripts/test_ci_lane_verdict.py": "405d6b6fff6c1a10ff0ff8e63d4cc224ed2f08e0992defcd1f8d4614046d0a4b",
+      "scripts/test_ci_tiers.py": "e94910d98c7e63b7fe4c234f38edbc73349e81f67d643b47be933e838549351a",
+      "scripts/test_ci_timing_history.py": "0db50c07a15db4d6c954038e8001ad5e061616b8976e0de4584c088f4bc15191",
+      "scripts/test_ci_worker_topology.py": "99eaf296681469a002f6c2dcd99536917efe09388de3bf31909767b1a6cd0711",
+      "scripts/test_ci_workflow.py": "5ce4e611ea734adf6212bd80127e6fe3a83c02b66dc3662e5125c06cc27a0be8",
+      "scripts/test_collect_ci_timing.py": "f440b9a56bec6830c61fd24330e1ce5a17bc7dd8701b99a181a73d90006781c6",
+      "scripts/test_generate_go_shard_hints.py": "1d759a4d583a851a6ab59e1cb8b019e69357696969ec3ed55a5480f75649d120",
+      "scripts/test_git_identity_versions.py": "791ec5a5a357ca8d34365d6cdbc2ab50c73cd5da1703500291fd0a553641ede0",
+      "scripts/test_go_cache_context.py": "05e9ee3e2833e66d27fb7708c9b8bc98d5ec7cf1a3645e5a74d6792fd3ac1ae3",
+      "scripts/test_go_cache_steps.py": "b598d31a9f22d5400bd676dff4b28be195b0c08bc53c4d452d1c31eb6348420a",
+      "scripts/test_go_parent_shards.py": "9d67a11a4e67efb0bd5a3c8dd99b27dba8a0879510003485b900f6d102c0a091",
+      "scripts/test_go_shards.py": "acb33c63a589ba2178a30ebf4d763c21c2a94115f958242114d5222e42df25fa",
+      "scripts/test_historical_vet_contract.py": "a23d089db4f7fc599a5fc9c38398742145969fedf163f7fc381a5aeaf62a2537",
+      "scripts/test_install.py": "0e7e2c5597943d74a42219360606f0043b2b273a8c4eff8b1958459ce3fa609b",
+      "scripts/test_install_from_source.py": "f59c932a063357abfbb67cfec051d5db997795be3d1c6e86cf4f699231106429",
+      "scripts/test_linux_acceptance.py": "9713709514bf34fab2a75e7204a2447b19d747d3109f7be97df2f5fc57c186eb",
+      "scripts/test_local_ci_plan.py": "12f749b719cf3a72e00bfe8627856460948fd7d23b160a93cb0d0264d263dc72",
+      "scripts/test_macos_smoke.py": "f9fa7bce5a3c3dd9cacff552deec9e38693b9ab5248f3d2b712338fc76408d69",
+      "scripts/test_measure_hook.py": "930d367f35f328a1ca12c15279e8b6382f6ca461a0e0f3baa453a4dfdd054c1a",
+      "scripts/test_muse_qualification.py": "a79f08e97db82e42e5f6136c4e648edf911357b5f663446d9085ddc93adc5794",
+      "scripts/test_native_full.py": "9b4a8946b321d4ede4f4043c1fc565d2a21bec9b24f5f06967a734e0ca394556",
+      "scripts/test_native_smoke_reference.py": "bb169d07f40380171e70ca06e16e15dea0ceecdde66e5f1f172cf5ae6acdaeb8",
+      "scripts/test_pr_reference.py": "0694c6554c5c7ed1ceb11284b3eced138032726c17835d98426099e1b749abff",
+      "scripts/test_purge_ci.py": "7fabb06ad1846b14ca8253cea8f0e54dbad2158287f95106f4d9cf71dbf3e04c",
+      "scripts/test_purge_recipe.py": "217b740bd5800ac7651a6a81fce89b8b8f40b5449b066bc1f51c41b5018feac3",
+      "scripts/test_release_assets.py": "953d0e8da8066a052fabbe7bda3441cbdb11253030cf51945c60a4b8b5851e70",
+      "scripts/test_release_candidate.py": "2e909f623fc6ef255b45480f6be88feaf35a0287bb3b9d89c8ef6febb5bf4480",
+      "scripts/test_release_signing.py": "9ab420a75af31d42e564f67f2660222a53b6e65b50b2a1127e5bee201baffb0d",
+      "scripts/test_report_ci_timing.py": "987cc2e5796e426c273c0084f1a193657f01635dc131c23d69aa8ec0ddeb6a7d",
+      "scripts/test_scope_native_verify.py": "252fb378e2dd9e2e30b2fce5a635c7bb80b7f8167b74b8ce9a0804321ae2c43a",
+      "scripts/test_stage_native_verify.py": "c0add0bdb88a38588981c199d84fad6503c5272c63db275a75a6b12af3ed360b",
+      "scripts/test_stage_release_vulnerability_scan.py": "991c0d175d883da04bf5b2f561944c679d9c45d0cda7023b535e692e1d382a02",
+      "scripts/test_summarize_picker_qualification.py": "ce24489997e76934e3c857b60e3cf6809692345aa6c5ca47ea414c0296addb16",
+      "scripts/test_warm_shared_module_graph.py": "63ede7eda7d2b4e3af9ed805c2a4282a8d40d570448228290b6fde44b50311e9",
+      "scripts/verified_tools.py": "57b0e2f265e2c8e4b6ef51b4d34cf39f7bd32555eded46d934b729fd16787de2",
+      "scripts/warm_shared_module_graph.py": "66f7178b924283283da5cd38baf43f6f0a862c49042ada1a9b3c08dd6c37919c",
+      "scripts/warm_shared_tools.py": "eaee5149887a8540dd8e250f62184fc5bc4dceb9012334bdcfba6a8e94aabc34"
+    },
+    "observation_kind": "normal",
+    "observed_worker_total_seconds": {
+      "0": 157.11358326100003,
+      "1": 297.23582135900006,
+      "2": 209.36766510600003,
+      "3": 195.65675442500003,
+      "4": 200.079756803,
+      "5": 201.72593281,
+      "6": 225.04688930999998,
+      "7": 180.55425965700002
+    },
+    "package_bootstrap": "Complete parent lifecycles include descendant waits and per-process fixture/bootstrap effects; summed advice is non-additive, not CPU time or worker elapsed.",
+    "paired_levenshtein_run_id": 38816394218,
+    "paired_run_identity_sha256": "50316bd089814ef6c53b72c0a3cefdf2fd20c87461e5aa9e6a4b807caf1969d6",
+    "pr_number": 604,
+    "previous_source": "bb84d9fd58b0665fde9b201050b80a19e68920b0",
+    "qualification": "One successful complete normal-traffic source observation; advisory ranking only, no latency quantile or measured speedup claim.",
+    "run_attempt": 1,
+    "run_identity_sha256": "516f5f72f823eda7bedf9b13c312062f000c3e5883e1e0679149e13566285512",
+    "runner_images": {
+      "0": {
+        "ImageOS": "ubuntu24",
+        "ImageVersion": "20261012.334.1"
+      },
+      "1": {
+        "ImageOS": "ubuntu24",
+        "ImageVersion": "20261012.334.1"
+      },
+      "2": {
+        "ImageOS": "ubuntu24",
+        "ImageVersion": "20261012.334.1"
+      },
+      "3": {
+        "ImageOS": "ubuntu24",
+        "ImageVersion": "20261012.334.1"
+      },
+      "4": {
+        "ImageOS": "ubuntu24",
+        "ImageVersion": "20261012.334.1"
+      },
+      "5": {
+        "ImageOS": "ubuntu24",
+        "ImageVersion": "20261012.334.1"
+      },
+      "6": {
+        "ImageOS": "ubuntu24",
+        "ImageVersion": "20261012.334.1"
+      },
+      "7": {
+        "ImageOS": "ubuntu24",
+        "ImageVersion": "20261012.334.1"
+      }
+    },
+    "sample_count": 1,
+    "source_limitations": "Measured merge39c550 includes the recent fixture and UI changes inherited by main101ec. This is its exact historical workload, not a measurement of main101ec or this refresh. Later discovered units retain the positive fallback. No incompatible earlier-source sample is pooled.",
+    "source_tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9",
+    "tested_base": "ed8da985be05e1178647681b64dd972a120e3a0e",
+    "workflow_conclusions": {
+      "Levenshtein": "success",
+      "Test": "success"
+    },
+    "workflow_run_id": 38816393618
+  },
+  "body_catalog_json": "{\n  \"schema\": 1,\n  \"daily_cron\": \"17 8 * * 1-6\",\n  \"weekly_cron\": \"17 8 * * 0\",\n  \"restorations\": [\n    {\n      \"package\": \"internal/archive\",\n      \"test\": \"TestFitStagesNeverGrowWithThePrefix\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/collector\",\n      \"test\": \"TestSessionOverItsReadShareIsANamedGapOnce\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/collector\",\n      \"test\": \"TestPendingUploadOverItsShareDefersThenEscalates\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/discovery\",\n      \"test\": \"TestRetainedHintsKeepTwoThousandWarmSourcesAndFreshProgress\",\n      \"restore\": \"weekly\",\n      \"pr\": \"explicit skip; full scale NOT RUN\",\n      \"counterpart\": \"TestRetainedHintsKeepSmallWarmSourcesAndFreshProgress\"\n    },\n    {\n      \"package\": \"internal/discovery\",\n      \"test\": \"TestMetadataInventorySharesFiveSweepsAtPhysicalScale\",\n      \"restore\": \"weekly\",\n      \"pr\": \"explicit skip; full scale NOT RUN\",\n      \"counterpart\": \"TestMetadataInventorySmallerPhysicalScale\"\n    },\n    {\n      \"package\": \"internal/discovery\",\n      \"test\": \"TestMetadataInventorySharesFiveSweepsWithIndexedWAL\",\n      \"restore\": \"weekly\",\n      \"pr\": \"explicit skip; full scale NOT RUN\",\n      \"counterpart\": \"TestMetadataInventorySmallerIndexedScale\"\n    },\n    {\n      \"package\": \"internal/discovery\",\n      \"test\": \"TestMetadataInventoryMaximumCopiesAndJointCapacity\",\n      \"restore\": \"weekly\",\n      \"pr\": \"explicit skip; full scale NOT RUN\",\n      \"counterpart\": \"TestMetadataInventorySmallCopiesAndJointCapacity\"\n    },\n    {\n      \"package\": \"internal/statshtml\",\n      \"test\": \"TestHostileTextIsInertInEveryField\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/stats\",\n      \"test\": \"TestTopProjectsBySpendNeverOmitADearerProject\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/stats\",\n      \"test\": \"TestHostileArchivesStayConsistent\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/cli\",\n      \"test\": \"TestRealCLICatalogDefaultList50Bounded\",\n      \"restore\": \"daily\",\n      \"pr\": \"128-record representative;512-record full scale NOT RUN\",\n      \"full_children\": [\n        \"128\",\n        \"512\"\n      ],\n      \"full_fixture\": \"128 and512 records; warm SQL overflow still2000linked references\"\n    },\n    {\n      \"package\": \"internal/cli\",\n      \"test\": \"TestRealCLICatalogListNonMultiplePageLimit\",\n      \"restore\": \"daily\",\n      \"pr\": \"representative or explicit skip; full body NOT RUN\",\n      \"full_children\": [\n        \"1100\"\n      ],\n      \"counterpart\": \"TestSnapshotBoundedRangeCountsCursorsAndBodyAuthority\",\n      \"counterpart_package\": \"internal/catalog\",\n      \"full_fixture\": \"1100 records /1050 selection, actual1000-page crossing\"\n    },\n    {\n      \"package\": \"internal/cli\",\n      \"test\": \"TestDefaultRepositoryScopeBodyBudgetAndEmptyFallback\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/cli\",\n      \"test\": \"TestStatsReadsThousandsOfSessions\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/cli\",\n      \"test\": \"TestStatsUsageRowsKeepNamesCountsAndCommandsTogether\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/cli\",\n      \"test\": \"TestStatsInteractiveWindowsEqualStaticRunsForEveryShape\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/cli\",\n      \"test\": \"TestStatsScreenNeverExceedsTheTerminalWhateverTheNames\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/cli\",\n      \"test\": \"TestStatsAllInHintsFitTheTerminal\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/cli\",\n      \"test\": \"TestGuidedFullCommandTranscripts\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/cli\",\n      \"test\": \"TestShowTranscriptStaysWithinTheLimitForEveryShapeOfSession\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/cli\",\n      \"test\": \"TestShowTranscriptTrimmingHoldsTheLimitForRandomSessions\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/cli\",\n      \"test\": \"TestShowTranscriptJSONTrimmingHoldsTheLimitForRandomSessions\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/backfill\",\n      \"test\": \"TestImportStagingSizeBoundPrecedesAdmission\",\n      \"restore\": \"weekly\",\n      \"pr\": \"8-row admitted recovery; real32MiB rejection NOT RUN\",\n      \"full_children\": [\n        \"near_limit_survives_native_deletion\",\n        \"oversized_remains_unadmitted\"\n      ],\n      \"counterpart\": \"TestImportStageCapacityEncodedBoundary\",\n      \"counterpart_package\": \"internal/state\"\n    },\n    {\n      \"package\": \"internal/backfill\",\n      \"test\": \"TestImportStagingAccountsForEncodedTextAndRefilterScratch\",\n      \"restore\": \"weekly\",\n      \"pr\": \"full body skip; state encoded/refilter capacity refusal counterparts execute\",\n      \"full_children\": [\n        \"encoded_expansion\",\n        \"refilter_scratch\"\n      ],\n      \"counterpart\": \"TestImportStageCapacityRefilterBoundary\",\n      \"counterpart_package\": \"internal/state\"\n    },\n    {\n      \"package\": \"internal/reader\",\n      \"test\": \"TestRemoteRootChildrenReusesOnlyCompleteSameRootSQL\",\n      \"restore\": \"daily\",\n      \"pr\": \"128-record representative;512-record full scale NOT RUN\",\n      \"full_children\": [\n        \"128\",\n        \"512\"\n      ],\n      \"full_fixture\": \"128 and512 records; warm SQL overflow still2000linked references\"\n    },\n    {\n      \"package\": \"internal/reader\",\n      \"test\": \"TestListRevisionBodyBudgetColdWarmAndExhaustiveOracle\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/agents/codex\",\n      \"test\": \"TestRelatedMillionRecordLimit\",\n      \"restore\": \"daily\",\n      \"pr\": \"full physical stream NOT RUN; cached-prefix aggregate refusal/release/retry is a distinct PR proof\",\n      \"counterpart\": \"TestRelatedCachedRecordCountLimitIsTypedAndReleasesBudget\",\n      \"full_fixture\": \"archive.MaxHistoryRecords physical streaming boundary\"\n    },\n    {\n      \"package\": \"internal/agents/nativecodec\",\n      \"test\": \"TestDecodeSourceStreamsWithBoundedMemory\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/agents/nativecodec\",\n      \"test\": \"TestLargeRecordMemoryCeiling\",\n      \"restore\": \"weekly\",\n      \"pr\": \"representative; full matrix/scale NOT RUN\"\n    },\n    {\n      \"package\": \"internal/catalog\",\n      \"test\": \"TestPickerFirstPageWorkDoesNotScaleWithUnrelatedArchive\",\n      \"restore\": \"weekly\",\n      \"pr\": \"128/512-record representative; 10000/100000 records NOT RUN\",\n      \"full_children\": [\n        \"10000\",\n        \"100000\"\n      ]\n    },\n    {\n      \"package\": \"internal/cli\",\n      \"test\": \"TestPickerQualificationRealCLIPhases\",\n      \"restore\": \"weekly\",\n      \"pr\": \"1400-record handoff/list/show first/Older page oracle (>100 eligible rows); scale NOT RUN\",\n      \"full_children\": [\n        \"1400\",\n        \"10000\",\n        \"100000\"\n      ]\n    },\n    {\n      \"package\": \"internal/agents/builtin\",\n      \"test\": \"TestNativeCaptureWholeSourceBoundary\",\n      \"restore\": \"weekly\",\n      \"pr\": \"race body NOT RUN only under explicit independent plain audit ownership; required plain body PASS\",\n      \"plain_counterpart\": {\n        \"suite\": \"audit\",\n        \"test\": \"TestNativeCaptureWholeSourceBoundary\"\n      }\n    }\n  ]\n}\n",
+  "body_catalog_sha256": "a9405bc94a56fd6782b525c482d71c36aba5bba44418aa0ebb8ba672ad8a906a",
+  "samples": [
+    {
+      "audit_directory": "audit",
+      "directory": "workers",
+      "id": "test-38816393618-attempt-1-schema4"
+    }
+  ],
+  "settings": {
+    "0": {
+      "cli_cpus": 2,
+      "cli_parallel": 2,
+      "compiled_discovery_schema": 1,
+      "cpus": 4,
+      "deadline_seconds": 1500,
+      "execution_lanes": 2,
+      "isolated_packages": [],
+      "lane_cpus": 2,
+      "ordinary_cpus": 2,
+      "ordinary_parallel": 2,
+      "package_p": 1,
+      "plain_audit_owned": true,
+      "plain_vet_context": {
+        "cc": {
+          "binary": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
+          "version": "ae487f55927d605284a32711e4ecf6bc3be2bcd5a9de414ace0936264b741f85"
+        },
+        "compilation_modes": {
+          "cross": [
+            "linux/arm64/cgo0",
+            "linux/amd64/cgo0",
+            "darwin/arm64/cgo0"
+          ],
+          "race": [
+            false,
+            true
+          ],
+          "release": [
+            "-trimpath",
+            "-s -w -X github.com/wangjohn/agent-archive/internal/cli.Version=<current>"
+          ],
+          "shared-tools": [
+            "-trimpath",
+            "-mod=readonly -buildvcs=false"
+          ],
+          "tags": []
+        },
+        "cxx": {
+          "binary": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769",
+          "version": "39553616934606f58b27c04bed0cdbbe5b00c92c831a9aaadebd7ceda61d1334"
+        },
+        "go": {
+          "CC": "gcc",
+          "CGO_CFLAGS": "-O2 -g",
+          "CGO_CPPFLAGS": "",
+          "CGO_CXXFLAGS": "-O2 -g",
+          "CGO_ENABLED": "1",
+          "CGO_LDFLAGS": "-O2 -g",
+          "CXX": "g++",
+          "GO386": "",
+          "GOAMD64": "v1",
+          "GOARCH": "amd64",
+          "GOARM": "",
+          "GOARM64": "",
+          "GOCACHEPROG": "",
+          "GODEBUG": "",
+          "GOENV": "",
+          "GOEXPERIMENT": "",
+          "GOFIPS140": "off",
+          "GOFLAGS": "-mod=readonly",
+          "GOHOSTARCH": "amd64",
+          "GOHOSTOS": "linux",
+          "GOMIPS": "",
+          "GOMIPS64": "",
+          "GOOS": "linux",
+          "GOPPC64": "",
+          "GORISCV64": "",
+          "GOROOT": "/opt/hostedtoolcache/go/1.27.2/x64",
+          "GOTOOLCHAIN": "local",
+          "GOTOOLDIR": "/opt/hostedtoolcache/go/1.27.2/x64/pkg/tool/linux_amd64",
+          "GOVERSION": "go1.27.2",
+          "GOWASM": "",
+          "GOWORK": "off"
+        },
+        "image": {
+          "ImageOS": "ubuntu24",
+          "ImageVersion": "20261012.334.1"
+        },
+        "native_environment": "3ad19504a25f1aa9ec3a3d0f3e5850bf612e6fccb7476b789bc295780e539562",
+        "os_release": "87458b3b1f1ca0e5c693ade771de7007c3783bdc692fa6b39eb6414bf2af2763",
+        "pinned_tools": {
+          "deadcode": [
+            "golang.org/x/tools",
+            "v0.50.0"
+          ],
+          "git-2.30.2": "94f6e3e283f2adfc518b39cfc39291f1c2832ad0",
+          "git-2.39.2": "cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6",
+          "golangci-lint": [
+            "github.com/golangci/golangci-lint/v2",
+            "v2.14.0"
+          ],
+          "shared": "6f799f72befb925d10f2ef01a7c9a46725fa714d"
+        },
+        "race": false,
+        "runner_arch": "X64",
+        "runner_os": "Linux",
+        "schema": "aa-pr-go-v2",
+        "tags": [],
+        "toolchain": {
+          "asm": "0e7bf93f6ce3164328c5f60e51101c8f93d430f91f02cf9000f4f6d64d8850d4",
+          "cgo": "8a470e65b4d4799820f463be4d1373b775bf1087fa94512e5ea3b1d0f79e689b",
+          "compile": "8d4484dbaa31c4c6cec965aadd42efaa1e8d59e4a30ca3b466b502c377c29121",
+          "go": "548d3c32f83fa81152f543eb1526be7884cfe0526eb5e9ce29d3eca14786e7e0",
+          "link": "b7567a824e05fa24240edbf883e77e536914f22444c6946f1cd4a904b315f9c2",
+          "vet": "f73e3188eb0953bf2938bb6eea06ee07dc0b4001468c17d3f199124e487d119b"
+        },
+        "version": "go version go1.27.2 linux/amd64"
+      },
+      "plain_vet_context_sha256": "0806433d704f8263ac7dd134f7d50d9bc4c31e4df1fb120a98c680f7e24f7474",
+      "plain_vet_owned": true,
+      "plain_vet_receipt_schema": 1,
+      "plain_vet_source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "sequential_after": {
+        "2": 0,
+        "3": 2,
+        "4": 3,
+        "5": 4
+      },
+      "source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "workers": 8
+    },
+    "1": {
+      "cli_cpus": 2,
+      "cli_parallel": 2,
+      "compiled_discovery_schema": 1,
+      "cpus": 4,
+      "deadline_seconds": 1500,
+      "execution_lanes": 2,
+      "isolated_packages": [
+        "github.com/wangjohn/agent-archive/internal/gitremote"
+      ],
+      "lane_cpus": 2,
+      "ordinary_cpus": 2,
+      "ordinary_parallel": 2,
+      "package_p": 1,
+      "plain_audit_owned": true,
+      "plain_vet_context": {
+        "cc": {
+          "binary": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
+          "version": "ae487f55927d605284a32711e4ecf6bc3be2bcd5a9de414ace0936264b741f85"
+        },
+        "compilation_modes": {
+          "cross": [
+            "linux/arm64/cgo0",
+            "linux/amd64/cgo0",
+            "darwin/arm64/cgo0"
+          ],
+          "race": [
+            false,
+            true
+          ],
+          "release": [
+            "-trimpath",
+            "-s -w -X github.com/wangjohn/agent-archive/internal/cli.Version=<current>"
+          ],
+          "shared-tools": [
+            "-trimpath",
+            "-mod=readonly -buildvcs=false"
+          ],
+          "tags": []
+        },
+        "cxx": {
+          "binary": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769",
+          "version": "39553616934606f58b27c04bed0cdbbe5b00c92c831a9aaadebd7ceda61d1334"
+        },
+        "go": {
+          "CC": "gcc",
+          "CGO_CFLAGS": "-O2 -g",
+          "CGO_CPPFLAGS": "",
+          "CGO_CXXFLAGS": "-O2 -g",
+          "CGO_ENABLED": "1",
+          "CGO_LDFLAGS": "-O2 -g",
+          "CXX": "g++",
+          "GO386": "",
+          "GOAMD64": "v1",
+          "GOARCH": "amd64",
+          "GOARM": "",
+          "GOARM64": "",
+          "GOCACHEPROG": "",
+          "GODEBUG": "",
+          "GOENV": "",
+          "GOEXPERIMENT": "",
+          "GOFIPS140": "off",
+          "GOFLAGS": "-mod=readonly",
+          "GOHOSTARCH": "amd64",
+          "GOHOSTOS": "linux",
+          "GOMIPS": "",
+          "GOMIPS64": "",
+          "GOOS": "linux",
+          "GOPPC64": "",
+          "GORISCV64": "",
+          "GOROOT": "/opt/hostedtoolcache/go/1.27.2/x64",
+          "GOTOOLCHAIN": "local",
+          "GOTOOLDIR": "/opt/hostedtoolcache/go/1.27.2/x64/pkg/tool/linux_amd64",
+          "GOVERSION": "go1.27.2",
+          "GOWASM": "",
+          "GOWORK": "off"
+        },
+        "image": {
+          "ImageOS": "ubuntu24",
+          "ImageVersion": "20261012.334.1"
+        },
+        "native_environment": "3ad19504a25f1aa9ec3a3d0f3e5850bf612e6fccb7476b789bc295780e539562",
+        "os_release": "87458b3b1f1ca0e5c693ade771de7007c3783bdc692fa6b39eb6414bf2af2763",
+        "pinned_tools": {
+          "deadcode": [
+            "golang.org/x/tools",
+            "v0.50.0"
+          ],
+          "git-2.30.2": "94f6e3e283f2adfc518b39cfc39291f1c2832ad0",
+          "git-2.39.2": "cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6",
+          "golangci-lint": [
+            "github.com/golangci/golangci-lint/v2",
+            "v2.14.0"
+          ],
+          "shared": "6f799f72befb925d10f2ef01a7c9a46725fa714d"
+        },
+        "race": false,
+        "runner_arch": "X64",
+        "runner_os": "Linux",
+        "schema": "aa-pr-go-v2",
+        "tags": [],
+        "toolchain": {
+          "asm": "0e7bf93f6ce3164328c5f60e51101c8f93d430f91f02cf9000f4f6d64d8850d4",
+          "cgo": "8a470e65b4d4799820f463be4d1373b775bf1087fa94512e5ea3b1d0f79e689b",
+          "compile": "8d4484dbaa31c4c6cec965aadd42efaa1e8d59e4a30ca3b466b502c377c29121",
+          "go": "548d3c32f83fa81152f543eb1526be7884cfe0526eb5e9ce29d3eca14786e7e0",
+          "link": "b7567a824e05fa24240edbf883e77e536914f22444c6946f1cd4a904b315f9c2",
+          "vet": "f73e3188eb0953bf2938bb6eea06ee07dc0b4001468c17d3f199124e487d119b"
+        },
+        "version": "go version go1.27.2 linux/amd64"
+      },
+      "plain_vet_context_sha256": "0806433d704f8263ac7dd134f7d50d9bc4c31e4df1fb120a98c680f7e24f7474",
+      "plain_vet_owned": true,
+      "plain_vet_receipt_schema": 1,
+      "plain_vet_source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "sequential_after": {
+        "2": 0,
+        "3": 2,
+        "4": 3,
+        "5": 4
+      },
+      "source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "workers": 8
+    },
+    "2": {
+      "cli_cpus": 2,
+      "cli_parallel": 2,
+      "compiled_discovery_schema": 1,
+      "cpus": 4,
+      "deadline_seconds": 1500,
+      "execution_lanes": 2,
+      "isolated_packages": [],
+      "lane_cpus": 2,
+      "ordinary_cpus": 2,
+      "ordinary_parallel": 2,
+      "package_p": 1,
+      "plain_audit_owned": true,
+      "plain_vet_context": {
+        "cc": {
+          "binary": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
+          "version": "ae487f55927d605284a32711e4ecf6bc3be2bcd5a9de414ace0936264b741f85"
+        },
+        "compilation_modes": {
+          "cross": [
+            "linux/arm64/cgo0",
+            "linux/amd64/cgo0",
+            "darwin/arm64/cgo0"
+          ],
+          "race": [
+            false,
+            true
+          ],
+          "release": [
+            "-trimpath",
+            "-s -w -X github.com/wangjohn/agent-archive/internal/cli.Version=<current>"
+          ],
+          "shared-tools": [
+            "-trimpath",
+            "-mod=readonly -buildvcs=false"
+          ],
+          "tags": []
+        },
+        "cxx": {
+          "binary": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769",
+          "version": "39553616934606f58b27c04bed0cdbbe5b00c92c831a9aaadebd7ceda61d1334"
+        },
+        "go": {
+          "CC": "gcc",
+          "CGO_CFLAGS": "-O2 -g",
+          "CGO_CPPFLAGS": "",
+          "CGO_CXXFLAGS": "-O2 -g",
+          "CGO_ENABLED": "1",
+          "CGO_LDFLAGS": "-O2 -g",
+          "CXX": "g++",
+          "GO386": "",
+          "GOAMD64": "v1",
+          "GOARCH": "amd64",
+          "GOARM": "",
+          "GOARM64": "",
+          "GOCACHEPROG": "",
+          "GODEBUG": "",
+          "GOENV": "",
+          "GOEXPERIMENT": "",
+          "GOFIPS140": "off",
+          "GOFLAGS": "-mod=readonly",
+          "GOHOSTARCH": "amd64",
+          "GOHOSTOS": "linux",
+          "GOMIPS": "",
+          "GOMIPS64": "",
+          "GOOS": "linux",
+          "GOPPC64": "",
+          "GORISCV64": "",
+          "GOROOT": "/opt/hostedtoolcache/go/1.27.2/x64",
+          "GOTOOLCHAIN": "local",
+          "GOTOOLDIR": "/opt/hostedtoolcache/go/1.27.2/x64/pkg/tool/linux_amd64",
+          "GOVERSION": "go1.27.2",
+          "GOWASM": "",
+          "GOWORK": "off"
+        },
+        "image": {
+          "ImageOS": "ubuntu24",
+          "ImageVersion": "20261012.334.1"
+        },
+        "native_environment": "3ad19504a25f1aa9ec3a3d0f3e5850bf612e6fccb7476b789bc295780e539562",
+        "os_release": "87458b3b1f1ca0e5c693ade771de7007c3783bdc692fa6b39eb6414bf2af2763",
+        "pinned_tools": {
+          "deadcode": [
+            "golang.org/x/tools",
+            "v0.50.0"
+          ],
+          "git-2.30.2": "94f6e3e283f2adfc518b39cfc39291f1c2832ad0",
+          "git-2.39.2": "cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6",
+          "golangci-lint": [
+            "github.com/golangci/golangci-lint/v2",
+            "v2.14.0"
+          ],
+          "shared": "6f799f72befb925d10f2ef01a7c9a46725fa714d"
+        },
+        "race": false,
+        "runner_arch": "X64",
+        "runner_os": "Linux",
+        "schema": "aa-pr-go-v2",
+        "tags": [],
+        "toolchain": {
+          "asm": "0e7bf93f6ce3164328c5f60e51101c8f93d430f91f02cf9000f4f6d64d8850d4",
+          "cgo": "8a470e65b4d4799820f463be4d1373b775bf1087fa94512e5ea3b1d0f79e689b",
+          "compile": "8d4484dbaa31c4c6cec965aadd42efaa1e8d59e4a30ca3b466b502c377c29121",
+          "go": "548d3c32f83fa81152f543eb1526be7884cfe0526eb5e9ce29d3eca14786e7e0",
+          "link": "b7567a824e05fa24240edbf883e77e536914f22444c6946f1cd4a904b315f9c2",
+          "vet": "f73e3188eb0953bf2938bb6eea06ee07dc0b4001468c17d3f199124e487d119b"
+        },
+        "version": "go version go1.27.2 linux/amd64"
+      },
+      "plain_vet_context_sha256": "0806433d704f8263ac7dd134f7d50d9bc4c31e4df1fb120a98c680f7e24f7474",
+      "plain_vet_owned": true,
+      "plain_vet_receipt_schema": 1,
+      "plain_vet_source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "sequential_after": {
+        "2": 0,
+        "3": 2,
+        "4": 3,
+        "5": 4
+      },
+      "source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "workers": 8
+    },
+    "3": {
+      "cli_cpus": 2,
+      "cli_parallel": 2,
+      "compiled_discovery_schema": 1,
+      "cpus": 4,
+      "deadline_seconds": 1500,
+      "execution_lanes": 2,
+      "isolated_packages": [],
+      "lane_cpus": 2,
+      "ordinary_cpus": 2,
+      "ordinary_parallel": 2,
+      "package_p": 1,
+      "plain_audit_owned": true,
+      "plain_vet_context": {
+        "cc": {
+          "binary": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
+          "version": "ae487f55927d605284a32711e4ecf6bc3be2bcd5a9de414ace0936264b741f85"
+        },
+        "compilation_modes": {
+          "cross": [
+            "linux/arm64/cgo0",
+            "linux/amd64/cgo0",
+            "darwin/arm64/cgo0"
+          ],
+          "race": [
+            false,
+            true
+          ],
+          "release": [
+            "-trimpath",
+            "-s -w -X github.com/wangjohn/agent-archive/internal/cli.Version=<current>"
+          ],
+          "shared-tools": [
+            "-trimpath",
+            "-mod=readonly -buildvcs=false"
+          ],
+          "tags": []
+        },
+        "cxx": {
+          "binary": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769",
+          "version": "39553616934606f58b27c04bed0cdbbe5b00c92c831a9aaadebd7ceda61d1334"
+        },
+        "go": {
+          "CC": "gcc",
+          "CGO_CFLAGS": "-O2 -g",
+          "CGO_CPPFLAGS": "",
+          "CGO_CXXFLAGS": "-O2 -g",
+          "CGO_ENABLED": "1",
+          "CGO_LDFLAGS": "-O2 -g",
+          "CXX": "g++",
+          "GO386": "",
+          "GOAMD64": "v1",
+          "GOARCH": "amd64",
+          "GOARM": "",
+          "GOARM64": "",
+          "GOCACHEPROG": "",
+          "GODEBUG": "",
+          "GOENV": "",
+          "GOEXPERIMENT": "",
+          "GOFIPS140": "off",
+          "GOFLAGS": "-mod=readonly",
+          "GOHOSTARCH": "amd64",
+          "GOHOSTOS": "linux",
+          "GOMIPS": "",
+          "GOMIPS64": "",
+          "GOOS": "linux",
+          "GOPPC64": "",
+          "GORISCV64": "",
+          "GOROOT": "/opt/hostedtoolcache/go/1.27.2/x64",
+          "GOTOOLCHAIN": "local",
+          "GOTOOLDIR": "/opt/hostedtoolcache/go/1.27.2/x64/pkg/tool/linux_amd64",
+          "GOVERSION": "go1.27.2",
+          "GOWASM": "",
+          "GOWORK": "off"
+        },
+        "image": {
+          "ImageOS": "ubuntu24",
+          "ImageVersion": "20261012.334.1"
+        },
+        "native_environment": "3ad19504a25f1aa9ec3a3d0f3e5850bf612e6fccb7476b789bc295780e539562",
+        "os_release": "87458b3b1f1ca0e5c693ade771de7007c3783bdc692fa6b39eb6414bf2af2763",
+        "pinned_tools": {
+          "deadcode": [
+            "golang.org/x/tools",
+            "v0.50.0"
+          ],
+          "git-2.30.2": "94f6e3e283f2adfc518b39cfc39291f1c2832ad0",
+          "git-2.39.2": "cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6",
+          "golangci-lint": [
+            "github.com/golangci/golangci-lint/v2",
+            "v2.14.0"
+          ],
+          "shared": "6f799f72befb925d10f2ef01a7c9a46725fa714d"
+        },
+        "race": false,
+        "runner_arch": "X64",
+        "runner_os": "Linux",
+        "schema": "aa-pr-go-v2",
+        "tags": [],
+        "toolchain": {
+          "asm": "0e7bf93f6ce3164328c5f60e51101c8f93d430f91f02cf9000f4f6d64d8850d4",
+          "cgo": "8a470e65b4d4799820f463be4d1373b775bf1087fa94512e5ea3b1d0f79e689b",
+          "compile": "8d4484dbaa31c4c6cec965aadd42efaa1e8d59e4a30ca3b466b502c377c29121",
+          "go": "548d3c32f83fa81152f543eb1526be7884cfe0526eb5e9ce29d3eca14786e7e0",
+          "link": "b7567a824e05fa24240edbf883e77e536914f22444c6946f1cd4a904b315f9c2",
+          "vet": "f73e3188eb0953bf2938bb6eea06ee07dc0b4001468c17d3f199124e487d119b"
+        },
+        "version": "go version go1.27.2 linux/amd64"
+      },
+      "plain_vet_context_sha256": "0806433d704f8263ac7dd134f7d50d9bc4c31e4df1fb120a98c680f7e24f7474",
+      "plain_vet_owned": true,
+      "plain_vet_receipt_schema": 1,
+      "plain_vet_source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "sequential_after": {
+        "2": 0,
+        "3": 2,
+        "4": 3,
+        "5": 4
+      },
+      "source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "workers": 8
+    },
+    "4": {
+      "cli_cpus": 2,
+      "cli_parallel": 2,
+      "compiled_discovery_schema": 1,
+      "cpus": 4,
+      "deadline_seconds": 1500,
+      "execution_lanes": 2,
+      "isolated_packages": [],
+      "lane_cpus": 2,
+      "ordinary_cpus": 2,
+      "ordinary_parallel": 2,
+      "package_p": 1,
+      "plain_audit_owned": true,
+      "plain_vet_context": {
+        "cc": {
+          "binary": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
+          "version": "ae487f55927d605284a32711e4ecf6bc3be2bcd5a9de414ace0936264b741f85"
+        },
+        "compilation_modes": {
+          "cross": [
+            "linux/arm64/cgo0",
+            "linux/amd64/cgo0",
+            "darwin/arm64/cgo0"
+          ],
+          "race": [
+            false,
+            true
+          ],
+          "release": [
+            "-trimpath",
+            "-s -w -X github.com/wangjohn/agent-archive/internal/cli.Version=<current>"
+          ],
+          "shared-tools": [
+            "-trimpath",
+            "-mod=readonly -buildvcs=false"
+          ],
+          "tags": []
+        },
+        "cxx": {
+          "binary": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769",
+          "version": "39553616934606f58b27c04bed0cdbbe5b00c92c831a9aaadebd7ceda61d1334"
+        },
+        "go": {
+          "CC": "gcc",
+          "CGO_CFLAGS": "-O2 -g",
+          "CGO_CPPFLAGS": "",
+          "CGO_CXXFLAGS": "-O2 -g",
+          "CGO_ENABLED": "1",
+          "CGO_LDFLAGS": "-O2 -g",
+          "CXX": "g++",
+          "GO386": "",
+          "GOAMD64": "v1",
+          "GOARCH": "amd64",
+          "GOARM": "",
+          "GOARM64": "",
+          "GOCACHEPROG": "",
+          "GODEBUG": "",
+          "GOENV": "",
+          "GOEXPERIMENT": "",
+          "GOFIPS140": "off",
+          "GOFLAGS": "-mod=readonly",
+          "GOHOSTARCH": "amd64",
+          "GOHOSTOS": "linux",
+          "GOMIPS": "",
+          "GOMIPS64": "",
+          "GOOS": "linux",
+          "GOPPC64": "",
+          "GORISCV64": "",
+          "GOROOT": "/opt/hostedtoolcache/go/1.27.2/x64",
+          "GOTOOLCHAIN": "local",
+          "GOTOOLDIR": "/opt/hostedtoolcache/go/1.27.2/x64/pkg/tool/linux_amd64",
+          "GOVERSION": "go1.27.2",
+          "GOWASM": "",
+          "GOWORK": "off"
+        },
+        "image": {
+          "ImageOS": "ubuntu24",
+          "ImageVersion": "20261012.334.1"
+        },
+        "native_environment": "3ad19504a25f1aa9ec3a3d0f3e5850bf612e6fccb7476b789bc295780e539562",
+        "os_release": "87458b3b1f1ca0e5c693ade771de7007c3783bdc692fa6b39eb6414bf2af2763",
+        "pinned_tools": {
+          "deadcode": [
+            "golang.org/x/tools",
+            "v0.50.0"
+          ],
+          "git-2.30.2": "94f6e3e283f2adfc518b39cfc39291f1c2832ad0",
+          "git-2.39.2": "cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6",
+          "golangci-lint": [
+            "github.com/golangci/golangci-lint/v2",
+            "v2.14.0"
+          ],
+          "shared": "6f799f72befb925d10f2ef01a7c9a46725fa714d"
+        },
+        "race": false,
+        "runner_arch": "X64",
+        "runner_os": "Linux",
+        "schema": "aa-pr-go-v2",
+        "tags": [],
+        "toolchain": {
+          "asm": "0e7bf93f6ce3164328c5f60e51101c8f93d430f91f02cf9000f4f6d64d8850d4",
+          "cgo": "8a470e65b4d4799820f463be4d1373b775bf1087fa94512e5ea3b1d0f79e689b",
+          "compile": "8d4484dbaa31c4c6cec965aadd42efaa1e8d59e4a30ca3b466b502c377c29121",
+          "go": "548d3c32f83fa81152f543eb1526be7884cfe0526eb5e9ce29d3eca14786e7e0",
+          "link": "b7567a824e05fa24240edbf883e77e536914f22444c6946f1cd4a904b315f9c2",
+          "vet": "f73e3188eb0953bf2938bb6eea06ee07dc0b4001468c17d3f199124e487d119b"
+        },
+        "version": "go version go1.27.2 linux/amd64"
+      },
+      "plain_vet_context_sha256": "0806433d704f8263ac7dd134f7d50d9bc4c31e4df1fb120a98c680f7e24f7474",
+      "plain_vet_owned": true,
+      "plain_vet_receipt_schema": 1,
+      "plain_vet_source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "sequential_after": {
+        "2": 0,
+        "3": 2,
+        "4": 3,
+        "5": 4
+      },
+      "source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "workers": 8
+    },
+    "5": {
+      "cli_cpus": 2,
+      "cli_parallel": 2,
+      "compiled_discovery_schema": 1,
+      "cpus": 4,
+      "deadline_seconds": 1500,
+      "execution_lanes": 2,
+      "isolated_packages": [],
+      "lane_cpus": 2,
+      "ordinary_cpus": 2,
+      "ordinary_parallel": 2,
+      "package_p": 1,
+      "plain_audit_owned": true,
+      "plain_vet_context": {
+        "cc": {
+          "binary": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
+          "version": "ae487f55927d605284a32711e4ecf6bc3be2bcd5a9de414ace0936264b741f85"
+        },
+        "compilation_modes": {
+          "cross": [
+            "linux/arm64/cgo0",
+            "linux/amd64/cgo0",
+            "darwin/arm64/cgo0"
+          ],
+          "race": [
+            false,
+            true
+          ],
+          "release": [
+            "-trimpath",
+            "-s -w -X github.com/wangjohn/agent-archive/internal/cli.Version=<current>"
+          ],
+          "shared-tools": [
+            "-trimpath",
+            "-mod=readonly -buildvcs=false"
+          ],
+          "tags": []
+        },
+        "cxx": {
+          "binary": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769",
+          "version": "39553616934606f58b27c04bed0cdbbe5b00c92c831a9aaadebd7ceda61d1334"
+        },
+        "go": {
+          "CC": "gcc",
+          "CGO_CFLAGS": "-O2 -g",
+          "CGO_CPPFLAGS": "",
+          "CGO_CXXFLAGS": "-O2 -g",
+          "CGO_ENABLED": "1",
+          "CGO_LDFLAGS": "-O2 -g",
+          "CXX": "g++",
+          "GO386": "",
+          "GOAMD64": "v1",
+          "GOARCH": "amd64",
+          "GOARM": "",
+          "GOARM64": "",
+          "GOCACHEPROG": "",
+          "GODEBUG": "",
+          "GOENV": "",
+          "GOEXPERIMENT": "",
+          "GOFIPS140": "off",
+          "GOFLAGS": "-mod=readonly",
+          "GOHOSTARCH": "amd64",
+          "GOHOSTOS": "linux",
+          "GOMIPS": "",
+          "GOMIPS64": "",
+          "GOOS": "linux",
+          "GOPPC64": "",
+          "GORISCV64": "",
+          "GOROOT": "/opt/hostedtoolcache/go/1.27.2/x64",
+          "GOTOOLCHAIN": "local",
+          "GOTOOLDIR": "/opt/hostedtoolcache/go/1.27.2/x64/pkg/tool/linux_amd64",
+          "GOVERSION": "go1.27.2",
+          "GOWASM": "",
+          "GOWORK": "off"
+        },
+        "image": {
+          "ImageOS": "ubuntu24",
+          "ImageVersion": "20261012.334.1"
+        },
+        "native_environment": "3ad19504a25f1aa9ec3a3d0f3e5850bf612e6fccb7476b789bc295780e539562",
+        "os_release": "87458b3b1f1ca0e5c693ade771de7007c3783bdc692fa6b39eb6414bf2af2763",
+        "pinned_tools": {
+          "deadcode": [
+            "golang.org/x/tools",
+            "v0.50.0"
+          ],
+          "git-2.30.2": "94f6e3e283f2adfc518b39cfc39291f1c2832ad0",
+          "git-2.39.2": "cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6",
+          "golangci-lint": [
+            "github.com/golangci/golangci-lint/v2",
+            "v2.14.0"
+          ],
+          "shared": "6f799f72befb925d10f2ef01a7c9a46725fa714d"
+        },
+        "race": false,
+        "runner_arch": "X64",
+        "runner_os": "Linux",
+        "schema": "aa-pr-go-v2",
+        "tags": [],
+        "toolchain": {
+          "asm": "0e7bf93f6ce3164328c5f60e51101c8f93d430f91f02cf9000f4f6d64d8850d4",
+          "cgo": "8a470e65b4d4799820f463be4d1373b775bf1087fa94512e5ea3b1d0f79e689b",
+          "compile": "8d4484dbaa31c4c6cec965aadd42efaa1e8d59e4a30ca3b466b502c377c29121",
+          "go": "548d3c32f83fa81152f543eb1526be7884cfe0526eb5e9ce29d3eca14786e7e0",
+          "link": "b7567a824e05fa24240edbf883e77e536914f22444c6946f1cd4a904b315f9c2",
+          "vet": "f73e3188eb0953bf2938bb6eea06ee07dc0b4001468c17d3f199124e487d119b"
+        },
+        "version": "go version go1.27.2 linux/amd64"
+      },
+      "plain_vet_context_sha256": "0806433d704f8263ac7dd134f7d50d9bc4c31e4df1fb120a98c680f7e24f7474",
+      "plain_vet_owned": true,
+      "plain_vet_receipt_schema": 1,
+      "plain_vet_source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "sequential_after": {
+        "2": 0,
+        "3": 2,
+        "4": 3,
+        "5": 4
+      },
+      "source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "workers": 8
+    },
+    "6": {
+      "cli_cpus": 2,
+      "cli_parallel": 2,
+      "compiled_discovery_schema": 1,
+      "cpus": 4,
+      "deadline_seconds": 1500,
+      "execution_lanes": 2,
+      "isolated_packages": [],
+      "lane_cpus": 2,
+      "ordinary_cpus": 2,
+      "ordinary_parallel": 2,
+      "package_p": 1,
+      "plain_audit_owned": true,
+      "plain_vet_context": {
+        "cc": {
+          "binary": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
+          "version": "ae487f55927d605284a32711e4ecf6bc3be2bcd5a9de414ace0936264b741f85"
+        },
+        "compilation_modes": {
+          "cross": [
+            "linux/arm64/cgo0",
+            "linux/amd64/cgo0",
+            "darwin/arm64/cgo0"
+          ],
+          "race": [
+            false,
+            true
+          ],
+          "release": [
+            "-trimpath",
+            "-s -w -X github.com/wangjohn/agent-archive/internal/cli.Version=<current>"
+          ],
+          "shared-tools": [
+            "-trimpath",
+            "-mod=readonly -buildvcs=false"
+          ],
+          "tags": []
+        },
+        "cxx": {
+          "binary": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769",
+          "version": "39553616934606f58b27c04bed0cdbbe5b00c92c831a9aaadebd7ceda61d1334"
+        },
+        "go": {
+          "CC": "gcc",
+          "CGO_CFLAGS": "-O2 -g",
+          "CGO_CPPFLAGS": "",
+          "CGO_CXXFLAGS": "-O2 -g",
+          "CGO_ENABLED": "1",
+          "CGO_LDFLAGS": "-O2 -g",
+          "CXX": "g++",
+          "GO386": "",
+          "GOAMD64": "v1",
+          "GOARCH": "amd64",
+          "GOARM": "",
+          "GOARM64": "",
+          "GOCACHEPROG": "",
+          "GODEBUG": "",
+          "GOENV": "",
+          "GOEXPERIMENT": "",
+          "GOFIPS140": "off",
+          "GOFLAGS": "-mod=readonly",
+          "GOHOSTARCH": "amd64",
+          "GOHOSTOS": "linux",
+          "GOMIPS": "",
+          "GOMIPS64": "",
+          "GOOS": "linux",
+          "GOPPC64": "",
+          "GORISCV64": "",
+          "GOROOT": "/opt/hostedtoolcache/go/1.27.2/x64",
+          "GOTOOLCHAIN": "local",
+          "GOTOOLDIR": "/opt/hostedtoolcache/go/1.27.2/x64/pkg/tool/linux_amd64",
+          "GOVERSION": "go1.27.2",
+          "GOWASM": "",
+          "GOWORK": "off"
+        },
+        "image": {
+          "ImageOS": "ubuntu24",
+          "ImageVersion": "20261012.334.1"
+        },
+        "native_environment": "3ad19504a25f1aa9ec3a3d0f3e5850bf612e6fccb7476b789bc295780e539562",
+        "os_release": "87458b3b1f1ca0e5c693ade771de7007c3783bdc692fa6b39eb6414bf2af2763",
+        "pinned_tools": {
+          "deadcode": [
+            "golang.org/x/tools",
+            "v0.50.0"
+          ],
+          "git-2.30.2": "94f6e3e283f2adfc518b39cfc39291f1c2832ad0",
+          "git-2.39.2": "cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6",
+          "golangci-lint": [
+            "github.com/golangci/golangci-lint/v2",
+            "v2.14.0"
+          ],
+          "shared": "6f799f72befb925d10f2ef01a7c9a46725fa714d"
+        },
+        "race": false,
+        "runner_arch": "X64",
+        "runner_os": "Linux",
+        "schema": "aa-pr-go-v2",
+        "tags": [],
+        "toolchain": {
+          "asm": "0e7bf93f6ce3164328c5f60e51101c8f93d430f91f02cf9000f4f6d64d8850d4",
+          "cgo": "8a470e65b4d4799820f463be4d1373b775bf1087fa94512e5ea3b1d0f79e689b",
+          "compile": "8d4484dbaa31c4c6cec965aadd42efaa1e8d59e4a30ca3b466b502c377c29121",
+          "go": "548d3c32f83fa81152f543eb1526be7884cfe0526eb5e9ce29d3eca14786e7e0",
+          "link": "b7567a824e05fa24240edbf883e77e536914f22444c6946f1cd4a904b315f9c2",
+          "vet": "f73e3188eb0953bf2938bb6eea06ee07dc0b4001468c17d3f199124e487d119b"
+        },
+        "version": "go version go1.27.2 linux/amd64"
+      },
+      "plain_vet_context_sha256": "0806433d704f8263ac7dd134f7d50d9bc4c31e4df1fb120a98c680f7e24f7474",
+      "plain_vet_owned": true,
+      "plain_vet_receipt_schema": 1,
+      "plain_vet_source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "sequential_after": {
+        "2": 0,
+        "3": 2,
+        "4": 3,
+        "5": 4
+      },
+      "source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "workers": 8
+    },
+    "7": {
+      "cli_cpus": 2,
+      "cli_parallel": 2,
+      "compiled_discovery_schema": 1,
+      "cpus": 4,
+      "deadline_seconds": 1500,
+      "execution_lanes": 2,
+      "isolated_packages": [],
+      "lane_cpus": 2,
+      "ordinary_cpus": 2,
+      "ordinary_parallel": 2,
+      "package_p": 1,
+      "plain_audit_owned": true,
+      "plain_vet_context": {
+        "cc": {
+          "binary": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
+          "version": "ae487f55927d605284a32711e4ecf6bc3be2bcd5a9de414ace0936264b741f85"
+        },
+        "compilation_modes": {
+          "cross": [
+            "linux/arm64/cgo0",
+            "linux/amd64/cgo0",
+            "darwin/arm64/cgo0"
+          ],
+          "race": [
+            false,
+            true
+          ],
+          "release": [
+            "-trimpath",
+            "-s -w -X github.com/wangjohn/agent-archive/internal/cli.Version=<current>"
+          ],
+          "shared-tools": [
+            "-trimpath",
+            "-mod=readonly -buildvcs=false"
+          ],
+          "tags": []
+        },
+        "cxx": {
+          "binary": "1353e9bdd29a7295c7226bf6c63abccce056d8cac31f112e5cdbecc3f28c2769",
+          "version": "39553616934606f58b27c04bed0cdbbe5b00c92c831a9aaadebd7ceda61d1334"
+        },
+        "go": {
+          "CC": "gcc",
+          "CGO_CFLAGS": "-O2 -g",
+          "CGO_CPPFLAGS": "",
+          "CGO_CXXFLAGS": "-O2 -g",
+          "CGO_ENABLED": "1",
+          "CGO_LDFLAGS": "-O2 -g",
+          "CXX": "g++",
+          "GO386": "",
+          "GOAMD64": "v1",
+          "GOARCH": "amd64",
+          "GOARM": "",
+          "GOARM64": "",
+          "GOCACHEPROG": "",
+          "GODEBUG": "",
+          "GOENV": "",
+          "GOEXPERIMENT": "",
+          "GOFIPS140": "off",
+          "GOFLAGS": "-mod=readonly",
+          "GOHOSTARCH": "amd64",
+          "GOHOSTOS": "linux",
+          "GOMIPS": "",
+          "GOMIPS64": "",
+          "GOOS": "linux",
+          "GOPPC64": "",
+          "GORISCV64": "",
+          "GOROOT": "/opt/hostedtoolcache/go/1.27.2/x64",
+          "GOTOOLCHAIN": "local",
+          "GOTOOLDIR": "/opt/hostedtoolcache/go/1.27.2/x64/pkg/tool/linux_amd64",
+          "GOVERSION": "go1.27.2",
+          "GOWASM": "",
+          "GOWORK": "off"
+        },
+        "image": {
+          "ImageOS": "ubuntu24",
+          "ImageVersion": "20261012.334.1"
+        },
+        "native_environment": "3ad19504a25f1aa9ec3a3d0f3e5850bf612e6fccb7476b789bc295780e539562",
+        "os_release": "87458b3b1f1ca0e5c693ade771de7007c3783bdc692fa6b39eb6414bf2af2763",
+        "pinned_tools": {
+          "deadcode": [
+            "golang.org/x/tools",
+            "v0.50.0"
+          ],
+          "git-2.30.2": "94f6e3e283f2adfc518b39cfc39291f1c2832ad0",
+          "git-2.39.2": "cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6",
+          "golangci-lint": [
+            "github.com/golangci/golangci-lint/v2",
+            "v2.14.0"
+          ],
+          "shared": "6f799f72befb925d10f2ef01a7c9a46725fa714d"
+        },
+        "race": false,
+        "runner_arch": "X64",
+        "runner_os": "Linux",
+        "schema": "aa-pr-go-v2",
+        "tags": [],
+        "toolchain": {
+          "asm": "0e7bf93f6ce3164328c5f60e51101c8f93d430f91f02cf9000f4f6d64d8850d4",
+          "cgo": "8a470e65b4d4799820f463be4d1373b775bf1087fa94512e5ea3b1d0f79e689b",
+          "compile": "8d4484dbaa31c4c6cec965aadd42efaa1e8d59e4a30ca3b466b502c377c29121",
+          "go": "548d3c32f83fa81152f543eb1526be7884cfe0526eb5e9ce29d3eca14786e7e0",
+          "link": "b7567a824e05fa24240edbf883e77e536914f22444c6946f1cd4a904b315f9c2",
+          "vet": "f73e3188eb0953bf2938bb6eea06ee07dc0b4001468c17d3f199124e487d119b"
+        },
+        "version": "go version go1.27.2 linux/amd64"
+      },
+      "plain_vet_context_sha256": "0806433d704f8263ac7dd134f7d50d9bc4c31e4df1fb120a98c680f7e24f7474",
+      "plain_vet_owned": true,
+      "plain_vet_receipt_schema": 1,
+      "plain_vet_source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "sequential_after": {
+        "2": 0,
+        "3": 2,
+        "4": 3,
+        "5": 4
+      },
+      "source_proof": {
+        "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc",
+        "tree": "50441a17a1429358a4ba591ef7f8b2b215ab68a9"
+      },
+      "workers": 8
+    }
+  },
+  "source": "39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc"
+}

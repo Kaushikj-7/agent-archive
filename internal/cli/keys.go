@@ -283,8 +283,67 @@ func (k *keyInput) buffered() bool {
 	return len(k.pending) > 0
 }
 
+// canReadAhead reports whether readAhead can read: not when the read after
+// the keys waiting ended in an error, which they come before.
+func (k *keyInput) canReadAhead() bool {
+	return k.failed == nil
+}
+
+// readAhead reads the keys that arrive within wait after the keys already
+// read, leaving those in place: a load started with keys typed ahead (a
+// wheel burst held past the end, say) sees an Esc pressed while it runs.
+// The caller queues the keys it does not act on after the ones waiting
+// (queue). It reads only while canReadAhead. A read that fails (input
+// ending, say) is kept for after the keys waiting, as a burst's is, so
+// what was typed ahead of it is still handled; canReadAhead is then false.
+func (k *keyInput) readAhead(wait time.Duration) ([]key, error) {
+	data, err := k.readBurstWait(wait)
+	if err != nil {
+		k.stale = nil
+		return nil, k.aheadFailed(err)
+	}
+	keys := k.decode(data)
+	if failed := k.failed; errors.Is(failed, errSuspended) || errors.Is(failed, errWindowResized) {
+		// Ctrl-Z ended the burst: it is answered now, as one read first
+		// is, so that the load still reads an Esc pressed after it.
+		k.failed, k.stale = nil, nil
+		return keys, k.aheadFailed(failed)
+	}
+	return keys, nil
+}
+
+// aheadFailed answers readAhead's failed read: Ctrl-Z is answered, a resize
+// needs nothing (the list is drawn again after the load), and any other
+// failure is kept in k.failed for after the keys waiting.
+func (k *keyInput) aheadFailed(failure error) error {
+	switch {
+	case errors.Is(failure, errSuspended):
+		return k.pause()
+	case errors.Is(failure, errWindowResized):
+	default:
+		k.failed = failure
+	}
+	return nil
+}
+
+// queue adds keys after the keys waiting to be handled.
+func (k *keyInput) queue(keys []key) {
+	k.pending = append(k.pending, keys...)
+}
+
+// dropMoves drops the keys waiting that only move the highlight or scroll
+// (the rest of a wheel's momentum, say), keeping typed ones.
+func (k *keyInput) dropMoves() {
+	k.pending = slices.DeleteFunc(k.pending, func(key key) bool {
+		_, move := scrollKeys[key.kind]
+		return move
+	})
+}
+
 // next returns the next key press, waiting for one.
-func (k *keyInput) next() (key, error) {
+func (k *keyInput) next() (key, error) { return k.nextWait(-1) }
+
+func (k *keyInput) nextWait(wait time.Duration) (key, error) {
 	for len(k.pending) == 0 {
 		// An error that ended the last burst (Ctrl-Z during the wait for
 		// an escape sequence's rest, say) is handled as a read's would be.
@@ -292,7 +351,10 @@ func (k *keyInput) next() (key, error) {
 		err := k.failed
 		k.failed = nil
 		if err == nil {
-			data, err = k.readBurst()
+			data, err = k.readBurstWait(wait)
+			if err == nil && len(data) == 0 && wait >= 0 {
+				return key{kind: keyResize}, nil
+			}
 		}
 		if err != nil {
 			// What came before a resize or Ctrl-Z is not continued after.
@@ -372,11 +434,9 @@ func (k *keyInput) decode(data []byte) []key {
 // maxBurst bounds the bytes read as one burst.
 const maxBurst = 4096
 
-// readBurst waits for input, then takes whatever else is already there,
-// and waits briefly for the rest of an escape sequence cut off at its end.
-func (k *keyInput) readBurst() ([]byte, error) {
+func (k *keyInput) readBurstWait(wait time.Duration) ([]byte, error) {
 	buf := make([]byte, 256)
-	n, err := k.term.read(buf, -1)
+	n, err := k.term.read(buf, wait)
 	if err != nil {
 		return nil, err
 	}

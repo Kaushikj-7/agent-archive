@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/historical-projects.schema.json",
+  "type": "object",
+  "properties": {
+    "historical_projects": {
+      "type": "array",
+      "maxItems": 16384,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\u0000-\u001f\u007f]+$"
+          },
+          "permissions": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "destination_id": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "destination_id",
+                "enabled"
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "permissions"
+        ]
+      }
+    },
+    "historical_project_protection": {
+      "const": true
+    },
+    "schema_version": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 10
+        },
+        "writer": {
+          "const": "historical-projects-v10"
+        }
+      },
+      "required": [
+        "version",
+        "writer"
+      ]
+    }
+  },
+  "required": [
+    "historical_project_protection",
+    "schema_version"
+  ]
+}

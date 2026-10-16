@@ -70,28 +70,28 @@ func (f Filter) Refilter(ctx context.Context, b archive.SourceBundle, at time.Ti
 	return sourceio.RefilterJSONL(ctx, f, b)
 }
 
-// EvidenceExtends compares retained native facts under unchanged codec versions.
-func (Filter) EvidenceExtends(previous, candidate archive.SourceBundle) bool {
-	return nativecodec.EvidenceExtends(previous, candidate)
-}
-
-type boundedRetained struct{ boundary archive.CaptureBoundary }
-
-func (f boundedRetained) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error) {
-	return nativecodec.FilterCursorRetainedJSONL(r, f.boundary)
-}
-
-// RefilterBounded preserves the Cursor codec's text framing and JSONL policy.
+// RefilterBounded applies current privacy rules within the retained output allowance.
 func (f Filter) RefilterBounded(ctx context.Context, b archive.SourceBundle, at time.Time, limits agentapi.ReadLimits) (archive.FilteredTranscript, error) {
 	if len(b.NativeText) > 0 {
-		if len(b.NativeText) != 1 || len(b.NativeText[0].Content) > archive.MaxRecordBytes {
-			return archive.FilteredTranscript{}, agentapi.ErrReadBudget
+		if limits.FilteredBytes > 0 && len(b.NativeText[0].Content) > int(limits.FilteredBytes) {
+			return archive.FilteredTranscript{}, archive.ErrRecordTooLarge
 		}
 		out, err := sourceio.RefilterText(ctx, b, at, f.FilterText)
-		if err == nil && (limits.FilteredBytes <= 0 || int64(out.Boundary.RetainedBytes) > limits.FilteredBytes) {
-			return archive.FilteredTranscript{}, agentapi.ErrReadBudget
+		if limits.FilteredBytes > 0 && out.Boundary.RetainedBytes > int(limits.FilteredBytes) {
+			return archive.FilteredTranscript{}, archive.ErrRecordTooLarge
 		}
 		return out, err
 	}
-	return sourceio.RefilterJSONL(ctx, boundedRetained{archive.CaptureBoundary{RetainedRecords: limits.Records, RetainedBytes: int(limits.FilteredBytes)}}, b)
+	return sourceio.RefilterJSONL(ctx, boundedRetainedFilter{archive.CaptureBoundary{RetainedRecords: limits.Records, RetainedBytes: int(limits.FilteredBytes)}}, b)
+}
+
+type boundedRetainedFilter struct{ boundary archive.CaptureBoundary }
+
+func (f boundedRetainedFilter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error) {
+	return nativecodec.FilterCursorRetainedBounded(r, f.boundary)
+}
+
+// EvidenceExtends compares retained native facts under unchanged codec versions.
+func (Filter) EvidenceExtends(previous, candidate archive.SourceBundle) bool {
+	return nativecodec.EvidenceExtends(previous, candidate)
 }

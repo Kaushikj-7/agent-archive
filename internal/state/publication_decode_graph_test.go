@@ -24,7 +24,9 @@ func TestPublicationClosedReachableLayouts(t *testing.T) {
 			return
 		}
 		seen[typ] = true
-		if typ == reflect.TypeFor[time.Time]() || typ == reflect.TypeFor[archive.ImportBatch]() || typ == reflect.TypeFor[json.RawMessage]() {
+		// Mature selecting/catalog custom decoders enforce their own exact wire
+		// contracts; source-set decoding additionally refuses mixed selecting proof.
+		if typ == reflect.TypeFor[time.Time]() || typ == reflect.TypeFor[archive.ImportBatch]() || typ == reflect.TypeFor[json.RawMessage]() || typ == reflect.TypeFor[StagedSelection]() || typ == reflect.TypeFor[ReadySelection]() || typ == reflect.TypeFor[CatalogPublication]() || typ == reflect.TypeFor[publishedSnapshot]() {
 			return
 		}
 		if reflect.PointerTo(typ).Implements(reflect.TypeFor[json.Unmarshaler]()) {
@@ -115,7 +117,7 @@ func TestPublicationClosedDecodeNestedAndOpaqueShapes(t *testing.T) {
 func TestPublicationClosedDecodePreservesTruncationClassification(t *testing.T) {
 	for _, raw := range []string{"", " ", "{", `{"bundle":{"sche`} {
 		var p publishedState
-		err := decodePublishedState([]byte(raw), &p, t.Context(), nil)
+		err := decodeSourceSetPublishedState([]byte(raw), &p, t.Context(), nil)
 		var syntax *json.SyntaxError
 		if !errors.Is(err, ErrDurableStorageRecovery) || !errors.As(err, &syntax) {
 			t.Fatalf("truncated bytes lost original syntax classification: %q: %v", raw, err)
@@ -123,7 +125,7 @@ func TestPublicationClosedDecodePreservesTruncationClassification(t *testing.T) 
 	}
 	for _, raw := range []string{`{} {}`, `{} garbage`} {
 		var p publishedState
-		err := decodePublishedState([]byte(raw), &p, t.Context(), nil)
+		err := decodeSourceSetPublishedState([]byte(raw), &p, t.Context(), nil)
 		var syntax *json.SyntaxError
 		if !errors.Is(err, ErrDurableStorageRecovery) || errors.As(err, &syntax) {
 			t.Fatalf("valid leading value trailing refusal changed classification: %q: %v", raw, err)
@@ -143,7 +145,7 @@ func TestPublicationClosedDecodeSyntaxPrecedesSemanticRefusal(t *testing.T) {
 		{`{"bundle":{},"bundle":{"sche`, true},
 	} {
 		var p publishedState
-		err := decodePublishedState([]byte(tc.body), &p, t.Context(), nil)
+		err := decodeSourceSetPublishedState([]byte(tc.body), &p, t.Context(), nil)
 		var syntax *json.SyntaxError
 		if !errors.Is(err, ErrDurableStorageRecovery) || errors.As(err, &syntax) != tc.malformed {
 			t.Fatalf("wrong semantic/syntax disposition: %q: %v", tc.body, err)

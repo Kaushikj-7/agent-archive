@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,7 +34,7 @@ func TestRootedConfigReadObservationClassification(t *testing.T) {
 	for _, kind := range []configObservationCase{observationSupported, observationLegacyFloor, observationFuture, observationCorrupt, observationFutureRead, observationCorruptRead, observationMissing, observationDirectory, observationReadError, observationUnsafeHome, observationReplacedHome} {
 		t.Run(string(kind), func(t *testing.T) {
 			home := durableTestHome(t)
-			initial := Config{MachineID: "synthetic", GenerationProtection: kind == observationLegacyFloor, CodexHistoryProtection: kind == observationLegacyFloor}
+			initial := Config{RetentionDays: 90, MachineID: "synthetic", GenerationProtection: kind == observationLegacyFloor, CodexHistoryProtection: kind == observationLegacyFloor}
 			if err := Save(home, initial); err != nil {
 				t.Fatal(err)
 			}
@@ -66,7 +67,7 @@ func TestRootedConfigReadObservationClassification(t *testing.T) {
 			var readErr error
 			switch kind {
 			case observationSupported, observationFutureRead, observationCorruptRead:
-				err = local.RootedWrite(held.Root, "config.json", Config{MachineID: "replacement"})
+				err = local.RootedWrite(held.Root, "config.json", Config{RetentionDays: 90, MachineID: "replacement"})
 			case observationLegacyFloor:
 				initial.DurableStorageProtection = true
 				err = local.RootedWrite(held.Root, "config.json", initial)
@@ -89,7 +90,7 @@ func TestRootedConfigReadObservationClassification(t *testing.T) {
 					if !errors.Is(readErr, os.ErrNotExist) {
 						t.Fatalf("expected actual failed read: %v", readErr)
 					}
-					err = local.RootedWrite(held.Root, "config.json", Config{MachineID: "replacement"})
+					err = local.RootedWrite(held.Root, "config.json", Config{RetentionDays: 90, MachineID: "replacement"})
 				}
 			case observationUnsafeHome:
 				err = os.Chmod(home, 0755)
@@ -130,7 +131,7 @@ func TestRootedConfigReadObservationClassification(t *testing.T) {
 
 func TestDurablePreflightExpiredDeadlineAllocatesNothing(t *testing.T) {
 	home := durableTestHome(t)
-	if err := Save(home, Config{MachineID: "synthetic"}); err != nil {
+	if err := Save(home, Config{RetentionDays: 90, MachineID: "synthetic"}); err != nil {
 		t.Fatal(err)
 	}
 	held, err := local.OpenRootedHome(home)
@@ -161,18 +162,35 @@ func TestDurablePreflightExpiredDeadlineAllocatesNothing(t *testing.T) {
 
 func TestDurableConcurrentInitialFloorLargeConfiguration(t *testing.T) {
 	home := durableTestHome(t)
-	if err := Save(home, Config{MachineID: strings.Repeat("synthetic", 64*1024)}); err != nil {
+	if err := Save(home, Config{RetentionDays: 90, MachineID: strings.Repeat("synthetic", 64*1024)}); err != nil {
 		t.Fatal(err)
 	}
 	start := make(chan struct{})
 	errs := make(chan error, 2)
+	var guarded atomic.Int32
 	var wg sync.WaitGroup
 	for range 2 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-start
-			errs <- WithDurableStorage(home, func(g DurableStorageGuard) error { return g.CheckHome(home) })
+			var err error
+			for range 10 {
+				err = WithDurableStorage(home, func(g DurableStorageGuard) error {
+					if err := g.CheckHome(home); err != nil {
+						return err
+					}
+					guarded.Add(1)
+					return nil
+				})
+				if !errors.Is(err, local.ErrBusy) {
+					break
+				}
+				// Each production call has a bounded preflight/lock deadline.
+				// Busy callers retry; every other error remains a failure.
+				time.Sleep(10 * time.Millisecond)
+			}
+			errs <- err
 		}()
 	}
 	close(start)
@@ -182,6 +200,9 @@ func TestDurableConcurrentInitialFloorLargeConfiguration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+	}
+	if guarded.Load() != 2 {
+		t.Fatalf("successful concurrent guards: %d, want 2", guarded.Load())
 	}
 	cfg, present, err := Load(home)
 	if err != nil || !present || !cfg.DurableStorageProtection || cfg.SchemaVersion != 7 {

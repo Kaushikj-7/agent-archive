@@ -151,7 +151,7 @@ func (b *statsBrowser) saveHTML(name string) string {
 	}
 	// The web page keeps the engine's default lists, like --html.
 	computed := b.inputs.compute(b.windows[b.window], false)
-	page, err := renderStatsHTML(computed, b.inputs.filters, b.inputs.now, false, statsEmptyMessage(computed, b.inputs.filters, len(b.inputs.sessions) > 0))
+	page, err := renderStatsHTML(computed, b.inputs.filters, b.inputs.now, false, statsEmptyMessage(computed, b.inputs.filters, b.inputs.hasSessions))
 	if err != nil {
 		return "Not saved: " + err.Error()
 	}

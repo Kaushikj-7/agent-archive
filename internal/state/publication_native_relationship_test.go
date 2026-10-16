@@ -26,7 +26,7 @@ func TestPublicationNativeTargetLoanAndSelectingReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selecting := publishedState{Status: CacheStatusPublished, PublishedAt: time.Now(), Sources: []archive.SourceReference{p.Sources[0].Reference}, PublicationVersion: 2, Bundle: p.Bundle, MetadataBytes: p.MetadataBytes, Commit: p.Commit, Payloads: p.Sources, Preparation: p.Preparation}
+	selecting := publishedState{Status: CacheStatusPublished, PublishedAt: time.Now(), Sources: []archive.SourceReference{p.Sources[0].Reference}, PublicationVersion: 5, Bundle: p.Bundle, MetadataBytes: p.MetadataBytes, Commit: p.Commit, Payloads: p.Sources, Preparation: p.Preparation}
 	summary := selecting.summary()
 	selecting.Summary = &summary
 	if err = selecting.validateSelectingPublished(); err != nil {

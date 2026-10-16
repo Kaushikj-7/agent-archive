@@ -252,15 +252,77 @@ func TestPublicationReadbackSingleConsumeBindsExactBodyAndValidator(t *testing.T
 	if _, _, err := receipt.Consume(key, []byte("different")); !errors.Is(err, storage.ErrPublicationConflict) {
 		t.Fatal("wrong body consumed C", err)
 	}
+	copyReceipt := *receipt
 	actual, validator, err := receipt.Consume(key, body)
 	if err != nil || string(actual) != string(body) || validator == "" {
 		t.Fatal("actual C response unavailable", err)
 	}
-	_, expectedValidator, err := remote.GetVersionedLimited(t.Context(), key, int64(len(body)))
+	_, expectedValidator, err := remote.GetLimitedVersioned(t.Context(), key, int64(len(body)))
 	if err != nil || validator != expectedValidator {
 		t.Fatal("validator belongs to another response", err)
 	}
 	if _, _, err := receipt.Consume(key, body); !errors.Is(err, storage.ErrPublicationConflict) {
 		t.Fatal("C consumed twice", err)
+	}
+	if _, _, err := copyReceipt.Consume(key, body); !errors.Is(err, storage.ErrPublicationConflict) {
+		t.Fatal("copied C consumed twice", err)
+	}
+}
+
+func TestSourceSetRefusesInvalidResolvedBytesBeforeUpload(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"wrong-size", "wrong-checksum", "resolver-error"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			remote := &publicationFaultStore{MemoryStore: storagetest.NewMemoryStore()}
+			sources := sourceSetFixture()[:1]
+			sources[0].Bytes = nil
+			released := 0
+			resolverErr := errors.New("synthetic resolver failure")
+			resolve := func(context.Context, int) ([]byte, func(), error) {
+				body := []byte("wrong")
+				if mode == "wrong-checksum" {
+					body = make([]byte, sources[0].Size)
+				}
+				var err error
+				if mode == "resolver-error" {
+					err = resolverErr
+				}
+				return body, func() { released++ }, err
+			}
+			err := storage.PutResolvedSourceSetThenMetadata(t.Context(), remote, sources, "metadata", []byte("next"), storage.MetadataPredecessor{Known: true}, storage.RetryPolicy{MaxAttempts: 1}, resolve, nil)
+			want := storage.ErrChecksumMismatch
+			if mode == "resolver-error" {
+				want = resolverErr
+			}
+			if !errors.Is(err, want) || remote.puts != 0 || released != 1 {
+				t.Fatalf("invalid replay payload: err=%v puts=%d releases=%d", err, remote.puts, released)
+			}
+		})
+	}
+}
+
+type unboundedPublicationStore struct {
+	storage.ObjectStore
+	gets int
+	puts int
+}
+
+func (s *unboundedPublicationStore) Get(ctx context.Context, key string) ([]byte, error) {
+	s.gets++
+	return s.ObjectStore.Get(ctx, key)
+}
+
+func (s *unboundedPublicationStore) Put(ctx context.Context, key string, body []byte) error {
+	s.puts++
+	return s.ObjectStore.Put(ctx, key, body)
+}
+
+func TestSourceSetRefusesUnboundedMetadataReadBeforeSideEffects(t *testing.T) {
+	t.Parallel()
+	remote := &unboundedPublicationStore{ObjectStore: storagetest.NewMemoryStore()}
+	err := storage.PutSourceSetThenMetadata(t.Context(), remote, sourceSetFixture(), "metadata", []byte("next"), storage.MetadataPredecessor{Known: true}, storage.RetryPolicy{MaxAttempts: 1})
+	if !errors.Is(err, storage.ErrVersionedReadUnavailable) || remote.gets != 0 || remote.puts != 0 {
+		t.Fatalf("unbounded publication: err=%v gets=%d puts=%d", err, remote.gets, remote.puts)
 	}
 }

@@ -2,7 +2,6 @@ package stats
 
 import (
 	"math"
-	"sort"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -76,17 +75,17 @@ func normalizedTokens(harness string, input, output, read, write, reasoning *int
 // entry is one model, and tokens on a record that named none are under
 // "unknown". Without it, the session-wide counts are all attributed to the
 // session's main model and approximate is set. has is false when the session
-// reported no token count.
-func memberUsage(m *archive.Metadata) (byModel map[string]tokenSet, has, approximate bool) {
+// reported no token count. The caller owns byModel, which is cleared before use.
+func memberUsage(m *archive.Metadata, normalize func(string) string, byModel map[string]tokenSet) (has, approximate bool) {
 	harness := archive.CanonicalHarness(m.Harness.Name)
-	byModel = map[string]tokenSet{}
+	clear(byModel)
 	if len(m.ModelTokens) > 0 {
 		for _, entry := range m.ModelTokens {
 			set, ok := normalizedTokens(harness, entry.InputTokens, entry.OutputTokens, entry.CacheReadTokens, entry.CacheWriteTokens, entry.ReasoningTokens)
 			if !ok {
 				continue
 			}
-			id := NormalizeModel(entry.Model)
+			id := normalize(entry.Model)
 			if id == "" {
 				id = archive.UnknownModel
 			}
@@ -95,28 +94,28 @@ func memberUsage(m *archive.Metadata) (byModel map[string]tokenSet, has, approxi
 			byModel[id] = merged
 			has = true
 		}
-		return byModel, has, false
+		return has, false
 	}
 	c := m.Counts
 	set, ok := normalizedTokens(harness, c.InputTokens, c.OutputTokens, c.CacheReadTokens, c.CacheWriteTokens, c.ReasoningTokens)
 	if !ok {
-		return byModel, false, false
+		return false, false
 	}
-	byModel[mainModel(m)] = set
-	return byModel, true, true
+	byModel[mainModel(m, normalize)] = set
+	return true, true
 }
 
 // mainModel is the model a session with no per-model split is priced at:
 // the one with the most turns (the lexically first on a tie), or "unknown"
 // when the session names no model.
-func mainModel(m *archive.Metadata) string {
+func mainModel(m *archive.Metadata, normalize func(string) string) string {
 	best, bestTurns := "", -1
 	for _, model := range m.Models {
 		id := model.Attributes["gen_ai.response.model"]
 		if strings.TrimSpace(id) == "" {
 			id = model.Attributes["gen_ai.request.model"]
 		}
-		id = NormalizeModel(id)
+		id = normalize(id)
 		if id == "" || id == "<synthetic>" {
 			continue
 		}
@@ -141,9 +140,11 @@ type costAcc struct {
 	priced      bool
 	unpriced    int64
 	approximate bool
+	excluded    int
 }
 
 func (c *costAcc) add(o costAcc) {
+	c.excluded += o.excluded
 	c.usd += o.usd
 	c.priced = c.priced || o.priced
 	c.unpriced = satAdd(c.unpriced, o.unpriced)
@@ -156,33 +157,26 @@ func (c *costAcc) cost() Cost {
 		value := c.usd
 		usd = &value
 	}
-	return Cost{USD: usd, Partial: c.unpriced > 0, UnpricedTokens: c.unpriced, Approximate: c.approximate}
-}
-
-// sortedModels lists a map's model ids in a fixed order, so float sums do not
-// depend on map iteration.
-func sortedModels(byModel map[string]tokenSet) []string {
-	ids := make([]string, 0, len(byModel))
-	for id := range byModel {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
+	return Cost{USD: usd, Partial: c.unpriced > 0 || c.excluded > 0, ObservationOnlySessions: c.excluded, UnpricedTokens: c.unpriced, Approximate: c.approximate}
 }
 
 // bucket is a running total over sessions: the overview, one agent, one
 // project, one day, or one group.
 type bucket struct {
-	sessions     int
-	dataSessions int
-	promptSess   int
-	prompts      int64
-	tokens       tokenSet
-	cost         costAcc
+	sessions            int
+	dataSessions        int
+	promptSess          int
+	prompts             int64
+	tokens              tokenSet
+	cost                costAcc
+	observations        archive.ObservationAccumulator
+	observationSessions int
 }
 
 func (b *bucket) add(u *unit) {
 	b.sessions++
+	b.observations.AddSummary(u.observations.Summary())
+	b.observationSessions += u.observationSessions
 	if u.prompts != nil {
 		b.promptSess++
 		b.prompts = satAdd(b.prompts, *u.prompts)

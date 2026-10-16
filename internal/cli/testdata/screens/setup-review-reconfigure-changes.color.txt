@@ -79,6 +79,9 @@ Also found on this computer: Claude Code and Cursor.
   \e[2m·\e[0m All adds or re-enables 1 projects; review the expanded capture scope before saving.
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
+
+\e[1mStorage · Account\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 Current storage: s3 / team-archive
 
 ? Keep your current storage?
@@ -91,8 +94,12 @@ Current storage: s3 / team-archive
 \e[2m✓ Keep current storage\e[0m
 
 
+\e[1mStorage · Verification\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 Checking your storage connection…
 \e[32m✓\e[0m Connected to your storage.
+  \e[33m!\e[0m Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 \e[1mStep 3 of 3 · Review your changes\e[0m
 * Apps      Codex 0.121.0 · Claude Code 2.1.90 · Cursor 3.21.13
@@ -139,9 +146,20 @@ Checking your storage connection…
 › Choose [11]: retention
 \e[2m✓ How long sessions are kept\e[0m
 
+? How long should sessions be kept?
+
+  Provider lifecycle rules and explicit deletion still apply.
+
+  1) 90 days (default)
+  2) Custom duration
+  3) Keep forever
+
+› Choose [1]: custom
+\e[2m✓ Retention Custom duration\e[0m
+
 ? Keep sessions for how many days?
 
-› Days [90]: 30
+› Days or forever [90]: 30
 \e[2m✓ Retention 30\e[0m
 
 \e[1mStep 3 of 3 · Review your changes\e[0m
@@ -153,7 +171,8 @@ Checking your storage connection…
   Codex     Included projects only
   Skills    Metadata, including user folders
   Storage   s3://team-archive/agent-archive/
-* Keep for  30 days
+* Keep for  30 days · Sessions with no new activity for 30 days are deleted from
+            your bucket; change with Edit a setting, or keep forever
     was 90 days
   ✓ Storage connected
   ! Bucket privacy unknown · public-access settings could not be read

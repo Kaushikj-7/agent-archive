@@ -52,6 +52,17 @@ func (s *countingStore) List(ctx context.Context, prefix string) ([]storage.Obje
 }
 
 func (s *countingStore) Get(ctx context.Context, key string) ([]byte, error) {
+	return s.get(ctx, key, 0)
+}
+
+func (s *countingStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if limit < 1 {
+		return nil, storage.ErrObjectTooLarge
+	}
+	return s.get(ctx, key, limit)
+}
+
+func (s *countingStore) get(ctx context.Context, key string, limit int64) ([]byte, error) {
 	s.mu.Lock()
 	s.gets = append(s.gets, key)
 	s.inFlight++
@@ -81,7 +92,13 @@ func (s *countingStore) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, err
 	}
 	if swap {
+		if limit > 0 && int64(len(swapped)) > limit {
+			return nil, storage.ErrObjectTooLarge
+		}
 		return swapped, nil
+	}
+	if limit > 0 {
+		return s.MemoryStore.GetLimited(ctx, key, limit)
 	}
 	return s.MemoryStore.Get(ctx, key)
 }
@@ -300,7 +317,7 @@ func cacheFiles(t *testing.T, home string) []string {
 		if err != nil {
 			return err
 		}
-		if !entry.IsDir() {
+		if !entry.IsDir() && entry.Name() != maintenanceFile {
 			name, err := filepath.Rel(root, path)
 			if err != nil {
 				return err

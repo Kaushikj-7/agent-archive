@@ -68,6 +68,7 @@ func bindingSHA(b *archive.CodexSourceBinding) string {
 }
 
 func meaningfulSHA(ctx context.Context, b archive.SourceBundle, budget *agentapi.NativeReadBudget) (string, error) {
+	owner := budget.Reservation()
 	limit := int64(128 << 20)
 	if budget != nil {
 		limit = min(limit, budget.Available())
@@ -77,10 +78,10 @@ func meaningfulSHA(ctx context.Context, b archive.SourceBundle, budget *agentapi
 		return "", err
 	}
 	if budget != nil {
-		if !budget.Reserve(n) {
+		if !owner.Reserve(n) {
 			return "", agentapi.ErrReadBudget
 		}
-		defer budget.Release(n)
+		defer owner.Release(n)
 	}
 	hash := sha256.New()
 	_, _ = hash.Write([]byte("meaningful-revision-records/v1\x00"))
@@ -93,16 +94,17 @@ func meaningfulSHA(ctx context.Context, b archive.SourceBundle, budget *agentapi
 // ValidateOrdinaryHistoryMigration binds exact old/new selections to complete
 // frozen registration/physical facts and the actual meaningful native comparator.
 func ValidateOrdinaryHistoryMigration(ctx context.Context, previousBody, nextBody []byte, previous, candidate archive.SourceBundle, registration archive.SessionRegistration, previousBinding, nextBinding *archive.CodexSourceBinding, adapter agentapi.TranscriptFilter, admission, policy string, budget *agentapi.NativeReadBudget) (ValidatedOrdinaryMigration, error) {
+	owner := budget.Reservation()
 	var invalid ValidatedOrdinaryMigration
 	if len(previousBody) == 0 || len(previousBody) > 32<<20 || len(nextBody) == 0 || len(nextBody) > 32<<20 {
 		return invalid, ErrDurableStorageCapacity
 	}
 	reservation := int64(len(previousBody)+len(nextBody)) + 8*int64(len(previous.NativeRecords)+len(candidate.NativeRecords)) + (32 << 10)
 	if budget != nil {
-		if !budget.Reserve(reservation) {
+		if !owner.Reserve(reservation) {
 			return invalid, agentapi.ErrReadBudget
 		}
-		defer budget.Release(reservation)
+		defer owner.Release(reservation)
 	}
 	evidence, ok := adapter.(agentapi.RevisionEvidence)
 	if !ok || previousBinding == nil || nextBinding == nil || previousBinding.Validate() != nil || nextBinding.Validate() != nil || !nextBinding.PreservesFacts(previousBinding) {

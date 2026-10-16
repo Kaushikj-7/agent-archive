@@ -1,8 +1,10 @@
 package cursorstore
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -29,16 +31,19 @@ func ReadRecovery(ctx context.Context, path string, budget agentapi.RecoveryRead
 		return err
 	}
 	if src.live {
+		if !src.emptyWAL {
+			return NotChecked(Locked)
+		}
+		// Reserve both observations before opening or reading the -shm.
+		if err := budget.Charge(0, 2*shmHeaderSize); err != nil {
+			return err
+		}
 		settled, ok := src.settled()
 		if !ok {
 			// Frames in the -wal are only safely read through Cursor's
 			// shared-memory index, which a settled observation can't vouch
 			// for: immutable would ignore them.
 			return NotChecked(Locked)
-		}
-		// settled and the post-read check each read the -shm header.
-		if err := budget.Charge(0, 2*shmHeaderSize); err != nil {
-			return err
 		}
 		src = settled
 	}
@@ -82,53 +87,70 @@ func ReadRecoveryComposer(ctx context.Context, path, id string, rawLimit, record
 			return err
 		}
 		defer func() { err = errors.Join(err, tx.Rollback()) }()
-		value, err := recoveryComposerValue(ctx, tx, id, rawLimit, recordLimit, budget)
-		if err != nil {
-			return err
-		}
-		_, ids, err := decodeHeaders(value)
-		if err != nil {
-			return err
-		}
-		lengths, err := recoveryBubbleLengths(ctx, tx, id, budget)
-		if err != nil {
-			return err
-		}
-		total := int64(len(value))
-		seen := map[string]bool{}
-		prefix := bubblePrefix(id)
-		for _, key := range ids {
-			n, present := lengths[key]
-			if !present {
-				continue
-			}
-			if rawLimit > 0 && n > rawLimit-total {
-				return agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
-			}
-			total += n
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			if recordLimit > 0 && n > recordLimit {
-				return agentapi.Wrap(agentapi.Limit, ErrRecordLimit)
-			}
-			if err := budget.Charge(1, int64(len(prefix+key))+n); err != nil {
-				return err
-			}
-		}
-		found, err := listedBubbles(ctx, tx, id, ids, lengths)
-		if err != nil {
-			return err
-		}
-		c = Composer{Composer: value, Bubbles: make([]Bubble, len(ids))}
-		for i, key := range ids {
-			_, present := lengths[key]
-			c.Bubbles[i] = Bubble{ID: key, Value: found[key], Missing: !present}
-		}
-		return nil
+		c, err = readRecoveryComposerTx(ctx, tx, id, rawLimit, recordLimit, budget, false)
+		return err
 	})
 	return c, err
+}
+
+func readRecoveryComposerTx(ctx context.Context, tx *sql.Tx, id string, rawLimit, recordLimit int64, budget agentapi.RecoveryReadBudget, reserveDecoded bool) (c Composer, err error) {
+	value, err := recoveryComposerValue(ctx, tx, id, rawLimit, recordLimit, budget)
+	if err != nil {
+		return c, err
+	}
+	if reserveDecoded {
+		if err := budget.Charge(0, 2*int64(len(value))+(32<<10)); err != nil {
+			return c, err
+		}
+		count, err := settledHeaderCount(ctx, value, budget.RemainingRows())
+		if err != nil {
+			return c, err
+		}
+		if err := budget.Charge(count, 24*int64(count)); err != nil {
+			return c, err
+		}
+	}
+	_, ids, err := decodeHeaders(value)
+	if err != nil {
+		return c, err
+	}
+	lengths, err := recoveryBubbleLengths(ctx, tx, id, budget)
+	if err != nil {
+		return c, err
+	}
+	total := int64(len(value))
+	seen := map[string]bool{}
+	prefix := bubblePrefix(id)
+	for _, key := range ids {
+		n, present := lengths[key]
+		if !present {
+			continue
+		}
+		if rawLimit > 0 && n > rawLimit-total {
+			return c, agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
+		}
+		total += n
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if recordLimit > 0 && n > recordLimit {
+			return c, agentapi.Wrap(agentapi.Limit, ErrRecordLimit)
+		}
+		if err := budget.Charge(1, int64(len(prefix+key))+n); err != nil {
+			return c, err
+		}
+	}
+	found, err := listedBubbles(ctx, tx, id, ids, lengths)
+	if err != nil {
+		return c, err
+	}
+	c = Composer{Composer: value, Bubbles: make([]Bubble, len(ids))}
+	for i, key := range ids {
+		_, present := lengths[key]
+		c.Bubbles[i] = Bubble{ID: key, Value: found[key], Missing: !present}
+	}
+	return c, nil
 }
 
 func recoveryComposerValue(ctx context.Context, tx *sql.Tx, id string, rawLimit, recordLimit int64, budget agentapi.RecoveryReadBudget) ([]byte, error) {
@@ -209,4 +231,40 @@ func recoveryBubbleLengths(ctx context.Context, tx *sql.Tx, id string, budget ag
 		out[key[len(prefix):]] = size.Int64
 	}
 	return out, rows.Err()
+}
+
+// settledHeaderCount bounds the ID/slice allocation before ordinary decoding.
+// Its borrowed JSON projection is covered by the caller's prospective views.
+func settledHeaderCount(ctx context.Context, value []byte, limit int) (int, error) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(value, &fields) != nil || fields == nil {
+		return 0, NotChecked(UnknownFormat)
+	}
+	raw, present := fields["fullConversationHeadersOnly"]
+	if !present || string(raw) == "null" {
+		raw, present = fields["conversation"]
+		if !present || string(raw) == "null" {
+			return 0, nil
+		}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('[') {
+		return 0, NotChecked(UnknownFormat)
+	}
+	count := 0
+	for decoder.More() {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		if count >= limit {
+			return 0, agentapi.Wrap(agentapi.Limit, agentapi.ErrReadBudget)
+		}
+		var row json.RawMessage
+		if decoder.Decode(&row) != nil {
+			return 0, NotChecked(UnknownFormat)
+		}
+		count++
+	}
+	return count, nil
 }

@@ -3,18 +3,22 @@ package cli
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -24,12 +28,63 @@ import (
 // archive.SourceObjectKey, which both produce "sessions/<harness>/<id>/...".
 const archiveSessionsPrefix = "sessions"
 
-// notSetUpMessage is what every read-only command prints, to stderr with
-// exit 1 like sync and pause, when setup has never run: its output is often
-// captured (claude "$(agent-archive handoff --latest)"), and must not pass
-// the message off as a result. It is deliberately the same line `status`
-// prints, so a first-time user gets one consistent answer.
+// notSetUpMessage is what the commands that need a configured archive
+// print, to stderr with exit 1 like sync and pause, when setup has never
+// run: its output is often captured, and must not pass the message off as
+// a result. It names the same next step `status` names, so a first-time
+// user gets one consistent answer. (handoff before setup does not need a
+// configured archive: it reads this machine's own sessions instead; see
+// pendingSetupReason for when it refuses.)
 const notSetUpMessage = "Not set up. Run `agent-archive setup` to get started."
+
+// notSetUpHandoffMessage is what list, show, and stats print before
+// setup, and what a bare invocation leads with then: these are the ones
+// a new user tries first, and `handoff` already works for them on the
+// Claude Code and Codex sessions this machine has, so say so instead of
+// dead-ending at setup. preSetupGuidance decides when it applies.
+const notSetUpHandoffMessage = "Not set up yet. For Claude Code or Codex sessions already on this machine, try `agent-archive handoff`; to start archiving, run `agent-archive setup`."
+
+// setupUnfinishedMessage replaces notSetUpHandoffMessage while a setup
+// draft or an interrupted setup transaction is waiting: handoff refuses
+// then (pendingSetupReason), so the only way on is to finish setup.
+const setupUnfinishedMessage = "Setup is not finished. Run `agent-archive setup` to finish it."
+
+// pendingSetupReason says why a machine with no saved configuration is
+// nonetheless mid-setup: an interrupted setup transaction waiting for
+// recovery, or a saved setup draft (or one that cannot be checked). It is
+// "" when neither applies. handoff refuses its native pre-setup path for
+// any non-empty reason, and preSetupGuidance stops recommending handoff
+// for the same ones, so the two cannot disagree.
+func pendingSetupReason(home string) string {
+	if setupjournal.TransactionPending(home) {
+		return "setup recovery is pending"
+	}
+	if _, err := os.Lstat(draftPath(home)); !errors.Is(err, os.ErrNotExist) {
+		return "saved setup is pending or inaccessible"
+	}
+	return ""
+}
+
+// preSetupGuidance is the line list, show, stats, and a bare invocation
+// print when no configuration is saved: the handoff hint when handoff
+// would take its native pre-setup path, and plain setup guidance when
+// setup is under way and handoff would refuse.
+func preSetupGuidance(home string) string {
+	if pendingSetupReason(home) != "" {
+		return setupUnfinishedMessage
+	}
+	return notSetUpHandoffMessage
+}
+
+// preSetupGuidanceFor is preSetupGuidance for the read commands, which
+// resolve the data directory inside openReadOnlyStore.
+func preSetupGuidanceFor(env interface{ readHome() (string, error) }) string {
+	home, err := env.readHome()
+	if err != nil {
+		return notSetUpMessage
+	}
+	return preSetupGuidance(home)
+}
 
 // openReadOnlyStore loads configuration and opens the configured object
 // store the same way a collector pass does (env.openStore), but without the
@@ -114,10 +169,10 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	if !found {
-		terminal.Println(stderr, notSetUpMessage)
+		terminal.Println(stderr, preSetupGuidanceFor(env))
 		return 1
 	}
-	if *rebuildIndex && !rebuildListingIndex(store, stderr) {
+	if *rebuildIndex && !rebuildListingIndex(env, store, stderr) {
 		return 1
 	}
 	scope, err := scopeFor(env, *project, *allProjects)
@@ -130,18 +185,22 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	// Explicit project names, searches and interactive scope switching still
 	// need exhaustive metadata. Text activity and child counts use summaries.
 	full := listRequiresFullScan(opts, *project, scope, q, browsing)
-	var stopList func()
-	if !opts.jsonOut {
-		stopList = startActivity(stdout, "Listing sessions…")
-	} else {
-		stopList = func() {}
-	}
+	progress, stopList := startListProgress(stdout, opts.jsonOut)
 	listOpts := listingReadOptions(env, scope, opts, full, stderr)
+	listOpts.Progress = progress.read
 	listLimit := opts.limit
 	if full {
 		listLimit = 0
 	}
-	listed, err := reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, listLimit, listOpts)
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
+	ctx = withListProgress(ctx, progress)
+	if browsing && q.empty() {
+		if used, code := runBoundedListBrowser(catalog.WithReadView(ctx), env, store, cfg, opts, scope, stdin, stdout, stderr, stopList); used {
+			return code
+		}
+	}
+	listed, full, err := readListCandidates(catalog.WithReadView(ctx), env, store, opts, listLimit, listOpts, full, stderr)
 	stopList()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
@@ -161,7 +220,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	format := listFormatOptions{
 		Now: env.now(), Verbose: opts.verbose, Projects: labels, Style: styleFor(stdout),
-		GroupByProject: true, Numbered: browsing, Children: listingChildren(listed, sessions, full),
+		GroupByDay: true, Numbered: browsing, Children: listingChildren(listed, sessions, full),
 	}
 	words := strings.Join(strings.Fields(query), " ")
 	choices := listChoices(scope, format, browsing, sessions, opts.limit, view, words)
@@ -174,16 +233,10 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 0
 	}
 	if browsing {
-		_, _, code := runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Query: words, Command: "list", Store: store, NoPager: opts.noPager})
+		_, _, code := runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Query: words, Command: "list", Store: store, NoPager: opts.noPager})
 		return code
 	}
-	if err := withPager(context.Background(), stdout, stderr, env, opts.noPager, func(w io.Writer) error {
-		return printListTable(w, choices.shown())
-	}); err != nil {
-		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
-		return 1
-	}
-	return 0
+	return printListWithPager(ctx, env, stdout, stderr, opts.noPager, choices)
 }
 
 // listChoices is what list shows of the archive: for a browser, every
@@ -192,7 +245,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 // elsewhere), and for a table, the sessions the search finds.
 func listChoices(scope sessionScope, format listFormatOptions, browsing bool, sessions []archive.Metadata, limit int, view func(sessionScope) listView, words string) *scopeChoices {
 	if browsing {
-		return newScopeChoices(scope, format, false, browseSearchRows(archiveRows(sessions, limit, format), view, words))
+		return pagedArchiveChoices(scope, format, sessions, limit, view, words)
 	}
 	return newScopeChoices(scope, format, true, func(s sessionScope) scopeView {
 		v := view(s)
@@ -567,6 +620,8 @@ func validLowerSHA256(value string) bool {
 func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env showCommandDependencies) int {
 	fs := env.newCommandFlags("show", stderr)
 	harness := fs.String("harness", "", "the session's harness, if the same ID exists under more than one")
+	revisions := fs.Bool("revisions", false, "list validated active and preserved native revisions; with --json, print the inventory")
+	revision := fs.String("revision", "", "read this exact native revision ID from the parent only (see --revisions)")
 	transcript := fs.Bool("transcript", false, "also download and verify the source bundle, and print the conversation (this prints transcript content)")
 	full := fs.Bool("full", false, "with --transcript, also print each tool call's trimmed result")
 	normalized := fs.Bool("normalized", false, "deprecated: the same as --transcript --json")
@@ -586,6 +641,9 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if *normalized {
 		terminal.Println(stderr, "agent-archive: show: --normalized is deprecated; use --transcript --json")
 		*transcript, *jsonOut = true, true
+	}
+	if code := checkShowRevisionFlags(fs, sessionID, *revision, *revisions, *transcript, *full, *normalized); code != 0 {
+		return code
 	}
 	if *full && !*transcript {
 		return fs.usageError("--full needs --transcript")
@@ -613,16 +671,17 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	if !found {
-		terminal.Println(stderr, notSetUpMessage)
+		terminal.Println(stderr, preSetupGuidanceFor(env))
 		return 1
 	}
 
-	ctx := context.Background()
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
+	ctx = catalog.WithReadView(ctx)
 	summary := summaryOptions{Now: env.now(), Style: styleFor(stdout), Projects: projectLabels(cfg), Hints: true}
 	if sessionID == "" {
-		return runBareShow(env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
+		return runBareShow(ctx, env, store, cfg, stdin, stdout, stderr, *harness, *jsonOut, *noPager)
 	}
-
 	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects, *noPager, *transcript || *jsonOut)
 	if code != 0 {
 		return code
@@ -633,26 +692,32 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	sessionID, *harness = lookup.SessionID, lookup.Harness
 
 	stopShow := startActivity(stdout, "Loading session…")
-	key, err := locateMetadataKey(ctx, store, *harness, sessionID)
+	selected, err := selectedShowMetadata(ctx, store, *harness, sessionID, lookup.Metadata)
 	if err != nil {
 		stopShow()
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return 1
 	}
-
+	key := selected.Key
+	if *revisions {
+		return readRevisionInventory(ctx, store, key, stdout, stderr, *jsonOut, stopShow)
+	}
 	if !*transcript {
-		metadata, err := reader.ReadMetadata(ctx, store, key)
+		view := metadataWithLinks(ctx, store, selected.Metadata)
+		if *revision != "" {
+			view, err = loadShowSummarySelection(ctx, store, key, *revision, parsersFor(env))
+		}
 		if err != nil {
 			stopShow()
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
 		}
-		view := metadataWithLinks(ctx, store, metadata)
+		stopReads()
 		stopShow()
 		if *jsonOut {
 			return printJSON(stdout, stderr, view)
 		}
-		if err := withPager(ctx, stdout, stderr, env, *noPager, func(w io.Writer) error {
+		if err := withPager(context.WithoutCancel(ctx), stdout, stderr, env, *noPager, func(w io.Writer) error {
 			renderSessionSummary(w, view, summary)
 			return nil
 		}); err != nil {
@@ -662,31 +727,31 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 0
 	}
 
-	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, sessionTranscriptOptions{
-		summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager, maxBytes: *maxBytes,
+	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, stopReads, sessionTranscriptOptions{
+		revision: *revision, selected: &selected, summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager, maxBytes: *maxBytes,
 	})
 }
 
 // runBareShow is `show` with no SESSION_ID on a terminal: the browser, or with
 // --json one session picked in it and printed as its sidecar.
-func runBareShow(env showCommandDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness string, jsonOut, noPager bool) int {
+func runBareShow(ctx context.Context, env showCommandDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness string, jsonOut, noPager bool) int {
 	if jsonOut {
-		row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, harness, "show", "Show")
+		row, selected, code := selectArchivedSession(ctx, env, store, cfg, stdin, stdout, stderr, harness, "show", "Show")
 		if code != 0 || !selected {
 			return code
 		}
-		view, err := readSessionView(context.Background(), store, row.HarnessKey, row.SessionID)
+		view, err := readPickerSessionView(pickerSelectionContext(ctx, row), store, row)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
 		}
 		return printJSON(stdout, stderr, view)
 	}
-	choices, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, harness, "show")
+	choices, ok, code := findBrowseSessions(ctx, env, store, cfg, stdout, stderr, harness, "show")
 	if !ok {
 		return code
 	}
-	_, _, code = runBrowser(context.Background(), env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "show", Store: store, NoPager: noPager})
+	_, _, code = runBrowser(ctx, env, newPrompter(stdin, stdout), stdout, stderr, browserSpec{Mode: browseSessions, Choices: choices, Command: "show", Store: store, NoPager: noPager})
 	return code
 }
 
@@ -706,6 +771,8 @@ func checkShowMaxBytes(fs *commandFlags, maxBytes int, transcript bool) int {
 
 // sessionTranscriptOptions are the show flags that shape a transcript.
 type sessionTranscriptOptions struct {
+	selected   *reader.MetadataLookup
+	revision   string
 	summary    summaryOptions
 	full       bool
 	json       bool
@@ -717,8 +784,22 @@ type sessionTranscriptOptions struct {
 // printSessionTranscript downloads and verifies the session's source bundle
 // and prints its transcript: readable and paged, or with --json the sidecar
 // and the normalized view. stopShow ends the loading activity line.
-func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env showCommandDependencies, stdout, stderr io.Writer, key, sessionID string, stopShow func(), opts sessionTranscriptOptions) int {
-	view, bundle, err := loadVerifiedSession(ctx, store, key)
+func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env showCommandDependencies, stdout, stderr io.Writer, key, sessionID string, stopShow, stopReads func(), opts sessionTranscriptOptions) int {
+	var view sessionView
+	var bundle archive.SourceBundle
+	var err error
+	if opts.revision == "" {
+		if opts.selected != nil {
+			view, bundle, err = loadVerifiedMetadata(ctx, store, *opts.selected)
+		} else {
+			view, bundle, err = loadVerifiedSession(ctx, store, key)
+		}
+	}
+	if opts.revision != "" {
+		var metadata archive.Metadata
+		metadata, bundle, err = loadArchiveSelection(ctx, store, key, opts.revision, parsersFor(env))
+		view = sessionView{Metadata: metadata, SelectedRevisionID: opts.revision}
+	}
 	if err != nil {
 		stopShow()
 		flag := "--transcript"
@@ -736,6 +817,8 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 	}
 	pruneHandoffs(home, env.now())
 	analysis, parseErr := analyzeSource(ctx, parsersFor(env), bundle)
+	// Remote reads are complete; the pager owns interruption from here.
+	stopReads()
 	if opts.json {
 		normalizedView, err := analysis.View, parseErr
 		stopShow()
@@ -759,7 +842,10 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
 		}
-		terminal.Print(stdout, string(data))
+		if err := writeOutput(stdout, data); err != nil {
+			terminal.Printf(stderr, "agent-archive: show: write JSON: %v\n", err)
+			return 1
+		}
 		return 0
 	}
 	var t archive.Transcript
@@ -777,7 +863,7 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 	if opts.maxBytes > 0 {
 		t, render = fitTranscriptToLimit(view, t, bundle, render, opts.maxBytes, home, stderr)
 	}
-	if err := withPager(ctx, stdout, stderr, env, opts.noPager, func(w io.Writer) error {
+	if err := withPager(context.WithoutCancel(ctx), stdout, stderr, env, opts.noPager, func(w io.Writer) error {
 		renderTranscript(w, view, t, render)
 		return nil
 	}); err != nil {
@@ -797,7 +883,7 @@ func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env 
 // the sidecar's fields at the top level is what existing readers of this
 // command already parse. Validate stored objects, not command output.
 func metadataWithLinks(ctx context.Context, store storage.ObjectStore, metadata archive.Metadata) sessionView {
-	return sessionView{metadata, reader.ResolveLinkedSessions(ctx, store, metadata)}
+	return sessionView{Metadata: metadata, LinkedAvailability: reader.ResolveLinkedSessions(ctx, store, metadata)}
 }
 
 // normalizedOutput is the JSON shape `show --transcript --json` prints for
@@ -858,7 +944,10 @@ func printJSON(stdout, stderr io.Writer, value any) int {
 		terminal.Printf(stderr, "agent-archive: %v\n", err)
 		return 1
 	}
-	terminal.Print(stdout, string(data))
+	if err := writeOutput(stdout, data); err != nil {
+		terminal.Printf(stderr, "agent-archive: write JSON: %v\n", err)
+		return 1
+	}
 	return 0
 }
 
@@ -970,13 +1059,36 @@ func listingReadOptions(env listCommandDependencies, scope sessionScope, opts li
 }
 
 // rebuildListingIndex reports explicit index maintenance progress and resumable failure.
-func rebuildListingIndex(store storage.ObjectStore, stderr io.Writer) bool {
+func rebuildListingIndex(env listCommandDependencies, store storage.ObjectStore, stderr io.Writer) bool {
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
 	terminal.Println(stderr, "agent-archive: list: rebuilding listing entries from live metadata…")
-	count, err := reader.RebuildIndex(context.Background(), store, archiveSessionsPrefix)
+	count, err := reader.RebuildIndex(ctx, store, archiveSessionsPrefix)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: rebuild index stopped after %d metadata entries: %v; rerun to resume\n", count, err)
 		return false
 	}
 	terminal.Printf(stderr, "agent-archive: list: rebuilt %d metadata entries.\n", count)
 	return true
+}
+
+// selectedShowMetadata keeps an already verified selection or resolves its body.
+func selectedShowMetadata(ctx context.Context, store storage.ObjectStore, harness, sessionID string, selected reader.MetadataLookup) (reader.MetadataLookup, error) {
+	if selected.Key != "" {
+		return selected, nil
+	}
+	return locateShowMetadata(ctx, store, harness, sessionID)
+}
+
+func printListWithPager(ctx context.Context, env listCommandDependencies, stdout, stderr io.Writer, noPager bool, choices *scopeChoices) int {
+	// On a terminal, each row is fit to one line of it; piped, it is the
+	// plain table.
+	width, _, _ := env.terminalSize(stdout)
+	if err := withPager(ctx, stdout, stderr, env, noPager, func(w io.Writer) error {
+		return printListTable(w, choices.shown(), width)
+	}); err != nil {
+		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
+		return 1
+	}
+	return 0
 }

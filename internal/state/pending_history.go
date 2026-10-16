@@ -79,6 +79,7 @@ type RetiredSource struct {
 // by journal validation. The input bytes retain their original caller ownership.
 func (owned *PendingPublication) ValidateHistoryBudgeted(id string, budget *agentapi.NativeReadBudget) error {
 	p := *owned
+	reservation := budget.Reservation()
 	if p.History == nil {
 		return nil
 	}
@@ -93,10 +94,10 @@ func (owned *PendingPublication) ValidateHistoryBudgeted(id string, budget *agen
 			}
 		}
 	}
-	if !budget.Reserve(n) {
+	if !reservation.Reserve(n) {
 		return errStateBudget
 	}
-	defer budget.Release(n)
+	defer reservation.Release(n)
 	return p.ValidateHistory(id)
 }
 
@@ -106,7 +107,7 @@ func (owned *PendingPublication) ValidateHistory(id string) error {
 	if p.History == nil {
 		return nil
 	}
-	if p.History.Version != pendingHistoryVersion && (p.JournalVersion != 2 || p.History.Version != 2) {
+	if p.History.Version != pendingHistoryVersion && (p.JournalVersion != 5 || p.History.Version != 2) {
 		return errors.Join(ErrDurableStorageRecovery, errors.New("pending history requires a newer writer"))
 	}
 	if err := validatePredecessorSHA(p.History.ExpectedMetadataSHA256); err != nil {

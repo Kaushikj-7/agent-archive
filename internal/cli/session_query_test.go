@@ -205,3 +205,53 @@ func TestSessionQueryShortWordsDoNotMatchAnIDPrefix(t *testing.T) {
 		t.Error("a three-character word no longer matches a title")
 	}
 }
+
+// Show prefixes remain ambiguous when another title mentions the same prefix.
+func TestShowPrefixIncludesTextCandidates(t *testing.T) {
+	sessions := []archive.Metadata{
+		{SessionID: "abcdef01000000000000000000000001", Harness: archive.Harness{Name: "codex"}},
+		{SessionID: "other", Title: "Compare abcdef01 results", Harness: archive.Harness{Name: "codex"}},
+	}
+	fields := func(m archive.Metadata) sessionFields { return fieldsOf(m, "") }
+	got := searchShowSessions(sessions, parseSessionQuery("abcdef01"), sessionScope{}, fields)
+	if len(got.matches) != 2 {
+		t.Fatalf("show matched %d sessions; want prefix and title", len(got.matches))
+	}
+	if legacy := searchSessions(sessions, parseSessionQuery("abcdef01"), sessionScope{}, fields); len(legacy.matches) != 1 {
+		t.Fatal("handoff prefix precedence changed")
+	}
+}
+
+// The agent's own session ID (a Codex thread ID, say) finds a session as the
+// archive's ID does: whole or as its first eight characters it wins outright
+// over a title that mentions it, and a longer prefix matches as a word.
+func TestNativeSessionIDFindsTheSession(t *testing.T) {
+	t.Parallel()
+	thread := archive.Metadata{SessionID: "87b47b5659a4cbaf452ec76ac2950b7e", NativeSessionID: "01A10E11-4bd0-7041-b71c-58103545883a", Title: "Review the generator"}
+	other := archive.Metadata{SessionID: "0e38152c4f099d5cd56fb0f845cf0449", NativeSessionID: "01a114f1-20eb-7e31-9455-0cca5eccbb93", Title: "Notes on 01a10e11"}
+	rows := []archive.Metadata{other, thread}
+	fields := func(m archive.Metadata) sessionFields { return fieldsOf(m, "") }
+	for _, query := range []string{"01a10e11", "01a10e11-4bd0-7041-b71c-58103545883a", "01a10e11-4bd0"} {
+		if got := matchPool(rows, parseSessionQuery(query), fields); len(got) != 1 || got[0].SessionID != thread.SessionID {
+			t.Fatalf("%q matched %d sessions", query, len(got))
+		}
+	}
+}
+
+// A Claude Code subagent's native ID begins with its parent's, so the
+// parent's ID names the parent alone; and a word that is one session's
+// archive short ID is that session, not another whose native ID shares it.
+func TestNativeSessionIDNamesOneSession(t *testing.T) {
+	t.Parallel()
+	parent := archive.Metadata{SessionID: "aaaa1111000000000000000000000000", NativeSessionID: "3f2a9c1e-0000-4000-8000-000000000001", Title: "Parent"}
+	child := archive.Metadata{SessionID: "bbbb2222000000000000000000000000", NativeSessionID: "3f2a9c1e-0000-4000-8000-000000000001:subagent:agent-1", Title: "Child"}
+	byArchive := archive.Metadata{SessionID: "01a10e11ffff00000000000000000000", NativeSessionID: "77777777-0000-4000-8000-000000000001", Title: "Archive ID"}
+	byNative := archive.Metadata{SessionID: "cccc3333000000000000000000000000", NativeSessionID: "01a10e11-4bd0-7041-b71c-58103545883a", Title: "Native ID"}
+	fields := func(m archive.Metadata) sessionFields { return fieldsOf(m, "") }
+	if got := matchPool([]archive.Metadata{parent, child}, parseSessionQuery("3f2a9c1e"), fields); len(got) != 1 || got[0].SessionID != parent.SessionID {
+		t.Fatalf("parent's native short ID matched %d sessions", len(got))
+	}
+	if got := matchPool([]archive.Metadata{byNative, byArchive}, parseSessionQuery("01a10e11"), fields); len(got) != 1 || got[0].SessionID != byArchive.SessionID {
+		t.Fatalf("archive short ID did not win: %d sessions", len(got))
+	}
+}

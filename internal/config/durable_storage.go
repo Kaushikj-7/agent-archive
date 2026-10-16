@@ -77,7 +77,7 @@ func (g PublicationCompositionGuard) Storage(home string) (DurableStorageGuard, 
 	return g.storage, nil
 }
 
-// WithPublicationComposition persists protocol2 protection before allocation.
+// WithPublicationComposition persists source-set protocol5 protection before allocation.
 func WithPublicationComposition(home string, write func(PublicationCompositionGuard) error) error {
 	return withPublicationStorage(home, true, func(g DurableStorageGuard) error { return write(PublicationCompositionGuard{storage: g}) })
 }
@@ -267,9 +267,9 @@ func rootedConfigUnchanged(home *local.RootedHome, before os.FileInfo) error {
 }
 
 func ensurePublicationStorageProtection(held *local.RootedHome, cfg Config, composition bool, configBefore os.FileInfo) (os.FileInfo, error) {
-	if !cfg.DurableStorageProtection || (composition && !cfg.PublicationCompositionProtection) {
+	if !cfg.DurableStorageProtection || (composition && !cfg.SourceSetPublicationProtection) {
 		if composition {
-			cfg.PublicationCompositionProtection = true
+			cfg.SourceSetPublicationProtection = true
 		}
 		cfg.DurableStorageProtection = true
 		if err := prepareDiscoveryConfig(&cfg); err != nil {
@@ -287,7 +287,7 @@ func ensurePublicationStorageProtection(held *local.RootedHome, cfg Config, comp
 			return nil, err
 		}
 		verified, present, e := LoadRooted(held)
-		if e != nil || !present || !verified.DurableStorageProtection || (verified.SchemaVersion != 7 && verified.SchemaVersion != 8) || (composition && !verified.PublicationCompositionProtection) {
+		if e != nil || !present || !verified.DurableStorageProtection || (verified.SchemaVersion < 7 || verified.SchemaVersion > 17 || verified.SchemaVersion == 14) || (composition && !verified.SourceSetPublicationProtection) {
 			return nil, errors.Join(errors.New("durable storage protection was not persisted"), e)
 		}
 	}

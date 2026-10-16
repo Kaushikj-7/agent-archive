@@ -18,11 +18,13 @@ Not imported:
    1  removed earlier by retention              add --include-removed
    1  not matching the filters
    1  in projects excluded in setup             change in setup
+   1  whose complete history requires an excluded source
    1  run from the home folder                  add --include-home
    1  run from / or /Users, above the home folder
    1  run from temporary directories            add --include-temp
    1  Cursor chat whose project could not be determined
    1  with unresolved worktree project ownership
+   1  waiting for local session index recovery
    1  with conflicting or invalid session IDs
    1  waiting for native history or own-task evidence
    1  that changed while being read; retry backfill

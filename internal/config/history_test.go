@@ -7,7 +7,7 @@ import (
 )
 
 func TestHistoryProtectionIsPermanentAndIndependentOfConsent(t *testing.T) {
-	c := Config{MachineID: "m", CodexHistoryProtection: true}
+	c := Config{RetentionDays: 90, MachineID: "m", CodexHistoryProtection: true}
 	raw, err := json.Marshal(c)
 	if err != nil {
 		t.Fatal(err)
@@ -25,7 +25,7 @@ func TestHistoryProtectionIsPermanentAndIndependentOfConsent(t *testing.T) {
 	if err := json.Unmarshal(raw, &current); err != nil {
 		t.Fatal(err)
 	}
-	rollback := Config{MachineID: "m"}
+	rollback := Config{RetentionDays: 90, MachineID: "m"}
 	PreserveWriterFence(&rollback, current)
 	raw, err = json.Marshal(rollback)
 	if err != nil {

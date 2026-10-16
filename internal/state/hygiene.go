@@ -85,6 +85,7 @@ var corruptionPolicies = map[string]corruption{
 	packedSessionIndexDir:     rebuiltFromRegistrations,
 	sessionIndexMarkerFile:    rebuiltFromRegistrations,
 	sessionRecoveryCursorFile: rebuiltFromRegistrations,
+	sessionIndexAbsenceFile:   rebuiltFromRegistrations,
 	sessionMembershipFile:     readAsRecoveryRequired,
 	sessionMembershipLock:     holdsNoContent,
 	"forgotten":               readAsRemoved,

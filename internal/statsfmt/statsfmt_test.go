@@ -136,9 +136,8 @@ func TestFormattersImportBoundary(t *testing.T) {
 		if strings.HasPrefix(path, "github.com/wangjohn/agent-archive/internal/") &&
 			path != "github.com/wangjohn/agent-archive/internal/archive" &&
 			path != "github.com/wangjohn/agent-archive/internal/agentmeta" &&
-			path != "github.com/wangjohn/agent-archive/internal/codexmeta" &&
-			path != "github.com/wangjohn/agent-archive/internal/jsonwire" {
-			t.Errorf("internal/statsfmt reaches %s; only internal/archive and its pure agentmeta/jsonwire/codexmeta dependencies are allowed", path)
+			path != "github.com/wangjohn/agent-archive/internal/codexmeta" {
+			t.Errorf("internal/statsfmt reaches %s; only internal/archive and its pure agentmeta/codexmeta dependencies are allowed", path)
 		}
 	}
 }

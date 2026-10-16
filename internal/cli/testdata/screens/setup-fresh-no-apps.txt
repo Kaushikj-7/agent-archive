@@ -60,6 +60,9 @@ Choose which apps to include:
 
 Step 2 of 3 · Connect storage
 
+Storage · Account
+Account → Storage → Verification
+
 ? Where should your archive live?
 
   1) Cloudflare R2 (default)

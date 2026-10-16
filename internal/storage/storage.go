@@ -39,6 +39,14 @@ type ObjectStore interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// CatalogNamespace optionally identifies an immutable object-store destination
+// across process lifetimes. The value must bind provider/endpoint/bucket/prefix
+// (and any custom routing identity); revision validators are scoped to it. Empty
+// declines persistent summary reuse. It must not contain credentials or tokens.
+type CatalogNamespace interface {
+	CatalogNamespace() string
+}
+
 // LimitedGetter reads at most limit bytes, rejecting oversized objects before
 // allocating their bodies. Callers of untrusted small records require it.
 type LimitedGetter interface {
@@ -235,6 +243,92 @@ func hasDotComponent(value string) bool {
 	return false
 }
 
+// PutSourceThenMetadataIndexed implements source-first publication. The
+// source is uploaded and verified in storage before metadata is published. Retry
+// attempts reuse the exact input bytes, so a retry cannot produce another
+// source hash or timestamp.
+//
+// Verification goes through verifyStoredObject, before the upload (a source
+// already stored with these exact bytes is not uploaded again) and after it.
+// A store that reports an object's SHA-256 (ObjectStatter) is checked that
+// way, without a download: S3Store.Put sends the source's SHA-256 with the
+// upload, the service refuses a body that does not match it, and a HEAD then
+// reports the checksum and size of the object now stored at the key. A
+// matching checksum and size therefore prove that key holds exactly these
+// bytes, as a download would, and a HEAD needs the same read permission as a
+// GET. A store that reports no checksum is read back and hashed instead.
+// beforeMetadata runs after source verification and before the authoritative
+// sidecar. A failed index write leaves no new sidecar; a failed sidecar write
+// leaves only a harmless stale index entry.
+func PutSourceThenMetadataIndexed(ctx context.Context, store ObjectStore, sourceKey, metadataKey string, source, metadata []byte, retry RetryPolicy, beforeMetadata func() error) error {
+	if sourceKey == "" || metadataKey == "" {
+		return errors.New("source and metadata keys are required")
+	}
+	if sourceKey == metadataKey {
+		return errors.New("source and metadata keys must differ")
+	}
+	sum := SHA256Hex(source)
+	if err := retry.run(ctx, func() error {
+		switch err := verifyStoredObject(ctx, store, sourceKey, sum, len(source)); {
+		case err == nil:
+			return nil
+		case errors.Is(err, ErrChecksumMismatch):
+			return fmt.Errorf("existing source: %w", err)
+		case !errors.Is(err, ErrNotFound):
+			return err
+		}
+		if err := store.Put(ctx, sourceKey, source); err != nil {
+			return err
+		}
+		return verifyStoredObject(ctx, store, sourceKey, sum, len(source))
+	}); err != nil {
+		return fmt.Errorf("publish source %q: %w", sourceKey, err)
+	}
+	if beforeMetadata != nil {
+		if err := beforeMetadata(); err != nil {
+			return fmt.Errorf("publish listing index: %w", err)
+		}
+	}
+	if err := retry.run(ctx, func() error { return store.Put(ctx, metadataKey, metadata) }); err != nil {
+		return fmt.Errorf("publish metadata %q: %w", metadataKey, err)
+	}
+	return nil
+}
+
+// PutMetadataForSourceIndexed publishes metadata that points at a source object
+// already in storage, for a caller that no longer has the source's bytes. The
+// source is read back and checked against sourceSHA256 first, so metadata
+// never points at a missing or different object: a missing source is
+// ErrNotFound and a different one ErrChecksumMismatch, and neither publishes.
+//
+// A store that can describe an object (ObjectStatter) and reports its SHA-256
+// is checked that way, without a download; otherwise the source is read back.
+// sourceSize, when positive, must match too.
+// beforeMetadata can write an immutable index entry immediately before the
+// sidecar replacement.
+func PutMetadataForSourceIndexed(ctx context.Context, store ObjectStore, sourceKey, sourceSHA256 string, sourceSize int, metadataKey string, metadata []byte, retry RetryPolicy, beforeMetadata func() error) error {
+	if sourceKey == "" || metadataKey == "" || sourceSHA256 == "" {
+		return errors.New("source key, source checksum, and metadata key are required")
+	}
+	if sourceKey == metadataKey {
+		return errors.New("source and metadata keys must differ")
+	}
+	if err := retry.run(ctx, func() error {
+		return verifyStoredObject(ctx, store, sourceKey, sourceSHA256, sourceSize)
+	}); err != nil {
+		return fmt.Errorf("verify source %q: %w", sourceKey, err)
+	}
+	if beforeMetadata != nil {
+		if err := beforeMetadata(); err != nil {
+			return fmt.Errorf("publish listing index: %w", err)
+		}
+	}
+	if err := retry.run(ctx, func() error { return store.Put(ctx, metadataKey, metadata) }); err != nil {
+		return fmt.Errorf("publish metadata %q: %w", metadataKey, err)
+	}
+	return nil
+}
+
 // ObjectInfo describes a stored object without its content.
 type ObjectInfo struct {
 	// ETag is the provider's opaque revision validator, without quotes.
@@ -250,12 +344,6 @@ type ObjectInfo struct {
 // the bytes. An empty validator cannot establish indexed freshness.
 type VersionedGetter interface {
 	GetVersioned(context.Context, string) ([]byte, string, error)
-}
-
-// LimitedVersionedGetter returns one response's bytes and opaque validator under
-// a caller allocation bound. No separate HEAD can supply that validator.
-type LimitedVersionedGetter interface {
-	GetVersionedLimited(context.Context, string, int64) ([]byte, string, error)
 }
 
 // ObjectStatter is implemented by stores that can describe an object without

@@ -28,6 +28,25 @@ storage prompt for a link to the [bucket guide](bucket.md). Setup asks questions
 stops before asking anything and changes nothing. Its prompt sequence is not
 a scripting API; to script it, use [`setup --yes`](#set-up-without-questions).
 
+### Interrupted storage creation
+
+If setup stops after requesting a bucket, rerun `agent-archive setup`. Private
+resource receipts survive draft changes and record whether creation was confirmed
+or its outcome remains unknown. Setup offers to connect the bucket as existing
+storage, choose other storage, or inspect resource details. Connecting still asks
+for credentials and verifies access; it does not establish ownership.
+
+An unknown creation is never retried for the same bucket automatically. Inspect
+the named account and bucket in the provider console. S3 receipts record the
+creation profile, which can change accounts; a profile name is not ownership proof.
+Bucket cleanup instructions remain pending because setup cannot verify ownership
+or manual deletion. Check bucket contents and other machines before deleting it.
+
+Unused guided R2 keys can be explicitly revoked after confirmation, using a fresh
+management token. Setup verifies exact provider key lineage and permissions before
+deleting, protects active and saved-draft credentials, and retains unsuccessful
+cleanup for retry. Bootstrap and management tokens are not stored in receipts.
+
 Setup groups each question, explanation, choices and shortcuts together. On a
 supported terminal, the answered question becomes a short receipt. Yes/No receipts
 retain the question subject so completed decisions remain identifiable.
@@ -111,6 +130,12 @@ choice separately from whether automatic discovery is enabled; see
 
 ## 2. Storage
 
+Within Step 2, **Account → Storage → Verification** shows the current work.
+Account covers provider access; Storage covers the destination and archive
+credentials; Verification checks connectivity and reports bucket privacy
+separately. Back and Retry return to the stage being edited, preserving valid
+existing-bucket answers within the run.
+
 Setup suggests S3 when your shell sets `AWS_PROFILE` or your AWS settings
 already have a profile with credentials, and R2 otherwise.
 
@@ -128,7 +153,8 @@ and during error recovery. See the [bucket guide](bucket.md) for credentials
 and permissions.
 
 S3 setup enables and reads back all four Block Public Access settings. It
-prints a narrower runtime policy, but does not create IAM identities or keys.
+offers **View archive permissions** for a narrower runtime policy, but does
+not create IAM identities or keys.
 The creation profile remains the default archive profile; choose **Choose
 another archive profile** to switch after attaching the policy yourself.
 
@@ -163,7 +189,7 @@ clear answer to the request, setup says the bucket may exist and to check
 the S3 console; it deletes nothing in that case. If the bucket was created
 but Block Public Access could not be turned on, setup does not use it: it
 offers to try again, to delete the empty bucket (after you type its name),
-or to stop. When it succeeds, setup prints the runtime policy for the new
+or to stop. When it succeeds, setup offers **View archive permissions** for the new
 bucket (not for a folder name with characters other than letters, digits
 and `. _ - /`; it says so and points at the guide) and asks which AWS
 profile archiving should use. The profile that created the bucket is the
@@ -202,14 +228,13 @@ visible, with old/new values for a reconfiguration. Storage is shown once.
 
 ```text
 Step 3 of 3 · Review and start
-
-  Apps       Codex, Claude Code, Cursor
-  Projects   3 included projects (paths in Details)
-  Codex      Included projects only
-  Skills     Metadata, including user folders
-  Storage    s3://team-archive/agent-archive/
-  Keep for   90 days
-
+  Apps      Codex, Claude Code, Cursor
+  Projects  3 included projects (paths in Details)
+  Codex     Included projects only
+  Skills    Metadata, including user folders
+  Storage   s3://team-archive/agent-archive/
+  Keep for  90 days · Sessions with no new activity for 90 days are deleted from
+            your bucket; change with Edit a setting, or keep forever
   ✓ Storage connected
   ✓ Bucket is private
   ! Setup imports the last 7 days of included projects; older history is separate.
@@ -221,8 +246,11 @@ project paths and exceptions, discovery/copy behavior, hook status, credential
 ownership, storage checks and privacy documentation. Longer details use the
 pager and return to the same draft and decision. **Name this machine** (`m`) and
 **Cancel; keep draft** (`q`) are separate shortcuts. Narrow displays wrap values
-and warnings without dropping them. The default retention is 90 days; older
-sessions are deleted from the bucket automatically.
+and warnings without dropping them. The default retention is 90 days, and
+the Keep for row says what that means: sessions with no new activity for 90
+days are deleted from your bucket automatically; change it with Edit a
+setting, or keep forever, in which case agent-archive never deletes sessions
+automatically.
 
 The Skills row controls filesystem skill evidence. Fresh setup uses
 `metadata` (names and filtered hashes, no body). Choose Edit a setting to
@@ -256,8 +284,7 @@ hooks moving to another file.
 At "Start archiving?", enter the number for "Edit a setting" to adjust apps, projects, session scope, retention, storage,
 the folder inside the bucket, or the AWS region. The folder inside the
 bucket (the prefix) is `agent-archive/` unless you change it. Retention is
-a whole number of days from 1 to 36,500; there is no "keep forever" (36,500
-days is about a century). Storage changes are checked
+a whole number of days from 1 to 36,500, or `forever` to disable automatic whole-session expiry. Provider lifecycle rules and explicit deletion still apply. Storage changes are checked
 again before starting. If the connection test fails, setup says why and
 how to fix it; see [when setup's storage check
 fails](../guides/troubleshooting.md#when-setups-storage-check-fails).
@@ -319,6 +346,7 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
 - `--prefix PREFIX` sets the folder inside the bucket, including when changing
   only that setting on an existing installation.
 - `--retention-days DAYS` sets retention from 1 to 36500 days.
+- `--keep-forever` disables automatic whole-session expiry and conflicts with `--retention-days`. The default remains 90 days. Guided retention offers **90 days**, **Custom duration**, and **Keep forever**, starting from the saved preference. Custom duration also accepts `forever`. This preference applies to existing and future sessions owned by this installation; provider lifecycle rules and explicit deletion still apply.
 - `--require-skill-use` captures only sessions that use skills;
   `--no-require-skill-use` captures sessions with or without skills. Omitted
   settings keep their saved values (fresh setup captures both).
@@ -615,6 +643,23 @@ agent-archive status --json
 What each status line means is in
 [troubleshooting](../guides/troubleshooting.md#reading-status).
 
+If you set up Codex discovery before setup imported the last 7 days, or a
+session in those days was not imported, `status` says so under Codex, once
+discovery has scanned it:
+
+```text
+! 1 Codex session from the 7 days before setup was not captured.
+  Import it with agent-archive backfill --since 2026-09-28.
+```
+
+The date is the local day 7 days before discovery was first enabled for Codex.
+The count is top-level Codex sessions that started from that day until
+discovery was enabled, that discovery refused for starting before it, and that
+are not archived; the line goes away once they are imported. Claude Code and
+Cursor have no such line: their hooks see no session from before they were
+installed, unless one runs a hook later, which status lists as a session
+skipped for starting before the project's activation.
+
 ### Sessions from the last 7 days
 
 Sessions that started before setup, the one you may be running setup from
@@ -765,3 +810,16 @@ format of existing sessions. Structural checks cannot prove that an unknown
 future producer preserves all current semantics, and these rules do not claim
 desktop GUI acceptance. See the [format contract](../reference/local-discovery-scanner.md#codex-format-compatibility)
 for supported profiles and limits.
+
+### Interrupted resource creation
+
+Guided storage creation records a private receipt before sending each bucket
+creation request. Receipts survive removing a setup draft. A request without a
+durably recorded response is uncertain: it does not prove that a bucket exists
+or that setup owns it. Check your provider account before retrying or deleting
+such a bucket. S3 receipts identify the creation profile, not a verified AWS
+account identity. R2 archive keys use the existing issuance ledger; receipts and
+ledger records contain identifiers and credential references, never setup tokens
+or credential values. Old drafts remain readable and have no inferred receipts.
+Setup withholds new bucket creation if existing receipts cannot be read or the
+receipt limit is reached; preserve and reconcile that history before retrying.

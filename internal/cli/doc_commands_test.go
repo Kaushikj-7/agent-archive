@@ -128,10 +128,12 @@ func TestDocsQuoteOnlyRealCommandsAndFlags(t *testing.T) {
 			t.Fatal(err)
 		}
 		rel, _ := filepath.Rel(filepath.Join("..", ".."), path)
-		// Specs propose flags that do not exist yet, so only an explicit
-		// `agent-archive ...` is checked there; elsewhere a code span such
-		// as `list --json` names the command too.
-		design := strings.HasPrefix(filepath.ToSlash(rel), "dev/specs/")
+		// Proposals, and specs written ahead of their code, can name flags
+		// that do not exist yet, so only an explicit `agent-archive ...` is
+		// checked there; elsewhere a code span such as `list --json` names
+		// the command too.
+		slashed := filepath.ToSlash(rel)
+		design := strings.HasPrefix(slashed, "dev/specs/") || strings.HasPrefix(slashed, "dev/proposals/")
 		for _, code := range quotedCode(string(data)) {
 			problems, n := quotedInvocationProblems(sets, code, !design)
 			checked += n
@@ -157,6 +159,7 @@ func quotedInvocationProblems(sets map[string]*flag.FlagSet, code string, bareCo
 	others := map[string][]string{
 		"help": nil, "--help": nil, "-h": nil, "--version": nil, "-v": nil,
 		"_collect": nil, "_hook": {"harness"},
+		"_catalog": {"bucket", "prefix", "isolated", "owner"},
 	}
 	code = shellContinuation.ReplaceAllString(code, " ")
 	for line := range strings.SplitSeq(code, "\n") {

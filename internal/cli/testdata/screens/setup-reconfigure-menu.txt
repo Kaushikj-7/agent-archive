@@ -14,14 +14,29 @@ Checking installed applications...
 › Choose [1]: 3
 ✓ How long sessions are kept
 
+? How long should sessions be kept?
+
+  Provider lifecycle rules and explicit deletion still apply.
+
+  1) 90 days (default)
+  2) Custom duration
+  3) Keep forever
+
+› Choose [1]: custom
+✓ Retention Custom duration
+
 ? Keep sessions for how many days?
 
-› Days [90]: 30
+› Days or forever [90]: 30
 ✓ Retention 30
 
 
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 Review your changes
   Apps      Codex
@@ -29,7 +44,8 @@ Review your changes
   Codex     Included projects only
   Skills    Metadata, including user folders
   Storage   s3://team-archive/agent-archive/
-* Keep for  30 days
+* Keep for  30 days · Sessions with no new activity for 30 days are deleted from
+            your bucket; change with Edit a setting, or keep forever
     was 90 days
   ✓ Storage connected
   ! Bucket privacy unknown · public-access settings could not be read

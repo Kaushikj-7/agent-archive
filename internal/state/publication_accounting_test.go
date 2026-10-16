@@ -100,7 +100,8 @@ func TestPublicationAccountingLargePeersSurvivePressureAndSavedRefresh(t *testin
 		t.Fatal("missing large peer classification", len(accounting.publicationAccounting.facts))
 	}
 	pressure := budget.Available() - (4 << 20)
-	if !budget.Reserve(pressure) {
+	pressureOwner := budget.Reservation()
+	if !pressureOwner.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
 	if err = scoped.SavePending(first.Bundle.ArchiveSessionID, first); err != nil {
@@ -109,7 +110,7 @@ func TestPublicationAccountingLargePeersSurvivePressureAndSavedRefresh(t *testin
 	if err = published.SaveCommittedPublication(first, first.Bundle.Capture.CapturedAt); err != nil {
 		t.Fatal("typed saved refresh", err)
 	}
-	if err = scoped.RemovePending(first.Bundle.ArchiveSessionID); err != nil {
+	if err = scoped.RemoveExactSourceSetPending(first.Bundle.ArchiveSessionID, first); err != nil {
 		t.Fatal("cleanup after published rewrite", err)
 	}
 	err = config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) (err error) {
@@ -135,7 +136,7 @@ func TestPublicationAccountingLargePeersSurvivePressureAndSavedRefresh(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	budget.Release(pressure)
+	pressureOwner.Release(pressure)
 	end()
 	closeAccounting()
 	closeAccounting()
@@ -164,8 +165,8 @@ func TestPublicationAccountingDetectsSameStampMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed := []byte(strings.Replace(string(raw), `"publication_version":2`, `"publication_version":9`, 1))
-	if len(changed) != len(raw) {
+	changed := []byte(strings.Replace(string(raw), `"publication_version":5`, `"publication_version":9`, 1))
+	if len(changed) != len(raw) || bytes.Equal(changed, raw) {
 		t.Fatal("invalid fault size")
 	}
 	if err = os.WriteFile(path, changed, 0600); err != nil {
@@ -310,11 +311,11 @@ func TestPublicationAccountingConfigBytesAndReplacementInvalidateReuse(t *testin
 						return err
 					}
 					original := decoded["schema_version"]
-					if !bytes.Contains(original, []byte(`"version":8`)) {
+					if !bytes.Contains(original, []byte(`"version":17`)) {
 						t.Fatal("wrong seed schema", string(original))
 					}
-					needle := regexp.MustCompile(`("version"\s*:\s*)8`)
-					changed := needle.ReplaceAll(raw, []byte(`${1}9`))
+					needle := regexp.MustCompile(`("version"\s*:\s*)17`)
+					changed := needle.ReplaceAll(raw, []byte(`${1}19`))
 					if len(changed) != len(raw) || bytes.Equal(changed, raw) {
 						t.Fatal("bad same-stamp config fault")
 					}
@@ -542,5 +543,28 @@ func TestPublicationAccountingRootReplacementInvalidatesReuse(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPublicationAccountingReleasePreservesLaterScopeCharges(t *testing.T) {
+	store := newTestStore(t)
+	budget := agentapi.NewNativeReadBudget(8192)
+	endFirst := budget.BeginScope(4096)
+	_, closeAccounting := store.WithPublicationAccounting(t.Context(), budget)
+	endFirst()
+	endSecond := budget.BeginScope(2048)
+	defer endSecond()
+	later := budget.Reservation()
+	if !later.Reserve(1536) {
+		t.Fatal("later scope setup refused")
+	}
+	closeAccounting()
+	closeAccounting()
+	if later.Reserve(1024) {
+		t.Fatal("accounting cleanup released another scope's charges")
+	}
+	later.Release(1536)
+	if used, _ := budget.Charged(); used != 0 {
+		t.Fatal("accounting reservation leaked after scope transition", used)
 	}
 }

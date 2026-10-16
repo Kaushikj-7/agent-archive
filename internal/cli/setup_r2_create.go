@@ -17,6 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/issuance"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupresources"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -136,6 +137,7 @@ type r2Created struct {
 // key typed in. On success the prompter holds the bootstrap client until
 // setup calls finishGuidedCreation or rollbackGuidedCreation.
 func createR2Bucket(p *prompter, env Env) (credentials.Config, credentials.R2Credentials, bool, error) {
+	p.storageStage(storageAccount)
 	var none credentials.R2Credentials
 	token, fromEnv, removed, err := askBootstrapToken(p, env)
 	if err != nil {
@@ -551,6 +553,9 @@ func (c *r2Creator) askLocation() error {
 // any of those. An interrupt ends it at once.
 func (c *r2Creator) createUntilVerified() (credentials.R2Credentials, error) {
 	for {
+		if c.creationConfirmed {
+			c.p.storageStage(storageDetails)
+		}
 		key, err := c.attempt()
 		if err == nil {
 			return key, nil
@@ -559,6 +564,7 @@ func (c *r2Creator) createUntilVerified() (credentials.R2Credentials, error) {
 			return credentials.R2Credentials{}, err
 		}
 		if errors.Is(err, errConfirmR2Creation) {
+			c.p.storageStage(storageDetails)
 			terminal.Println(c.p.out, "Account: "+c.account)
 			terminal.Println(c.p.out, "Bucket: "+c.bucket.Name)
 			location := "automatic"
@@ -753,7 +759,28 @@ func answerLost(err error) bool {
 // made that bucket.
 func (c *r2Creator) createBucket(ctx context.Context) error {
 	p := c.p
-	err := c.api.CreateBucket(ctx, c.account, c.bucket)
+	home, err := c.env.readHome()
+	if err != nil {
+		return err
+	}
+	if err = p.refuseUncertainCreation(home, setupresources.Receipt{Provider: setupresources.R2, Account: c.account, Bucket: c.bucket.Name, Jurisdiction: c.bucket.Jurisdiction, CreatedAt: c.env.now()}); err != nil {
+		return err
+	}
+	receipt, err := setupresources.Begin(home, setupresources.Receipt{Provider: setupresources.R2, Account: c.account, Bucket: c.bucket.Name, Jurisdiction: c.bucket.Jurisdiction, CreatedAt: c.env.now()})
+	if err != nil {
+		return err
+	}
+	p.rememberResourceRequest(receipt.ID)
+	err = c.api.CreateBucket(ctx, c.account, c.bucket)
+	if err == nil {
+		if receiptErr := setupresources.Finish(home, receipt, setupresources.Created); receiptErr != nil {
+			return receiptErr
+		}
+	} else if !answerLost(err) {
+		if receiptErr := setupresources.Finish(home, receipt, setupresources.Refused); receiptErr != nil {
+			return receiptErr
+		}
+	}
 	if err == nil {
 		c.bucketCreated = true
 		terminal.Println(p.out, p.style.okMark()+" Created bucket "+c.bucket.Name+".")
@@ -880,7 +907,11 @@ func (c *r2Creator) mintKey(ctx context.Context) (token cloudflare.Token, name s
 			slot.State = issuance.Deleted
 			slot.CleanupReason = "creation-refused"
 		}
-		_ = issuance.Save(home, slot)
+		if saveErr := issuance.Save(home, slot); saveErr != nil {
+			// Preserve the failed durability result while still revoking any token
+			// whose identifier came back without a usable secret.
+			err = errors.Join(err, saveErr)
+		}
 	} else {
 		slot.State = issuance.SecretIntent
 		if e = issuance.Save(home, slot); e != nil {
@@ -926,6 +957,7 @@ func (c *r2Creator) wait(ctx context.Context, d time.Duration) {
 // without a diagnosis.
 func (c *r2Creator) checkKey(ctx context.Context, key credentials.R2Credentials) error {
 	p := c.p
+	p.storageStage(storageVerification)
 	cfg := c.storageConfig()
 	if c.keyStorage != nil {
 		cfg = *c.keyStorage

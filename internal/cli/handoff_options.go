@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 type handoffConfigState struct {
@@ -24,11 +26,16 @@ func handoffConfig(home string, opts handoffOptions) (config.Config, bool, error
 }
 
 type handoffOptions struct {
-	config    *handoffConfigState
-	native    bool
-	sessionID string
-	project   string
-	harness   string
+	readCtx context.Context
+	// archiveStore retains the exact client bound to the query read view.
+	archiveStore storage.ObjectStore
+	selection    **handoffPickerSelection
+	config       *handoffConfigState
+	native       bool
+	sessionID    string
+	revision     string
+	project      string
+	harness      string
 	// allProjects searches and lists every project, not only the working
 	// directory's repository.
 	allProjects bool
@@ -50,6 +57,9 @@ type handoffOptions struct {
 	newWindow bool
 	// agentArgs are the arguments after `--`, given to the launched agent.
 	agentArgs []string
+	// preparing stops the "Preparing handoff…" spinner a run started before
+	// reading the chosen session; it may be called more than once.
+	preparing func()
 }
 
 type handoffDestination string
@@ -62,10 +72,11 @@ const (
 
 func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDependencies, interactive bool) (handoffOptions, bool) {
 	fs := env.newCommandFlags("handoff", stderr)
+	revision := fs.String("revision", "", "read this exact parent native revision ID (requires SESSION_ID and --source archive)")
 	latest := fs.Bool("latest", false, "the most recent session for the project, by path or by repository (remote origin)")
 	project := fs.String("project", "", "the project to pick from and search, as a directory or a project name, and the directory --latest searches (default: the current directory's repository)")
 	allProjects := fs.Bool("all-projects", false, "pick from and search every project, not only the current repository's")
-	harness := fs.String("harness", "", "only sessions from this harness (claude, codex, cursor)")
+	harness := fs.String("harness", "", "only sessions from this harness (claude, codex, cursor, muse)")
 	file := fs.String("file", "", "render this native transcript file directly (requires --harness)")
 	source := fs.String("source", "auto", "where session content comes from: auto, local, or archive")
 	maxBytes := fs.Int("max-bytes", archive.DefaultHandoffMaxBytes, "output budget in bytes; 0 means no limit")
@@ -88,7 +99,10 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	if !ok {
 		return handoffOptions{}, false
 	}
-	opts := handoffOptions{sessionID: sessionID, project: *project, allProjects: *allProjects, harness: *harness,
+	if checkNonemptyRevisionFlag(fs, *revision) != 0 {
+		return handoffOptions{}, false
+	}
+	opts := handoffOptions{revision: *revision, sessionID: sessionID, project: *project, allProjects: *allProjects, harness: *harness,
 		file: *file, source: *source, maxBytes: *maxBytes, format: *format, to: *to,
 		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble, here: *here, newWindow: *newWindow, agentArgs: agentArgs,
 		worktree: *worktree, branch: *branch}
@@ -135,6 +149,8 @@ func validateHandoffFlagCombinations(opts handoffOptions, interactive bool) stri
 		}
 	}
 	switch {
+	case invalidHandoffRevisionSelection(opts):
+		return "--revision requires SESSION_ID and --source archive; it cannot read latest or local transcripts"
 	// An argument of only spaces names nothing, and must not stand for the
 	// no selector that lets --to take the calling agent's own session.
 	case opts.sessionID != "" && strings.TrimSpace(opts.sessionID) == "":
@@ -146,7 +162,7 @@ func validateHandoffFlagCombinations(opts handoffOptions, interactive bool) stri
 	case selectors > 1:
 		return "a session ID, --latest, and --file are mutually exclusive"
 	case opts.file != "" && opts.harness == "":
-		return "--file requires --harness (claude, codex, or cursor)"
+		return "--file requires --harness (claude, codex, cursor, or muse)"
 	case opts.project != "" && opts.allProjects:
 		return "--project and --all-projects cannot be used together: --project picks one project, --all-projects searches every project"
 	case opts.project != "" && opts.file != "":
@@ -226,4 +242,8 @@ func (e Env) loadHandoffConfig(home string) (config.Config, bool, error) {
 		return e.handoffConfigLoad(home)
 	}
 	return config.LoadWithCatalog(home, e.agentRegistry().Catalog())
+}
+
+func invalidHandoffRevisionSelection(opts handoffOptions) bool {
+	return opts.revision != "" && (opts.sessionID == "" || opts.latest || opts.file != "" || opts.source != "archive")
 }

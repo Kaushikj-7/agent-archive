@@ -14,10 +14,15 @@ import (
 // its subagent sessions rolled in. Everything the engine aggregates is
 // computed here once.
 type unit struct {
-	root     *archive.Metadata
-	children []*archive.Metadata
-	harness  string
-	project  string
+	root          *archive.Metadata
+	capturedAt    time.Time
+	sessionID     string
+	messages      int
+	compacted     bool
+	subagentCount int
+	children      []*archive.Metadata
+	harness       string
+	project       string
 
 	// day is the root's captured_at day as a day number in the window's
 	// zone (see dayNumber); month is year*12 + month - 1.
@@ -26,11 +31,13 @@ type unit struct {
 
 	// perModel is the unit's tokens by normalized model id, sorted by id,
 	// each priced; tokens and cost are their sums. Subagents are included.
-	perModel    []modelUse
-	tokens      tokenSet
-	hasData     bool
-	approximate bool
-	cost        costAcc
+	perModel            []modelUse
+	tokens              tokenSet
+	hasData             bool
+	approximate         bool
+	cost                costAcc
+	observations        archive.ObservationAccumulator
+	observationSessions int
 
 	// rootTokens is the root's own tokens, without its subagents.
 	rootTokens  tokenSet
@@ -51,9 +58,11 @@ type unit struct {
 }
 
 type modelUse struct {
-	id   string
-	set  tokenSet
-	cost costAcc
+	id     string
+	set    tokenSet
+	cost   costAcc
+	label  string
+	priced bool
 }
 
 // buildUnits groups metadata into units, ordered by the root's captured_at
@@ -86,8 +95,10 @@ func buildUnits(sessions []archive.Metadata, loc *time.Location, prices priceInd
 			u.children = append(u.children, m)
 		}
 	}
+	lookup := &modelLookup{prices: prices, normalized: map[string]string{}, entries: map[string]modelPriceLookup{}}
+	scratch := unitScratch{member: map[string]tokenSet{}, merged: map[string]tokenSet{}}
 	for _, u := range ordered {
-		u.finish(loc, prices)
+		u.finish(loc, lookup, &scratch)
 	}
 	sort.SliceStable(ordered, func(i, j int) bool { return metadataBefore(ordered[i].root, ordered[j].root) })
 	return ordered
@@ -200,13 +211,24 @@ func (r *rootResolver) resolve(m *archive.Metadata) *archive.Metadata {
 	return r.done[m].root
 }
 
-func (u *unit) members() []*archive.Metadata {
-	return append([]*archive.Metadata{u.root}, u.children...)
+// unitScratch belongs to one buildUnits call. Units copy its values into their
+// own model slices before the scratch is reused for another unit.
+type unitScratch struct {
+	member map[string]tokenSet
+	merged map[string]tokenSet
+	ids    []string
 }
 
 // finish computes everything derived from the unit's members.
-func (u *unit) finish(loc *time.Location, prices priceIndex) {
+func (u *unit) finish(loc *time.Location, lookup *modelLookup, scratch *unitScratch) {
 	root := u.root
+	u.capturedAt = root.CapturedAt
+	u.sessionID = root.SessionID
+	if root.Counts.Messages != nil {
+		u.messages = *root.Counts.Messages
+	}
+	u.compacted = root.Counts.Compactions != nil && *root.Counts.Compactions > 0
+	u.subagentCount = len(u.children)
 	u.harness = archive.CanonicalHarness(root.Harness.Name)
 	u.project = strings.TrimSpace(root.ProjectName)
 	captured := root.CapturedAt.In(loc)
@@ -218,11 +240,22 @@ func (u *unit) finish(loc *time.Location, prices priceIndex) {
 		turns := value(root.Counts.Turns)
 		u.prompts = &turns
 	}
-	u.skills = map[string]struct{}{}
-	u.mcp = map[string]int64{}
-	merged := map[string]tokenSet{}
-	for i, m := range u.members() {
-		byModel, has, approximate := memberUsage(m)
+	merged := scratch.merged
+	clear(merged)
+	for i := 0; i <= len(u.children); i++ {
+		m := root
+		if i > 0 {
+			m = u.children[i-1]
+		}
+		u.observations.AddSummary(m.TokenObservations)
+		if m.TokenObservations.HasObservations() {
+			u.observationSessions++
+		}
+		has, approximate := memberUsage(m, lookup.normalize, scratch.member)
+		if !has && m.TokenObservations.HasObservations() {
+			u.cost.excluded++
+		}
+		byModel := scratch.member
 		var memberTotal tokenSet
 		for id, set := range byModel {
 			all := merged[id]
@@ -241,21 +274,19 @@ func (u *unit) finish(loc *time.Location, prices priceIndex) {
 				u.childTokens = satAdd(u.childTokens, memberTotal.total())
 			}
 		}
-		u.addToolErrors(m)
-		for _, skill := range m.SkillsUsed {
-			if name := strings.TrimSpace(skill.Name); name != "" {
-				u.skills[name] = struct{}{}
-			}
-		}
-		for _, call := range m.MCPCalls {
-			if name := strings.TrimSpace(call.Name); name != "" && call.Count > 0 {
-				u.mcp[name] = satAdd(u.mcp[name], int64(call.Count))
-			}
-		}
+		u.addActivity(m)
 	}
-	for _, id := range sortedModels(merged) {
-		use := modelUse{id: id, set: merged[id]}
-		if usd, ok := prices.price(id, use.set); ok {
+	scratch.ids = scratch.ids[:0]
+	for id := range merged {
+		scratch.ids = append(scratch.ids, id)
+	}
+	sort.Strings(scratch.ids)
+	u.perModel = make([]modelUse, 0, len(scratch.ids))
+	for _, id := range scratch.ids {
+		entry := lookup.price(id)
+		use := modelUse{id: id, set: merged[id], label: entry.label, priced: entry.priced}
+		if entry.priced {
+			usd := entry.entry.cost(use.set)
 			use.cost = costAcc{usd: usd, priced: true, approximate: u.approximate}
 		} else {
 			use.cost = costAcc{unpriced: use.set.total(), approximate: u.approximate}
@@ -263,6 +294,27 @@ func (u *unit) finish(loc *time.Location, prices priceIndex) {
 		u.perModel = append(u.perModel, use)
 		u.tokens.add(use.set)
 		u.cost.add(use.cost)
+	}
+}
+
+// addActivity copies tool, skill and MCP totals from one member.
+func (u *unit) addActivity(m *archive.Metadata) {
+	u.addToolErrors(m)
+	for _, skill := range m.SkillsUsed {
+		if name := strings.TrimSpace(skill.Name); name != "" {
+			if u.skills == nil {
+				u.skills = map[string]struct{}{}
+			}
+			u.skills[name] = struct{}{}
+		}
+	}
+	for _, call := range m.MCPCalls {
+		if name := strings.TrimSpace(call.Name); name != "" && call.Count > 0 {
+			if u.mcp == nil {
+				u.mcp = map[string]int64{}
+			}
+			u.mcp[name] = satAdd(u.mcp[name], int64(call.Count))
+		}
 	}
 }
 

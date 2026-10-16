@@ -34,15 +34,16 @@ type publicationAccountingContext struct {
 }
 
 type publicationAccounting struct {
-	mu        sync.Mutex
-	ctx       context.Context
-	budget    *agentapi.NativeReadBudget
-	seeded    bool
-	seedValid bool
-	closed    bool
-	binding   publicationAccountingContext
-	facts     []publicationAccountingFact
-	charge    int64
+	mu          sync.Mutex
+	ctx         context.Context
+	budget      *agentapi.NativeReadBudget
+	reservation *agentapi.NativeReadReservation
+	seeded      bool
+	seedValid   bool
+	closed      bool
+	binding     publicationAccountingContext
+	facts       []publicationAccountingFact
+	charge      int64
 }
 
 // WithPublicationAccounting owns accounting facts only during the existing
@@ -50,10 +51,11 @@ type publicationAccounting struct {
 func (s *Store) WithPublicationAccounting(ctx context.Context, budget *agentapi.NativeReadBudget) (*Store, func()) {
 	scoped := *s
 	scoped.publicationAccounting = nil
-	if budget == nil || !budget.Reserve(accountingFactBytes) {
+	reservation := budget.Reservation()
+	if budget == nil || !reservation.Reserve(accountingFactBytes) {
 		return &scoped, func() {}
 	}
-	a := &publicationAccounting{ctx: ctx, budget: budget, charge: accountingFactBytes}
+	a := &publicationAccounting{ctx: ctx, budget: budget, reservation: reservation, charge: accountingFactBytes}
 	scoped.publicationAccounting = a
 	var once sync.Once
 	return &scoped, func() {
@@ -62,7 +64,7 @@ func (s *Store) WithPublicationAccounting(ctx context.Context, budget *agentapi.
 			defer a.mu.Unlock()
 			a.closed = true
 			a.facts = nil
-			a.budget.Release(a.charge)
+			a.reservation.Release(a.charge)
 			a.charge = 0
 		})
 	}
@@ -124,15 +126,15 @@ func (a *publicationAccounting) install(f publicationAccountingFact, binding pub
 			return true
 		}
 	}
-	if len(a.facts) >= durableEntryLimit || !a.budget.Reserve(accountingFactBytes) {
+	if len(a.facts) >= durableEntryLimit || !a.reservation.Reserve(accountingFactBytes) {
 		return false
 	}
 	a.charge += accountingFactBytes
 	if len(a.facts) == cap(a.facts) {
 		capacity := min(durableEntryLimit, max(16, cap(a.facts)*2))
 		allocation := int64(capacity) * 128
-		if !a.budget.Reserve(allocation) {
-			a.budget.Release(accountingFactBytes)
+		if !a.reservation.Reserve(allocation) {
+			a.reservation.Release(accountingFactBytes)
 			a.charge -= accountingFactBytes
 			return false
 		}
@@ -140,7 +142,7 @@ func (a *publicationAccounting) install(f publicationAccountingFact, binding pub
 		copy(next, a.facts)
 		old := int64(cap(a.facts)) * 128
 		a.facts = next
-		a.budget.Release(old)
+		a.reservation.Release(old)
 		a.charge += allocation - old
 	}
 	a.facts = append(a.facts, f)
@@ -165,18 +167,22 @@ func (s *Store) accountingHash(home *local.RootedHome, path string, expected os.
 		return sum, errStateBudget
 	}
 	overhead := 1024 + 4*pathBytes
-	if s.resourceBudget == nil || !s.resourceBudget.Reserve(overhead) {
+	if s.resourceBudget == nil {
 		return sum, errStateBudget
 	}
-	defer s.resourceBudget.Release(overhead)
+	reservation := s.resourceBudget.Reservation()
+	if !reservation.Reserve(overhead) {
+		return sum, errStateBudget
+	}
+	defer reservation.Release(overhead)
 	scratch := min(expected.Size(), int64(128<<10))
-	if !s.resourceBudget.Reserve(scratch) {
+	if !reservation.Reserve(scratch) {
 		scratch = min(expected.Size(), int64(32<<10))
-		if !s.resourceBudget.Reserve(scratch) {
+		if !reservation.Reserve(scratch) {
 			return sum, errStateBudget
 		}
 	}
-	defer s.resourceBudget.Release(scratch)
+	defer reservation.Release(scratch)
 	buffer := make([]byte, scratch)
 	f, err := home.Root.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
@@ -279,12 +285,12 @@ func (s *Store) seedPublicationAccounting(a *publicationAccounting, id string) (
 	if err != nil || cfgInfo.Size() < 0 || cfgInfo.Size() > durableStorageQuota/2 {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	if !a.budget.Reserve(2 * cfgInfo.Size()) {
+	if !a.reservation.Reserve(2 * cfgInfo.Size()) {
 		return errStateBudget
 	}
 	cfg, found, observedSHA, e := config.LoadRootedObserved(home)
-	a.budget.Release(2 * cfgInfo.Size())
-	if e != nil || !found || cfg.SchemaVersion != 8 || !cfg.PublicationCompositionProtection || !cfg.DurableStorageProtection {
+	a.reservation.Release(2 * cfgInfo.Size())
+	if e != nil || !found || cfg.SchemaVersion != 17 || !cfg.SourceSetPublicationProtection || !cfg.DurableStorageProtection {
 		return errors.Join(ErrDurableStorageRecovery, e)
 	}
 	binding, err := s.accountingBinding(home)
@@ -303,10 +309,10 @@ func (s *Store) seedPublicationAccounting(a *publicationAccounting, id string) (
 	}
 	defer func() { err = errors.Join(err, s.closePublicationFile(dir)) }()
 	const enumeration = 64 << 10
-	if !a.budget.Reserve(enumeration) {
+	if !a.reservation.Reserve(enumeration) {
 		return errStateBudget
 	}
-	defer a.budget.Release(enumeration)
+	defer a.reservation.Release(enumeration)
 	remaining := durableEntryLimit
 	for {
 		if err = s.durableContext().Err(); err != nil {
@@ -394,10 +400,10 @@ func (s *Store) savedAccountingCandidate(g config.DurableStorageGuard, path stri
 	if a == nil {
 		return nil, binding, func() {}, nil
 	}
-	if !a.budget.Reserve(accountingFactBytes) {
+	if !a.reservation.Reserve(accountingFactBytes) {
 		return nil, binding, func() {}, errStateBudget
 	}
-	release = func() { a.budget.Release(accountingFactBytes) }
+	release = func() { a.reservation.Release(accountingFactBytes) }
 	home, err := g.RootedHome(s.home)
 	if err != nil {
 		return nil, binding, release, err
@@ -447,10 +453,10 @@ func (s *Store) readPublishedOwned(path string, p *publishedState) (found bool, 
 }
 
 func (s *Store) readCurrentPublished(path string, p *publishedState, a *publicationAccounting, binding publicationAccountingContext) (err error) {
-	if !a.budget.Reserve(accountingFactBytes) {
+	if !a.reservation.Reserve(accountingFactBytes) {
 		return errStateBudget
 	}
-	defer a.budget.Release(accountingFactBytes)
+	defer a.reservation.Release(accountingFactBytes)
 	home, err := local.OpenRootedHome(s.home)
 	if err != nil {
 		return err
@@ -513,20 +519,20 @@ func (s *Store) seedPublishedAccountingPeer(a *publicationAccounting, home *loca
 	if strings.HasPrefix(name, ".pending-") || !strings.HasSuffix(name, ".json") || !safeFileComponent(strings.TrimSuffix(name, ".json")) {
 		return
 	}
-	if !a.budget.Reserve(accountingFactBytes) {
+	if !a.reservation.Reserve(accountingFactBytes) {
 		return
 	}
 	path := filepath.Join("published", name)
 	info, e := home.Root.Lstat(path)
 	if e != nil {
-		a.budget.Release(accountingFactBytes)
+		a.reservation.Release(accountingFactBytes)
 		return
 	}
 	mode, sum, e := s.readPublishedClassification(s.durableContext(), home, path, info)
 	if e != nil {
-		a.budget.Release(accountingFactBytes)
+		a.reservation.Release(accountingFactBytes)
 		return
 	}
 	a.install(publicationAccountingFact{path: path, stamp: info, sha: sum, mode: mode}, binding)
-	a.budget.Release(accountingFactBytes)
+	a.reservation.Release(accountingFactBytes)
 }

@@ -14,14 +14,17 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // checkpoint calls Env.backfillCheckpoint, a test's stand-in for a crash at
@@ -67,7 +70,7 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 		terminal.Printf(stderr, "agent-archive: backfill: "+format+"\n", args...)
 		return 1
 	}
-	reg, err := registerImportLocked(env, stdout, stderr, home, plan, fingerprint, backfillCollectorWait)
+	reg, err := registerImportLocked(env, stdout, stderr, home, plan, fingerprint, backfillCollectorWait, !background)
 	defer reg.release()
 	if errors.Is(err, errCollectorBusy) {
 		return fail("%v; run backfill again. Nothing was changed", err)
@@ -81,6 +84,7 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 		return fail("%v", err)
 	}
 	printRegistered(reg.out, reg.batch.ID, reg.added, reg.result)
+	printChangedAtAdmission(reg.out, reg.changed, "backfill again with the same options")
 
 	if background {
 		terminal.Println(reg.out, "The background collector uploads them. Run agent-archive status to follow it.")
@@ -91,7 +95,7 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	if err := env.checkpoint("uploading"); err != nil {
 		return fail("%v", err)
 	}
-	return uploadImport(env, reg.out, stderr, home, reg.batch.ID, plan, reg.interrupt, &reg.activity)
+	return uploadImport(env, reg.out, stderr, home, reg.batch.ID, reg.plan, reg.interrupt, &reg.activity)
 }
 
 // registeredImport is a committed, completely registered import, with the
@@ -100,6 +104,11 @@ type registeredImport struct {
 	batch  backfill.Batch
 	added  int
 	result backfill.RegistrationResult
+	// plan is what was imported: the confirmed plan without the sessions
+	// whose evidence changed before the configuration was committed, which
+	// changed counts (backfill.Plan.AdmitRecovery).
+	plan    backfill.Plan
+	changed int
 	// out is the caller's writer, serialized against the watch's message.
 	out       io.Writer
 	interrupt *signalWatch
@@ -110,6 +119,7 @@ type registeredImport struct {
 // release ends the watch and drops the locks registration held. It is
 // called once, whatever registerImportLocked returned.
 func (r *registeredImport) release() {
+	defer r.batch.CloseStagedResults()
 	for i := len(r.releases) - 1; i >= 0; i-- {
 		r.releases[i]()
 	}
@@ -153,8 +163,10 @@ func (e *importRegistrationError) Unwrap() error { return e.err }
 // background collector. It waits up to collectorWait for a collector pass
 // to finish, and returns errCollectorBusy when one is still running. The
 // returned import's release is always called.
-func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan backfill.Plan, fingerprint string, collectorWait time.Duration) (*registeredImport, error) {
-	reg := &registeredImport{out: stdout}
+func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan backfill.Plan, fingerprint string, collectorWait time.Duration, capacityUploads bool) (reg *registeredImport, resultErr error) {
+	span := trace.Start("backfill admission and registration")
+	defer span.End()
+	reg = &registeredImport{out: stdout}
 	confirmationCtx, stopConfirmation := importConfirmationContext(env, stderr, plan)
 	stopConfirmation = releaseOnce(stopConfirmation)
 	reg.releases = append(reg.releases, stopConfirmation)
@@ -176,11 +188,13 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	// deadline only after that wait, retaining signal cancellation throughout.
 	confirmationCtx, cancelConfirmation := context.WithTimeout(confirmationCtx, 30*time.Second)
 	reg.releases = append(reg.releases, cancelConfirmation)
-	batch, admittedAt, added, err := commitImport(confirmationCtx, env, home, plan, fingerprint)
+	commit, err := commitImport(confirmationCtx, env, home, plan, fingerprint)
 	if err != nil {
 		return reg, err
 	}
-	reg.added = added
+	batch, admittedAt, plan := commit.batch, commit.admittedAt, commit.plan
+	defer func() { reg.batch = batch }()
+	reg.added, reg.plan, reg.changed = commit.added, commit.plan, commit.changed
 	stopConfirmation()
 	if err := env.checkpoint("committed"); err != nil {
 		return reg, err
@@ -206,7 +220,37 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].StartedAt.Before(candidates[j].StartedAt) })
 	stopRegister := startActivity(stdout, "Registering sessions…")
 	reg.activity.set(stopRegister)
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		return reg, err
+	}
+	lookup, readHomes, err := passCodexRollouts(registrationCtx, state.OpenReadOnly(home), cfg, env)
+	if err != nil {
+		return reg, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, lookup.Close()) }()
+	// The confirmation's lookup is closed with its plan. Rebuild the trusted
+	// census before reading qualified selected history in this fresh pass.
+	if err := prepareImportLookup(registrationCtx, lookup, candidates); err != nil {
+		return reg, err
+	}
+	var onCapacity func(context.Context) error
+	if capacityUploads {
+		onCapacity = importCapacityDrain(env, stdout, home, store, lookup, readHomes, interrupt.requested)
+	}
 	registration := backfill.Registration{
+		HistoricalSourcePolicy: func(current config.Config) func(string) bool {
+			return backfill.NewHistoricalSourcePolicy(env.backfillEnvironment(plan.Home, current), current, plan.Filters)
+		},
+		OnCapacity:     onCapacity,
+		DurableSources: true, CodexRollouts: lookup, ConfiguredCodexHomes: readHomes,
+		AfterStage: func(id string) error {
+			batch.StagedSessions = append(batch.StagedSessions, id)
+			if err := backfill.SaveBatch(home, batch); err != nil {
+				return err
+			}
+			return env.checkpoint("staged")
+		},
 		Context: registrationCtx,
 		Sources: env.agentRegistry(),
 		Home:    home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
@@ -251,6 +295,8 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 // completeBatch rebuilds the batch's sessions from the registrations, which
 // are the source of truth, and marks it complete.
 func completeBatch(env Env, home string, store *state.Store, batch *backfill.Batch) error {
+	span := trace.Start("backfill batch completion")
+	defer span.End()
 	if err := batch.Reconcile(store); err != nil {
 		return err
 	}
@@ -294,7 +340,17 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 		return nil
 	}
 	last = latest
-	if err := completeBatch(env, home, state.OpenReadOnly(home), &last); err != nil {
+	defer last.CloseStagedResults()
+	store, err := state.Open(home)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := store.ResumeAllImportAdmissions(ctx); err != nil {
+		return err
+	}
+	if err := completeBatch(env, home, store, &last); err != nil {
 		return err
 	}
 	terminal.Printf(stdout, "\nImport %s, which was interrupted, is complete: %s registered.\n", last.ID, countNoun(len(last.Sessions), "session"))
@@ -316,6 +372,9 @@ func underlyingWriter(w io.Writer) io.Writer {
 	}
 	if l, ok := w.(*lockedWriter); ok {
 		return underlyingWriter(l.w)
+	}
+	if p, ok := w.(*pausingWriter); ok {
+		return underlyingWriter(p.w)
 	}
 	return w
 }
@@ -363,17 +422,38 @@ func importConfirmationContext(env Env, stderr io.Writer, plan backfill.Plan) (c
 	return interruptibleContext(env, stderr)
 }
 
-// commitImport is step 4. With collector.lock held, it takes hooks.lock,
-// rereads the configuration, and checks that it is the one the plan was made
-// from. It then stamps the admission time and writes the batch file, which
-// records every configuration change (backfill.ConfigChanges), then the new
-// projects, apps, and retention. The batch file is written first,
-// so a crash in between leaves a batch that names projects it did not add,
-// never projects added without a record.
-func commitImport(ctx context.Context, env Env, home string, plan backfill.Plan, fingerprint string) (batch backfill.Batch, admittedAt time.Time, added int, err error) {
-	if err := plan.CheckRecovery(ctx); err != nil {
-		return batch, admittedAt, 0, err
+// committedImport is a committed configuration change and its batch file.
+// plan is what the import admits: the confirmed plan without the sessions
+// whose evidence changed since it was made, which changed counts.
+type committedImport struct {
+	batch      backfill.Batch
+	admittedAt time.Time
+	added      int
+	plan       backfill.Plan
+	changed    int
+}
+
+// commitImport is step 4. It renews recovered ownership first, outside
+// hooks.lock (backfill.Plan.AdmitRecovery): a session whose evidence changed
+// is left out rather than refusing the import. With collector.lock held, it
+// then takes hooks.lock, rereads the configuration, and checks that it is the
+// one the plan was made from. It then stamps the admission time and writes
+// the batch file, which records every configuration change
+// (backfill.ConfigChanges), then the new projects, apps, and retention, for
+// the sessions left. The batch file is written first, so a crash in between
+// leaves a batch that names projects it did not add, never projects added
+// without a record.
+func commitImport(ctx context.Context, env Env, home string, confirmed backfill.Plan, fingerprint string) (committedImport, error) {
+	plan, changed, err := confirmed.AdmitRecovery(ctx)
+	if err != nil {
+		return committedImport{}, err
 	}
+	batch, admittedAt, added, err := commitAdmitted(ctx, env, home, plan, fingerprint)
+	return committedImport{batch: batch, admittedAt: admittedAt, added: added, plan: plan, changed: changed}, err
+}
+
+// commitAdmitted is commitImport for the admitted plan.
+func commitAdmitted(ctx context.Context, env Env, home string, plan backfill.Plan, fingerprint string) (batch backfill.Batch, admittedAt time.Time, added int, err error) {
 	releaseHooks, err := local.NamedLockWait(home, "hooks.lock", backfillHooksWait)
 	if err != nil {
 		return batch, admittedAt, 0, errors.New("capture hooks are busy; run backfill again. Nothing was changed")
@@ -409,6 +489,7 @@ func commitImport(ctx context.Context, env Env, home string, plan backfill.Plan,
 	}
 	previous := cfg
 	previous.Archive.Projects = slices.Clone(cfg.Archive.Projects)
+	previous.HistoricalProjects = slices.Clone(cfg.HistoricalProjects)
 	changes, err := backfill.ApplyToConfig(&cfg, plan, admittedAt)
 	if err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
@@ -442,6 +523,11 @@ func printRegistered(out io.Writer, batchID string, added int, result backfill.R
 		line += " and " + countNoun(n, "subagent transcript")
 	}
 	terminal.Printf(out, "%s as import %s.\n", line, batchID)
+	printRegistrationSkips(out, result)
+}
+
+// printRegistrationSkips keeps non-admission outcomes visible to every import caller.
+func printRegistrationSkips(out io.Writer, result backfill.RegistrationResult) {
 	var skipped []string
 	if n := result.AlreadyArchived; n > 0 {
 		skipped = append(skipped, fmt.Sprintf("%d already in the archive", n))
@@ -466,6 +552,20 @@ func printRegistered(out io.Writer, batchID string, added int, result backfill.R
 	}
 }
 
+// printChangedAtAdmission says how many confirmed sessions were left out
+// because their project or source evidence changed after the plan was made,
+// and what imports them (retry, already styled).
+func printChangedAtAdmission(out io.Writer, changed int, retry string) {
+	if changed == 0 {
+		return
+	}
+	them := "them"
+	if changed == 1 {
+		them = "it"
+	}
+	terminal.Printf(out, "Not imported: %s whose project or source evidence changed after the plan was made. Run %s to import %s.\n", countNoun(changed, "session"), retry, them)
+}
+
 func printImportHints(out io.Writer, batchID string) {
 	s := styleFor(underlyingWriter(out))
 	terminal.Println(out, "See them with "+s.cmd("agent-archive list --imported")+".")
@@ -481,6 +581,8 @@ const uploadBusyGiveUp = 2 * time.Minute
 // ends the pass after the session in flight; what is left is uploaded by
 // the background collector.
 func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan backfill.Plan, interrupt *signalWatch, activity *activityStop) int {
+	span := trace.Start("backfill collection and upload")
+	defer span.End()
 	sizes := map[agentmeta.SessionKey]int64{}
 	for _, c := range plan.Imported() {
 		size := c.Bytes
@@ -511,7 +613,8 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 	lastProgress := time.Now()
 	for len(u.pending) > 0 && !stop() {
 		before := len(u.pending)
-		_, err := runPass(env, false, passOptions{progress: u.observe, stop: stop})
+		result, err := runPass(env, false, passOptions{progress: u.observe, stop: stop})
+		result.CloseStagedResults()
 		u.stopFinishing()
 		if refreshErr := u.refresh(); refreshErr != nil && err == nil {
 			err = refreshErr
@@ -779,8 +882,14 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 // with what is left; interrupted, nothing registered, removed (none of its
 // sessions is registered any more), how many are waiting, or uploaded. Only
 // the latest import can still be finished by running backfill again.
+//
+// Waiting counts the pending sessions not in the archive yet. A pending
+// session already published is counted apart, after them: rechecking when
+// it owes only a re-scan (state.Outstanding's Rechecking), updating when it
+// has newer work to upload.
 func batchUploadState(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, b backfill.Batch, latest bool) (string, error) {
-	registered, subagents, waiting := 0, 0, 0
+	registered, subagents, waiting, rechecking, updating := 0, 0, 0, 0, 0
+	staged, verified := 0, 0
 	for _, reg := range regs {
 		if !reg.InBatch(b.ID) {
 			continue
@@ -790,11 +899,27 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 			continue
 		}
 		registered++
-		pending, err := importPending(store, cfg, reg)
+		if reg.StagedImportSHA256 != "" {
+			staged++
+			summary, _, err := store.LoadPublishedSummary(reg.ArchiveSessionID)
+			if err != nil {
+				return "", err
+			}
+			if summary.Published {
+				verified++
+			}
+		}
+		owed, err := importOutstanding(store, cfg, reg)
 		if err != nil {
 			return "", err
 		}
-		if pending {
+		switch {
+		case !owed.Pending():
+		case owed.Rechecking():
+			rechecking++
+		case owed.Published:
+			updating++
+		default:
 			waiting++
 		}
 	}
@@ -817,6 +942,8 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 		return "undone", nil
 	}
 	switch {
+	case b.CompletedAt == nil && latest && len(b.StagedSessions) > 0:
+		return fmt.Sprintf("interrupted; %d durably staged; %d registered; %d remotely verified; run agent-archive backfill with the same options to finish", len(b.StagedSessions), registered, verified), nil
 	case b.CompletedAt == nil && latest:
 		return fmt.Sprintf("interrupted; %d registered; run agent-archive backfill with the same options to finish", registered), nil
 	case b.CompletedAt == nil:
@@ -825,8 +952,100 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 		return "nothing registered", nil
 	case registered == 0:
 		return "removed", nil
-	case waiting > 0:
-		return fmt.Sprintf("%d waiting", waiting), nil
 	}
-	return "uploaded", nil
+	return batchUploadSummary(registered, staged, verified, waiting, rechecking, updating), nil
+}
+
+// batchUploadSummary keeps first-publication progress separate from later work.
+func batchUploadSummary(registered, staged, verified, waiting, rechecking, updating int) string {
+	upload := "uploaded"
+	if waiting > 0 {
+		if staged > 0 {
+			upload = fmt.Sprintf("%d registered; %d durably staged; %d remotely verified; %d waiting", registered, staged, verified, waiting)
+		} else {
+			upload = fmt.Sprintf("%d waiting", waiting)
+		}
+	} else if staged > 0 {
+		upload = fmt.Sprintf("uploaded; %d remotely verified", verified)
+	}
+	if rechecking > 0 {
+		upload += fmt.Sprintf(" · %d rechecking", rechecking)
+	}
+	if updating > 0 {
+		upload += fmt.Sprintf(" · %d updating", updating)
+	}
+	return upload
+}
+
+func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.Store, lookup agentapi.CodexRolloutLookup, readHomes []string, stop func() bool) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if trace.Enabled() {
+			started := time.Now()
+			defer func() {
+				trace.Add(trace.CapacityDrainMicroseconds, time.Since(started).Microseconds())
+				trace.Add(trace.CapacityDrainPasses, 1)
+			}()
+		}
+		current, found, err := config.Load(home)
+		if err != nil || !found {
+			return errors.Join(state.ErrDurableStorageRecovery, err)
+		}
+		if current.Paused {
+			return errPaused
+		}
+		remote, err := env.openStoreContext(ctx, current)
+		if err != nil {
+			return err
+		}
+		result, err := collector.Run(ctx, store, remote, collector.Options{Sources: env.agentRegistry(), Parsers: parsersFor(env), Decoders: env.agentRegistry(), MachineID: current.MachineID, Now: env.Now, AcceptSession: current.AcceptSession, HistoricalProjectLabel: current.HistoricalProjectLabel, SkillEvidence: current.EffectiveSkillEvidence(), RequireSkillUse: current.RequireSkillUse, CursorDatabase: env.cursorDatabase(), CodexRollouts: lookup, ConfiguredCodexHomes: readHomes, NativeRoots: current.NativeRoots, RepoKey: env.repoKey, Stop: stop})
+		defer result.CloseStagedResults()
+		return reportImportCapacityDrain(stdout, result, err)
+	}
+}
+
+// reportImportCapacityDrain preserves owner failures even when collection's
+// top-level result is nil. Actual publication permits retry, never all-success.
+func reportImportCapacityDrain(stdout io.Writer, result collector.Result, collectErr error) error {
+	ids := make([]string, 0, len(result.Errors))
+	for id := range result.Errors {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var ownerErrs []error
+	for _, id := range ids {
+		ownerErr := fmt.Errorf("session %s: %w", id, result.Errors[id])
+		ownerErrs = append(ownerErrs, ownerErr)
+		terminal.Printf(stdout, "Staging capacity publication failed for %s: %v\n", id, result.Errors[id])
+	}
+	if len(result.Deferred) > 0 {
+		terminal.Printf(stdout, "Staging capacity publication deferred for %s; retained evidence remains pending.\n", countNoun(len(result.Deferred), "session"))
+	}
+	if collectErr != nil {
+		return errors.Join(collectErr, errors.Join(ownerErrs...))
+	}
+	if len(result.Published) == 0 {
+		return errors.Join(state.ErrDurableStorageCapacity, errors.Join(ownerErrs...))
+	}
+	terminal.Printf(stdout, "Freed staging capacity after remotely verifying %s; continuing admission.\n", countNoun(len(result.Published), "session"))
+	return nil
+}
+
+func prepareImportLookup(registrationCtx context.Context, lookup *discovery.CodexRolloutLookup, candidates []backfill.Candidate) error {
+	for _, candidate := range candidates {
+		if candidate.Harness == archive.HarnessCodex {
+			if _, err := lookup.Thread(registrationCtx, candidate.NativeSessionID); err != nil && registrationCtx.Err() != nil {
+				return err
+			}
+		}
+	}
+	for {
+		health, err := lookup.ObserveReadOnly(registrationCtx)
+		if err != nil {
+			return err
+		}
+		if !health.Pending {
+			break
+		}
+	}
+	return nil
 }

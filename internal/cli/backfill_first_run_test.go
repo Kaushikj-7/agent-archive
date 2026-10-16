@@ -118,7 +118,14 @@ func TestFirstRunImportConfirmationFailureDoesNotCommitProposedProjects(t *testi
 			defer cancel()
 			switch failure {
 			case confirmationStale:
+				// Every session the import would admit is stale: the live
+				// session is left to the partial-admission test.
 				*current = false
+				for i := range p.Candidates {
+					if p.Candidates[i].ProjectResolution == nil {
+						p.Candidates[i].Skip = backfill.SkipFilteredOut
+					}
+				}
 			case confirmationCancelled:
 				cancel()
 			case confirmationBatchSaved:
@@ -129,7 +136,7 @@ func TestFirstRunImportConfirmationFailureDoesNotCommitProposedProjects(t *testi
 					return nil
 				}
 			}
-			if _, _, _, err := commitImport(ctx, f.env, f.data, p, configFingerprint(cfg)); err == nil {
+			if _, err := commitImport(ctx, f.env, f.data, p, configFingerprint(cfg)); err == nil {
 				t.Fatal("confirmation unexpectedly succeeded")
 			}
 			after, _, err := config.Load(f.data)
@@ -192,5 +199,39 @@ func TestImportConfirmationValidationDeadlineStartsAfterCollectorWait(t *testing
 				}
 			})
 		})
+	}
+}
+
+// A recovered session whose evidence changed after the plan was confirmed is
+// left out and reported; the rest of the confirmed plan is imported.
+func TestFirstRunImportLeavesOutChangedRecoveryAndImportsTheRest(t *testing.T) {
+	f, p, cfg, current := firstRunImportPlan(t)
+	*current = false
+	var out, stderr bytes.Buffer
+	if code := importPlanLocked(f.env, &out, &stderr, f.data, p, configFingerprint(cfg), true); code != 0 {
+		t.Fatalf("%d %s", code, stderr.String())
+	}
+	if !strings.Contains(out.String(), "Registered 1 session") || !strings.Contains(out.String(), "Not imported: 1 session whose project or source evidence changed after the plan was made. Run backfill again with the same options to import it.") {
+		t.Fatalf("partial admission not reported:\n%s", out.String())
+	}
+	after, _, err := config.Load(f.data)
+	if err != nil || len(after.Archive.Projects) != 1 {
+		t.Fatal("live session's project was not added", after.Archive.Projects, err)
+	}
+	regs, err := state.OpenReadOnly(f.data).LoadRegistrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported := 0
+	for _, reg := range regs {
+		if reg.Imported() {
+			imported++
+			if reg.ProjectResolution != nil {
+				t.Fatal("changed recovery was registered", reg.ProjectResolution)
+			}
+		}
+	}
+	if imported != 1 {
+		t.Fatalf("%d imported registrations", imported)
 	}
 }

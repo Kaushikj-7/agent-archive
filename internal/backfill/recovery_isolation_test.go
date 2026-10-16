@@ -153,7 +153,7 @@ func TestRecoveryGapsBlockOnlyAffectedApps(t *testing.T) {
 			key := archive.RepoKey("https://example.test/acme/repo")
 			cfg.Archive.Projects = []archive.ProjectActivation{project(root, true)}
 			r := newResolver(env, cfg, Filters{})
-			r.inventoryCurrent = func(context.Context) bool { return !tc.changed }
+			r.inventoryAdded = func(context.Context) (addedSources, bool) { return addedSources{}, !tc.changed }
 			prepareRecoveryInventory(t.Context(), r, nil, tc.unread, tc.db)
 			for h, want := range map[harness]sourcefacts.RecoveryOutcome{harnessCodex: tc.codex, harnessCursor: tc.cursor} {
 				res := r.resolveSessionEvidence(t.Context(), h, gone, key)
@@ -323,6 +323,9 @@ func TestAppendedSourceRequiresSameGrownFile(t *testing.T) {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatal(err)
+		}
 		info, err := os.Lstat(path)
 		if err != nil {
 			t.Fatal(err)
@@ -365,25 +368,41 @@ func TestAppendedWitnessIsNonEligibleAndRenewsOnlyAppends(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := tr.env()
-	w := &work{t: &transcript{harness: harnessCodex, path: path, sourceInfo: info, cwd: root}, res: resolution{root: root, kind: ProjectKindRepository}, sourceChanged: true}
-	projects, witnesses, gaps := recoveryWitnessInventory(t.Context(), newResolver(env, config.Config{}, Filters{}), []*work{w})
+	inv := newRecoverySourceInventory(env)
+	seen := inv.environment()
+	if _, err := seen.Lstat(path); err != nil {
+		t.Fatal(err)
+	}
+	f, err := seen.open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(io.Discard, f); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	inv.ownContent(path, info)
+	w := &work{t: &transcript{harness: harnessCodex, path: path, sourceInfo: info, cwd: root}, res: resolution{root: root, kind: ProjectKindRepository}, sourceChanged: true, appendHeaderVerified: true}
+	projects, witnesses, gaps := recoveryWitnessInventory(newResolver(env, config.Config{}, Filters{}), []*work{w})
 	if len(gaps) != 0 || len(witnesses[root]) != 1 || len(projects) != 1 || projects[0].Included {
 		t.Fatalf("appended witness: %+v %+v %+v", projects, witnesses, gaps)
 	}
-	if w.stillAppendedOnly(env) {
+	if w.stillAppendedOnly(env, inv.current(t.Context())) {
 		t.Fatal("unchanged file renewed as appended")
 	}
 	tr.write("home/source.jsonl", "a\nb\n")
-	if !w.stillAppendedOnly(env) {
+	if !w.stillAppendedOnly(env, inv.current(t.Context())) {
 		t.Fatal("grown file did not renew")
 	}
 	tr.write("home/source.jsonl", "")
-	if w.stillAppendedOnly(env) {
+	if w.stillAppendedOnly(env, inv.current(t.Context())) {
 		t.Fatal("truncated file renewed")
 	}
 	w.sourceRewritten = true
 	tr.write("home/source.jsonl", "a\nb\nc\n")
-	if w.stillAppendedOnly(env) {
+	if w.stillAppendedOnly(env, inv.current(t.Context())) {
 		t.Fatal("rewritten source renewed")
 	}
 }
@@ -475,8 +494,25 @@ func TestAppendedWitnessRenewsAtAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := tr.env()
+	inv := newRecoverySourceInventory(env)
+	seen := inv.environment()
+	if _, err := seen.Lstat(path); err != nil {
+		t.Fatal(err)
+	}
+	f, err := seen.open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(io.Discard, f); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	inv.ownContent(path, info)
 	r := newResolver(env, config.Config{}, Filters{})
-	w := &work{t: &transcript{harness: harnessCodex, path: path, sourceInfo: info, cwd: root}, res: r.resolve(root)}
+	r.inventoryAdded = inv.added
+	w := &work{t: &transcript{harness: harnessCodex, path: path, sourceInfo: info, cwd: root}, res: r.resolve(root), appendHeaderVerified: true}
 	tr.write("home/source.jsonl", "a\nb\n")
 	w.checkSource(env)
 	if !w.appendedOnly() {
@@ -484,11 +520,11 @@ func TestAppendedWitnessRenewsAtAdmission(t *testing.T) {
 	}
 	witnesses := map[string][]*work{w.res.root: {w}}
 	tr.write("home/source.jsonl", "a\nb\nc\n")
-	if current, _ := recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}, true); !current {
+	if current, _, _ := recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}, true); !current {
 		t.Fatal("further append invalidated the appended witness")
 	}
 	tr.write("home/source.jsonl", "a\n")
-	if current, _ := recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}, true); current {
+	if current, _, _ := recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}, true); current {
 		t.Fatal("truncated witness renewed")
 	}
 }

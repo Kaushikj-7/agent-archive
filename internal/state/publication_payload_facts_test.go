@@ -151,3 +151,31 @@ func TestPublicationBudgetedFactoryMatchesDefaultAndOwnsScratch(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicationPayloadFactsKeepCapturedReservationOwner(t *testing.T) {
+	t.Parallel()
+	budget := agentapi.NewNativeReadBudget(32 << 10)
+	endFirst := budget.BeginScope(4096)
+	owner := budget.Reservation()
+	endFirst()
+	endSecond := budget.BeginScope(4096)
+	defer endSecond()
+	second := budget.Reservation()
+	if !second.Reserve(4096) {
+		t.Fatal("second scope setup failed")
+	}
+	defer second.Release(4096)
+	facts, release, err := newPayloadDigestFacts(t.Context(), budget, 1, owner)
+	if err != nil {
+		t.Fatalf("facts charged to full later scope: %v", err)
+	}
+	source := PublicationSource{Payload: PublicationPayload{Kind: PublicationInline, Inline: []byte("synthetic")}}
+	if got := payloadInlineSHA(source, facts); got != publicationSHA256(source.Payload.Inline) {
+		t.Fatal("wrong digest", got)
+	}
+	release()
+	release()
+	if second.Available() != 0 {
+		t.Fatal("delayed facts release credited later scope", second.Available())
+	}
+}

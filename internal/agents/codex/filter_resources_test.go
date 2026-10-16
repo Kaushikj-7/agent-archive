@@ -17,6 +17,7 @@ func TestNativeFilterLeasePressureReleaseAndIndependentProgress(t *testing.T) {
 	dir := t.TempDir()
 	ref, _ := historyFile(t, dir, threadA, threadA, 0, nil, strings.Repeat("ordinary visible text ", 100))
 	budget := agentapi.NewNativeReadBudget(2 << 20)
+	reservation := budget.Reservation()
 	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{ReadBudget: budget})
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +28,7 @@ func TestNativeFilterLeasePressureReleaseAndIndependentProgress(t *testing.T) {
 	}
 	before, _ := budget.Charged()
 	pressure := budget.Available() - 1024
-	if !budget.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
 	c := agentapi.FilterContext{Filename: filepath.Base(ref.Path), Limits: agentapi.ReadLimits{RawBytes: 4 << 20, RecordBytes: archive.MaxRecordBytes}}
@@ -40,7 +41,7 @@ func TestNativeFilterLeasePressureReleaseAndIndependentProgress(t *testing.T) {
 	if used != before+pressure {
 		t.Fatalf("refusal leaked %d", used-before-pressure)
 	}
-	budget.Release(pressure)
+	reservation.Release(pressure)
 	out, release, err := (Filter{}).FilterLeased(t.Context(), snap.Input(), c, budget)
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +79,7 @@ func TestNativeFilterLeaseCancellationAndHistoryMetadataOwnership(t *testing.T) 
 	a, raw := historyFile(t, dir, threadA, threadA, 0, nil, "copied", "old own")
 	end := len(strings.SplitAfter(string(raw), "\n")[0]) + len(strings.SplitAfter(string(raw), "\n")[1])
 	b, _ := historyFile(t, dir, threadB, threadA, 2, map[string]any{"history_base": map[string]any{"thread_id": threadA, "end_ordinal_exclusive": 2, "end_byte_offset": end}}, "new own")
-	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &b, Candidates: []agentapi.SourceRef{a, b}, Complete: true, Revision: "stable"}, rollouts: map[string][]agentapi.SourceRef{threadA: {a}, threadB: {b}}}
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &b, Candidates: []agentapi.SourceRef{a, b}, Revision: "stable"}, rollouts: map[string][]agentapi.SourceRef{threadA: {a}, threadB: {b}}}
 	budget := agentapi.NewNativeReadBudget(4 << 20)
 	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{ReadBudget: budget, CodexRollouts: lookup})
 	if err != nil {

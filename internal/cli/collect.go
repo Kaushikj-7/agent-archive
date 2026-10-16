@@ -11,9 +11,11 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/evidence"
 	"github.com/wangjohn/agent-archive/internal/gitremote"
@@ -68,7 +70,8 @@ func runCollectCommand(_ []string, _ io.Writer, stderr io.Writer, env Env) int {
 	if home, err := env.home(); err == nil {
 		_ = local.TrimLog(filepath.Join(home, "collector-error.log"), errorLogMaxBytes, errorLogKeepBytes)
 	}
-	_, err := runOnePass(env, true)
+	result, err := runOnePass(env, true)
+	defer result.CloseStagedResults()
 	if err != nil {
 		if errors.Is(err, errNotSetUp) || errors.Is(err, errPaused) {
 			return 0
@@ -100,7 +103,18 @@ type passOptions struct {
 	stop     func() bool
 }
 
-func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Result, resultErr error) {
+func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, error) {
+	var changes passChanges
+	result, err := runPassLocked(env, quietOnBusy, pass, &changes)
+	// Every inner defer has now finished: verification, retention, registration,
+	// staged-data closure and collector unlock precede any consumer hint work.
+	if changes.enabled {
+		dispatchSessionChanges(context.Background(), changes.destination, result.PublicationCandidates, env.changeConsumers(changes.home, changes.namespace))
+	}
+	return result, err
+}
+
+func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passChanges) (result collector.Result, resultErr error) {
 	// Read-only until the configuration is found: sync before setup leaves
 	// no data directory behind.
 	home, err := env.readHome()
@@ -123,7 +137,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		return collector.Result{}, fmt.Errorf("open local store: %w", err)
 	}
 
-	unlock, err := lockCollector(home, collectorPassHolder(quietOnBusy, pass), env.now())
+	guard, unlock, err := lockCollectorGuard(home, collectorPassHolder(quietOnBusy, pass), env.now(), cfg.Storage.EffectiveArchiveFormat())
 	if err != nil {
 		if errors.Is(err, local.ErrBusy) {
 			if quietOnBusy {
@@ -186,6 +200,12 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		return collector.Result{}, err
 	}
 
+	namespace := ""
+	if cfg.SearchIndexing {
+		namespace, _ = contentSearchLocation(home, cfg)
+	}
+	*changes = passChanges{home: home, destination: cfg.DestinationID(), namespace: namespace, enabled: cfg.SearchIndexing}
+
 	// Registration gets an independent budget after capture and retention,
 	// including their failure paths. It cannot cause either to be skipped.
 	defer func() { _ = publishMachineLocked(context.Background(), home, cfg, env, objectStore, false) }()
@@ -207,15 +227,15 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		}
 	}
 	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
-		Labels:           env.labelProviders(cfg),
-		LabelEnvironment: env.labelEnvironment(cfg, labelHomes),
-		PrepareCodexCoverage: func(ctx context.Context, regs []archive.SessionRegistration) error {
-			return rollouts.PrepareRegistered(ctx, cfg, regs, discovery.Options{Now: env.Now, Stop: stop})
-		},
+		CollectorGuard:           guard,
+		CatalogDestination:       config.DestinationID(cfg.Storage),
+		Labels:                   env.labelProviders(cfg),
+		LabelEnvironment:         env.labelEnvironment(cfg, labelHomes),
 		SkipSessionIndexRecovery: true,
 		CodexRollouts:            rollouts,
 		PendingCodexRollouts:     pendingCodexRollouts(rollouts),
 		ConfiguredCodexHomes:     readHomes,
+		NativeRoots:              cfg.NativeRoots,
 		ResolveCodexReadHomes:    func(current config.Config) ([]string, error) { return trustedCodexReadHomes(current, env) },
 		Parsers:                  parsersFor(env),
 		Sources:                  registryFor(env),
@@ -224,6 +244,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (result collector.Resu
 		SupplementalEvidence:     skillObserver(env, cfg.EffectiveSkillEvidence()),
 		SkillEvidence:            cfg.EffectiveSkillEvidence(),
 		AcceptSession:            cfg.AcceptSession,
+		HistoricalProjectLabel:   cfg.HistoricalProjectLabel,
 		Now:                      env.Now,
 		RequireSkillUse:          cfg.RequireSkillUse,
 		Progress:                 pass.progress,
@@ -264,9 +285,10 @@ func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, en
 			return "", verifyErr, err
 		}
 	}
-	if len(result.Errors) > 0 {
+	if len(result.Errors) > 0 || len(result.RetryLater) > 0 {
 		// In place of collector.Run's own count of the same sessions; the
-		// pass's other problems stay.
+		// pass's other problems stay. A session the pass held on its
+		// backoff schedule keeps its issue (see recordSessionIssues).
 		summary, err = recordSessionIssues(localStore, result.Errors, subagentLookup(localStore), collector.FailedSessionsProblem(len(result.Errors)))
 		if err != nil {
 			return "", verifyErr, err
@@ -298,7 +320,7 @@ func finishPassWithRetention(home string, env Env, cfg config.Config, localStore
 		CurrentDestination: cfg.InCurrentDestination,
 		// Outstanding work defers expiry only when the collector will do it.
 		Publishable:    cfg.AcceptSession,
-		SessionMaxAge:  time.Duration(cfg.RetentionDays) * 24 * time.Hour,
+		SessionMaxAge:  config.RetentionDuration(cfg.RetentionDays),
 		PreviousScanAt: previousScanAt,
 	}
 	if env.sweepClock != nil {
@@ -513,6 +535,9 @@ func openConfiguredStore(cfg config.Config, credentialStore func() (credentials.
 }
 
 func openConfiguredStoreContext(ctx context.Context, cfg config.Config, credentialStore func() (credentials.CredentialStore, error)) (storage.ObjectStore, error) {
+	if err := storage.CheckConfiguredArchiveFormat(cfg.Storage); err != nil {
+		return nil, err
+	}
 	var store credentials.CredentialStore
 	// Spelled as storage.NewConfiguredStore reads it.
 	if strings.EqualFold(strings.TrimSpace(cfg.Storage.Provider), credentials.ProviderR2) {
@@ -521,7 +546,25 @@ func openConfiguredStoreContext(ctx context.Context, cfg config.Config, credenti
 			return nil, storageOpenError(credentialOS, err)
 		}
 	}
-	return storage.NewConfiguredStore(ctx, cfg.Storage, store)
+	remote, err := storage.NewConfiguredStore(ctx, cfg.Storage, store)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
+		return catalog.WrapConfigured(remote, cfg.Storage)
+	}
+	return configuredArchiveStore(cfg.Storage.EffectiveArchiveFormat(), remote)
+}
+
+func configuredArchiveStore(format destination.ArchiveFormat, remote storage.ObjectStore) (storage.ObjectStore, error) {
+	switch format {
+	case destination.FormatLegacy:
+		return remote, nil
+	case destination.FormatCatalogV4:
+		return catalog.Wrap(remote)
+	default:
+		return nil, storage.ErrAtomicCatalogUnqualified
+	}
 }
 
 // skillObserver shares bounded observations within a pass: user-scope skill

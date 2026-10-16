@@ -144,11 +144,11 @@ func isCallingAgent(env currentSessionDependencies, reg archive.SessionRegistrat
 // removed, since it may by then hold copies of someone's work.
 func createHandoffWorktree(env worktreeDependencies, branch string, target handoffTarget, dir string, stderr io.Writer) (string, error) {
 	ctx := context.Background()
-	top, err := gitText(ctx, env, dir, "rev-parse", "--show-toplevel")
+	top, err := gitPath(ctx, env, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", fmt.Errorf("--worktree needs a git checkout, and %s is not in one: %w", dir, err)
 	}
-	prefix, err := gitText(ctx, env, dir, "rev-parse", "--show-prefix")
+	prefix, err := gitPath(ctx, env, dir, "rev-parse", "--show-prefix")
 	if err != nil {
 		return "", err
 	}
@@ -209,6 +209,12 @@ func createHandoffWorktree(env worktreeDependencies, branch string, target hando
 	// dir was inside an ignored or untracked-only directory.
 	terminal.Printf(stderr, "handoff: %s is not in the worktree; starting at its top level\n", prefix)
 	return path, nil
+}
+
+// gitPath removes only Git's output terminator, preserving path whitespace.
+func gitPath(ctx context.Context, env worktreeDependencies, dir string, args ...string) (string, error) {
+	out, err := env.runGit(ctx, dir, args...)
+	return strings.TrimSuffix(string(out), "\n"), err
 }
 
 // gitText runs git in dir and returns its output without surrounding space.

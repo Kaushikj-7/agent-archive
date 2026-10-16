@@ -1,8 +1,13 @@
 $ agent-archive setup --yes --apps codex --codex-discovery on --codex-capture-scope included-projects --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --project ~/src/web-app
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl responds
+
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   · Codex capture: Automatic discovery plus hooks when approved.
   · Codex scope: Included projects only.
   · Exceptions: None configured.

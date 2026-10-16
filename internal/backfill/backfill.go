@@ -22,6 +22,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/inspectioncache"
 	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
@@ -55,6 +56,8 @@ const (
 	SkipFilteredOut SkipReason = "filtered_out"
 	// SkipExcludedProject means the session's project is excluded in setup.
 	SkipExcludedProject SkipReason = "excluded_project"
+	// SkipExcludedHistory means a complete history requires an excluded dependency.
+	SkipExcludedHistory SkipReason = "excluded_history"
 	// SkipHomeDirectory means the session ran from the home folder itself.
 	// --include-home imports it.
 	SkipHomeDirectory SkipReason = "home_directory"
@@ -71,6 +74,9 @@ const (
 	// SkipWorktreeUnresolved means the session ran in a Git worktree that no
 	// longer exists and cannot be mapped to its repository.
 	SkipWorktreeUnresolved SkipReason = "worktree_unresolved"
+	// SkipIndexRecovery means local identity bookkeeping cannot yet prove whether
+	// this session was previously admitted. It cannot be selected for import.
+	SkipIndexRecovery SkipReason = "session_index_pending"
 	// SkipIdentityMismatch means the session IDs inside the transcript do not
 	// match the file (or the Cursor chat's key).
 	SkipIdentityMismatch SkipReason = "identity_mismatch"
@@ -96,8 +102,8 @@ const (
 // skipOrder is the spec's precedence: the first applicable reason wins.
 var skipOrder = []SkipReason{
 	SkipAlreadyArchived, SkipDuplicateSession, SkipRegisteredNotAdmitted, SkipRemovedByUndo, SkipRemovedByRetention,
-	SkipFilteredOut, SkipExcludedProject, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory,
-	SkipProjectUnknown, SkipWorktreeUnresolved, SkipIdentityMismatch, SkipRelatedHistory, SkipSourceChanged,
+	SkipFilteredOut, SkipExcludedProject, SkipExcludedHistory, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory,
+	SkipProjectUnknown, SkipWorktreeUnresolved, SkipIndexRecovery, SkipIdentityMismatch, SkipRelatedHistory, SkipSourceChanged,
 	SkipEmpty, SkipUnsafeFormat, SkipTooLarge, SkipStartUnknown, SkipStartInFuture,
 }
 
@@ -127,12 +133,16 @@ const (
 	ProjectKindHome ProjectKind = "home"
 	// ProjectKindDirectory is any other folder.
 	ProjectKindDirectory ProjectKind = "directory"
+	// ProjectKindHistorical never includes a live filesystem root.
+	ProjectKindHistorical ProjectKind = "historical"
 )
 
 // Candidate is one session found on disk and what the plan decided for it.
 // It holds paths and native IDs for the import step; nothing here is ever
 // printed.
 type Candidate struct {
+	// reviewedCursor is compact planning evidence, never capture authority.
+	reviewedCursor  *agentapi.DatabaseChat
 	Harness         string
 	NativeSessionID string
 	// NativeChild and native relationship IDs describe Codex ownership, not admission.
@@ -152,6 +162,7 @@ type Candidate struct {
 	// registered under: a configured project's own spelling, or the resolved
 	// path. It is set for a skip that has a would-be root (home, temporary,
 	// excluded) and empty when no project could be determined.
+	HistoricalProject        *archive.HistoricalProjectProof
 	ProjectRoot              string
 	ProjectResolution        *archive.ProjectResolution
 	projectResolutionCurrent func() bool
@@ -187,9 +198,13 @@ type Subagent struct {
 
 // Filters narrows a backfill run.
 type Filters struct {
-	Harnesses       []string
-	Projects        []string
-	ProjectMappings map[string]string
+	Harnesses          []string
+	Projects           []string
+	ProjectMappings    map[string]string
+	HistoricalMappings map[string]string
+	HistoricalProjects []HistoricalProjectDefinition
+	BulkMappings       bool
+	MappingFile        string
 	// Since and Until are local dates, YYYY-MM-DD, compared inclusively with
 	// the session's start.
 	Since string
@@ -276,16 +291,29 @@ const (
 // through collector.FilterTranscriptFile, the collector's own filter, which
 // reads transcripts from the real file system whatever is injected here.
 type Environment struct {
+	// InspectionCache performs lookup only; persistence belongs to the caller.
+	InspectionCache *inspectioncache.Cache
+	// ObserveInspection receives successful facts after all source checks and closes.
+	// It may be called concurrently and must return promptly; callers may enqueue
+	// bounded, best-effort persistence.
+	ObserveInspection func(inspectioncache.Observation)
+
+	// Progress receives serialized planning updates, including from workers.
+	// It must return promptly and must not change planning inputs.
+	Progress func(PlanningProgress)
+
+	HistoricalSourceAllowed   func(string) bool
 	RepositoryIdentity        sourcefacts.RepositoryLookup
 	RepositoryIdentityCurrent func(sourcefacts.RepositoryIdentity) bool
-	Discovery                 agentapi.DiscoveryLookup
-	DatabaseCatalogs          agentapi.DatabaseCatalogLookup
-	NativePaths               agentapi.NativePathsLookup
-	Worktrees                 agentapi.WorktreeLookup
-	Workspaces                agentapi.WorkspaceLookup
-	Children                  agentapi.ChildrenLookup
-	Imports                   agentapi.ImportsLookup
-	Sources                   agentapi.SourcesLookup
+	// Discovery supplies providers eligible for this environment's import/project purposes.
+	Discovery        agentapi.DiscoveryLookup
+	DatabaseCatalogs agentapi.DatabaseCatalogLookup
+	NativePaths      agentapi.NativePathsLookup
+	Worktrees        agentapi.WorktreeLookup
+	Workspaces       agentapi.WorkspaceLookup
+	Children         agentapi.ChildrenLookup
+	Imports          agentapi.ImportsLookup
+	Sources          agentapi.SourcesLookup
 	// CodexRollouts shares native selection and its resource ledger with planning.
 	CodexRollouts agentapi.CodexRolloutLookup
 	// PrepareCodexProof advances qualified inventory without authorizing capture.
@@ -513,4 +541,12 @@ func historicalChoices(names []string) string {
 	default:
 		return strings.Join(names[:len(names)-1], ", ") + ", or " + names[len(names)-1]
 	}
+}
+
+// ProjectIdentity returns immutable ownership independently of a live root.
+func (c Candidate) ProjectIdentity() string {
+	if c.HistoricalProject != nil {
+		return c.HistoricalProject.ProjectID
+	}
+	return archive.ProjectID(c.ProjectRoot)
 }

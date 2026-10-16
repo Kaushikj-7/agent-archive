@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -50,6 +52,86 @@ func subagentsSummary(result collector.Result) string {
 	return summary
 }
 
+// deferredWhat words each reason a pass deferred a session's scan, after a
+// count, for sync and status.
+var deferredWhat = map[string]string{
+	collector.DeferredSourceChanged:   "rechecking after the source changed while being read",
+	collector.DeferredReadBudget:      "waiting for read memory other sessions held",
+	collector.DeferredLookupAllowance: "left for the next pass after this pass's time for finding Codex rollouts ran out",
+}
+
+// deferredReasonWhat words one deferral reason, with a general wording for a
+// reason this version does not write.
+func deferredReasonWhat(reason string) string {
+	if what, ok := deferredWhat[reason]; ok {
+		return what
+	}
+	return "rechecking on the next pass"
+}
+
+// deferredSummary is sync's count of the sessions a pass deferred, by
+// reason, or "" when it deferred none. A deferral is not a failure: the next
+// pass retries the session, so sync lists no error for it. A session in
+// failed (a retention failure recorded after collection, say) is counted
+// there only.
+func deferredSummary(deferred map[string]string, failed map[string]error) string {
+	counts := map[string]int{}
+	for id, reason := range deferred {
+		if failed[id] == nil {
+			counts[deferredReasonWhat(reason)]++
+		}
+	}
+	var summary strings.Builder
+	for _, what := range slices.Sorted(maps.Keys(counts)) {
+		fmt.Fprintf(&summary, "; %d %s", counts[what], what)
+	}
+	return summary.String()
+}
+
+// syncSummary is the line sync reports a pass on: what it published, held,
+// left unchanged, failed and deferred, and how many queued sessions it ran
+// out of time for. A deferred or unreached session is not counted as
+// failed, and has no error line of its own.
+func syncSummary(result collector.Result) string {
+	return fmt.Sprintf("Scanned %d session(s): %d published, %s%d unchanged, %d failed%s%s%s%s.",
+		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), deferredSummary(result.Deferred, result.Errors), subagentsSummary(result), unreachedSummary(result.Unreached, result.Errors), retryLaterSummary(result.RetryLater))
+}
+
+// retryLaterSummary counts the Codex sessions a pass held unopened until
+// their next attempt (collector.Result.RetryLater), with the local time the
+// earliest is due, or is "" when it held none. They still fail, as an
+// earlier pass reported, but this pass made no attempt, so they are not
+// counted as failed and do not change the exit code.
+func retryLaterSummary(held map[string]time.Time) string {
+	if len(held) == 0 {
+		return ""
+	}
+	var next time.Time
+	for _, at := range held {
+		if next.IsZero() || at.Before(next) {
+			next = at
+		}
+	}
+	return fmt.Sprintf("; %d failing Codex session(s) held for a later retry (next at %s)", len(held), next.Local().Format("Jan 2 15:04"))
+}
+
+// unreachedSummary counts the queued sessions a pass ended before reaching
+// (collector.Result.Unreached), or is "" when it reached them all. As with
+// deferredSummary, a session in failed (one whose local state could not be
+// read, say) is counted there only.
+func unreachedSummary(unreached map[string]int, failed map[string]error) string {
+	left := 0
+	for id := range unreached {
+		if failed[id] == nil {
+			left++
+		}
+	}
+	if left == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; %d left for the next pass", left)
+}
+
 // runSyncCommand implements `agent-archive sync`: one explicit collection
 // pass, preserving queued work on failure. It respects paused state and
 // does not implicitly resume, per the spec.
@@ -61,6 +143,7 @@ func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	// done (or not all of it) goes to stderr, with exit 1.
 	stopScan := startActivity(stdout, "Scanning sessions…")
 	result, err := runOnePass(env, false)
+	defer result.CloseStagedResults()
 	stopScan()
 	if err != nil {
 		switch {
@@ -81,8 +164,7 @@ func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		}
 		return 1
 	}
-	terminal.Printf(stdout, "Scanned %d session(s): %d published, %s%d unchanged, %d failed%s.\n",
-		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), subagentsSummary(result))
+	terminal.Println(stdout, syncSummary(result))
 	for id, sessionErr := range result.Errors {
 		for _, line := range sessionErrorLines(id, sessionErr) {
 			terminal.Println(stderr, line)

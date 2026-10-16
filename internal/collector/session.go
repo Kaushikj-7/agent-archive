@@ -78,6 +78,17 @@ type sessionScan struct {
 	warnings []error
 	// gap is the capture gap the scan ended in, if it did (see block).
 	gap state.BlockedReason
+	// sizeLimit names the limit a size-limit gap stopped at, when known.
+	sizeLimit *state.SizeLimitGap
+	// lastRead is the source read whose observation a ceiling refusal uses:
+	// either the read this scan went on from or the read that was refused.
+	// The gap is recorded at its state (see overCeiling).
+	lastRead *sourceRead
+	// frozenSource is the current source of the history publication this
+	// scan froze from its own candidate, whose bundle (the publication's
+	// Bundle) is exactly what that source's bytes encode until preparation
+	// changes the publication (see historyInputBundle).
+	frozenSource archive.SourceReference
 	// subagentRunning reports that the scan ended waiting for a resumed
 	// subagent to stop again (see errSubagentRunning).
 	subagentRunning bool
@@ -92,8 +103,27 @@ type sessionScan struct {
 	retainedBudget   *agentapi.NativeReadBudget
 	retainedReleases []func()
 	priorBinding     *archive.CodexSourceBinding
+	nativeLeases     []*preparedNativeValidation
 	revisions        *revisionPlan
 	rewritten        *archive.SourceBundle
+	// offChainKept counts the off-chain (best-effort) revisions the last
+	// reconciliation kept: what they retained counts against the session's
+	// read ceiling until the scan ends. withoutOffChain is set when the scan
+	// runs again without them (see run). offChainLeftOut reports that it
+	// left at least one out of what is published (see noteRevisionLeftOut).
+	// offChainPlanned and offChainUnread are what the last reconciliation
+	// that read them staged to publish beside the current revision (each
+	// revision with the source staged) and whether it left any unread; they
+	// outlive the run again, which reports only what it no longer publishes
+	// as staged (see reconcileRevisions).
+	offChainKept    int
+	offChainLeftOut bool
+	withoutOffChain bool
+	offChainPlanned []archive.RevisionReference
+	offChainUnread  bool
+	// replacingOwed is set when resume went past a publication owed
+	// before this scan, to be replaced by the scan's own (see run).
+	replacingOwed bool
 }
 
 // filteredSource is a source read and filtered once in a scan.
@@ -123,17 +153,63 @@ const (
 
 func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 
-func (s *sessionScan) run() (sessionOutcome, error) {
+// run scans the session once (scanOnce). A scan that kept off-chain
+// revisions and then met the session's own read ceiling (guarding,
+// settling or publishing with their retained bytes still held) is run again
+// from the start without them: they are best effort, and the whole session
+// recorded as too large to read, although its own chain fits, would stop
+// its capture on every pass. Everything the first scan retained is released
+// and its ceiling refusal forgotten first, so the second scan meets the
+// ceiling only on its own. A scan that saved a publication before the
+// refusal is not run again: the publication is owed as it is
+// (overCeiling defers it), and its later passes resume it without the
+// reconciliation's retained work. A publication already owed when the scan
+// began does not keep it from running again: the scan went on past it, so
+// it may be replaced (one never attempted, which a stop request replaces
+// with a richer one), and a replacement the first scan saved is resumed as
+// it is by the second. Whether an off-chain revision was left out is
+// recorded once, as the scan ends (noteRevisionLeftOut).
+func (s *sessionScan) run(ctx context.Context) (outcome sessionOutcome, err error) {
+	defer func() { err = errors.Join(err, s.closeNativeLeases()); s.noteRevisionLeftOut(err) }()
+	outcome, err = s.scanOnce(ctx)
+	if err == nil || s.offChainKept == 0 || s.withoutOffChain || !s.overSessionCeiling(err) {
+		return outcome, err
+	}
+	if owed, owedErr := s.local.Outstanding(s.reg, false); owedErr != nil {
+		return outcome, errors.Join(err, owedErr)
+	} else if owed.Upload && !s.replacingOwed {
+		return outcome, err
+	}
+	s.forgetForRunWithoutOffChain()
+	return s.scanOnce(ctx)
+}
+
+// forgetForRunWithoutOffChain releases and forgets what a scan did, keeping
+// only what its reconciliation planned for off-chain revisions, so the scan
+// can run again without them (see run).
+func (s *sessionScan) forgetForRunWithoutOffChain() {
+	s.releaseRetained()
+	s.readBudget().ForgetScopeExceeded()
+	s.filtered, s.lastRead, s.revisions, s.rewritten = nil, nil, nil, nil
+	s.gap, s.sizeLimit, s.readyAt, s.subagentRunning = "", nil, time.Time{}, false
+	s.frozenSource = archive.SourceReference{}
+	// offChainLeftOut stands until the second scan reconciles: one that
+	// resumes the first scan's replacement leaves out what the first did.
+	s.offChainKept, s.withoutOffChain = 0, true
+}
+
+// scanOnce is one scan of the session, the steps above.
+func (s *sessionScan) scanOnce(ctx context.Context) (sessionOutcome, error) {
 	if err := s.prepareRetainedOwnership(); err != nil {
 		return outcomeSkipped, err
 	}
-	if outcome, handled, err := s.prepareRetainedHistoryWork(); handled || err != nil {
+	if outcome, handled, err := s.prepareRetainedHistoryWork(ctx); handled || err != nil {
 		return outcome, err
 	}
 	if err := s.checkRetainedHistory(); err != nil {
 		return outcomeSkipped, err
 	}
-	if s.reg.CaptureFrozen {
+	if s.maintainsRetainedOnly() {
 		outcome, err := s.maintainFrozen()
 		if err != nil {
 			return outcome, err
@@ -143,7 +219,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	if err := s.local.GenerationCaptureAllowed(s.reg); err != nil {
 		return outcomeSkipped, err
 	}
-	if outcome, handled, err := s.resume(); handled || err != nil {
+	if outcome, handled, err := s.resume(ctx); handled || err != nil {
 		return outcome, err
 	}
 	read, ok, err := s.read()
@@ -153,7 +229,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	if emptied, err := s.emptied(read); emptied || err != nil {
 		return outcomeSkipped, err
 	}
-	candidate, supplemental, err := s.build(read)
+	candidate, supplemental, err := s.buildCandidate(&read)
 	if err != nil {
 		return outcomeSkipped, err
 	}
@@ -168,7 +244,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 		if settled, err := s.settleRevisionCandidate(read, &candidate); settled || err != nil {
 			return outcomeSkipped, err
 		}
-		return s.publish(read, candidate)
+		return s.publish(ctx, read, candidate)
 	}
 	if err := archive.CheckHistoryMutation(candidate, archive.Metadata{}); err != nil {
 		return outcomeSkipped, err
@@ -176,11 +252,11 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	if settled, err := s.compare(read, &candidate); settled || err != nil {
 		return outcomeSkipped, err
 	}
-	candidate, blocked, err := s.guard(s.ctx, read, candidate, supplemental)
+	candidate, blocked, err := s.guard(ctx, read, candidate, supplemental)
 	if blocked || err != nil {
 		return outcomeSkipped, err
 	}
-	outcome, err := s.publish(read, candidate)
+	outcome, err := s.publish(ctx, read, candidate)
 	if err != nil || outcome != outcomePublished || s.rewritten == nil {
 		return outcome, err
 	}
@@ -196,7 +272,7 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 
 // resume retries a pending publication, or runs the metadata refresh when
 // there is none. handled reports that the scan ends here.
-func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error) {
+func (s *sessionScan) resume(ctx context.Context) (outcome sessionOutcome, handled bool, err error) {
 	// A publication that may already have reached storage is immutable local
 	// work. Retry its exact bytes before considering later transcript changes.
 	pending, havePending, err := s.local.LoadPublicationPending(s.id())
@@ -214,22 +290,46 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		}
 		return regenerateMetadata(s)
 	}
+	if s.reg.StagedImportSHA256 != "" && pending.History == nil {
+		pending, err = s.resumeStagedPolicy(pending)
+		if err != nil {
+			return outcomeSkipped, true, err
+		}
+	}
 	if pending.History != nil {
-		outcome, err := s.resumeHistory(pending)
+		outcome, err := s.resumeHistory(ctx, pending)
 		return outcome, true, err
 	}
+	if outcome, handled, err := s.resumeSourceSetPrivacy(pending); handled || err != nil {
+		return outcome, handled, err
+	}
 	if pendingSkillMode(pending.SkillEvidence) != s.opts.skillEvidence() {
+		if pending.Selection != nil {
+			return outcomeSkipped, true, state.ErrReadySelectionFrozen
+		}
+		if pending.Catalog != nil {
+			return outcomeSkipped, true, state.ErrCatalogJournalFrozen
+		}
 		return outcomeSkipped, true, errors.New("pending source privacy policy changed; retain evidence for refilter and reconcile")
 	}
-	// Validate policy and frozen context before a new request may replace replay evidence.
+
+	// Freeze legacy selecting authority before a new request can replace its
+	// replay evidence. Modern ready/staged/catalog protocols stay unchanged.
 	if err := s.sealPending(&pending); err != nil {
 		return outcomeSkipped, true, err
 	}
 	if !pending.Attempted && s.req.Token != "" && s.req.Token != pending.RequestToken {
+		if pending.Selection != nil {
+			return outcomeSkipped, true, state.ErrReadySelectionFrozen
+		}
+		if pending.Catalog != nil {
+			return outcomeSkipped, true, state.ErrCatalogJournalFrozen
+		}
 		// A stop/end request is a natural debounce flush. A merely rate-limited,
 		// never-attempted candidate can be safely replaced by a richer one;
 		// deferred lifecycle evidence enriches it without changing when it
 		// becomes ready.
+		s.replacingOwed = true
 		return outcomeSkipped, false, nil
 	}
 	// No publication ever waits longer than one interval from now. A later
@@ -237,6 +337,12 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 	// publicationReadyAt); it is capped durably, since a cap recomputed from
 	// each pass's now would keep moving away.
 	if latest := s.now.Add(s.opts.minUploadInterval()); pending.ReadyAt.After(latest) {
+		if pending.Selection != nil {
+			return outcomeSkipped, true, state.ErrReadySelectionFrozen
+		}
+		if pending.Catalog != nil {
+			return outcomeSkipped, true, state.ErrCatalogJournalFrozen
+		}
 		pending.ReadyAt = latest
 		if err := s.savePending(&pending); err != nil {
 			return outcomeSkipped, true, fmt.Errorf("cap pending publication time: %w", err)
@@ -246,16 +352,17 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		s.readyAt = pending.ReadyAt
 		return outcomeRateLimited, true, nil
 	}
-	outcome, err = s.publishPending(pending)
+	outcome, err = s.publishPending(ctx, pending)
 	return outcome, true, err
 }
 
 // sourceRead is what reading the session's source produced.
 type sourceRead struct {
-	filterLease *int
-	adapter     agentapi.TranscriptFilter
-	filtered    archive.FilteredTranscript
-	observed    sourceState
+	stagedRevisions []archive.SourceBundle
+	filterLease     *int
+	adapter         agentapi.TranscriptFilter
+	filtered        archive.FilteredTranscript
+	observed        sourceState
 	// outcome is the scan's outcome when the read ended it.
 	outcome sessionOutcome
 }
@@ -263,6 +370,32 @@ type sourceRead struct {
 // read reads and filters the session's source. ok is false when the scan
 // ends here: nothing to read yet, or a recorded gap, or an error.
 func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
+	if s.reg.StagedImportSHA256 != "" {
+		if s.published.TypedStagedPublished() {
+			err := s.releaseTypedStage()
+			read.outcome = outcomeSkipped
+			return read, false, err
+		}
+		if _, _, published := s.published.LastPublished(); !published {
+			return s.readImportStage()
+		}
+		// A crash after local acknowledgement can leave preparation behind. Its
+		// removal still requires the complete remotely verified publication.
+		if _, found, err := s.local.LoadImportStage(s.ctx, s.reg); err != nil {
+			return read, false, err
+		} else if found {
+			key, err := archive.MetadataObjectKey(s.reg.Harness.Name, s.id())
+			if err != nil {
+				return read, false, err
+			}
+			if err := s.verifyImportPublication(state.PendingPublication{MetadataKey: key, MetadataBytes: s.published.Metadata()}); err != nil {
+				return read, false, err
+			}
+			if err := s.local.RemoveImportStage(s.id()); err != nil {
+				return read, false, err
+			}
+		}
+	}
 	reader, available := newSourceReader(s.reg, s.opts)
 	if !available {
 		// Not an error: a Cursor desktop chat is registered at its first
@@ -286,6 +419,13 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 		read.filterLease = s.nativeFilterLease(mark)
 	}
 	if err != nil {
+		if s.overSessionCeiling(err) && !read.observed.observation.Present {
+			// The gap is recorded at the state the source is in, so an
+			// unchanged source is not read again to reach it.
+			if observed, signatureErr := reader.Signature(s.ctx); signatureErr == nil {
+				read.observed = observed
+			}
+		}
 		read.outcome, err = s.readFailed(read, err)
 		return read, false, err
 	}
@@ -310,15 +450,31 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 	} else if err != nil {
 		return read, false, err
 	}
-	if err := s.persistCodexBinding(read.observed.binding); err != nil {
+	if err := s.persistNativeValidation(read.observed.prepared); err != nil {
 		return read, false, err
 	}
+	if err := s.persistCodexBinding(read.observed.binding.CodexBinding()); err != nil {
+		return read, false, err
+	}
+	if err := s.followRelocatedRollout(read.observed.relocated); err != nil {
+		return read, false, err
+	}
+	s.lastRead = &read
 	return read, true, nil
 }
 
 // readFailed turns a failed read into the scan's end: a recorded gap for a
 // condition retrying cannot fix, otherwise the error.
 func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, error) {
+	if s.overSessionCeiling(err) {
+		// Use the same pending-upload guard as a refusal after the read:
+		// superseding an unattempted publication must not leave its upload
+		// owed behind a terminal gap. Keep this read's exact observation.
+		s.lastRead = &read
+		return s.overCeiling(err)
+	}
+	// A refusal under others' pressure ends the scan here; pass.scan defers
+	// it (sessionScan.overCeiling), as any refusal after the read.
 	if agentapi.HasFailure(err, agentapi.Cleanup) || agentapi.HasFailure(err, agentapi.Changed) || agentapi.HasFailure(err, agentapi.Unavailable) || errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return outcomeSkipped, err
 	}
@@ -326,10 +482,12 @@ func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, er
 	case errors.Is(err, errTranscriptTooLarge):
 		// The file will not shrink by retrying: record the gap once and
 		// keep the last published snapshot instead of failing every pass.
+		s.sizeLimit = sizeLimitOf(err, read.observed, s.reg.Harness.Name, s.opts.maxTranscriptBytes())
 		return s.blockThenRemember(state.BlockedReasonTranscriptTooLarge, read)
 	case errors.Is(err, errRecordTooLarge):
 		// Likewise one record too long to read: a gap recorded once, the
 		// last published snapshot kept, cleared when the file changes.
+		s.sizeLimit = sizeLimitOf(err, read.observed, s.reg.Harness.Name, s.opts.maxTranscriptBytes())
 		return s.blockThenRemember(state.BlockedReasonRecordTooLarge, read)
 	case errors.Is(err, os.ErrNotExist):
 		// The application deleted its own transcript. Retention keeps
@@ -344,7 +502,7 @@ func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, er
 	// Unsafe format: never upload; the last published snapshot, if any,
 	// remains untouched and readable.
 	err = fmt.Errorf("filter transcript: %w", err)
-	if rememberErr := rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, err, "", s.publishedLastHead()); rememberErr != nil {
+	if rememberErr := rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, err, "", nil, s.publishedLastHead()); rememberErr != nil {
 		return outcomeSkipped, errors.Join(err, rememberErr)
 	}
 	return outcomeSkipped, err
@@ -379,6 +537,18 @@ func (s *sessionScan) emptied(read sourceRead) (bool, error) {
 	return true, err
 }
 
+// buildCandidate builds the scan's candidate (build). A history candidate is
+// reconciled and published without the read's encoded rows, so they are
+// released (finishHistoryFilter) before reconciliation reads more.
+func (s *sessionScan) buildCandidate(read *sourceRead) (archive.SourceBundle, []archive.SupplementalEvidence, error) {
+	candidate, supplemental, err := s.build(*read)
+	if err != nil || candidate.History == nil || !s.canReconcileRevisions(*read, candidate) {
+		return candidate, supplemental, err
+	}
+	candidate, err = s.finishHistoryFilter(read, candidate)
+	return candidate, supplemental, err
+}
+
 // build assembles the candidate bundle, and returns the supplemental
 // evidence it was built with. A recoverable block the readable
 // source has ended is cleared first, since a source that comes back carrying
@@ -394,13 +564,9 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 		baseEvidence = cached.SupplementalEvidence
 	}
 	baseEvidence = limitSkillEvidence(baseEvidence, s.opts.skillEvidence())
-	if read.filtered.History == nil {
-		baseEvidence = s.applyLabels(baseEvidence)
-	} else {
-		// An ordinary lookup may precede a native history transition in the
-		// same pass. Preserve history capture without widening name authority.
-		baseEvidence = withoutSessionLabels(baseEvidence)
-	}
+	// An ordinary source and a history source set carry the session's name
+	// alike: a thread that continues into a later rollout keeps it.
+	baseEvidence = s.applyLabels(baseEvidence)
 	supplemental := limitSkillEvidence(mergeSupplementalEvidence(baseEvidence, s.req.HookEvidence), s.opts.skillEvidence())
 
 	// now is a placeholder here; bundleEvidenceEqual ignores CapturedAt, so
@@ -606,13 +772,13 @@ func (s *sessionScan) guard(ctx context.Context, read sourceRead, candidate arch
 
 // publish renders candidate's publication and decides what happens to it:
 // declined by policy, held back by the upload interval, or published now.
-func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (sessionOutcome, error) {
+func (s *sessionScan) publish(ctx context.Context, read sourceRead, candidate archive.SourceBundle) (sessionOutcome, error) {
 	var err error
 	candidate, err = s.finishNativeFilter(&read, candidate)
 	if err != nil {
 		return outcomeSkipped, err
 	}
-	rendered, err := renderPublication(s.ctx, s.resolveParser(), s.parserVersion(), candidate, s.reg, s.now, s.opts, s.priorRepoKey)
+	rendered, err := renderPublication(ctx, s.resolveParser(), s.parserVersion(), candidate, s.reg, s.now, s.opts, s.priorRepoKey)
 	if err != nil {
 		return outcomeSkipped, err
 	}
@@ -644,10 +810,15 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		proof := s.scanSignature(read.observed, candidate)
 		frozenSignature = &proof
 	}
+	expectedImportMetadata := ""
+	if s.reg.StagedImportSHA256 != "" && s.published.Summary().Published {
+		expectedImportMetadata = metadataSHA(s.published.Metadata())
+	}
 	pending := state.PendingPublication{
-		ScanSignature: frozenSignature,
-		SkillEvidence: string(s.opts.skillEvidence()),
-		Bundle:        candidate, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
+		ImportExpectedMetadataSHA256: expectedImportMetadata,
+		ScanSignature:                frozenSignature,
+		SkillEvidence:                string(s.opts.skillEvidence()),
+		Bundle:                       candidate, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
 		SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataBytes: rendered.metadata,
 		RequestToken: s.req.Token, ReadyAt: readyAt, Attempted: !readyAt.After(s.now),
 	}
@@ -656,11 +827,18 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 			return outcomeSkipped, err
 		}
 	}
+	if pending.History == nil {
+		if err := s.freezeOrdinaryReadySelection(ctx, &pending); err != nil {
+			return outcomeSkipped, err
+		}
+	}
 	if err := s.savePending(&pending); err != nil {
 		return outcomeSkipped, fmt.Errorf("persist pending publication: %w", err)
 	}
 	if pending.History != nil {
-		outcome, err := s.resumeHistory(pending)
+		// Its current source is exactly this candidate (historyInputBundle).
+		s.frozenSource = pending.SourceReference()
+		outcome, err := s.resumeHistory(ctx, pending)
 		if err != nil || outcome != outcomePublished {
 			return outcome, err
 		}
@@ -673,7 +851,7 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		s.readyAt = readyAt
 		return outcomeRateLimited, nil
 	}
-	outcome, err := s.publishPending(pending)
+	outcome, err := s.publishPending(ctx, pending)
 	if err != nil || outcome != outcomePublished {
 		return outcome, err
 	}
@@ -715,7 +893,7 @@ func renderPublication(ctx context.Context, parser agentapi.TranscriptParser, pa
 	analysis, parseErr := agentapi.Analyze(ctx, parser, candidate)
 	metadata, buildErr := archive.BuildMetadataWithAnalysis(candidate, analysis, parseErr, opts.MachineID, reg.SessionStartedAt, now, source, archive.ParserInfo{Version: parserVersion})
 	metadata.ApplyRegistrationProvenance(reg)
-	metadata.ApplyProjectName(reg.ProjectRoot)
+	applyProjectName(&metadata, reg, opts)
 	metadata.ApplyRepoKey(opts.repoKeyOr(reg, priorRepoKey))
 	metadata.ApplyGitHead(reg)
 	metadata.ApplyReplay(reg)
@@ -771,4 +949,44 @@ func (s *sessionScan) completeRequest(what string) error {
 		return fmt.Errorf("%s: %w", what, err)
 	}
 	return nil
+}
+
+func (s *sessionScan) hasRetainedPublication() bool {
+	_, _, found := s.published.LastPublished()
+	return found
+}
+
+func applyProjectName(m *archive.Metadata, reg archive.SessionRegistration, opts Options) {
+	if reg.HistoricalProject == nil {
+		m.ApplyProjectName(reg.ProjectRoot)
+		return
+	}
+	m.ProjectName = opts.historicalProjectName(reg)
+}
+
+func (opts Options) historicalProjectName(reg archive.SessionRegistration) string {
+	label := reg.HistoricalProject.Label
+	if opts.HistoricalProjectLabel != nil {
+		if current := opts.HistoricalProjectLabel(reg.ProjectID); current != "" {
+			label = current
+		}
+	}
+	return label
+}
+
+func (s *sessionScan) validateHistoricalSnapshot() error {
+	if s.reg.HistoricalProject == nil {
+		return nil
+	}
+	if err := s.reg.ValidateHistoricalProject(); err != nil {
+		return err
+	}
+	if s.reg.StagedImportSHA256 == "" {
+		return errors.New("historical import has no frozen source-set proof")
+	}
+	return nil
+}
+
+func (s *sessionScan) maintainsRetainedOnly() bool {
+	return s.reg.CaptureFrozen || s.reg.HistoricalProject != nil && s.hasRetainedPublication()
 }

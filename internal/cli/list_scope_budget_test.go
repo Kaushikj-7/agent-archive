@@ -36,6 +36,14 @@ func (s *scopeBudgetStore) GetVersioned(ctx context.Context, key string) ([]byte
 	return s.MemoryStore.GetVersioned(ctx, key)
 }
 
+func (s *scopeBudgetStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.gets.Add(1)
+	if !strings.HasSuffix(key, "/metadata.json") {
+		s.sourceGets.Add(1)
+	}
+	return s.MemoryStore.GetLimited(ctx, key, limit)
+}
+
 func (s *scopeBudgetStore) Get(ctx context.Context, key string) ([]byte, error) {
 	s.gets.Add(1)
 	if !strings.HasSuffix(key, "/metadata.json") {
@@ -48,7 +56,13 @@ func (s *scopeBudgetStore) Get(ctx context.Context, key string) ([]byte, error) 
 // clones by RepoKey and legacy local metadata by ProjectID, before any body read.
 func TestDefaultRepositoryScopeBodyBudgetAndEmptyFallback(t *testing.T) {
 	t.Parallel()
-	for _, size := range []int{10000, 20000} {
+	sizes := []int{10000, 20000}
+	if testing.Short() {
+		// Keep doubled archives beyond a provider page and two timestamp
+		// cycles, including parent 1425 and far more than 50 scoped rows.
+		sizes = []int{1600, 3200}
+	}
+	for _, size := range sizes {
 		t.Run(strconv.Itoa(size), func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
@@ -105,6 +119,16 @@ func TestDefaultRepositoryScopeBodyBudgetAndEmptyFallback(t *testing.T) {
 				t.Fatal(err)
 			}
 			scoped := scope.filter(oracle)
+			if len(scoped) <= 50 || len(scoped) == len(oracle) || childCounts(oracle)[childKey(a.base.Harness.Name, "budget00001425")] == 0 {
+				t.Fatal("fixture needs omitted scoped rows, outside matches and children")
+			}
+			parentShown := false
+			for _, m := range scoped[:50] {
+				parentShown = parentShown || m.SessionID == "budget00001425"
+			}
+			if !parentShown {
+				t.Fatal("fixture must show the parent whose child count is checked")
+			}
 			home, err := a.env.Home()
 			if err != nil {
 				t.Fatal(err)
@@ -150,10 +174,10 @@ func TestDefaultRepositoryScopeBodyBudgetAndEmptyFallback(t *testing.T) {
 						expected := append([]archive.Metadata(nil), oracle...)
 						sortByActivity(expected)
 						view := listViews{sessions: expected, listed: reader.RecentResult{TotalMatched: len(expected), Complete: true}, full: true, limit: 50}.view
-						format := listFormatOptions{Now: a.env.now(), Projects: projectLabelsMust(t, a.env), GroupByProject: true, Children: childCounts(expected)}
+						format := listFormatOptions{Now: a.env.now(), Projects: projectLabelsMust(t, a.env), GroupByDay: true, Children: childCounts(expected)}
 						var expectedOut bytes.Buffer
 						choices := listChoices(scope, format, false, expected, 50, view, "")
-						if err := printListTable(&expectedOut, choices.shown()); err != nil {
+						if err := printListTable(&expectedOut, choices.shown(), 0); err != nil {
 							t.Fatal(err)
 						}
 						if out != expectedOut.String() {

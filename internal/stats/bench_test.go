@@ -24,8 +24,8 @@ func BenchmarkCompute50kSessions(b *testing.B) {
 
 // The worst case for ranking projects: every session in a project of its own,
 // with a spend of its own, so 50,000 projects are ranked (by spend, then the
-// tie-breaks) and cut. The list of every project and the default top few cost
-// the same to rank.
+// tie-breaks) and cut. AllRows requires a full sort; bounded top rows retain
+// only the requested projects.
 func BenchmarkCompute50kProjects(b *testing.B) {
 	rng := rand.New(rand.NewPCG(7, 7))
 	sessions := make([]archive.Metadata, 0, 50_000)
@@ -41,6 +41,50 @@ func BenchmarkCompute50kProjects(b *testing.B) {
 			b.ResetTimer()
 			for range b.N {
 				Compute(sessions, o)
+			}
+		})
+	}
+}
+
+// The original accounting and prepared path use the same archive and windows;
+// preparation is measured separately and included in the one-shot benchmark.
+func BenchmarkPrepared50kSessions(b *testing.B) {
+	sessions, _ := randomArchive(rand.New(rand.NewPCG(7, 7)), 50_000)
+	opts := Options{Now: time.Date(2026, time.September, 20, 12, 0, 0, 0, newYork), Location: newYork, Days: 400, By: GroupWeek}
+	b.Run("original", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			legacyCompute(sessions, opts)
+		}
+	})
+	b.Run("prepare", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			Prepare(sessions, PrepareOptions{Location: newYork})
+		}
+	})
+	b.Run("window", func(b *testing.B) {
+		p := Prepare(sessions, PrepareOptions{Location: newYork})
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			p.Compute(opts)
+		}
+	})
+	for _, prepared := range []bool{false, true} {
+		b.Run(fmt.Sprintf("repeatedWindows/prepared=%v", prepared), func(b *testing.B) {
+			p := Prepare(sessions, PrepareOptions{Location: newYork})
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				for _, days := range []int{7, 30, 90} {
+					opts.Days = days
+					if prepared {
+						p.Compute(opts)
+					} else {
+						legacyCompute(sessions, opts)
+					}
+				}
 			}
 		})
 	}

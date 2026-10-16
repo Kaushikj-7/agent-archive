@@ -163,7 +163,7 @@ func TestSetupWriterPreservesStorageOnlyFence(t *testing.T) {
 	if err := os.Chmod(home, 0700); err != nil {
 		t.Fatal(err)
 	}
-	current := config.Config{MachineID: "synthetic"}
+	current := config.Config{RetentionDays: 90, MachineID: "synthetic"}
 	if err := config.Save(home, current); err != nil {
 		t.Fatal(err)
 	}

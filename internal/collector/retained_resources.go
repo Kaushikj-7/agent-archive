@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -26,7 +26,7 @@ func (s *sessionScan) readBudget() *agentapi.NativeReadBudget {
 			s.retainedBudget = shared.NativeReadBudget()
 		}
 		if s.retainedBudget == nil {
-			s.retainedBudget = agentapi.NewNativeReadBudget(128 << 20)
+			s.retainedBudget = agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
 		}
 	}
 	return s.retainedBudget
@@ -49,18 +49,20 @@ func (s *sessionScan) releaseRetainedAfter(mark int) {
 
 func (s *sessionScan) retainCharge(n int64) error {
 	b := s.readBudget()
-	if !b.Reserve(n) {
+	reservation := b.Reservation()
+	if !reservation.Reserve(n) {
 		return errRetainedBudget
 	}
-	s.retainedReleases = append(s.retainedReleases, func() { b.Release(n) })
+	s.retainedReleases = append(s.retainedReleases, func() { reservation.Release(n) })
 	return nil
 }
 
 func (s *sessionScan) historyGet(key string, limit int64) ([]byte, error) {
 	b := s.readBudget()
+	reservation := b.Reservation()
 	// Sidecars are mutable: stat provides a bounded allocation ceiling, never
 	// authority. Exact bytes/schema/predecessor checks still run after GET.
-	if statter, ok := s.publicationRemote().(storage.ObjectStatter); ok && strings.HasSuffix(key, "/metadata.json") {
+	if statter, ok := s.sourceSetRemote().(storage.ObjectStatter); ok && strings.HasSuffix(key, "/metadata.json") {
 		info, err := statter.Stat(s.ctx, key)
 		if err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return nil, err
@@ -77,17 +79,17 @@ func (s *sessionScan) historyGet(key string, limit int64) ([]byte, error) {
 	if limit <= 0 || limit > historyCompressedLimit {
 		return nil, errRetainedBudget
 	}
-	if !b.Reserve(limit) {
+	if !reservation.Reserve(limit) {
 		return nil, errRetainedBudget
 	}
-	data, err := historyLimitedGet(s.ctx, s.publicationRemote(), key, limit)
+	data, err := historyLimitedGet(s.ctx, s.sourceSetRemote(), key, limit)
 	if err != nil {
-		b.Release(limit)
+		reservation.Release(limit)
 		return nil, err
 	}
 	n := int64(len(data))
-	b.Release(limit - n)
-	s.retainedReleases = append(s.retainedReleases, func() { b.Release(n) })
+	reservation.Release(limit - n)
+	s.retainedReleases = append(s.retainedReleases, func() { reservation.Release(n) })
 	return data, nil
 }
 
@@ -97,15 +99,16 @@ func (s *sessionScan) historyStage(stage state.PendingSource) ([]byte, error) {
 		return nil, errRetainedBudget
 	}
 	b := s.readBudget()
-	if !b.Reserve(n) {
+	reservation := b.Reservation()
+	if !reservation.Reserve(n) {
 		return nil, errRetainedBudget
 	}
 	data, err := s.local.ReadPendingSource(s.id(), stage)
 	if err != nil {
-		b.Release(n)
+		reservation.Release(n)
 		return nil, err
 	}
-	s.retainedReleases = append(s.retainedReleases, func() { b.Release(n) })
+	s.retainedReleases = append(s.retainedReleases, func() { reservation.Release(n) })
 	return data, nil
 }
 
@@ -157,34 +160,39 @@ func (s *sessionScan) compressSource(bundle archive.SourceBundle) (archive.Compr
 
 func (s *sessionScan) marshalRetained(value any) ([]byte, error) {
 	b := s.readBudget()
+	reservation := b.Reservation()
 	const scratch = 32 << 10
-	if !b.Reserve(scratch) {
+	if !reservation.Reserve(scratch) {
 		return nil, errRetainedBudget
 	}
-	n, err := jsonwire.Bound(s.ctx, value, b.Available()/2)
-	b.Release(scratch)
+	available := reservation.Available()
+	n, err := agentmeta.JSONWireBound(s.ctx, value, available/2)
+	if errors.Is(err, agentmeta.ErrJSONWireLimit) {
+		reservation.Refuse(available + 2)
+	}
+	reservation.Release(scratch)
 	if err != nil {
 		return nil, errors.Join(errRetainedBudget, err)
 	}
-	if !b.Reserve(n) {
+	if !reservation.Reserve(n) {
 		return nil, errRetainedBudget
 	}
-	defer b.Release(n)
-	if !b.Reserve(n) {
+	defer reservation.Release(n)
+	if !reservation.Reserve(n) {
 		return nil, errRetainedBudget
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
-		b.Release(n)
+		reservation.Release(n)
 		return nil, err
 	}
 	actual := int64(len(data))
 	if actual > n {
-		b.Release(n)
+		reservation.Release(n)
 		return nil, errRetainedBudget
 	}
-	b.Release(n - actual)
-	s.retainedReleases = append(s.retainedReleases, func() { b.Release(actual) })
+	reservation.Release(n - actual)
+	s.retainedReleases = append(s.retainedReleases, func() { reservation.Release(actual) })
 	return data, nil
 }
 
@@ -207,6 +215,7 @@ func (s *sessionScan) newSourceBundle(reg archive.SessionRegistration, adapter a
 	var n int64
 	for _, row := range filtered.Records {
 		if int64(len(row)) > s.readBudget().Available()-n {
+			s.readBudget().Refuse(n + int64(len(row)))
 			return archive.SourceBundle{}, errRetainedBudget
 		}
 		n += int64(len(row))
@@ -316,4 +325,38 @@ func (s *sessionScan) keepRetainedFrom(mark, keep int) {
 	for i := mark; i < keep; i++ {
 		s.releaseRetainedIndex(i)
 	}
+}
+
+// finishHistoryFilter ends a history read's encoded-row ownership once build
+// has decoded the candidate from it, before the candidate is reconciled and
+// published: nothing on that path reads the encoded rows again, and holding
+// them beside the candidate's decoded records would charge a long thread
+// twice its size. The candidate gets its own envelope (history included);
+// its ordinals and text still alias the read's, so they stay charged on
+// their own. A read whose rows a rewrite guard still holds is left as it is.
+func (s *sessionScan) finishHistoryFilter(read *sourceRead, candidate archive.SourceBundle) (archive.SourceBundle, error) {
+	if read.filterLease == nil || candidate.History == nil || read.filtered.History == nil || s.rewritten != nil {
+		return candidate, nil
+	}
+	aliased := 8 * int64(len(read.filtered.Ordinals))
+	for _, text := range read.filtered.Text {
+		aliased += int64(len(text))
+	}
+	if err := s.retainCharge(aliased); err != nil {
+		return archive.SourceBundle{}, err
+	}
+	detached, err := s.detachRetainedEnvelope(candidate)
+	if err != nil {
+		return archive.SourceBundle{}, err
+	}
+	lease := *read.filterLease
+	read.filtered.Records, read.filterLease = nil, nil
+	if s.lastRead != nil && s.lastRead.filterLease != nil && *s.lastRead.filterLease == lease {
+		s.lastRead.filtered.Records, s.lastRead.filterLease = nil, nil
+	}
+	if s.filtered != nil && s.filtered.filterLease != nil && *s.filtered.filterLease == lease {
+		s.filtered = nil
+	}
+	s.releaseRetainedIndex(lease)
+	return detached, nil
 }

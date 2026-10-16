@@ -144,7 +144,7 @@ func (owned *PendingPublication) validatePublicationPredecessor(prior Publicatio
 // ValidatePublication checks every local replay payload and exact metadata binding.
 func (owned *PendingPublication) ValidatePublication() error {
 	p := *owned
-	if p.JournalVersion == 2 {
+	if p.JournalVersion == 5 {
 		return p.validatePublicationEnvelope()
 	}
 	return p.validateReadyPublication()
@@ -153,7 +153,7 @@ func (owned *PendingPublication) ValidatePublication() error {
 // ValidatePublicationBudgeted shares hashes only within this complete validation
 // call, borrowing the caller's existing ledger without extending proof lifetime.
 func (owned *PendingPublication) ValidatePublicationBudgeted(ctx context.Context, budget *agentapi.NativeReadBudget) error {
-	if owned.JournalVersion != 2 {
+	if owned.JournalVersion != 5 {
 		return owned.ValidatePublication()
 	}
 	count := len(owned.Sources)
@@ -195,7 +195,7 @@ func (owned *PendingPublication) validateReadyPublicationWithFacts(facts *payloa
 	if err := p.validatePublicationOwnership(refs[0]); err != nil {
 		return err
 	}
-	if p.JournalVersion == 2 {
+	if p.JournalVersion == 5 {
 		var metadata archive.Metadata
 		if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil {
 			return err
@@ -345,7 +345,7 @@ func attachPublication(next publishedState, pending PendingPublication, ctx cont
 	commit := *pending.Commit
 	next.Commit = &commit
 	if commit.Version == 2 {
-		next.PublicationVersion = 2
+		next.PublicationVersion = 5
 		next.PrivacyReceipts = pending.privacyReceipts()
 		next.Preparation = pending.Preparation
 		next.SettledPrivacy = nil

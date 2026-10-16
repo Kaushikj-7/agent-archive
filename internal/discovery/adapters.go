@@ -58,6 +58,7 @@ const (
 	outcomeOwnTaskRejected Outcome = "own_task_rejected"
 	outcomeIncomplete      Outcome = "incomplete_metadata"
 	outcomeRelatedHistory  Outcome = Outcome(codexmeta.RelatedHistoryPending)
+	outcomeUnsupportedExec Outcome = Outcome(codexmeta.UnsupportedExecution)
 	outcomeUnavailable     Outcome = "source_unavailable"
 	outcomeChanged         Outcome = "source_changed"
 )
@@ -85,17 +86,21 @@ type Fingerprint struct {
 type SourceEntry struct {
 	unsafeMetadata  bool
 	unknownMetadata bool
-	// CoverageFingerprint includes every directory entry, even non-rollouts.
-	CoverageFingerprint string
-	Source              SourceDescriptor
-	Fingerprint         Fingerprint
-	Directory           string
+	// EntryFingerprint includes every directory entry, even non-rollouts.
+	EntryFingerprint string
+	// memberFingerprint replaces EntryFingerprint in the directory digest of
+	// a rollout file. It omits size and modification time, so an active rollout
+	// appended between observation and validation keeps its membership.
+	memberFingerprint string
+	Source            SourceDescriptor
+	Fingerprint       Fingerprint
+	Directory         string
 }
 
 // SourceBatch carries a durable enumeration cookie and at most 256 entries.
-// A cookie is a coverage hint, never freshness or completeness evidence.
+// A cookie is a continuation hint, never freshness or completeness evidence.
 type SourceBatch struct {
-	coverage     *coverageBatch
+	digest       *directoryBatch
 	Entries      []SourceEntry
 	Continuation int64
 	Complete     bool
@@ -143,7 +148,7 @@ func (a codexAdapter) Enumerate(ctx context.Context, root, path string, cookie i
 	if a.metadataCounts != nil {
 		a.metadataCounts.stats++
 	}
-	stampBefore := directoryCoverageStamp(root, path)
+	stampBefore := directoryStamp(root, path)
 	names, next, complete, err := readBatchMeasured(directory{Root: root, Path: path, Offset: cookie}, a.metadataCounts)
 	if err != nil {
 		return SourceBatch{}, err
@@ -151,8 +156,8 @@ func (a codexAdapter) Enumerate(ctx context.Context, root, path string, cookie i
 	if a.metadataCounts != nil {
 		a.metadataCounts.stats++
 	}
-	stampAfter := directoryCoverageStamp(root, path)
-	b := SourceBatch{Continuation: next, Complete: complete, coverage: &coverageBatch{Stamp: stampBefore, Unavailable: stampBefore == "" || stampBefore != stampAfter}}
+	stampAfter := directoryStamp(root, path)
+	b := SourceBatch{Continuation: next, Complete: complete, digest: &directoryBatch{Stamp: stampBefore, Unavailable: stampBefore == "" || stampBefore != stampAfter}}
 	for _, name := range names {
 		if err := ctx.Err(); err != nil {
 			return SourceBatch{}, err
@@ -162,10 +167,14 @@ func (a codexAdapter) Enumerate(ctx context.Context, root, path string, cookie i
 		}
 		entry := a.Describe(root, path, name)
 		b.Entries = append(b.Entries, entry)
-		if entry.CoverageFingerprint == "" {
-			b.coverage.Unavailable = true
+		if entry.EntryFingerprint == "" {
+			b.digest.Unavailable = true
 		}
-		b.coverage.Entries = append(b.coverage.Entries, entry.CoverageFingerprint)
+		fingerprint := entry.EntryFingerprint
+		if entry.memberFingerprint != "" {
+			fingerprint = entry.memberFingerprint
+		}
+		b.digest.Entries = append(b.digest.Entries, fingerprint)
 	}
 	return b, nil
 }
@@ -180,16 +189,16 @@ func (a codexAdapter) Describe(root, path, name string) SourceEntry {
 		return SourceEntry{}
 	}
 	if info.IsDir() {
-		return SourceEntry{Directory: filepath.Join(path, name), CoverageFingerprint: entryFingerprint(name, info)}
+		return SourceEntry{Directory: filepath.Join(path, name), EntryFingerprint: entryFingerprint(name, info)}
 	}
 	if !info.Mode().IsRegular() || !strings.HasPrefix(name, "rollout-") || sourcefacts.RolloutID(name) == "" {
-		return SourceEntry{CoverageFingerprint: entryFingerprint(name, info), unsafeMetadata: info.Mode()&os.ModeSymlink != 0, unknownMetadata: strings.HasSuffix(name, ".jsonl")}
+		return SourceEntry{EntryFingerprint: entryFingerprint(name, info), unsafeMetadata: info.Mode()&os.ModeSymlink != 0, unknownMetadata: strings.HasSuffix(name, ".jsonl")}
 	}
 	priority := 0
 	if local.PathWithin(loc, filepath.Join(root, "archived_sessions")) {
 		priority = 1
 	}
-	return SourceEntry{CoverageFingerprint: entryFingerprint(name, info), Source: SourceDescriptor{Priority: priority, Kind: archive.SourceKindFile, StableKey: sourcefacts.RolloutID(name), Locator: loc, Root: root}, Fingerprint: Fingerprint{Size: info.Size(), Mtime: info.ModTime().UnixNano()}}
+	return SourceEntry{EntryFingerprint: entryFingerprint(name, info), memberFingerprint: memberFingerprint(name, info), Source: SourceDescriptor{Priority: priority, Kind: archive.SourceKindFile, StableKey: sourcefacts.RolloutID(name), Locator: loc, Root: root}, Fingerprint: Fingerprint{Size: info.Size(), Mtime: info.ModTime().UnixNano()}}
 }
 
 func (a codexAdapter) Inspect(ctx context.Context, source SourceDescriptor) Observation {

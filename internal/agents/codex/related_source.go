@@ -19,10 +19,30 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
+	"github.com/wangjohn/agent-archive/internal/trace"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
-const relatedRawBudget int64 = 128 << 20
+// passReadBudget is the shared ledger a pass opens when its caller supplies
+// none. It charges bytes the pass holds in memory (headers, line buffers,
+// cached prefixes), never the length of a file it reads through a
+// descriptor.
+const passReadBudget = agentapi.PassReadBudget
+
+// prefixCacheLimit bounds the immutable ancestor prefixes a pass keeps for
+// the threads that share them. The cache outlives one session's read, so it
+// stays small beside a session's own ceiling.
+const prefixCacheLimit int64 = 16 << 20
+
+// PassCacheBytes is the most a pass keeps between reads: cached ancestor
+// prefixes and the header of every open rollout, all charged unscoped
+// within agentapi.PassCacheReserve.
+const PassCacheBytes = prefixCacheLimit + archive.MaxHistorySpans*sourceHeaderCharge
+
+// ordinaryScratch is what an ordinary snapshot holds while open: hashing and
+// boundary scratch. The filter charges its own record buffer (see
+// nativeScannerCharge).
+const ordinaryScratch int64 = 64 << 10
 
 const sourceHeaderCharge int64 = 128 << 10
 
@@ -38,13 +58,13 @@ func (SourceProvider) OpenPass(ctx context.Context, e agentapi.SourceEnvironment
 		return nil, err
 	}
 	if shared, ok := e.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok && shared.NativeReadBudget() != nil && e.ReadBudget != nil && e.ReadBudget != shared.NativeReadBudget() {
-		return nil, errors.Join(sourceFailure(agentapi.Unavailable, "source and lookup require the same charge ledger"), legacy.Close())
+		return nil, errors.Join(sourceRefusal(agentapi.Unavailable, agentapi.CauseSourceAndLookupRequireTheSameChargeLedger, "source and lookup require the same charge ledger"), legacy.Close())
 	}
 	if e.ReadBudget == nil {
 		if shared, ok := e.CodexRollouts.(agentapi.CodexRolloutResourceBudget); ok {
 			e.ReadBudget = shared.NativeReadBudget()
 		} else {
-			e.ReadBudget = agentapi.NewNativeReadBudget(relatedRawBudget)
+			e.ReadBudget = agentapi.NewNativeReadBudget(passReadBudget)
 		}
 	}
 	if e.Files == nil {
@@ -59,7 +79,6 @@ func (SourceProvider) Activities(ctx context.Context, e agentapi.SourceEnvironme
 }
 
 type rolloutFile struct {
-	rawCharged   bool
 	ref          agentapi.SourceRef
 	file         *transcriptio.Snapshot
 	meta         codexmeta.CodexMeta
@@ -79,9 +98,15 @@ type relatedSourcePass struct {
 	live         map[*historySnapshot]bool
 	ordinaryLive map[*ordinarySnapshot]bool
 	bytes        int64
+	prefixBytes  int64
 	cacheHits    int64
 	closed       bool
 	closeErr     error
+}
+
+// sourceRefusal attaches a fixed, content-free reason for import diagnostics.
+func sourceRefusal(kind agentapi.FailureKind, cause agentapi.SourceCause, message string) error {
+	return agentapi.WithCause(sourceFailure(kind, message), cause)
 }
 
 func sourceFailure(kind agentapi.FailureKind, message string) error {
@@ -96,32 +121,28 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 		return nil, err
 	}
 	if len(ref.Path) > 8192 || len(ref.Key) > 4096 {
-		return nil, sourceFailure(agentapi.Limit, "rollout locator limit")
+		return nil, sourceRefusal(agentapi.Limit, agentapi.CauseRolloutLocatorLimit, "rollout locator limit")
 	}
 	if ref.Kind != archive.SourceKindFile {
 		return nil, sourceFailure(agentapi.Unsafe, "invalid rollout kind")
 	}
 	if old := p.files[ref.Path]; old != nil {
-		if err := old.file.Check(); err == nil && old.checkHeader(ctx) == nil {
-			if !old.rawCharged {
-				if !p.reserve(old.file.Length()) {
-					return nil, agentapi.ReadBudgetLimit(errors.New("cached native extent exceeds shared budget"))
-				}
-				old.rawCharged = true
-			}
+		if !p.historySourceAllowed(old.meta.Cwd) {
+			return nil, agentapi.Wrap(agentapi.Unsafe, agentapi.ErrHistorySourceExcluded)
+		}
+		if old.currentHeader(ctx) {
 			return old, nil
 		}
 		if old.refs > 0 {
 			return nil, sourceFailure(agentapi.Changed, "rollout dependency changed")
 		}
-		p.release(old.charge())
-		delete(p.files, ref.Path)
+		p.dropFile(ref.Path, old)
 		if err := old.file.Close(); err != nil {
 			return nil, agentapi.Wrap(agentapi.Cleanup, err)
 		}
 	}
 	if len(p.files) >= archive.MaxHistorySpans {
-		return nil, sourceFailure(agentapi.Limit, "shared rollout file limit")
+		return nil, sourceRefusal(agentapi.Limit, agentapi.CauseSharedRolloutFileLimit, "shared rollout file limit")
 	}
 	f, err := transcriptio.Open(p.env.Files, ref.Path, p.env.Policy)
 	if err != nil {
@@ -130,32 +151,35 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	ownedCharge := int64(0)
 	fail := func(e error) (*rolloutFile, error) {
 		if ownedCharge > 0 {
-			p.release(ownedCharge)
+			p.releaseCache(ownedCharge)
 			ownedCharge = 0
 		}
 		return nil, errors.Join(e, agentapi.Wrap(agentapi.Cleanup, f.Close()))
 	}
-	if f.Length() > relatedRawBudget {
+	if f.Length() > archive.MaxCodexRawTranscriptBytes {
 		stamp := f.Stamp()
 		o := agentapi.SourceObservation{Present: true, Size: stamp.Size, Activity: stamp.ModifiedAt, Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano())}
-		return fail(&agentapi.SourceError{Kind: agentapi.Limit, Err: agentapi.ErrRawLimit, Observed: &o})
+		return fail(agentapi.RawLimit(f.Length(), archive.MaxCodexRawTranscriptBytes, &o))
 	}
-
-	if p.bytes+f.Length() > relatedRawBudget || len(p.files) >= archive.MaxHistorySpans {
-		return fail(sourceFailure(agentapi.Limit, "shared rollout budget exhausted"))
-	}
-	if !p.reserve(f.Length() + sourceHeaderCharge) {
+	// The file is read through its descriptor, a bounded record at a time;
+	// only the header and proof state stay in memory with it.
+	if !p.reserveHeader() {
 		return fail(agentapi.ReadBudgetLimit(errors.New("shared source and index budget exhausted")))
 	}
-	ownedCharge = f.Length() + sourceHeaderCharge
-	reader := bufio.NewReaderSize(io.NewSectionReader(f, 0, min(f.Length(), int64(64<<10)+1)), 4096)
+	ownedCharge = sourceHeaderCharge
+	headerInput, headerFinish := trace.CountReads(io.NewSectionReader(f, 0, min(f.Length(), int64(64<<10)+1)), trace.HeaderBytes)
+	defer headerFinish()
+	reader := bufio.NewReaderSize(headerInput, 4096)
 	line, err := reader.ReadBytes('\n')
 	if err != nil || len(line) > 64<<10 {
-		return fail(sourceFailure(agentapi.Unavailable, "rollout metadata incomplete"))
+		return fail(sourceRefusal(agentapi.Unavailable, agentapi.CauseRolloutMetadataIncomplete, "rollout metadata incomplete"))
 	}
 	meta, _, found, err := codexmeta.ParseCodexMeta(line)
 	if err != nil || !found {
 		return fail(sourceFailure(agentapi.FormatMismatch, "invalid rollout metadata"))
+	}
+	if !p.historySourceAllowed(meta.Cwd) {
+		return fail(agentapi.Wrap(agentapi.Unsafe, agentapi.ErrHistorySourceExcluded))
 	}
 	if meta.HistoryMode != "" && meta.HistoryMode != codexmeta.CodexHistoryLegacy && meta.HistoryMode != codexmeta.CodexHistoryPaginated {
 		return fail(sourceFailure(agentapi.Unsafe, "unsupported history mode"))
@@ -168,7 +192,7 @@ func (p *relatedSourcePass) open(ctx context.Context, ref agentapi.SourceRef) (*
 	if err != nil {
 		return fail(sourceio.Classify(err))
 	}
-	out := &rolloutFile{rawCharged: true, ref: ref, file: f, meta: meta, identity: identity, header: line, headerDigest: sha256.Sum256(line), boundary: boundary}
+	out := &rolloutFile{ref: ref, file: f, meta: meta, identity: identity, header: line, headerDigest: sha256.Sum256(line), boundary: boundary}
 	p.files[ref.Path] = out
 	return out, nil
 }
@@ -178,11 +202,17 @@ func (p *relatedSourcePass) evict() error {
 	for path, f := range p.files {
 		if f.refs == 0 {
 			err = errors.Join(err, agentapi.Wrap(agentapi.Cleanup, f.file.Close()))
-			p.release(f.charge())
-			delete(p.files, path)
+			p.dropFile(path, f)
 		}
 	}
 	return err
+}
+
+// dropFile forgets a cached file and returns everything it held.
+func (p *relatedSourcePass) dropFile(path string, f *rolloutFile) {
+	p.releaseCache(f.charge())
+	p.prefixBytes -= int64(len(f.prefix))
+	delete(p.files, path)
 }
 
 func (p *relatedSourcePass) Close() error {
@@ -198,13 +228,14 @@ func (p *relatedSourcePass) Close() error {
 		err = errors.Join(err, s.Close())
 	}
 	for _, f := range p.files {
-		p.release(f.charge())
+		p.releaseCache(f.charge())
 		err = errors.Join(err, agentapi.Wrap(agentapi.Cleanup, f.file.Close()))
 		f.prefix = nil
 		f.validated = nil
 	}
 	p.files = nil
 	p.bytes = 0
+	p.prefixBytes = 0
 	p.closeErr = err
 	return err
 }
@@ -224,7 +255,7 @@ type sourceSelection struct {
 }
 
 func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.SourceRef) (sourceSelection, error) {
-	if len(p.files) >= 32 || p.bytes > relatedRawBudget/2 {
+	if len(p.files) >= 32 || p.prefixBytes > prefixCacheLimit/2 {
 		if err := p.evict(); err != nil {
 			return sourceSelection{}, err
 		}
@@ -245,7 +276,7 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 	selected := sourceSelection{leaf: seed, thread: seed.identity.ThreadID, headers: []*rolloutFile{seed}}
 	if p.env.CodexRollouts == nil {
 		if seed.identity.RolloutID != seed.identity.ThreadID || seed.identity.HistoryBase != nil {
-			return selected, errors.Join(sourceFailure(agentapi.Unavailable, "current rollout evidence unavailable"), archive.ErrRelatedHistory)
+			return selected, errors.Join(sourceRefusal(agentapi.Unavailable, agentapi.CauseCurrentRolloutEvidenceUnavailable, "current rollout evidence unavailable"), archive.ErrRelatedHistory)
 		}
 		return selected, nil
 	}
@@ -254,7 +285,7 @@ func (p *relatedSourcePass) selectSource(ctx context.Context, ref agentapi.Sourc
 		return selected, err
 	}
 	if len(set.Revision) > 4096 || len(set.Candidates) > archive.MaxHistorySpans {
-		return selected, sourceFailure(agentapi.Limit, "rollout candidate limit")
+		return selected, sourceRefusal(agentapi.Limit, agentapi.CauseRolloutCandidateLimit, "rollout candidate limit")
 	}
 	for _, candidate := range set.Candidates {
 		if len(candidate.Path) > 8192 || len(candidate.Key) > 4096 || candidate.Kind != archive.SourceKindFile {
@@ -293,8 +324,14 @@ func (p *relatedSourcePass) openSelectedSeed(ctx context.Context, ref agentapi.S
 		if set.Current != nil {
 			return p.open(ctx, *set.Current)
 		}
-		if set.Complete && len(set.Candidates) > 0 && len(set.Candidates) <= archive.MaxHistorySpans {
-			return p.open(ctx, set.Candidates[0])
+		// Codex may have renamed it (into archived_sessions/ or back). Any
+		// observed same-thread rollout seeds the tip selection instead.
+		for _, candidate := range set.Candidates[:min(len(set.Candidates), archive.MaxHistorySpans)] {
+			found, openErr := p.open(ctx, candidate)
+			if errors.Is(openErr, os.ErrNotExist) {
+				continue
+			}
+			return found, openErr
 		}
 	}
 	return seed, err
@@ -305,15 +342,29 @@ func (p *relatedSourcePass) legacyOrdinarySeed(seed *rolloutFile) bool {
 	return p.env.LegacyUnboundRegistration && seed.meta.HistoryMode == "" && seed.meta.LocalExecutionSource() && !hasRelated(seed) && id.ParentID == "" && id.ForkOrdinal == nil && id.SubagentOrdinal == nil && (id.RootID == "" || id.RootID == id.ThreadID)
 }
 
+// selectLineage chooses the tip of a thread whose current locator Codex's
+// index does not name (no row, or an older Codex): among the seed and the
+// observed same-thread rollouts, the one rollout no other continues from.
+// Rollouts the walk back from that tip does not reach are off the thread's
+// chain and are ignored. Observed candidates are hints, not a proof that no
+// newer segment exists: a segment created since is picked up by a later pass,
+// whose changed lookup revision makes the source look changed.
 func (p *relatedSourcePass) selectLineage(ctx context.Context, selected sourceSelection) (sourceSelection, error) {
 	set := selected.set
-	if !set.Complete {
-		return selected, sourceFailure(agentapi.Unavailable, "rollout lineage incomplete")
-	}
-	candidates := map[string]*rolloutFile{}
+	candidates := map[string]*rolloutFile{selected.leaf.identity.RolloutID: selected.leaf}
 	bases := map[string]bool{}
+	if base := selected.leaf.identity.HistoryBase; base != nil {
+		bases[base.RolloutID] = true
+	}
 	for _, candidate := range set.Candidates {
+		if candidate.Path == selected.leaf.ref.Path {
+			continue
+		}
 		f, e := p.open(ctx, candidate)
+		if errors.Is(e, os.ErrNotExist) {
+			// An observation can outlive its file (Codex renamed it).
+			continue
+		}
 		if e != nil {
 			return selected, e
 		}
@@ -323,37 +374,77 @@ func (p *relatedSourcePass) selectLineage(ctx context.Context, selected sourceSe
 			return selected, sourceFailure(agentapi.Unsafe, "rollout candidate identity mismatch")
 		}
 		if prior := candidates[id.RolloutID]; prior != nil && prior.ref.Path != f.ref.Path {
-			return selected, sourceFailure(agentapi.Unavailable, "ambiguous physical rollout")
+			return selected, sourceRefusal(agentapi.Unavailable, agentapi.CauseRolloutTipAmbiguous, "ambiguous physical rollout")
 		}
 		candidates[id.RolloutID] = f
 		if id.HistoryBase != nil {
 			bases[id.HistoryBase.RolloutID] = true
 		}
 	}
-	var tip *rolloutFile
+	var tips []*rolloutFile
 	for id, f := range candidates {
 		if !bases[id] {
-			if tip != nil {
-				return selected, sourceFailure(agentapi.Unavailable, "ambiguous rollout tips")
-			}
-			tip = f
+			tips = append(tips, f)
 		}
 	}
+	if len(tips) > 1 {
+		// An observed rollout can look like a tip only because a segment
+		// between it and a later one was never observed. Walk each apparent
+		// tip's chain back by rollout ID, so an ancestor is not a tip.
+		for _, f := range tips {
+			if err := p.markAncestors(ctx, f, bases); err != nil {
+				return selected, err
+			}
+		}
+		tips = slices.DeleteFunc(tips, func(f *rolloutFile) bool { return bases[f.identity.RolloutID] })
+	}
+	if len(tips) > 1 {
+		return selected, sourceRefusal(agentapi.Unavailable, agentapi.CauseRolloutTipAmbiguous, "ambiguous rollout tips")
+	}
+	var tip *rolloutFile
+	if len(tips) == 1 {
+		tip = tips[0]
+	}
 	if tip == nil {
-		return selected, sourceFailure(agentapi.Unavailable, "no complete rollout tip")
-	}
-	spans, err := p.graph(ctx, tip)
-	if err != nil {
-		return selected, err
-	}
-	for _, span := range spans {
-		delete(candidates, span.file.identity.RolloutID)
-	}
-	if len(candidates) != 0 {
-		return selected, sourceFailure(agentapi.Unavailable, "disconnected rollout lineage")
+		return selected, sourceRefusal(agentapi.Unavailable, agentapi.CauseRolloutTipAmbiguous, "no rollout tip")
 	}
 	selected.leaf = tip
 	return selected, nil
+}
+
+// markAncestors records in bases every rollout the chain behind f reaches,
+// found by rollout ID as graph finds them. It stops where a base cannot be
+// resolved: that only leaves a tip ambiguous, and the chosen tip's own walk
+// names an unresolved base.
+func (p *relatedSourcePass) markAncestors(ctx context.Context, f *rolloutFile, bases map[string]bool) error {
+	seen := map[string]bool{f.identity.RolloutID: true}
+	for current := f; current.identity.HistoryBase != nil && len(seen) <= archive.MaxHistorySpans; {
+		id := current.identity.HistoryBase.RolloutID
+		if seen[id] {
+			return nil
+		}
+		seen[id] = true
+		bases[id] = true
+		refs, err := p.env.CodexRollouts.Rollout(ctx, id)
+		if err != nil {
+			return err
+		}
+		if len(refs) != 1 {
+			return nil
+		}
+		base, err := p.open(ctx, refs[0])
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if base.identity.RolloutID != id {
+			return nil
+		}
+		current = base
+	}
+	return nil
 }
 
 type physicalSpan struct {
@@ -382,7 +473,7 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]phy
 		}
 		seen[id.RolloutID] = true
 		if len(reversed) >= archive.MaxHistorySpans {
-			return nil, sourceFailure(agentapi.Limit, "rollout history depth limit")
+			return nil, sourceRefusal(agentapi.Limit, agentapi.CauseRolloutHistoryDepthLimit, "rollout history depth limit")
 		}
 		start := uint64(0)
 		if id.HistoryBase != nil {
@@ -393,16 +484,21 @@ func (p *relatedSourcePass) graph(ctx context.Context, leaf *rolloutFile) ([]phy
 			break
 		}
 		if p.env.CodexRollouts == nil {
-			return nil, errors.Join(sourceFailure(agentapi.Unavailable, "history dependency unavailable"), archive.ErrRelatedHistory)
+			return nil, errors.Join(sourceRefusal(agentapi.Unavailable, agentapi.CauseHistoryDependencyUnavailable, "history dependency unavailable"), archive.ErrRelatedHistory)
 		}
 		refs, err := p.env.CodexRollouts.Rollout(ctx, id.HistoryBase.RolloutID)
 		if err != nil {
 			return nil, err
 		}
 		if len(refs) != 1 {
-			return nil, sourceFailure(agentapi.Unavailable, "history dependency missing or ambiguous")
+			return nil, sourceRefusal(agentapi.Unavailable, agentapi.CauseHistoryBaseUnavailable, "history dependency missing or ambiguous")
 		}
 		base, err := p.open(ctx, refs[0])
+		if errors.Is(err, os.ErrNotExist) {
+			// Gone since the lookup found it (Codex renamed it, say): the
+			// base is unavailable, not the thread's own source missing.
+			return nil, sourceRefusal(agentapi.Unavailable, agentapi.CauseHistoryBaseUnavailable, "history dependency missing")
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -434,7 +530,6 @@ func hasRelated(f *rolloutFile) bool {
 }
 
 func (p *relatedSourcePass) Signature(ctx context.Context, ref agentapi.SourceRef) (agentapi.SourceObservation, error) {
-	defer p.releaseIdleExtents()
 	if p.env.CodexRollouts != nil && p.genericLegacy(ref) {
 		return p.genericLegacySignature(ctx, ref)
 	}
@@ -459,7 +554,7 @@ func (p *relatedSourcePass) Signature(ctx context.Context, ref agentapi.SourceRe
 		return p.observation(ctx, selection, []physicalSpan{{file: selection.leaf, end: selection.leaf.boundary}})
 	}
 	if p.env.RequireConfinedHistory && p.env.Policy.Root == "" {
-		return agentapi.SourceObservation{}, sourceFailure(agentapi.Unavailable, "related history requires admitted confined source home")
+		return agentapi.SourceObservation{}, sourceRefusal(agentapi.Unavailable, agentapi.CauseRelatedHistoryRequiresAdmittedConfinedSourceHome, "related history requires admitted confined source home")
 	}
 	spans, err := p.graph(ctx, selection.leaf)
 	if err != nil {
@@ -560,7 +655,7 @@ func (p *relatedSourcePass) readSelection(ctx context.Context, limits agentapi.R
 
 func (p *relatedSourcePass) readHistorySelection(ctx context.Context, limits agentapi.ReadLimits, selection sourceSelection) (agentapi.SourceSnapshot, error) {
 	if p.env.RequireConfinedHistory && p.env.Policy.Root == "" {
-		return nil, sourceFailure(agentapi.Unavailable, "related history requires admitted confined source home")
+		return nil, sourceRefusal(agentapi.Unavailable, agentapi.CauseRelatedHistoryRequiresAdmittedConfinedSourceHome, "related history requires admitted confined source home")
 	}
 	fail := p.readFailure
 	spans, err := p.graph(ctx, selection.leaf)
@@ -571,27 +666,20 @@ func (p *relatedSourcePass) readHistorySelection(ctx context.Context, limits age
 	for _, span := range spans {
 		size += span.end
 	}
-	if size > relatedRawBudget || limits.RawBytes > 0 && size > limits.RawBytes {
-		return fail(sourceFailure(agentapi.Limit, "aggregate history byte limit"))
+	if rawLimit := codexRawLimit(limits); size > rawLimit {
+		// The observation lets the caller record the gap at this state, so
+		// an unchanged lineage is not read again to reach it.
+		observed, err := p.observation(ctx, selection, spans)
+		if err != nil {
+			return fail(errors.Join(agentapi.WithCause(agentapi.RawLimit(size, rawLimit, nil), agentapi.CauseAggregateHistoryByteLimit), err))
+		}
+		return fail(agentapi.WithCause(agentapi.RawLimit(size, rawLimit, &observed), agentapi.CauseAggregateHistoryByteLimit))
 	}
 	limit := limits.RecordBytes
 	if limit <= 0 || limit > archive.MaxRecordBytes {
 		limit = archive.MaxRecordBytes
 	}
-	var largest int64
-	for _, span := range spans {
-		largest = max(largest, span.end)
-	}
-	recordCeiling := limit
-	bufferCharge := min(max(int64(4096), min(largest+1, limit+1)), min(relatedRawBudget-p.bytes, p.env.ReadBudget.Available()))
-	if bufferCharge < 4096 {
-		return fail(agentapi.ReadBudgetLimit(errors.New("shared record buffer budget exhausted")))
-	}
-	limit = min(limit, bufferCharge-1)
-	s := &historySnapshot{owner: p, selection: selection, spans: spans, headers: selection.headerFiles(spans), recordLimit: limit, recordCeiling: recordCeiling, bufferCharge: bufferCharge}
-	if !p.reserve(bufferCharge) {
-		return fail(agentapi.ReadBudgetLimit(errors.New("shared record buffer budget exhausted")))
-	}
+	s := &historySnapshot{owner: p, selection: selection, spans: spans, headers: selection.headerFiles(spans), recordLimit: limit}
 	for _, f := range s.headers {
 		f.refs++
 	}
@@ -610,22 +698,20 @@ func (p *relatedSourcePass) readHistorySelection(ctx context.Context, limits age
 }
 
 type historySnapshot struct {
-	admission     *archive.CodexSourceBinding
-	firstOwnTask  *agentapi.OwnTaskFacts
-	owner         *relatedSourcePass
-	selection     sourceSelection
-	spans         []physicalSpan
-	headers       []*rolloutFile
-	history       archive.SourceHistory
-	observed      agentapi.SourceObservation
-	recordLimit   int64
-	recordCeiling int64
-	bufferCharge  int64
-	span          int
-	scanner       *bufio.Scanner
-	nextOrdinal   uint64
-	headerSent    bool
-	closed        bool
+	admission    *archive.CodexSourceBinding
+	firstOwnTask *agentapi.OwnTaskFacts
+	owner        *relatedSourcePass
+	selection    sourceSelection
+	spans        []physicalSpan
+	headers      []*rolloutFile
+	history      archive.SourceHistory
+	observed     agentapi.SourceObservation
+	recordLimit  int64
+	span         int
+	lines        *chargedLineReader
+	nextOrdinal  uint64
+	headerSent   bool
+	closed       bool
 }
 
 func (s *historySnapshot) validate(ctx context.Context) error {
@@ -637,7 +723,7 @@ func (s *historySnapshot) validate(ctx context.Context) error {
 			continue
 		}
 		if facts.ForkID != "" && facts.ForkOrdinal == nil {
-			return sourceFailure(agentapi.Unavailable, "fork ownership boundary unavailable")
+			return sourceRefusal(agentapi.Unavailable, agentapi.CauseForkOwnershipBoundaryUnavailable, "fork ownership boundary unavailable")
 		}
 		for _, boundary := range []*uint64{facts.ForkOrdinal, facts.SubagentOrdinal} {
 			if boundary != nil && (s.history.OwnStart == nil || *boundary > *s.history.OwnStart) {
@@ -660,7 +746,7 @@ func (s *historySnapshot) validate(ctx context.Context) error {
 		}
 		count += facts.records
 		if count > archive.MaxHistoryRecords {
-			return sourceFailure(agentapi.Limit, "history record limit")
+			return sourceRefusal(agentapi.Limit, agentapi.CauseHistoryRecordLimit, "history record limit")
 		}
 		span.digest, span.endOrdinal = facts.digest, facts.endOrdinal
 		next := facts.endOrdinal
@@ -682,36 +768,37 @@ func (s *historySnapshot) Close() error {
 	}
 	s.closed = true
 	delete(s.owner.live, s)
-	s.owner.release(s.bufferCharge)
-	s.bufferCharge = 0
+	s.lines.close()
+	s.lines = nil
 	for _, f := range s.headers {
 		f.refs--
 	}
 	s.headers = nil
-	s.scanner = nil
 	s.spans = nil
 	s.selection = sourceSelection{}
-	s.owner.releaseIdleExtents()
 	return nil
 }
 
 func (s *historySnapshot) ValidateAdmission(ctx context.Context, a agentapi.SourceAdmission) error {
-	s.admission = a.Binding
-	if s.history.OwnStart == nil && a.Binding != nil && a.Binding.OwnStart != nil {
-		s.history.OwnStart = a.Binding.OwnStart
+	if err := a.Binding.ValidateFor("codex"); err != nil {
+		return err
+	}
+	s.admission = a.Binding.CodexBinding()
+	if s.history.OwnStart == nil && a.Binding.CodexBinding() != nil && a.Binding.CodexBinding().OwnStart != nil {
+		s.history.OwnStart = a.Binding.CodexBinding().OwnStart
 		// Validation may have cached a task before retained admission supplied
 		// its owned boundary. Historical reads validate admission before their
 		// consumer gathers evidence, so that earlier result must be recomputed.
 		s.firstOwnTask = nil
 	}
-	facts, err := s.AdmissionFacts(ctx)
+	facts, err := s.codexAdmissionFacts(ctx)
 	if err != nil {
 		return err
 	}
-	if !validAdmissionFacts(s.selection.leaf, facts, a) {
-		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	if err := s.owner.checkHistoryAdmissionFacts(ctx, s.selection, s.spans, facts, a); err != nil {
+		return err
 	}
-	if a.NativeID != s.selection.thread || a.Cwd != "" && a.Cwd != s.selection.leaf.meta.Cwd {
+	if a.NativeID != s.selection.thread || a.Cwd != "" && a.Cwd != facts.Cwd {
 		return sourceFailure(agentapi.Unsafe, "source admission identity changed")
 	}
 	return s.check(ctx)
@@ -744,13 +831,22 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 	}
 	for s.span < len(s.spans) {
 		span := s.spans[s.span]
-		if s.scanner == nil {
-			s.scanner = bufio.NewScanner(io.NewSectionReader(span.reader(), 0, span.end))
-			s.scanner.Buffer(make([]byte, min(int64(4096), s.recordLimit+1)), int(s.recordLimit)+1)
+		if s.lines == nil {
+			filterInput, finish := trace.CountReads(io.NewSectionReader(span.reader(), 0, span.end), trace.FilterBytes)
+			lines, err := s.owner.newChargedLineReader(filterInput, s.recordLimit)
+			if err != nil {
+				finish()
+				return agentapi.NativeRecord{}, false, err
+			}
+			lines.traceFinish = finish
+			s.lines = lines
 			s.nextOrdinal = span.startOrdinal
 		}
-		if s.scanner.Scan() {
-			raw := s.scanner.Bytes()
+		raw, more, err := s.lines.next(ctx)
+		if err != nil {
+			return agentapi.NativeRecord{}, false, sourceio.Classify(err)
+		}
+		if more {
 			if len(bytes.TrimSpace(raw)) == 0 {
 				continue
 			}
@@ -758,13 +854,8 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 			s.nextOrdinal++
 			return agentapi.NativeRecord{Kind: agentapi.CodexHistoryRecord, Key: span.file.identity.RolloutID, Raw: raw, Ordinal: ordinal}, true, nil
 		}
-		if err := s.scanner.Err(); err != nil {
-			if errors.Is(err, bufio.ErrTooLong) {
-				return agentapi.NativeRecord{}, false, s.recordCapacityError(0)
-			}
-			return agentapi.NativeRecord{}, false, sourceio.Classify(err)
-		}
-		s.scanner = nil
+		s.lines.close()
+		s.lines = nil
 		s.span++
 	}
 	return agentapi.NativeRecord{}, false, s.check(ctx)
@@ -772,40 +863,57 @@ func (s *historySnapshot) Next(ctx context.Context) (agentapi.NativeRecord, bool
 
 // ordinarySnapshot retains file framing while accepting verified later appends.
 type ordinarySnapshot struct {
-	bufferCharge int64
-	owner        *relatedSourcePass
-	source       *rolloutFile
-	selection    sourceSelection
-	ctx          context.Context
-	length       int64
-	digest       [32]byte
-	closed       bool
-	observed     agentapi.SourceObservation
-	headers      []*rolloutFile
+	scratchCharge      int64
+	scratchReservation *agentapi.NativeReadReservation
+	owner              *relatedSourcePass
+	source             *rolloutFile
+	selection          sourceSelection
+	ctx                context.Context
+	length             int64
+	digest             [32]byte
+	hashScratch        []byte
+	closed             bool
+	observed           agentapi.SourceObservation
+	headers            []*rolloutFile
 }
 
 func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLimits, selection sourceSelection) (agentapi.SourceSnapshot, error) {
-	bufferCharge := min(int64(archive.MaxRecordBytes)+1, selection.leaf.file.Length()+1) + 64<<10
-	if !p.reserve(bufferCharge) {
-		return nil, sourceFailure(agentapi.Unavailable, "ordinary native scanner budget exhausted")
+	f := selection.leaf
+	if rawLimit := codexRawLimit(limits); f.file.Length() > rawLimit {
+		stamp := f.file.Stamp()
+		o := agentapi.SourceObservation{Present: true, Size: stamp.Size, Activity: stamp.ModifiedAt, Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano())}
+		if p.env.CodexRollouts != nil {
+			observed, err := p.observation(ctx, selection, []physicalSpan{{file: f, end: f.boundary}})
+			if err != nil {
+				return nil, errors.Join(agentapi.RawLimit(f.file.Length(), rawLimit, nil), err)
+			}
+			o = observed
+		}
+		return nil, agentapi.RawLimit(f.file.Length(), rawLimit, &o)
+	}
+	reservation := p.env.ReadBudget.Reservation()
+	if !p.reserve(reservation, ordinaryScratch) {
+		return nil, agentapi.WithCause(agentapi.ReadBudgetLimit(errors.New("ordinary native scratch budget exhausted")), agentapi.CauseOrdinaryNativeScratchBudgetExhausted)
 	}
 	transferred := false
 	defer func() {
 		if !transferred {
-			p.release(bufferCharge)
+			p.release(reservation, ordinaryScratch)
 		}
 	}()
-	f := selection.leaf
-	if limits.RawBytes > 0 && f.file.Length() > limits.RawBytes {
-		return nil, agentapi.Wrap(agentapi.Limit, agentapi.ErrRawLimit)
-	}
 	h := sha256.New()
-	if _, err := io.Copy(h, io.LimitReader(f.file.Reader(ctx), f.boundary)); err != nil {
+	// One snapshot owns this scratch until Close. All ordinary hash operations
+	// use it serially, within the existing ordinaryScratch reservation.
+	buffer := make([]byte, max(1, min(ordinaryScratch, f.boundary)))
+	n, err := io.CopyBuffer(h, io.LimitReader(f.file.Reader(ctx), f.boundary), buffer)
+	trace.Add(trace.HashBytes, n)
+	if err != nil {
 		return nil, err
 	}
 	stamp := f.file.Stamp()
-	out := &ordinarySnapshot{bufferCharge: bufferCharge, owner: p, source: f, selection: selection, headers: selection.headerFiles(nil), ctx: ctx, length: f.boundary, observed: agentapi.SourceObservation{Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano()), Present: true, Empty: f.boundary == 0, Activity: stamp.ModifiedAt, Size: stamp.Size}}
+	out := &ordinarySnapshot{scratchCharge: ordinaryScratch, scratchReservation: reservation, owner: p, source: f, selection: selection, headers: selection.headerFiles(nil), ctx: ctx, length: f.boundary, observed: agentapi.SourceObservation{Signature: sourceio.FileSignature(stamp.Size, stamp.ModifiedAt.UnixNano()), Present: true, Empty: f.boundary == 0, Activity: stamp.ModifiedAt, Size: stamp.Size}}
 	copy(out.digest[:], h.Sum(nil))
+	out.hashScratch = buffer
 	if p.env.CodexRollouts != nil {
 		var err error
 		out.observed, err = p.observation(ctx, selection, []physicalSpan{{file: f, end: f.boundary}})
@@ -813,7 +921,7 @@ func (p *relatedSourcePass) ordinary(ctx context.Context, limits agentapi.ReadLi
 			return nil, err
 		}
 	}
-	if err := checkHeaders(ctx, out.headers); err != nil {
+	if err := out.checkHeaders(ctx); err != nil {
 		return nil, err
 	}
 	for _, header := range out.headers {
@@ -834,13 +942,13 @@ func (s *ordinarySnapshot) Close() error {
 	if !s.closed {
 		s.closed = true
 		delete(s.owner.ordinaryLive, s)
-		s.owner.release(s.bufferCharge)
-		s.bufferCharge = 0
+		s.owner.release(s.scratchReservation, s.scratchCharge)
+		s.scratchCharge = 0
+		s.hashScratch = nil
 		for _, header := range s.headers {
 			header.refs--
 		}
 		s.headers = nil
-		s.owner.releaseIdleExtents()
 	}
 	return nil
 }
@@ -909,10 +1017,11 @@ func (p *relatedSourcePass) chargedNewlineBoundary(file *transcriptio.Snapshot) 
 		return size, nil
 	}
 	const scratch = 64 << 10
-	if !p.reserve(scratch) {
+	reservation := p.env.ReadBudget.Reservation()
+	if !p.reserve(reservation, scratch) {
 		return 0, agentapi.ReadBudgetLimit(errors.New("native newline scratch budget exhausted"))
 	}
-	defer p.release(scratch)
+	defer p.release(reservation, scratch)
 	return newlineBoundary(file, size)
 }
 
@@ -921,21 +1030,25 @@ func (f ordinaryFile) Records(ctx context.Context, tail bool, windowBytes, recor
 		return transcriptio.RecordWindow{}, agentapi.ErrClosed
 	}
 	charge := max(int64(4096), min(f.s.length, max(recordBytes, windowBytes))) + max(windowBytes, 0) + 64<<10
-	if !f.s.owner.reserve(charge) {
-		return transcriptio.RecordWindow{}, sourceFailure(agentapi.Unavailable, "native record window budget exhausted")
+	reservation := f.s.owner.env.ReadBudget.Reservation()
+	if !f.s.owner.reserve(reservation, charge) {
+		return transcriptio.RecordWindow{}, sourceRefusal(agentapi.Unavailable, agentapi.CauseNativeRecordWindowBudgetExhausted, "native record window budget exhausted")
 	}
-	defer f.s.owner.release(charge)
+	defer f.s.owner.release(reservation, charge)
 	return f.FileInput.Records(ctx, tail, windowBytes, recordBytes, visit)
 }
 
 func (s *ordinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.SourceAdmission) error {
-	facts, err := s.AdmissionFacts(ctx)
+	if err := a.Binding.ValidateFor("codex"); err != nil {
+		return err
+	}
+	facts, err := s.codexAdmissionFacts(ctx)
 	if err != nil {
 		return err
 	}
-	if a.Binding != nil {
-		facts.FirstNativeTaskAt = a.Binding.FirstNativeTaskAt
-		facts.FirstNativeTaskID = a.Binding.FirstNativeTaskID
+	if a.Binding.CodexBinding() != nil {
+		facts.FirstNativeTaskAt = a.Binding.CodexBinding().FirstNativeTaskAt
+		facts.FirstNativeTaskID = a.Binding.CodexBinding().FirstNativeTaskID
 	}
 	if !validAdmissionFacts(s.source, facts, a) {
 		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
@@ -950,7 +1063,7 @@ func (s *ordinarySnapshot) ValidateAdmission(ctx context.Context, a agentapi.Sou
 }
 
 func (s *ordinarySnapshot) check(ctx context.Context) error {
-	if err := s.source.file.CheckPrefix(ctx, s.length, s.digest); err != nil {
+	if err := s.source.file.CheckPrefixBuffer(ctx, s.length, s.digest, s.hashScratch); err != nil {
 		return sourceio.Classify(err)
 	}
 	if s.owner.env.CodexRollouts != nil {
@@ -958,13 +1071,22 @@ func (s *ordinarySnapshot) check(ctx context.Context) error {
 			return sourceio.Classify(err)
 		}
 	}
-	return checkHeaders(ctx, s.headers)
+	return s.checkHeaders(ctx)
+}
+
+func (s *ordinarySnapshot) checkHeaders(ctx context.Context) error {
+	for _, header := range s.headers {
+		if err := header.file.CheckPrefixBuffer(ctx, int64(len(header.header)), header.headerDigest, s.hashScratch); err != nil {
+			return sourceio.Classify(err)
+		}
+	}
+	return nil
 }
 
 func bindingFacts(f *rolloutFile, home string, own *uint64) (archive.CodexSourceBinding, error) {
 	_, created, found, err := codexmeta.ParseCodexMeta(f.header)
 	if err != nil || !found || created.IsZero() {
-		return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unavailable, "native creation evidence unavailable")
+		return archive.CodexSourceBinding{}, sourceRefusal(agentapi.Unavailable, agentapi.CauseNativeCreationEvidenceUnavailable, "native creation evidence unavailable")
 	}
 	var source string
 	rawSource := f.meta.Source
@@ -991,7 +1113,7 @@ func bindingFacts(f *rolloutFile, home string, own *uint64) (archive.CodexSource
 	return facts, err
 }
 
-func (s *ordinarySnapshot) AdmissionFacts(ctx context.Context) (archive.CodexSourceBinding, error) {
+func (s *ordinarySnapshot) codexAdmissionFacts(ctx context.Context) (archive.CodexSourceBinding, error) {
 	if s.closed || s.owner.closed {
 		return archive.CodexSourceBinding{}, agentapi.ErrClosed
 	}
@@ -1001,7 +1123,7 @@ func (s *ordinarySnapshot) AdmissionFacts(ctx context.Context) (archive.CodexSou
 	return bindingFacts(s.source, s.owner.env.Policy.Root, nil)
 }
 
-func (s *historySnapshot) AdmissionFacts(ctx context.Context) (archive.CodexSourceBinding, error) {
+func (s *historySnapshot) codexAdmissionFacts(ctx context.Context) (archive.CodexSourceBinding, error) {
 	if s.closed || s.owner.closed {
 		return archive.CodexSourceBinding{}, agentapi.ErrClosed
 	}
@@ -1013,8 +1135,10 @@ func (s *historySnapshot) AdmissionFacts(ctx context.Context) (archive.CodexSour
 }
 
 func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref agentapi.SourceRef, admission agentapi.SourceAdmission) error {
-	defer p.releaseIdleExtents()
-	if p.env.CodexRollouts != nil && p.genericLegacy(ref) && admission.Binding == nil && admission.NativeCreatedAt.IsZero() {
+	if err := admission.Binding.ValidateFor("codex"); err != nil {
+		return err
+	}
+	if p.env.CodexRollouts != nil && p.genericLegacy(ref) && admission.Binding.CodexBinding() == nil && admission.NativeCreatedAt.IsZero() {
 		if admission.NativeID != ref.Key {
 			return sourceFailure(agentapi.Unsafe, "legacy admission identity mismatch")
 		}
@@ -1028,11 +1152,11 @@ func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref age
 	if err != nil {
 		return err
 	}
-	if selection.legacyOrdinary && (admission.Binding != nil || !admission.NativeCreatedAt.IsZero()) {
-		return sourceFailure(agentapi.Unavailable, "legacy compatibility requires unbound admission")
+	if selection.legacyOrdinary && (admission.Binding.CodexBinding() != nil || !admission.NativeCreatedAt.IsZero()) {
+		return sourceRefusal(agentapi.Unavailable, agentapi.CauseLegacyCompatibilityRequiresUnboundAdmission, "legacy compatibility requires unbound admission")
 	}
 	if p.env.RequireConfinedHistory && p.env.Policy.Root == "" && hasRelated(selection.leaf) {
-		return sourceFailure(agentapi.Unavailable, "related admission requires confined source home")
+		return sourceRefusal(agentapi.Unavailable, agentapi.CauseRelatedAdmissionRequiresConfinedSourceHome, "related admission requires confined source home")
 	}
 	spans, err := p.graph(ctx, selection.leaf)
 	if err != nil {
@@ -1054,12 +1178,12 @@ func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref age
 			return sourceio.Classify(err)
 		}
 	}
-	facts, err := p.historyBindingFacts(ctx, selection, spans, own, admission.Binding)
+	facts, err := p.historyBindingFacts(ctx, selection, spans, own, admission.Binding.CodexBinding())
 	if err != nil {
 		return err
 	}
-	if selection.thread != admission.NativeID || admission.Cwd != "" && facts.Cwd != admission.Cwd || !validAdmissionFacts(selection.leaf, facts, admission) {
-		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	if err := p.checkHistoryAdmissionFacts(ctx, selection, spans, facts, admission); err != nil {
+		return err
 	}
 	if p.env.CodexRollouts != nil {
 		return p.env.CodexRollouts.Check(ctx, selection.thread, selection.set.Revision)
@@ -1068,12 +1192,12 @@ func (p *relatedSourcePass) ValidateSourceAdmission(ctx context.Context, ref age
 }
 
 func validAdmissionFacts(f *rolloutFile, facts archive.CodexSourceBinding, a agentapi.SourceAdmission) bool {
-	if a.Binding != nil && a.Binding.PhysicalRolloutID == f.identity.RolloutID {
-		if a.Binding.PhysicalProducerVersion != "" && a.Binding.PhysicalProducerVersion != f.meta.Version || a.Binding.PhysicalProducerOriginator != "" && a.Binding.PhysicalProducerOriginator != f.meta.Originator {
+	if a.Binding.CodexBinding() != nil && a.Binding.CodexBinding().PhysicalRolloutID == f.identity.RolloutID {
+		if a.Binding.CodexBinding().PhysicalProducerVersion != "" && a.Binding.CodexBinding().PhysicalProducerVersion != f.meta.Version || a.Binding.CodexBinding().PhysicalProducerOriginator != "" && a.Binding.CodexBinding().PhysicalProducerOriginator != f.meta.Originator {
 			return false
 		}
 	}
-	return facts.PreservesFacts(a.Binding) && (a.NativeCreatedAt.IsZero() || facts.NativeCreatedAt.Equal(a.NativeCreatedAt)) && (a.InitialProducerVersion == "" || f.meta.Version == a.InitialProducerVersion) && (a.InitialProducerOriginator == "" || f.meta.Originator == a.InitialProducerOriginator) && (a.InitialProducerSource == "" || facts.ProducerSource == a.InitialProducerSource)
+	return facts.PreservesFacts(a.Binding.CodexBinding()) && (a.NativeCreatedAt.IsZero() || facts.NativeCreatedAt.Equal(a.NativeCreatedAt)) && (a.InitialProducerVersion == "" || f.meta.Version == a.InitialProducerVersion) && (a.InitialProducerOriginator == "" || f.meta.Originator == a.InitialProducerOriginator) && (a.InitialProducerSource == "" || facts.ProducerSource == a.InitialProducerSource)
 }
 
 // prefixValidation is cached only for one immutable, fully captured ancestor prefix.
@@ -1092,9 +1216,6 @@ const prefixSummaryCharge int64 = 128
 
 func (f *rolloutFile) charge() int64 {
 	charge := sourceHeaderCharge
-	if f.rawCharged {
-		charge += f.file.Length()
-	}
 	if f.prefix != nil {
 		charge += int64(len(f.prefix)) + prefixSummaryCharge
 	}
@@ -1111,43 +1232,41 @@ func (span physicalSpan) reader() io.ReaderAt {
 func (p *relatedSourcePass) cachePrefixes(ctx context.Context, spans []physicalSpan) error {
 	for _, span := range spans[:len(spans)-1] {
 		f := span.file
-		if f.prefix != nil || span.end > relatedRawBudget/4 || p.bytes+span.end+prefixSummaryCharge > relatedRawBudget || span.end+prefixSummaryCharge > p.env.ReadBudget.Available() {
+		if f.prefix != nil || p.prefixBytes+span.end > prefixCacheLimit || span.end+prefixSummaryCharge > p.env.ReadBudget.Available() {
 			continue
 		}
 		// The one bounded immutable copy is shared by descendants; never replace it
 		// while a snapshot might hold a borrowed scanner over its bytes.
 		charge := span.end + prefixSummaryCharge
-		if !p.reserve(charge) {
+		if !p.reserveCache(charge) {
 			continue
 		}
 		raw := make([]byte, span.end)
 		reader := sourceio.Reader(ctx, f.file, span.end)
 		if _, err := io.ReadFull(reader, raw); err != nil {
-			p.release(charge)
+			p.releaseCache(charge)
 			return sourceio.Classify(err)
 		}
 		f.prefix = raw
+		p.prefixBytes += span.end
 	}
 	return nil
 }
 
-// recordCapacityError keeps a shared-capacity scanner refusal distinct from
-// the configured native record ceiling. Only the latter can establish a gap.
-func (s *historySnapshot) recordCapacityError(recordBytes int64) error {
-	if recordBytes > s.recordCeiling && s.recordCeiling > 0 {
-		return agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+// codexRawLimit is the raw size a read may cover: the caller's limit, never
+// more than archive.MaxCodexRawTranscriptBytes.
+func codexRawLimit(limits agentapi.ReadLimits) int64 {
+	if limits.RawBytes > 0 {
+		return min(limits.RawBytes, archive.MaxCodexRawTranscriptBytes)
 	}
-	if s.recordLimit < s.recordCeiling {
-		return agentapi.ReadBudgetLimit(errors.New("history record scanner exceeds shared capacity"))
-	}
-	return agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
+	return archive.MaxCodexRawTranscriptBytes
 }
 
 func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) (prefixValidation, error) {
 	cached := span.file.validated
 	if cached != nil && int64(len(span.file.prefix)) == span.end && cached.startOrdinal == span.startOrdinal {
 		if cached.maxRecordBytes > s.recordLimit {
-			return prefixValidation{}, s.recordCapacityError(cached.maxRecordBytes)
+			return prefixValidation{}, agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge)
 		}
 		s.owner.cacheHits++
 		result := *cached
@@ -1167,17 +1286,23 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 	facts := prefixValidation{startOrdinal: span.startOrdinal, endOrdinal: span.startOrdinal, taskOwned: span.file.identity.ThreadID == s.selection.thread, taskBoundary: boundary}
 
 	h := sha256.New()
-	scanner := bufio.NewScanner(io.TeeReader(io.NewSectionReader(span.reader(), 0, span.end), h))
-	scanner.Buffer(make([]byte, min(int64(4096), s.recordLimit+1)), int(s.recordLimit)+1)
-	for scanner.Scan() {
-		if err := ctx.Err(); err != nil {
-			return facts, err
+	hashInput, hashFinish := trace.CountReads(io.TeeReader(io.NewSectionReader(span.reader(), 0, span.end), h), trace.HashBytes)
+	defer hashFinish()
+	lines, err := s.owner.newChargedLineReader(hashInput, s.recordLimit)
+	if err != nil {
+		return facts, err
+	}
+	defer lines.close()
+	for {
+		raw, more, err := lines.next(ctx)
+		if err != nil {
+			return facts, sourceio.Classify(err)
 		}
-		facts.maxRecordBytes = max(facts.maxRecordBytes, int64(len(scanner.Bytes())))
-		if facts.maxRecordBytes > s.recordLimit {
-			return facts, s.recordCapacityError(facts.maxRecordBytes)
+		if !more {
+			break
 		}
-		line := bytes.TrimSpace(scanner.Bytes())
+		facts.maxRecordBytes = max(facts.maxRecordBytes, int64(len(raw)))
+		line := bytes.TrimSpace(raw)
 		if len(line) == 0 {
 			continue
 		}
@@ -1194,7 +1319,7 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 			return facts, sourceFailure(agentapi.Unsafe, "noncontiguous history ordinal")
 		}
 		if facts.endOrdinal == math.MaxUint64 {
-			return facts, sourceFailure(agentapi.Limit, "history ordinal overflow")
+			return facts, sourceRefusal(agentapi.Limit, agentapi.CauseHistoryOrdinalOverflow, "history ordinal overflow")
 		}
 		if facts.taskOwned && !facts.firstTask.Seen && facts.endOrdinal >= facts.taskBoundary {
 			facts.firstTask = ownTaskFacts(line, localExecutionShape(span.file))
@@ -1202,14 +1327,8 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 		facts.endOrdinal++
 		facts.records++
 		if facts.records > archive.MaxHistoryRecords {
-			return facts, sourceFailure(agentapi.Limit, "history record limit")
+			return facts, sourceRefusal(agentapi.Limit, agentapi.CauseHistoryRecordLimit, "history record limit")
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		if errors.Is(err, bufio.ErrTooLong) {
-			return facts, s.recordCapacityError(0)
-		}
-		return facts, sourceio.Classify(err)
 	}
 	copy(facts.digest[:], h.Sum(nil))
 	if int64(len(span.file.prefix)) == span.end {
@@ -1219,6 +1338,9 @@ func (s *historySnapshot) validateSpan(ctx context.Context, span *physicalSpan) 
 }
 
 func (p *relatedSourcePass) ReadRevision(ctx context.Context, ref agentapi.SourceRef, admission agentapi.SourceAdmission, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
+	if err := admission.Binding.ValidateFor("codex"); err != nil {
+		return nil, err
+	}
 	leaf, err := p.open(ctx, ref)
 	if err != nil {
 		return nil, err
@@ -1248,64 +1370,81 @@ func (p *relatedSourcePass) ReadRevision(ctx context.Context, ref agentapi.Sourc
 	return snapshot, nil
 }
 
-func (s *historySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.SourceRef, error) {
+func (s *historySnapshot) RevisionCandidates(ctx context.Context) (agentapi.RevisionCandidateSet, error) {
 	if s.closed || s.owner.closed {
-		return nil, agentapi.ErrClosed
+		return agentapi.RevisionCandidateSet{}, agentapi.ErrClosed
 	}
 	if err := s.check(ctx); err != nil {
-		return nil, err
+		return agentapi.RevisionCandidateSet{}, err
 	}
-	if s.owner.env.CodexRollouts != nil && !s.selection.set.Complete {
-		return nil, sourceFailure(agentapi.Unavailable, "historical candidate coverage incomplete")
-	}
-	out := make([]agentapi.SourceRef, 0, archive.MaxHistorySpans)
+	var out agentapi.RevisionCandidateSet
 	seen := map[string]bool{}
-	add := func(ref agentapi.SourceRef) error {
-		if seen[ref.Path] {
-			return nil
+	// The thread's own segments on its chain are required.
+	for _, span := range s.spans {
+		if span.file.identity.ThreadID != s.selection.thread || seen[span.file.ref.Path] {
+			continue
 		}
-		if len(out) >= archive.MaxHistorySpans {
-			return sourceFailure(agentapi.Limit, "historical candidate limit")
+		if len(out.Chain) >= archive.MaxHistorySpans {
+			return agentapi.RevisionCandidateSet{}, sourceRefusal(agentapi.Limit, agentapi.CauseHistoricalCandidateLimit, "historical candidate limit")
+		}
+		seen[span.file.ref.Path] = true
+		out.Chain = append(out.Chain, span.file.ref)
+	}
+	// The tip is what this snapshot read as the thread's current revision.
+	if seen[s.selection.leaf.ref.Path] {
+		out.Active = s.selection.leaf.ref
+	}
+	// Observed same-thread rollouts off it (an abandoned branch, say) follow
+	// as best-effort historical revisions; one whose file is gone since is
+	// passed over, and past the limit further ones are left out rather than
+	// refusing the chain's own capture.
+	for _, ref := range presentCandidates(s.selection.set.Candidates) {
+		if seen[ref.Path] {
+			continue
+		}
+		if len(out.Chain)+len(out.BestEffort) >= archive.MaxHistorySpans {
+			break
 		}
 		seen[ref.Path] = true
-		out = append(out, ref)
-		return nil
-	}
-	for _, span := range s.spans {
-		if span.file.identity.ThreadID == s.selection.thread {
-			if err := add(span.file.ref); err != nil {
-				return nil, err
-			}
-		}
-	}
-	for _, ref := range s.selection.set.Candidates {
-		if err := add(ref); err != nil {
-			return nil, err
-		}
+		out.BestEffort = append(out.BestEffort, ref)
 	}
 	return out, nil
 }
 
-func (s *ordinarySnapshot) RevisionCandidates(ctx context.Context) ([]agentapi.SourceRef, error) {
-	if _, err := s.AdmissionFacts(ctx); err != nil {
-		return nil, err
+func (s *ordinarySnapshot) RevisionCandidates(ctx context.Context) (agentapi.RevisionCandidateSet, error) {
+	if _, err := s.codexAdmissionFacts(ctx); err != nil {
+		return agentapi.RevisionCandidateSet{}, err
 	}
-	if s.owner.env.CodexRollouts != nil && !s.selection.set.Complete {
-		return nil, sourceFailure(agentapi.Unavailable, "historical candidate coverage incomplete")
-	}
-	out := []agentapi.SourceRef{s.source.ref}
-	seen := map[string]bool{s.source.ref.Path: true}
-	for _, ref := range s.selection.set.Candidates {
-		if seen[ref.Path] {
+	// An ordinary rollout is the whole chain; observed same-thread rollouts
+	// off it follow as best-effort historical revisions.
+	out := agentapi.RevisionCandidateSet{Chain: []agentapi.SourceRef{s.source.ref}, Active: s.source.ref}
+	for _, ref := range presentCandidates(s.selection.set.Candidates) {
+		if ref.Path == s.source.ref.Path {
 			continue
 		}
-		if len(out) >= archive.MaxHistorySpans {
-			return nil, sourceFailure(agentapi.Limit, "historical candidate limit")
+		if 1+len(out.BestEffort) >= archive.MaxHistorySpans {
+			// Further off-chain rollouts are left out rather than refusing
+			// the rollout's own capture.
+			break
 		}
-		seen[ref.Path] = true
-		out = append(out, ref)
+		out.BestEffort = append(out.BestEffort, ref)
 	}
 	return out, nil
+}
+
+// presentCandidates are the observed candidates whose files still exist,
+// newest first, so the newest fill the slots the chain leaves. An
+// observation can outlive its file (Codex renamed it); the reader reopens and
+// rechecks every one it is given.
+func presentCandidates(candidates []agentapi.SourceRef) []agentapi.SourceRef {
+	var out []agentapi.SourceRef
+	for _, ref := range candidates {
+		if info, err := os.Lstat(ref.Path); err == nil && info.Mode().IsRegular() {
+			out = append(out, ref)
+		}
+	}
+	slices.SortFunc(out, func(a, b agentapi.SourceRef) int { return codexmeta.NewestRolloutFirst(a.Path, b.Path) })
+	return out
 }
 
 func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection sourceSelection, spans []physicalSpan, own *uint64, known *archive.CodexSourceBinding) (archive.CodexSourceBinding, error) {
@@ -1322,7 +1461,7 @@ func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection s
 			return archive.CodexSourceBinding{}, err
 		}
 		if len(refs) > archive.MaxHistorySpans {
-			return archive.CodexSourceBinding{}, sourceFailure(agentapi.Limit, "original fact candidate limit")
+			return archive.CodexSourceBinding{}, sourceRefusal(agentapi.Limit, agentapi.CauseOriginalFactCandidateLimit, "original fact candidate limit")
 		}
 		for _, ref := range refs {
 			candidate, err := p.open(ctx, ref)
@@ -1331,7 +1470,7 @@ func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection s
 			}
 			if candidate.identity.ThreadID == selection.thread && candidate.identity.RolloutID == selection.thread {
 				if original != nil && original.ref.Path != candidate.ref.Path {
-					return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unavailable, "original native identity ambiguous")
+					return archive.CodexSourceBinding{}, sourceRefusal(agentapi.Unavailable, agentapi.CauseHistoryBaseUnavailable, "original native identity ambiguous")
 				}
 				original = candidate
 			}
@@ -1350,7 +1489,7 @@ func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection s
 			facts.OwnStart = own
 		}
 	} else {
-		return archive.CodexSourceBinding{}, sourceFailure(agentapi.Unavailable, "original native creation facts unavailable")
+		return archive.CodexSourceBinding{}, sourceRefusal(agentapi.Unavailable, agentapi.CauseNativeCreationEvidenceUnavailable, "original native creation facts unavailable")
 	}
 	for _, span := range spans {
 		id := span.file.identity
@@ -1387,7 +1526,7 @@ func (p *relatedSourcePass) historyBindingFacts(ctx context.Context, selection s
 }
 
 func ownTaskFacts(line []byte, local bool) agentapi.OwnTaskFacts {
-	seen, native := codexmeta.NativeFirstTask(line)
+	seen, native, reason := codexmeta.NativeFirstTaskReason(line)
 	if !seen {
 		return agentapi.OwnTaskFacts{}
 	}
@@ -1397,7 +1536,7 @@ func ownTaskFacts(line []byte, local bool) agentapi.OwnTaskFacts {
 		} `json:"payload"`
 	}
 	_ = json.Unmarshal(line, &event)
-	return agentapi.OwnTaskFacts{Seen: true, Native: native, LocalExecution: local, StartedAt: codexmeta.FirstTaskAt(line), TurnID: event.Payload.TurnID}
+	return agentapi.OwnTaskFacts{Refusal: agentapi.SourceCause(reason), Seen: true, Native: native, LocalExecution: local, StartedAt: codexmeta.FirstTaskAt(line), TurnID: event.Payload.TurnID}
 }
 
 func localExecutionShape(f *rolloutFile) bool {
@@ -1425,7 +1564,7 @@ func (s *historySnapshot) gatherOwnTask(ctx context.Context) (agentapi.OwnTaskFa
 		}
 		ordinal := span.startOrdinal
 		facts := agentapi.OwnTaskFacts{}
-		err := s.owner.scanChargedLines(ctx, io.NewSectionReader(span.file.file, 0, span.end), s.recordLimit+1, func(line []byte) bool {
+		err := s.owner.scanChargedLines(ctx, io.NewSectionReader(span.file.file, 0, span.end), s.recordLimit, func(line []byte) bool {
 			line = bytes.TrimSpace(line)
 			if len(line) == 0 {
 				return false
@@ -1457,7 +1596,7 @@ func (s *ordinarySnapshot) FirstOwnTask(ctx context.Context) (agentapi.OwnTaskFa
 		return agentapi.OwnTaskFacts{}, agentapi.ErrClosed
 	}
 	facts := agentapi.OwnTaskFacts{}
-	err := s.owner.scanChargedLines(ctx, io.NewSectionReader(s.source.file, 0, s.length), archive.MaxRecordBytes+1, func(line []byte) bool {
+	err := s.owner.scanChargedLines(ctx, io.NewSectionReader(s.source.file, 0, s.length), archive.MaxRecordBytes, func(line []byte) bool {
 		facts = ownTaskFacts(bytes.TrimSpace(line), localExecutionShape(s.source))
 		return facts.Seen
 	})
@@ -1469,30 +1608,36 @@ func (s *ordinarySnapshot) FirstOwnTask(ctx context.Context) (agentapi.OwnTaskFa
 }
 
 func (s *historySnapshot) AdmissionEvidence(ctx context.Context, admission agentapi.SourceAdmission) (agentapi.AdmissionEvidence, error) {
+	if err := admission.Binding.ValidateFor("codex"); err != nil {
+		return agentapi.AdmissionEvidence{}, err
+	}
 	if s.closed || s.owner.closed {
 		return agentapi.AdmissionEvidence{}, agentapi.ErrClosed
 	}
-	s.admission = admission.Binding
-	if s.history.OwnStart == nil && admission.Binding != nil && admission.Binding.OwnStart != nil {
-		s.history.OwnStart = admission.Binding.OwnStart
+	s.admission = admission.Binding.CodexBinding()
+	if s.history.OwnStart == nil && admission.Binding.CodexBinding() != nil && admission.Binding.CodexBinding().OwnStart != nil {
+		s.history.OwnStart = admission.Binding.CodexBinding().OwnStart
 		s.firstOwnTask = nil
 	}
 	binding, err := s.owner.historyBindingFacts(ctx, s.selection, s.spans, s.history.OwnStart, s.admission)
 	if err != nil {
 		return agentapi.AdmissionEvidence{}, err
 	}
-	if admission.NativeID != s.selection.thread || admission.Cwd != "" && admission.Cwd != s.selection.leaf.meta.Cwd || !validAdmissionFacts(s.selection.leaf, binding, admission) {
-		return agentapi.AdmissionEvidence{}, sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	if err := s.owner.checkHistoryAdmissionFacts(ctx, s.selection, s.spans, binding, admission); err != nil {
+		return agentapi.AdmissionEvidence{}, err
 	}
 	task, err := s.gatherOwnTask(ctx)
 	if err != nil {
 		return agentapi.AdmissionEvidence{}, err
 	}
-	evidence := agentapi.AdmissionEvidence{Binding: binding, Task: task}
+	evidence := agentapi.AdmissionEvidence{Binding: agentapi.SourceBinding{Codex: &binding}, Task: task}
 	return evidence, s.check(ctx)
 }
 
 func (s *ordinarySnapshot) AdmissionEvidence(ctx context.Context, admission agentapi.SourceAdmission) (agentapi.AdmissionEvidence, error) {
+	if err := admission.Binding.ValidateFor("codex"); err != nil {
+		return agentapi.AdmissionEvidence{}, err
+	}
 	if s.closed || s.owner.closed {
 		return agentapi.AdmissionEvidence{}, agentapi.ErrClosed
 	}
@@ -1500,9 +1645,9 @@ func (s *ordinarySnapshot) AdmissionEvidence(ctx context.Context, admission agen
 	if err != nil {
 		return agentapi.AdmissionEvidence{}, err
 	}
-	if admission.Binding != nil {
-		binding.FirstNativeTaskAt = admission.Binding.FirstNativeTaskAt
-		binding.FirstNativeTaskID = admission.Binding.FirstNativeTaskID
+	if admission.Binding.CodexBinding() != nil {
+		binding.FirstNativeTaskAt = admission.Binding.CodexBinding().FirstNativeTaskAt
+		binding.FirstNativeTaskID = admission.Binding.CodexBinding().FirstNativeTaskID
 	}
 	if admission.NativeID != s.source.identity.ThreadID || admission.Cwd != "" && admission.Cwd != s.source.meta.Cwd || !validAdmissionFacts(s.source, binding, admission) {
 		return agentapi.AdmissionEvidence{}, sourceFailure(agentapi.Unsafe, "source admission facts changed")
@@ -1511,29 +1656,56 @@ func (s *ordinarySnapshot) AdmissionEvidence(ctx context.Context, admission agen
 	if err != nil {
 		return agentapi.AdmissionEvidence{}, err
 	}
-	return agentapi.AdmissionEvidence{Binding: binding, Task: task}, nil
+	return agentapi.AdmissionEvidence{Binding: agentapi.SourceBinding{Codex: &binding}, Task: task}, nil
 }
 
-func (p *relatedSourcePass) reserve(bytes int64) bool {
-	if bytes < 0 || bytes > relatedRawBudget-p.bytes || !p.env.ReadBudget.Reserve(bytes) {
+func (p *relatedSourcePass) reserve(reservation *agentapi.NativeReadReservation, bytes int64) bool {
+	if bytes < 0 || !reservation.Reserve(bytes) {
 		return false
 	}
 	p.bytes += bytes
 	return true
 }
 
-func (p *relatedSourcePass) release(bytes int64) { p.env.ReadBudget.Release(bytes); p.bytes -= bytes }
+func (p *relatedSourcePass) release(reservation *agentapi.NativeReadReservation, bytes int64) {
+	reservation.Release(bytes)
+	p.bytes -= bytes
+}
 
-// Idle file handles retain header/proof and immutable-prefix ownership. Native
-// raw extents have no remaining record consumer once every snapshot closes.
-// Reopening a cached extent reserves it again before graph/record consumption.
-func (p *relatedSourcePass) releaseIdleExtents() {
-	for _, file := range p.files {
-		if file.refs == 0 && file.rawCharged {
-			p.release(file.file.Length())
-			file.rawCharged = false
-		}
+// reserveCache charges what the pass keeps between reads (cached headers and
+// ancestor prefixes): no session's own, so no session's scope counts it.
+func (p *relatedSourcePass) reserveCache(bytes int64) bool {
+	if bytes < 0 || !p.env.ReadBudget.ReserveUnscoped(bytes) {
+		return false
 	}
+	p.bytes += bytes
+	return true
+}
+
+// reserveHeader charges a cached rollout's header like reserveCache, but
+// the read cannot go on without it: a refusal marks the session's scope
+// pressured, so the session is deferred rather than failed.
+func (p *relatedSourcePass) reserveHeader() bool {
+	if !p.env.ReadBudget.ReserveUnscopedRequired(sourceHeaderCharge) {
+		return false
+	}
+	p.bytes += sourceHeaderCharge
+	return true
+}
+
+func (p *relatedSourcePass) releaseCache(bytes int64) {
+	p.env.ReadBudget.ReleaseUnscoped(bytes)
+	p.bytes -= bytes
+}
+
+// ReleaseCaches drops every cached file no snapshot holds, with its header
+// and any ancestor prefix, so the next session's scan starts with the pass
+// ledger as free as the pass can make it.
+func (p *relatedSourcePass) ReleaseCaches() error {
+	if p.closed {
+		return nil
+	}
+	return p.evict()
 }
 
 func (p *relatedSourcePass) lookupThread(ctx context.Context, id string) (agentapi.CodexRolloutSet, error) {
@@ -1555,8 +1727,6 @@ func (p *relatedSourcePass) initialLookupRef(ctx context.Context, ref agentapi.S
 		}
 		if set.Current != nil {
 			ref = *set.Current
-		} else if set.Complete && len(set.Candidates) > 0 {
-			ref = set.Candidates[0]
 		}
 	}
 	return ref, nil
@@ -1574,10 +1744,11 @@ func (p *relatedSourcePass) chargedBoundary(f *transcriptio.Snapshot) (int64, er
 		return f.Length(), nil
 	}
 	charge := min(f.Length(), int64(archive.MaxRecordBytes)) + 64<<10
-	if !p.reserve(charge) {
-		return 0, sourceFailure(agentapi.Unavailable, "native boundary scratch budget exhausted")
+	reservation := p.env.ReadBudget.Reservation()
+	if !p.reserve(reservation, charge) {
+		return 0, sourceRefusal(agentapi.Unavailable, agentapi.CauseNativeBoundaryScratchBudgetExhausted, "native boundary scratch budget exhausted")
 	}
-	defer p.release(charge)
+	defer p.release(reservation, charge)
 	return transcriptio.CompleteJSONLBoundary(f, f.Length(), archive.MaxRecordBytes)
 }
 
@@ -1588,4 +1759,161 @@ func (p *relatedSourcePass) readFailure(err error) (agentapi.SourceSnapshot, err
 		return nil, err
 	}
 	return nil, errors.Join(err, p.evict())
+}
+
+// Initial producer facts belong to the original thread, independently of the
+// producer that emitted the selected physical revision. Each remains bound to
+// its own validated header; neither can replace native creation or ownership.
+func (p *relatedSourcePass) checkHistoryAdmissionFacts(ctx context.Context, selection sourceSelection, spans []physicalSpan, facts archive.CodexSourceBinding, admission agentapi.SourceAdmission) error {
+	physical := admission
+	physical.InitialProducerVersion, physical.InitialProducerOriginator = "", ""
+	if selection.thread != admission.NativeID || admission.Cwd != "" && admission.Cwd != facts.Cwd || !validAdmissionFacts(selection.leaf, facts, physical) {
+		return sourceFailure(agentapi.Unsafe, "source admission facts changed")
+	}
+	if admission.InitialProducerVersion == "" && admission.InitialProducerOriginator == "" {
+		return nil
+	}
+	var original *rolloutFile
+	for _, span := range spans {
+		if span.file.identity.ThreadID == selection.thread && span.file.identity.RolloutID == selection.thread {
+			original = span.file
+			break
+		}
+	}
+	if original == nil {
+		for _, file := range p.files {
+			if file.identity.ThreadID == selection.thread && file.identity.RolloutID == selection.thread {
+				if original != nil && original.ref.Path != file.ref.Path {
+					return sourceFailure(agentapi.Unsafe, "original native identity ambiguous")
+				}
+				original = file
+			}
+		}
+	}
+	if original == nil && p.env.CodexRollouts != nil {
+		refs, err := p.env.CodexRollouts.Rollout(ctx, selection.thread)
+		if err != nil {
+			return err
+		}
+		if len(refs) > archive.MaxHistorySpans {
+			return sourceFailure(agentapi.Limit, "original fact candidate limit")
+		}
+		for _, ref := range refs {
+			file, err := p.open(ctx, ref)
+			if err != nil {
+				return err
+			}
+			if file.identity.ThreadID == selection.thread && file.identity.RolloutID == selection.thread {
+				if original != nil && original.ref.Path != file.ref.Path {
+					return sourceFailure(agentapi.Unsafe, "original native identity ambiguous")
+				}
+				original = file
+			}
+		}
+	}
+	if original == nil {
+		return sourceFailure(agentapi.Unsafe, "original producer facts unavailable")
+	}
+	if !originalProducerMatches(original, admission) {
+		return sourceFailure(agentapi.Unsafe, "original producer facts changed")
+	}
+	return original.checkHeader(ctx)
+}
+
+func (p *relatedSourcePass) historySourceAllowed(cwd string) bool {
+	return p.env.HistorySourceAllowed == nil || p.env.HistorySourceAllowed(cwd)
+}
+
+func (f *rolloutFile) currentHeader(ctx context.Context) bool {
+	return f.file.Check() == nil && f.checkHeader(ctx) == nil
+}
+
+func originalProducerMatches(original *rolloutFile, admission agentapi.SourceAdmission) bool {
+	return (admission.InitialProducerVersion == "" || admission.InitialProducerVersion == original.meta.Version) && (admission.InitialProducerOriginator == "" || admission.InitialProducerOriginator == original.meta.Originator)
+}
+
+// ContentProofFor excludes promoted methods on snapshot or input decorators.
+func (s *ordinarySnapshot) ContentProofFor(snapshot agentapi.SourceSnapshot, in agentapi.NativeInput) bool {
+	actual, ok := snapshot.(*ordinarySnapshot)
+	file, ordinary := in.File.(ordinaryFile)
+	return ok && actual == s && ordinary && file.s == s && file.FileInput == s.source.file && in.Records == nil && in.SubagentMeta == nil && !s.closed && !s.owner.closed
+}
+
+// ContentProof reuses the digest of the same ordinary boundary passed to filtering.
+func (s *ordinarySnapshot) ContentProof(ctx context.Context) (agentapi.SourceContentProof, error) {
+	if err := s.VerifyContent(ctx); err != nil {
+		return agentapi.SourceContentProof{}, err
+	}
+	return s.capturedProof(), nil
+}
+
+func (s *ordinarySnapshot) capturedProof() agentapi.SourceContentProof {
+	return agentapi.SourceContentProof{Version: 1, Provider: "codex-ordinary", SHA256: s.digest, Boundary: s.length}
+}
+
+// VerifiedInspectionFor rejects snapshot and filter decorators, including ones
+// that promote this method while overriding Input, Check or inspection behavior.
+func (s *ordinarySnapshot) VerifiedInspectionFor(snapshot agentapi.SourceSnapshot, filter agentapi.TranscriptFilter) bool {
+	actual, ok := snapshot.(*ordinarySnapshot)
+	_, native := filter.(Filter)
+	return ok && actual == s && native
+}
+
+// CapturedContentHint identifies captured bytes without asserting current source
+// equality. It authorizes only a lookup; a hit still requires VerifyContent.
+func (s *ordinarySnapshot) CapturedContentHint(ctx context.Context) (agentapi.SourceContentProof, error) {
+	if s.closed || s.owner.closed {
+		return agentapi.SourceContentProof{}, agentapi.ErrClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return agentapi.SourceContentProof{}, err
+	}
+	return s.capturedProof(), nil
+}
+
+// InspectVerifiedImport owns the actual codec call and its complete input.
+// The concrete codec always ends its read with ordinaryFile.Check, independently
+// hashing the captured prefix and checking current selection, locator and header.
+// After that check this operation only copies intrinsic summary/proof values;
+// no arbitrary inspector return, external callback or read can intervene.
+func (s *ordinarySnapshot) InspectVerifiedImport(ctx context.Context, filter agentapi.TranscriptFilter, c agentapi.FilterContext) (agentapi.ImportSummary, agentapi.SourceContentProof, error) {
+	f, native := filter.(Filter)
+	if !native {
+		return agentapi.ImportSummary{}, agentapi.SourceContentProof{}, sourceFailure(agentapi.Unavailable, "verified inspection requires native Codex filter")
+	}
+	if _, err := s.CapturedContentHint(ctx); err != nil {
+		return agentapi.ImportSummary{}, agentapi.SourceContentProof{}, err
+	}
+	summary, err := f.InspectFilteredImport(ctx, s.Input(), c)
+	if err != nil {
+		return agentapi.ImportSummary{}, agentapi.SourceContentProof{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return agentapi.ImportSummary{}, agentapi.SourceContentProof{}, err
+	}
+	return summary, s.capturedProof(), nil
+}
+
+// VerifyContent retains current descriptor, locator, selection and header checks.
+func (s *ordinarySnapshot) VerifyContent(ctx context.Context) error {
+	if s.closed || s.owner.closed {
+		return agentapi.ErrClosed
+	}
+	return s.check(ctx)
+}
+
+func (s *ordinarySnapshot) AdmissionFacts(ctx context.Context) (agentapi.SourceBinding, error) {
+	b, err := s.codexAdmissionFacts(ctx)
+	if err != nil {
+		return agentapi.SourceBinding{}, err
+	}
+	return agentapi.SourceBinding{Codex: &b}, nil
+}
+
+func (s *historySnapshot) AdmissionFacts(ctx context.Context) (agentapi.SourceBinding, error) {
+	b, err := s.codexAdmissionFacts(ctx)
+	if err != nil {
+		return agentapi.SourceBinding{}, err
+	}
+	return agentapi.SourceBinding{Codex: &b}, nil
 }

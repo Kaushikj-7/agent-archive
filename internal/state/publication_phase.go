@@ -156,13 +156,13 @@ func PreparePublicationV2(p PendingPublication, prior PublicationPredecessor, de
 // existing source ledger; it grants no persistence or storage capability.
 func PreparePublicationV2Budgeted(ctx context.Context, budget *agentapi.NativeReadBudget, p PendingPublication, prior PublicationPredecessor, destination, admission, policy string, purpose PublicationPurpose) (prepared PendingPublication, err error) {
 	preparing := p.History != nil && p.History.Preparing
-	if p.JournalVersion == 2 && p.Commit != nil {
+	if p.JournalVersion == 5 && p.Commit != nil {
 		if err := p.ValidatePublicationBudgeted(ctx, budget); err != nil {
 			return p, fmt.Errorf("existing selecting seal: %w", err)
 		}
 		return p, nil
 	}
-	if p.JournalVersion != 0 && p.JournalVersion != 2 {
+	if p.JournalVersion != 0 && p.JournalVersion != 5 {
 		return p, ErrDurableStorageRecovery
 	}
 	p.Commit = nil
@@ -190,13 +190,17 @@ func PreparePublicationV2Budgeted(ctx context.Context, budget *agentapi.NativeRe
 			return p, err
 		}
 	}
-	p.JournalVersion = 2
+	p.JournalVersion = 5
 	p.Phase = PublicationReady
 	if preparing {
 		p.Phase = PublicationPreparing
 	}
 	if p.History != nil {
 		if err := p.initializeHistoryProgress(sources, facts, preparing); err != nil {
+			return p, err
+		}
+	} else if purpose == PublicationPrivacyRewrite {
+		if err := p.initializeOrdinaryPrivacyProgress(sources, facts); err != nil {
 			return p, err
 		}
 	}
@@ -233,7 +237,7 @@ func (owned *PendingPublication) validatePublicationEnvelope() error {
 func (owned *PendingPublication) validatePublicationEnvelopeWithFacts(facts *payloadDigestFacts) (err error) {
 	defer func() { err = facts.result(err) }()
 	p := *owned
-	if p.JournalVersion != 2 || (p.Phase != PublicationPreparing && p.Phase != PublicationReady) || p.Preparation == nil || p.Cleanup == nil {
+	if p.JournalVersion != 5 || (p.Phase != PublicationPreparing && p.Phase != PublicationReady) || p.Preparation == nil || p.Cleanup == nil {
 		return ErrDurableStorageRecovery
 	}
 	a := p.Preparation
@@ -284,7 +288,7 @@ func (owned *PendingPublication) validatePublicationEnvelopeWithFacts(facts *pay
 
 // publicationWire clears compatibility byte fields; the union is the only wire payload.
 func publicationWire(p PendingPublication) PendingPublication {
-	if p.JournalVersion == 2 {
+	if p.JournalVersion == 5 {
 		p.SourceBytes = nil
 		for i := range p.Sources {
 			if len(p.Sources[i].Bytes) != 0 {
@@ -338,9 +342,13 @@ func (a PreparationAuthority) validateWithFacts(facts *payloadDigestFacts) (err 
 
 func (p *PendingPublication) validatePreparationProgress(facts *payloadDigestFacts) error {
 	a := p.Preparation
-	if p.History != nil {
+	if p.History != nil || a.Purpose == PublicationPrivacyRewrite {
+		cursor := len(a.Inputs)
+		if p.History != nil {
+			cursor = p.History.PrivacyCursor
+		}
 		g := p.Progress
-		if g == nil || g.Version != 1 || g.AuthoritySHA256 != a.SHA256 || g.SHA256 != progressSHAWithFacts(*g, facts) || g.Cursor != p.History.PrivacyCursor || len(g.Outputs) != g.Cursor || g.Cursor < 0 || g.Cursor > len(a.Inputs) || publicationSHA256(g.WorkingMetadata) != publicationSHA256(p.MetadataBytes) {
+		if g == nil || g.Version != 1 || g.AuthoritySHA256 != a.SHA256 || g.SHA256 != progressSHAWithFacts(*g, facts) || g.Cursor != cursor || len(g.Outputs) != g.Cursor || g.Cursor < 0 || g.Cursor > len(a.Inputs) || publicationSHA256(g.WorkingMetadata) != publicationSHA256(p.MetadataBytes) {
 			return ErrDurableStorageRecovery
 		}
 		for i, output := range g.Outputs {

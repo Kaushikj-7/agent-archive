@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,7 +57,7 @@ func TestPublicationV2SinglePayloadAndSettledCharge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(string(raw), `{"publication_version":2,"summary":`) {
+	if !strings.HasPrefix(string(raw), `{"publication_version":5,"summary":`) {
 		t.Fatal("publication header is not before summary")
 	}
 	if err = s.RemovePending(p.Bundle.ArchiveSessionID); err != nil {
@@ -75,7 +76,7 @@ func TestPublicationV2SinglePayloadAndSettledCharge(t *testing.T) {
 				t.Error(err)
 			}
 		}()
-		u, e := q.usage(t.Context())
+		u, e := q.usageContext(t.Context())
 		if e == nil && u.charged != 2*int64(len(raw)) {
 			t.Fatalf("settled file not exactly charged: %d vs %d", u.charged, 2*len(raw))
 		}
@@ -105,7 +106,11 @@ func TestPublicationV2UnknownEnvelopeRetainsEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw = []byte(strings.Replace(string(raw), `"journal_version":2`, `"journal_version":99`, 1))
+	changed := []byte(strings.Replace(string(raw), `"journal_version":5`, `"journal_version":99`, 1))
+	if bytes.Equal(changed, raw) {
+		t.Fatal("journal-version mutation did not change the fixture")
+	}
+	raw = changed
 	if err = os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -145,6 +150,17 @@ func TestPublicationLegacyMigrationHasOwnedReplayAndOpaqueGenericRefusal(t *test
 	got, found, err := s.LoadPublicationPending(fixture.Bundle.ArchiveSessionID)
 	if err != nil || !found || got.Commit == nil || got.Commit.MetadataSHA256 != p.Commit.MetadataSHA256 {
 		t.Fatal("owned migration replay", found, err)
+	}
+	var ownedMetadata archive.Metadata
+	if err = json.Unmarshal(got.MetadataBytes, &ownedMetadata); err != nil {
+		t.Fatal(err)
+	}
+	owner := archive.SessionRegistration{ArchiveSessionID: ownedMetadata.SessionID, NativeSessionID: ownedMetadata.NativeSessionID, ProjectID: ownedMetadata.ProjectID, Harness: ownedMetadata.Harness, Origin: ownedMetadata.Origin, SessionStartedAt: ownedMetadata.StartedAt, PreviousGenerationID: ownedMetadata.PreviousGenerationID, DestinationID: "destination"}
+	if err = s.CheckDurableSessionRead(owner.ArchiveSessionID); !errors.Is(err, ErrDurableStorageRecovery) {
+		t.Fatalf("generic reader bypassed original evidence: %v", err)
+	}
+	if err = s.CheckPublicationSessionRead(owner, ownedMetadata.MachineID, "admission"); err != nil {
+		t.Fatalf("owned replay reader refused validated original evidence: %v", err)
 	}
 	evidenceRaw, err := os.ReadFile(filepath.Join(s.home, evidencePath(fixture.Bundle.ArchiveSessionID)))
 	if err != nil {
@@ -301,9 +317,9 @@ func TestPublicationClosedNestedAuthorityRejectsCaseAlias(t *testing.T) {
 			}
 			switch variant {
 			case publicationAliasVariantCommitEqual:
-				shape["commit"].(map[string]any)["VERSION"] = float64(2)
+				shape["source_set_commit5"].(map[string]any)["VERSION"] = float64(2)
 			case publicationAliasVariantCommitConflicting:
-				shape["commit"].(map[string]any)["VERSION"] = float64(9)
+				shape["source_set_commit5"].(map[string]any)["VERSION"] = float64(9)
 			case publicationAliasVariantPreparation:
 				shape["preparation"].(map[string]any)["VERSION"] = shape["preparation"].(map[string]any)["version"]
 			case publicationAliasVariantPayload:

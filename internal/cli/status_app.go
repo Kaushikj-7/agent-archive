@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -42,6 +44,12 @@ func printAppStatus(out, errOut io.Writer, view statusView, name string, sc stat
 	sc.printHeader(out, view)
 	terminal.Printf(out, "\n%s\n", s.bold("Capture"))
 	sc.printRows(out, []statusRow{row})
+	if lines := sizeLimitedLines(app); len(lines) > 0 {
+		terminal.Printf(out, "\n%s\n", s.bold("Stopped at a size limit"))
+		for _, line := range lines {
+			terminal.Println(out, line)
+		}
+	}
 	if table := sc.projectTable(app); len(table) > 0 {
 		terminal.Printf(out, "\n%s\n", s.bold("Projects"))
 		for _, line := range table {
@@ -65,6 +73,28 @@ func printAppStatus(out, errOut io.Writer, view statusView, name string, sc stat
 	}
 	sc.printFooter(out, "agent-archive status", "agent-archive status "+name+" --verbose")
 	return 0
+}
+
+// sizeLimitedLines lists an app's sessions whose capture stopped at a size
+// limit: each one's ID, the limit and its size, then how to go on.
+func sizeLimitedLines(app appStatus) []string {
+	if len(app.SizeLimitedSessions) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(app.SizeLimitedSessions)+1)
+	for _, session := range app.SizeLimitedSessions {
+		line := "  " + archive.DisplayLine(session.ArchiveSessionID)
+		switch {
+		case session.Limit != "" && session.SizeBytes > 0:
+			line += fmt.Sprintf("  %s, over the %s limit", formatBytes(session.SizeBytes), session.Limit)
+		case session.Limit != "":
+			line += "  over the " + session.Limit + " limit"
+		default:
+			line += "  over a transcript size limit"
+		}
+		lines = append(lines, line)
+	}
+	return append(lines, "  Each keeps its last published snapshot. To keep capturing the work, continue it in a new session (agent-archive handoff SESSION_ID carries the context there).")
 }
 
 // projectTable is status APP's table of an app's projects: for each, the

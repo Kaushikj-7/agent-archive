@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"reflect"
 	"slices"
@@ -73,7 +74,19 @@ func underlyingSkillEvidence(mode SkillEvidence) SkillEvidence {
 }
 
 func prepareDiscoveryConfig(c *Config) error {
-	if (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8) || (c.SchemaVersion == 8 && (!c.PublicationCompositionProtection || !c.DurableStorageProtection)) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil) {
+	if c.SearchIndexing {
+		c.SearchLifecycleProtection = true
+	}
+	if len(c.NativeRoots) > 0 {
+		c.NativeAuthorityProtection = true
+	}
+	if err := c.validateNativeRoots(); err != nil {
+		return err
+	}
+	if err := ValidateRetentionDays(c.RetentionDays); err != nil {
+		return err
+	}
+	if unsupportedPreparedWriter(*c) {
 		return errors.New("configuration requires a newer agent-archive writer")
 	}
 	if c.Discovery != nil {
@@ -108,20 +121,67 @@ func prepareDiscoveryConfig(c *Config) error {
 	if c.DurableStorageProtection {
 		c.SchemaVersion = 7
 	}
-	if c.PublicationCompositionProtection {
-		c.DurableStorageProtection = true
+	if c.RetentionProtection {
 		c.SchemaVersion = 8
+	}
+	if c.ImportStagingProtection {
+		c.SchemaVersion = 9
+	}
+	if c.HistoricalProjectProtection {
+		c.SchemaVersion = 10
+	}
+	if c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
+		c.SchemaVersion = 11
+	}
+	if c.PublicationCompositionProtection {
+		c.SchemaVersion = 12
+	}
+	if c.StagedSelectionProtection {
+		c.SchemaVersion = 13
+	}
+	if c.SettledCursorSelectionProtection {
+		c.SchemaVersion = 15
+	}
+	if c.ScopedPickerProtection {
+		c.SchemaVersion = 14
+	}
+	if c.SearchLifecycleProtection {
+		c.SchemaVersion = 16
+	}
+	if c.SourceSetPublicationProtection {
+		c.DurableStorageProtection = true
+		c.SchemaVersion = 17
 	}
 	return validateDiscoveryConfig(*c)
 }
 
 func validateDiscoveryConfig(c Config) error {
-	if c.PublicationCompositionProtection {
-		if c.SchemaVersion != 8 || !c.DurableStorageProtection {
-			return errors.New("publication composition requires schema 8 and storage protection")
+	var err error
+	c, err = peelProtectedWriterLayers(c)
+	if err != nil {
+		return err
+	}
+	if c.RetentionProtection {
+		if c.SchemaVersion != 8 {
+			return errors.New("retention protection requires schema 8")
 		}
-		c.PublicationCompositionProtection = false
-		c.SchemaVersion = 7
+		c.RetentionProtection = false
+		c.SchemaVersion = 1
+		if c.Discovery != nil {
+			c.SchemaVersion = 2
+		}
+		if c.CodexCapture != nil {
+			c.SchemaVersion = 3
+		}
+		if c.GenerationProtection {
+			c.SchemaVersion = 4
+		}
+		if c.CodexHistoryProtection {
+			c.SchemaVersion = 5
+		}
+		if c.DurableStorageProtection {
+			c.SchemaVersion = 7
+		}
 	}
 	if c.DurableStorageProtection {
 		if c.SchemaVersion != 7 {
@@ -409,6 +469,42 @@ func (c Config) DiscoveryGeneration(agent, root string, started, now time.Time) 
 	return "", false
 }
 
+// DiscoveryStartFloor is the earliest native start discovery admits for
+// agent under any current authorization (DiscoveryGeneration and
+// CodexDiscoveryGeneration refuse every session that started before it):
+// the earliest project floor, or, for Codex in all-projects scope, the
+// later of the capture and source floors, since admission needs both. ok
+// is false when no current authorization of agent has a known floor.
+func (c Config) DiscoveryStartFloor(agent string) (time.Time, bool) {
+	if c.Discovery == nil || !c.Discovery.Enabled {
+		return time.Time{}, false
+	}
+	if agent == "codex" && c.EffectiveCodexCaptureScope() == CodexAllProjects {
+		capture, source := c.CodexCapture.Authorization, c.CodexCapture.SourceAuthorization
+		if capture == nil || source == nil || capture.DestinationID != c.DestinationID() || source.DestinationID != c.DestinationID() {
+			return time.Time{}, false
+		}
+		captureFloor, sourceFloor := discoveryNativeStartFloor(*capture), discoveryNativeStartFloor(*source)
+		if captureFloor.IsZero() || sourceFloor.IsZero() {
+			return time.Time{}, false
+		}
+		if captureFloor.After(sourceFloor) {
+			return captureFloor, true
+		}
+		return sourceFloor, true
+	}
+	var earliest time.Time
+	for _, a := range c.Discovery.Authorizations {
+		if a.Agent != agent || a.DestinationID != c.DestinationID() {
+			continue
+		}
+		if floor := discoveryNativeStartFloor(a); !floor.IsZero() && (earliest.IsZero() || floor.Before(earliest)) {
+			earliest = floor
+		}
+	}
+	return earliest, !earliest.IsZero()
+}
+
 // Legacy retained history can only narrow permission to its earliest surviving
 // interval. Activation or observation times cannot recover an empty history.
 func discoveryNativeStartFloor(a DiscoveryAuthorization) time.Time {
@@ -472,4 +568,323 @@ func validateDiscoveryPayload(d *DiscoveryConfig) error {
 		}
 	}
 	return nil
+}
+
+// peelImportStagingProtection validates the capability before checking every
+// underlying policy floor. Staging does not grant legacy permission migration.
+func peelImportStagingProtection(c Config) (Config, error) {
+	if c.SchemaVersion > 9 || (c.SchemaVersion == 9 && !c.ImportStagingProtection) {
+		return c, errors.New("configuration requires a newer agent-archive writer")
+	}
+	if !c.ImportStagingProtection {
+		return c, nil
+	}
+	if c.SchemaVersion != 9 {
+		return c, errors.New("import staging protection requires schema 9")
+	}
+	c.ImportStagingProtection = false
+	c.SchemaVersion = 1
+	if c.Discovery != nil {
+		c.SchemaVersion = 2
+	}
+	if c.CodexCapture != nil {
+		c.SchemaVersion = 3
+	}
+	if c.GenerationProtection {
+		c.SchemaVersion = 4
+	}
+	if c.CodexHistoryProtection {
+		c.SchemaVersion = 5
+	}
+	if c.DurableStorageProtection {
+		c.SchemaVersion = 7
+	}
+	if c.RetentionProtection {
+		c.SchemaVersion = 8
+	}
+	return c, nil
+}
+
+// peelHistoricalProjectProtection preserves every underlying writer floor.
+func peelHistoricalProjectProtection(c Config) (Config, error) {
+	if c.SchemaVersion > 10 || c.SchemaVersion == 10 && !c.HistoricalProjectProtection {
+		return c, errors.New("configuration requires a newer agent-archive writer")
+	}
+	if !c.HistoricalProjectProtection {
+		return c, nil
+	}
+	if c.SchemaVersion != 10 {
+		return c, errors.New("historical project protection requires schema 10")
+	}
+	c.HistoricalProjectProtection = false
+	c.SchemaVersion = 1
+	if c.Discovery != nil {
+		c.SchemaVersion = 2
+	}
+	if c.CodexCapture != nil {
+		c.SchemaVersion = 3
+	}
+	if c.GenerationProtection {
+		c.SchemaVersion = 4
+	}
+	if c.CodexHistoryProtection {
+		c.SchemaVersion = 5
+	}
+	if c.DurableStorageProtection {
+		c.SchemaVersion = 7
+	}
+	if c.RetentionProtection {
+		c.SchemaVersion = 8
+	}
+	if c.ImportStagingProtection {
+		c.SchemaVersion = 9
+	}
+	return c, nil
+}
+
+func unsupportedPreparedWriter(c Config) bool {
+	if c.SchemaVersion == 17 {
+		if !c.SourceSetPublicationProtection || !c.DurableStorageProtection {
+			return true
+		}
+		c = sourceSetUnderlyingConfig(c)
+	}
+	if c.SchemaVersion == 16 {
+		if !c.SearchLifecycleProtection {
+			return true
+		}
+		c = searchUnderlyingConfig(c)
+	}
+	return unsupportedLowerPreparedWriter(c)
+}
+
+func unsupportedLowerPreparedWriter(c Config) bool {
+	return (c.SchemaVersion > 5 && c.SchemaVersion != 7 && c.SchemaVersion != 8 && c.SchemaVersion != 9 && c.SchemaVersion != 10 && c.SchemaVersion != 11 && c.SchemaVersion != 12 && c.SchemaVersion != 13 && c.SchemaVersion != 14 && c.SchemaVersion != 15) || unsupportedScopedPreparedWriter(c) || (c.SchemaVersion == 12 && (!c.PublicationCompositionProtection || !c.DurableStorageProtection)) || (c.SchemaVersion == 11 && c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4) || (c.SchemaVersion == 10 && !c.HistoricalProjectProtection) || (c.SchemaVersion == 9 && !c.ImportStagingProtection) || (c.SchemaVersion == 8 && !c.RetentionProtection) || (c.SchemaVersion == 7 && !c.DurableStorageProtection) || (c.SchemaVersion == 5 && !c.CodexHistoryProtection) || (c.SchemaVersion == 4 && !c.GenerationProtection) || (c.SchemaVersion == 3 && c.CodexCapture == nil)
+}
+
+// peelCatalogProtection keeps catalog configuration distinct from the permanent
+// historical-project schema10 writer and validates every underlying capability.
+func peelCatalogProtection(c Config) (Config, error) {
+	format := c.Storage.EffectiveArchiveFormat()
+	if format != destination.FormatLegacy && format != destination.FormatCatalogV4 {
+		return c, errors.New("unsupported archive format")
+	}
+	if format != destination.FormatCatalogV4 {
+		return c, nil
+	}
+	if c.SchemaVersion != 11 {
+		return c, errors.New("catalog protection requires schema 11")
+	}
+	c.SchemaVersion = 1
+	if c.Discovery != nil {
+		c.SchemaVersion = 2
+	}
+	if c.CodexCapture != nil {
+		c.SchemaVersion = 3
+	}
+	if c.GenerationProtection {
+		c.SchemaVersion = 4
+	}
+	if c.CodexHistoryProtection {
+		c.SchemaVersion = 5
+	}
+	if c.DurableStorageProtection {
+		c.SchemaVersion = 7
+	}
+	if c.RetentionProtection {
+		c.SchemaVersion = 8
+	}
+	if c.ImportStagingProtection {
+		c.SchemaVersion = 9
+	}
+	if c.HistoricalProjectProtection {
+		c.SchemaVersion = 10
+	}
+	return c, nil
+}
+
+// peelProtectedWriterLayers validates catalog, historical and import fences in order.
+func peelProtectedWriterLayers(c Config) (Config, error) {
+	var err error
+	if c.SourceSetPublicationProtection {
+		if c.SchemaVersion != 17 || !c.DurableStorageProtection {
+			return c, errors.New("source-set publication requires protected schema 17")
+		}
+		c = sourceSetUnderlyingConfig(c)
+	} else if c.SchemaVersion == 17 {
+		return c, errors.New("source-set publication requires its permanent protection")
+	}
+	c, err = peelSearchProtection(c)
+	if err != nil {
+		return c, err
+	}
+	c, err = peelScopedPickerProtection(c)
+	if err != nil {
+		return c, err
+	}
+	c, err = peelSettledCursorSelectionProtection(c)
+	if err != nil {
+		return c, err
+	}
+	c, err = peelStagedSelectionProtection(c)
+	if err != nil {
+		return c, err
+	}
+	c, err = peelPublicationProtection(c)
+	if err != nil {
+		return c, err
+	}
+	c, err = peelCatalogProtection(c)
+	if err != nil {
+		return c, err
+	}
+	c, err = peelHistoricalProjectProtection(c)
+	if err != nil {
+		return c, err
+	}
+	c, err = peelImportStagingProtection(c)
+	if err != nil {
+		return c, err
+	}
+	return c, nil
+}
+
+func peelPublicationProtection(c Config) (Config, error) {
+	if !c.PublicationCompositionProtection {
+		return c, nil
+	}
+	if c.SchemaVersion != 12 || !c.DurableStorageProtection {
+		return c, errors.New("publication composition requires protected schema 12")
+	}
+	c.PublicationCompositionProtection = false
+	c.SchemaVersion = 1
+	if c.Discovery != nil {
+		c.SchemaVersion = 2
+	}
+	if c.CodexCapture != nil {
+		c.SchemaVersion = 3
+	}
+	if c.GenerationProtection {
+		c.SchemaVersion = 4
+	}
+	if c.CodexHistoryProtection {
+		c.SchemaVersion = 5
+	}
+	if c.DurableStorageProtection {
+		c.SchemaVersion = 7
+	}
+	if c.RetentionProtection {
+		c.SchemaVersion = 8
+	}
+	if c.ImportStagingProtection {
+		c.SchemaVersion = 9
+	}
+	if c.HistoricalProjectProtection {
+		c.SchemaVersion = 10
+	}
+	if c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 {
+		c.SchemaVersion = 11
+	}
+	return c, nil
+}
+
+// SupportsOrdinarySelection preserves the ordinary codec under both supported floors.
+func (c Config) SupportsOrdinarySelection() bool {
+	if c.SourceSetPublicationProtection && c.SchemaVersion == 17 {
+		c = sourceSetUnderlyingConfig(c)
+	}
+	if c.SearchLifecycleProtection {
+		if c.SchemaVersion != 16 {
+			return false
+		}
+		c = searchUnderlyingConfig(c)
+	}
+	return c.PublicationCompositionProtection && c.DurableStorageProtection && (c.SchemaVersion == 12 || (c.SchemaVersion == 13 || c.SchemaVersion == 15 && c.SettledCursorSelectionProtection) && c.StagedSelectionProtection || c.SchemaVersion == 14 && c.ScopedPickerProtection && c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4)
+}
+
+// SupportsStagedSelection never enables catalog staging.
+func (c Config) SupportsStagedSelection() bool {
+	if c.SourceSetPublicationProtection && c.SchemaVersion == 17 {
+		c = sourceSetUnderlyingConfig(c)
+	}
+	if c.SearchLifecycleProtection {
+		if c.SchemaVersion != 16 {
+			return false
+		}
+		c = searchUnderlyingConfig(c)
+	}
+	return (c.SchemaVersion == 13 || c.SchemaVersion == 15 && c.SettledCursorSelectionProtection) && c.StagedSelectionProtection && c.SupportsOrdinarySelection() && c.ImportStagingProtection && c.Storage.EffectiveArchiveFormat() == destination.FormatLegacy
+}
+
+func peelStagedSelectionProtection(c Config) (Config, error) {
+	if !c.StagedSelectionProtection {
+		if c.SchemaVersion == 13 {
+			return c, errors.New("staged selection floor lacks protection")
+		}
+		return c, nil
+	}
+	if !c.SupportsStagedSelection() {
+		return c, errors.New("unsupported staged selection configuration")
+	}
+	c.StagedSelectionProtection = false
+	c.SchemaVersion = 12
+	return c, nil
+}
+
+func peelScopedPickerProtection(c Config) (Config, error) {
+	if !c.ScopedPickerProtection {
+		return c, nil
+	}
+	if c.SchemaVersion != 14 || c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4 {
+		return c, errors.New("scoped picker requires protected catalog schema 14")
+	}
+	if c.SettledCursorSelectionProtection && !c.StagedSelectionProtection {
+		return c, errors.New("remembered settled Cursor protection requires its staged permanent fence")
+	}
+	if c.StagedSelectionProtection && (!c.PublicationCompositionProtection || !c.DurableStorageProtection || !c.ImportStagingProtection) {
+		return c, errors.New("remembered staged protection requires every lower permanent fence")
+	}
+	c.ScopedPickerProtection = false
+	// These flags remain on the saved configuration. Only this validation copy
+	// peels remembered legacy capabilities beneath the permanent scoped fence.
+	c.SettledCursorSelectionProtection = false
+	c.StagedSelectionProtection = false
+	c.SchemaVersion = 11
+	if c.PublicationCompositionProtection {
+		c.SchemaVersion = 12
+	}
+	return c, nil
+}
+
+func unsupportedScopedPreparedWriter(c Config) bool {
+	return c.SchemaVersion == 14 && (!c.ScopedPickerProtection || c.Storage.EffectiveArchiveFormat() != destination.FormatCatalogV4)
+}
+
+// SupportsSettledCursorSelection accepts only the distinct closed Cursor floor.
+func (c Config) SupportsSettledCursorSelection() bool {
+	if c.SourceSetPublicationProtection && c.SchemaVersion == 17 {
+		c = sourceSetUnderlyingConfig(c)
+	}
+	if c.SearchLifecycleProtection {
+		if c.SchemaVersion != 16 {
+			return false
+		}
+		c = searchUnderlyingConfig(c)
+	}
+	return c.SchemaVersion == 15 && c.SettledCursorSelectionProtection && c.SupportsStagedSelection()
+}
+
+func peelSettledCursorSelectionProtection(c Config) (Config, error) {
+	if !c.SettledCursorSelectionProtection {
+		if c.SchemaVersion == 15 {
+			return c, errors.New("settled Cursor floor lacks protection")
+		}
+		return c, nil
+	}
+	if !c.SupportsSettledCursorSelection() {
+		return c, errors.New("unsupported settled Cursor selection configuration")
+	}
+	c.SettledCursorSelectionProtection = false
+	c.SchemaVersion = 13
+	return c, nil
 }

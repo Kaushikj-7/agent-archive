@@ -15,6 +15,9 @@ Checking installed applications...
 \e[2m✓ Continue where you left off\e[0m
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
+
+\e[1mStorage · Account\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 Continue connecting the saved bucket, or choose a replacement.
 
 ? Where should your archive live?
@@ -28,12 +31,18 @@ Continue connecting the saved bucket, or choose a replacement.
 › Choose [2]: s3-existing
 \e[2m✓ Provider Amazon S3\e[0m
 
+\e[1mStorage · Account\e[0m
+\e[2mAccount → Storage → Verification\e[0m
+
 ? AWS profile
 
   [:back] Back to storage options
 
 › Answer [work]:
 \e[2m✓ AWS profile work\e[0m
+
+\e[1mStorage · Storage\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 
 ? Which bucket should sessions be stored in?
 
@@ -54,8 +63,12 @@ The last storage check failed with region us-east-1.
 \e[2m✓ Bucket region eu-west-1\e[0m
 
 
+\e[1mStorage · Verification\e[0m
+\e[2mAccount → Storage → Verification\e[0m
 Checking your storage connection…
 \e[32m✓\e[0m Connected to your storage.
+  \e[33m!\e[0m Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 \e[1mStep 3 of 3 · Review and start\e[0m
   Apps      Codex
@@ -63,7 +76,8 @@ Checking your storage connection…
   Codex     Included projects only
   Skills    Metadata, including user folders
   Storage   s3://team-archive/agent-archive/
-  Keep for  90 days
+  Keep for  90 days · Sessions with no new activity for 90 days are deleted from
+            your bucket; change with Edit a setting, or keep forever
   ✓ Storage connected
   ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:

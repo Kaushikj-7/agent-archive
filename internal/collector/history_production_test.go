@@ -221,7 +221,7 @@ func TestRunCommittedHistoryRetryDoesNotRequireRemovedPrivateStages(t *testing.T
 		t.Fatal(err)
 	}
 	defer endAttempt()
-	if _, err := scan.upload(p); err != nil {
+	if _, err := scan.sourceSetUpload(p); err != nil {
 		t.Fatal(err)
 	}
 	for _, stage := range p.History.Sources {
@@ -845,9 +845,9 @@ func TestRunHistoryPreservesIndependentProducerVersions(t *testing.T) {
 
 }
 
-func (s *historyCrashStore) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+func (s *historyCrashStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
 	if s.boundary(key) {
 		return nil, "", errors.New("synthetic bounded read interruption")
 	}
-	return s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+	return s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
 }

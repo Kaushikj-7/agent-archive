@@ -2,12 +2,14 @@ package agentapi
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"io"
 	"strings"
 )
 
@@ -111,6 +113,15 @@ func decodeReferencedSource(ctx context.Context, metadata archive.Metadata, data
 	// assembled records the caller asked for.
 	bundle, err := archive.ReadSourceBundle(bytes.NewReader(data), archive.DecodeOptions{MaxUncompressedBytes: int64(limits.UncompressedLimit())})
 	if err != nil {
+		var unsupported *archive.UnsupportedSourceSchemaError
+		if errors.As(err, &unsupported) {
+			// An unsupported header may precede a corrupt gzip trailer. Only
+			// fully verified encodings may become a stable format gap.
+			if verifyErr := verifyUnsupportedEncoding(data, limits.UncompressedLimit()); verifyErr != nil {
+				return archive.SourceBundle{}, fmt.Errorf("decode source: %w", verifyErr)
+			}
+			err = &unsupportedSourceError{cause: err}
+		}
 		return archive.SourceBundle{}, fmt.Errorf("decode source: %w", err)
 	}
 	if bundle.History != nil && (metadata.History == nil || metadata.History.CurrentRevision != bundle.History.ActiveRolloutID) {
@@ -134,4 +145,32 @@ func sourceHarnessMatches(source, active archive.Harness, preserved bool) bool {
 		return source.Name == active.Name
 	}
 	return source == active
+}
+
+// IsUnsupportedSource reports a rejected format only after its referenced
+// compressed bytes passed size, checksum and complete gzip verification.
+func IsUnsupportedSource(err error) bool {
+	var unsupported *unsupportedSourceError
+	return errors.As(err, &unsupported)
+}
+
+type unsupportedSourceError struct{ cause error }
+
+func (e *unsupportedSourceError) Error() string { return e.cause.Error() }
+func (e *unsupportedSourceError) Unwrap() error { return e.cause }
+
+func verifyUnsupportedEncoding(data []byte, limit int) error {
+	compressed, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = compressed.Close() }()
+	n, err := io.CopyN(io.Discard, compressed, int64(limit)+1)
+	if n > int64(limit) {
+		return archive.ErrSourceTooLarge
+	}
+	if !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
 }

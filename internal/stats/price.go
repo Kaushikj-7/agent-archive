@@ -321,34 +321,21 @@ func (t PriceTable) index() priceIndex {
 	return index
 }
 
-// Family returns the family label the table groups a model id under in cost by
-// model ("opus", "gpt-5"), and whether the table lists the model at all. The id
-// is read as the archive records it (any case, with or without a date or
-// context suffix). A caller that must show only model names a table lists,
-// such as a page that is meant to be shared, asks this of the built-in table:
-// a fine-tune id or a custom deployment name is not listed, so it is not shown.
-func (t PriceTable) Family(model string) (string, bool) {
+// FamilyLookup returns a read-only snapshot of the table's family lookup.
+// Subsequent changes to the table do not affect it. The returned function may
+// be called concurrently and does not retain the model ids passed to it.
+// It uses the table's canonical model normalization and valid-price rules.
+func (t PriceTable) FamilyLookup() func(string) (string, bool) {
 	index := t.index()
+	return index.family
+}
+
+func (index priceIndex) family(model string) (string, bool) {
 	id := NormalizeModel(model)
 	if _, ok := index[id]; !ok {
 		return "", false
 	}
 	return index.label(id), true
-}
-
-// price returns USD-like cost for tokens of one model, and whether the model
-// is priced.
-func (p priceIndex) price(model string, tokens tokenSet) (float64, bool) {
-	entry, ok := p[model]
-	if !ok {
-		return 0, false
-	}
-	const perMillion = 1e6
-	cost := float64(tokens.fresh)*entry.InputPerMTok +
-		float64(tokens.read)*entry.CacheReadPerMTok +
-		float64(tokens.write)*entry.CacheWritePerMTok +
-		float64(tokens.out)*entry.OutputPerMTok
-	return cost / perMillion, true
 }
 
 // label is the short name a model is grouped under in cost by model: its
@@ -361,4 +348,13 @@ func (p priceIndex) label(model string) string {
 		return entry.ID
 	}
 	return model
+}
+
+func (entry ModelPrice) cost(tokens tokenSet) float64 {
+	const perMillion = 1e6
+	cost := float64(tokens.fresh)*entry.InputPerMTok +
+		float64(tokens.read)*entry.CacheReadPerMTok +
+		float64(tokens.write)*entry.CacheWritePerMTok +
+		float64(tokens.out)*entry.OutputPerMTok
+	return cost / perMillion
 }

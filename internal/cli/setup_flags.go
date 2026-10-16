@@ -33,17 +33,26 @@ const (
 	discoveryOff discoverySetting = "off"
 )
 
+type searchIndexingSetting string
+
+const (
+	searchIndexingOn  searchIndexingSetting = "on"
+	searchIndexingOff searchIndexingSetting = "off"
+)
+
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
 	// pairingInput preserves answers buffered by first-run onboarding. The original
 	// stdin remains the terminal identity used for private code entry.
 	pairingInput             io.Reader
+	searchIndexing           searchIndexingSetting
 	codexDiscovery           string
 	codexCaptureScope        string
 	pair                     bool
 	pairFile                 string
 	prefix                   string
 	prefixSupplied           bool
+	keepForever              bool
 	retentionDays            int
 	retentionSupplied        bool
 	requireSkillUse          bool
@@ -131,10 +140,19 @@ func (l *projectList) Set(value string) error {
 // setupFlags adds setup's answer flags to fs and parses args.
 func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	var opts setupOptions
+	fs.Func("search-indexing", "on or off; automatic local content indexing (default off)", func(value string) error {
+		setting := searchIndexingSetting(value)
+		if setting != searchIndexingOn && setting != searchIndexingOff {
+			return errors.New("search-indexing must be on or off")
+		}
+		opts.searchIndexing = setting
+		return nil
+	})
 	fs.BoolVar(&opts.pair, "pair", false, "import an encrypted pairing bundle")
 	fs.StringVar(&opts.pairFile, "pair-file", "", "read a pairing bundle from PATH, or - for stdin")
 	var projects, projectRepos projectList
 	fs.StringVar(&opts.prefix, "prefix", "", "folder inside the bucket")
+	fs.BoolVar(&opts.keepForever, "keep-forever", false, "disable automatic whole-session expiry")
 	fs.IntVar(&opts.retentionDays, "retention-days", 0, "keep sessions for 1 to 36500 days")
 	fs.BoolVar(&opts.requireSkillUse, "require-skill-use", false, "capture only sessions that use skills")
 	fs.BoolVar(&opts.noRequireSkillUse, "no-require-skill-use", false, "capture sessions with or without skills")
@@ -194,6 +212,10 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 			opts.storageFlagsSupplied = true
 		}
 	})
+	if opts.keepForever && opts.retentionSupplied {
+		fs.usageError("--keep-forever and --retention-days are mutually exclusive")
+		return opts, false
+	}
 	if err := validateProjectScopeOptions(opts); err != nil {
 		fs.usageError("%s", err)
 		return opts, false
@@ -203,7 +225,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.codexCaptureScope != "" || o.codexDiscovery != "" || o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.hasProjectScope() || o.skillEvidence != ""
+	return o.searchIndexing != "" || o.keepForever || o.codexCaptureScope != "" || o.codexDiscovery != "" || o.prefixSupplied || o.retentionSupplied || o.requireSkillSupplied || o.noRequireSkillSupplied || o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || len(o.projectRepos) > 0 || o.hasProjectScope() || o.skillEvidence != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -366,20 +388,39 @@ func reviewWithoutQuestions(home string, existing, cfg config.Config, p *prompte
 	return nil
 }
 
+func (opts setupOptions) applyRetentionAnswer(cfg *config.Config) error {
+	if opts.keepForever && opts.retentionSupplied {
+		return errors.New("--keep-forever and --retention-days are mutually exclusive")
+	}
+	if opts.keepForever {
+		cfg.RetentionDays = 0
+		cfg.RetentionProtection = true
+	}
+	if opts.retentionSupplied {
+		if opts.retentionDays < 1 || opts.retentionDays > 36500 {
+			return errors.New("--retention-days must be between 1 and 36500; use --keep-forever for no automatic expiry")
+		}
+		cfg.RetentionDays = opts.retentionDays
+	}
+	return nil
+}
+
 // setupAnswers is the configuration setup --yes saves, before its storage
 // is checked: existing with the flags' answers. secret carries a new R2
 // access key ID, if one was given; its secret is read once the answers
 // check out. Every missing or wrong answer is reported together.
 func setupAnswers(existing config.Config, opts setupOptions, home, userHome string, installed bool, env Env) (config.Config, credentials.R2Credentials, error) {
 	cfg := existing
+	if opts.searchIndexing != "" {
+		if err := config.SetSearchIndexing(&cfg, opts.searchIndexing == searchIndexingOn); err != nil {
+			return cfg, credentials.R2Credentials{}, err
+		}
+	}
 	if err := validateProjectScopeOptions(opts); err != nil {
 		return cfg, credentials.R2Credentials{}, err
 	}
-	if opts.retentionSupplied {
-		if opts.retentionDays < 1 || opts.retentionDays > 36500 {
-			return cfg, credentials.R2Credentials{}, errors.New("--retention-days must be between 1 and 36500")
-		}
-		cfg.RetentionDays = opts.retentionDays
+	if err := opts.applyRetentionAnswer(&cfg); err != nil {
+		return cfg, credentials.R2Credentials{}, err
 	}
 	if opts.prefixSupplied {
 		if strings.TrimSpace(opts.prefix) == "" {
@@ -446,7 +487,7 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	problems = append(problems, setupProjects(&cfg, opts.projects, userHome)...)
 	secret, storageProblems := setupStorageFromFlags(&cfg, opts, env)
 	problems = append(problems, storageProblems...)
-	if cfg.RetentionDays <= 0 {
+	if cfg.RetentionDays == 0 && !cfg.RetentionProtection {
 		cfg.RetentionDays = defaultRetentionDays
 	}
 	return cfg, secret, answersError(problems)

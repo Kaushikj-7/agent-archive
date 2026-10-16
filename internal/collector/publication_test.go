@@ -278,7 +278,7 @@ func TestPublicationChangedDestinationOrPrivacyContextRetainsPending(t *testing.
 			}
 			remote.failMetadata = false
 			scan := newSessionScan(t.Context(), local, remote, reg, state.Request{}, published, at, opts)
-			if _, err := scan.publishPending(pending); err == nil {
+			if _, err := scan.publishPending(scan.ctx, pending); err == nil {
 				t.Fatal("changed context admitted old bytes")
 			}
 			if _, err := remote.Get(t.Context(), pending.MetadataKey); !errors.Is(err, storage.ErrNotFound) {
@@ -661,7 +661,7 @@ func TestPublicationSealingUsesInjectedRetainedComparatorWithoutEnablingWriter(t
 				if next.Commit == nil || next.ValidatePublication() != nil {
 					t.Fatal("continuity not sealed")
 				}
-				if _, err := scan.publishPending(next); !errors.Is(err, archive.ErrHistoryMutationPending) {
+				if _, err := scan.publishPending(scan.ctx, next); !errors.Is(err, archive.ErrHistoryMutationPending) {
 					t.Fatal("writer fence lifted", err)
 				}
 			}
@@ -731,7 +731,7 @@ func TestPublicationRecoveryMetadataReadsUseAllocationBound(t *testing.T) {
 	}
 }
 
-func (s *winnerAfterUploadStore) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+func (s *winnerAfterUploadStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
 	if key == s.metadataKey && s.readsAfterPut > 0 {
 		s.readsAfterPut++
 		if s.readsAfterPut == 3 {
@@ -754,7 +754,7 @@ func (s *winnerAfterUploadStore) GetVersionedLimited(ctx context.Context, key st
 			}
 		}
 	}
-	body, etag, err := s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+	body, etag, err := s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
 	if key == s.metadataKey && s.readsAfterPut == 2 && err == nil {
 		s.cHash, s.cETag = storage.SHA256Hex(body), etag
 	}
@@ -779,7 +779,7 @@ func TestPublicationClosingProofRefusesChangedFrameBeforeLocalSave(t *testing.T)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := scan.publicationRemote().Put(t.Context(), stage.Reference.Key, raw); err != nil {
+				if err := scan.sourceSetRemote().Put(t.Context(), stage.Reference.Key, raw); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -913,7 +913,7 @@ func TestPublicationAttemptKeepsActualProviderAcrossAmbientReplacement(t *testin
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := scan.publicationRemote().Put(t.Context(), stage.Reference.Key, raw); err != nil {
+		if err := scan.sourceSetRemote().Put(t.Context(), stage.Reference.Key, raw); err != nil {
 			t.Fatal(err)
 		}
 	}

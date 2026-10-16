@@ -14,15 +14,21 @@ type CodexRolloutLookup interface {
 	Check(context.Context, string, string) error
 }
 
-// CodexRolloutSet separates a native current locator from complete lineage evidence.
-// Complete must never be inferred from a prunable observation cache alone.
-// Revision changes whenever the current locator, candidate membership, or candidate
-// identity evidence changes. Check must revalidate this token within the same budget.
+// CodexRolloutSet is a thread's native current locator and, without one, the
+// same-thread rollouts the lookup has observed. Current is the tip Codex's own
+// thread index names; the source walks each rollout's history base back from
+// it, so the chain it reaches is the thread's complete lineage and no proof of
+// absence over the whole native home is needed. Candidates are the same-thread
+// rollouts the lookup has observed: hints for choosing a tip when there is no
+// current locator, and otherwise historical revisions offered beside the
+// chain. They never prove that no other same-thread rollout exists. Revision
+// changes whenever the current locator, the candidates or their observed
+// identity evidence change. Check must revalidate this token within the same
+// budget.
 type CodexRolloutSet struct {
 	Current    *SourceRef
 	Candidates []SourceRef
 	Revision   string
-	Complete   bool
 }
 
 // CodexHistoryHeader and CodexHistoryRecord frame selected identity and physical records.
@@ -35,7 +41,7 @@ const (
 type SourceAdmission struct {
 	NativeID                  string
 	Cwd                       string
-	Binding                   *archive.CodexSourceBinding
+	Binding                   *SourceBinding
 	NativeCreatedAt           time.Time
 	InitialProducerVersion    string
 	InitialProducerOriginator string
@@ -54,6 +60,18 @@ type CodexValidationLimits struct {
 	Duration time.Duration
 }
 
+// CodexRolloutAllowance is optionally implemented by a lookup whose pass
+// allowance can run out. BeginCollection starts a fresh allowance for a
+// collector pass, so what earlier users of the same lookup (discovery,
+// import registration) spent does not leave the collector none. Once
+// AllowanceSpent reports true, every further lookup call fails with
+// CauseLookupAllowanceSpent, so a caller can leave the remaining Codex
+// sources for the next pass without opening them.
+type CodexRolloutAllowance interface {
+	BeginCollection()
+	AllowanceSpent() bool
+}
+
 // CodexRolloutSliceProvider optionally shares validation within a caller-owned
 // operation slice. The caller closes all snapshots before renewing a slice.
 type CodexRolloutSliceProvider interface {
@@ -70,7 +88,7 @@ type CodexRolloutSlice interface {
 
 // SourceAdmissionFacts exposes bounded facts from the actual opened snapshot.
 type SourceAdmissionFacts interface {
-	AdmissionFacts(context.Context) (archive.CodexSourceBinding, error)
+	AdmissionFacts(context.Context) (SourceBinding, error)
 }
 
 // SourceAdmissionSignature validates opened native facts without decoding a
@@ -85,15 +103,32 @@ type SourceRevisions interface {
 	ReadRevision(context.Context, SourceRef, SourceAdmission, ReadLimits) (SourceSnapshot, error)
 }
 
+// RevisionCandidateSet is a thread's bounded historical revision candidates.
+// Chain lists the thread's own segments on the selected lineage: a failure
+// reading one fails the reconciliation. BestEffort lists observed same-thread
+// rollouts off that chain (an abandoned branch, say), kept as historical
+// revisions when they can be read: a failure reading one only leaves it out,
+// so it never blocks the chain's own capture. Active is the chain's tip, the
+// rollout the snapshot that listed the set read as the thread's current
+// revision: it is in Chain, and a reader holding that snapshot's records
+// already has it, so it need not read it again.
+type RevisionCandidateSet struct {
+	Chain      []SourceRef
+	BestEffort []SourceRef
+	Active     SourceRef
+}
+
 // SourceRevisionCandidates exposes bounded same-thread candidates from validated
 // graph and lookup evidence; these observations never grant capture admission.
 type SourceRevisionCandidates interface {
-	RevisionCandidates(context.Context) ([]SourceRef, error)
+	RevisionCandidates(context.Context) (RevisionCandidateSet, error)
 }
 
 // OwnTaskFacts contains the first owned native task observation, never permission.
 // Seen with Native false refuses a later task as replacement evidence.
 type OwnTaskFacts struct {
+	// Refusal is a fixed metadata validation code, never native content.
+	Refusal        SourceCause
 	Seen           bool
 	Native         bool
 	LocalExecution bool
@@ -116,7 +151,7 @@ type SourceOwnTaskFacts interface {
 
 // AdmissionEvidence combines facts from one opened snapshot before admission.
 type AdmissionEvidence struct {
-	Binding archive.CodexSourceBinding
+	Binding SourceBinding
 	Task    OwnTaskFacts
 }
 
@@ -124,6 +159,15 @@ type AdmissionEvidence struct {
 // validates supplied immutable constraints, and performs one final shared check.
 type SourceAdmissionEvidence interface {
 	AdmissionEvidence(context.Context, SourceAdmission) (AdmissionEvidence, error)
+}
+
+// SourceRelocation names the physical rollout a snapshot of an unbound
+// legacy registration read when it is not the registered locator: Codex
+// renamed the rollout (into archived_sessions/, or back) and the lookup found
+// it by its thread ID. The registration keeps its legacy representation and
+// only follows the locator; a bound registration follows its binding instead.
+type SourceRelocation interface {
+	RelocatedFrom(registered SourceRef) (SourceRef, bool)
 }
 
 // RevisionEvidence identifies meaningful native evidence without teaching shared

@@ -19,7 +19,7 @@ func CursorStateDatabase(home string) string {
 // CursorDatabaseReader is CursorDatabaseReaderFor for the state.vscdb under
 // home on this machine.
 func CursorDatabaseReader(home string) func(context.Context) (CursorDatabaseResult, error) {
-	return CursorDatabaseReaderFor(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: home})
+	return CursorDatabaseReaderFor(Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: home})
 }
 
 // cursorSlug is the folder name Cursor gives a workspace under
@@ -64,4 +64,20 @@ func cursorWorkspaceFolders(env Environment) []string {
 		}
 	}
 	return out
+}
+
+// CheckRecovery is AdmitRecovery that refuses unless every imported session
+// is still current: what a test asserts about one plan's evidence.
+func (p Plan) CheckRecovery(ctx context.Context) error {
+	_, changed, err := p.AdmitRecovery(ctx)
+	if err == nil && changed > 0 {
+		err = errRecoveryChanged
+	}
+	return err
+}
+
+// current reports an inventory with no membership change at all.
+func (i *recoverySourceInventory) current(ctx context.Context) bool {
+	grown, ok := i.compare(ctx)
+	return ok && !grown
 }

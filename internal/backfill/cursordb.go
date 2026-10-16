@@ -458,12 +458,15 @@ func appendCursorDatabaseChats(env Environment, r *resolver, projectFilter []str
 				w.filtered = true
 			}
 		}
+		w.c.HistoricalProject = w.res.historical
 		w.c.ProjectRoot, w.c.ProjectKind, w.c.ProjectIncluded = w.res.root, w.res.kind, w.res.included
 		if w.res.root != "" {
 			w.c.ProjectExists = env.exists(w.res.root)
 		}
 		w.c.Skip = w.reason(plan.GeneratedAt)
 		w.c.Diagnostic = candidateDiagnostic(w.c.Skip, w.res.outcome, w.res.cause)
+		chat := w.chat
+		w.c.reviewedCursor = &chat
 		plan.Candidates = append(plan.Candidates, w.c)
 	}
 }

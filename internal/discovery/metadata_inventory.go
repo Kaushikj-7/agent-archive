@@ -223,7 +223,7 @@ func (m *metadataInventory) beginOperation(ctx context.Context) (context.Context
 		}
 	}
 	if m.remaining <= 0 {
-		return ctx, nil, metadataLimit()
+		return ctx, nil, m.fail(metadataLimit())
 	}
 	m.deadline = started.Add(m.remaining)
 	operation, cancel := context.WithDeadline(ctx, m.deadline)
@@ -236,7 +236,7 @@ func (m *metadataInventory) operationFailure(parent context.Context, err error) 
 		return canceled
 	}
 	if !m.deadline.IsZero() && !time.Now().Before(m.deadline) {
-		return metadataLimit()
+		return m.fail(metadataLimit())
 	}
 	return err
 }
@@ -253,8 +253,11 @@ func metadataLimit() error {
 	return agentapi.Wrap(agentapi.Limit, errors.New("native metadata inventory limit"))
 }
 
+// reserve charges the inventory, which lives for the pass, against the
+// shared ledger only (agentapi.PassCacheReserve holds its metadataBytes):
+// it is no one session's, whichever session's validation built it.
 func (m *metadataInventory) reserve(n int64) bool {
-	if n < 0 || m.charge+m.headerBytes+n > metadataBytes || !m.owner.readBudget.Reserve(n) {
+	if n < 0 || m.charge+m.headerBytes+n > metadataBytes || !m.owner.readBudget.ReserveUnscoped(n) {
 		return false
 	}
 	m.charge += n
@@ -268,14 +271,14 @@ func (m *metadataInventory) closeCursor() error {
 	err := m.cursor.file.Close()
 	scratch := m.cursor.scratch
 	m.cursor = nil
-	m.owner.readBudget.Release(scratch)
+	m.owner.readBudget.ReleaseUnscoped(scratch)
 	m.charge -= scratch
 	return err
 }
 
 func (m *metadataInventory) close() error {
 	err := m.closeCursor()
-	m.owner.readBudget.Release(m.charge)
+	m.owner.readBudget.ReleaseUnscoped(m.charge)
 	m.charge = 0
 	m.facts = nil
 	m.batch = nil
@@ -486,7 +489,7 @@ func (m *metadataInventory) step(ctx context.Context) error {
 				}
 				f, err := m.open(entry.Source)
 				if err != nil {
-					m.owner.readBudget.Release(metadataScratch)
+					m.owner.readBudget.ReleaseUnscoped(metadataScratch)
 					m.charge -= metadataScratch
 					return err
 				}
@@ -494,7 +497,7 @@ func (m *metadataInventory) step(ctx context.Context) error {
 				info, err := f.Stat()
 				if err != nil {
 					_ = f.Close()
-					m.owner.readBudget.Release(metadataScratch)
+					m.owner.readBudget.ReleaseUnscoped(metadataScratch)
 					m.charge -= metadataScratch
 					return err
 				}
@@ -503,7 +506,7 @@ func (m *metadataInventory) step(ctx context.Context) error {
 			continue
 		}
 		if m.batchCharge != 0 {
-			m.owner.readBudget.Release(m.batchCharge)
+			m.owner.readBudget.ReleaseUnscoped(m.batchCharge)
 			m.charge -= m.batchCharge
 			m.batchCharge = 0
 		}
@@ -526,7 +529,7 @@ func (m *metadataInventory) step(ctx context.Context) error {
 		if err != nil && agentapi.Failure(err) == agentapi.Limit {
 			return err
 		}
-		if err != nil || batch.coverage == nil || batch.coverage.Unavailable {
+		if err != nil || batch.digest == nil || batch.digest.Unavailable {
 			return metadataUnavailable()
 		}
 		key := d.Root + "\x00" + d.Path
@@ -537,14 +540,14 @@ func (m *metadataInventory) step(ctx context.Context) error {
 			}
 			i = len(m.directories)
 			m.directoryIndex[key] = i
-			m.directories = append(m.directories, metadataDirectory{dir: directory{Root: d.Root, Path: d.Path}, stamp: batch.coverage.Stamp})
+			m.directories = append(m.directories, metadataDirectory{dir: directory{Root: d.Root, Path: d.Path}, stamp: batch.digest.Stamp})
 			m.counts.directories++
 		}
 		proof := &m.directories[i]
-		if proof.stamp != batch.coverage.Stamp {
+		if proof.stamp != batch.digest.Stamp {
 			return metadataChanged()
 		}
-		proof.digest = appendCoverageDigest(proof.digest, batch.coverage.Entries)
+		proof.digest = appendDirectoryDigest(proof.digest, batch.digest.Entries)
 		m.batch = batch.Entries
 		m.next = d
 		if !batch.Complete {
@@ -744,7 +747,7 @@ func (m *metadataInventory) validate(ctx context.Context) error {
 		// removals and moves; individual file observations fence append/rewrite.
 		// Irrelevant file payload changes cannot alter native metadata membership.
 		m.counts.stats++
-		if directoryCoverageStamp(proof.dir.Root, proof.dir.Path) != proof.stamp {
+		if directoryStamp(proof.dir.Root, proof.dir.Path) != proof.stamp {
 			return metadataChanged()
 		}
 	}
@@ -787,7 +790,9 @@ func (m *metadataInventory) BeginValidationSlice(ctx context.Context, limits age
 		err = m.validate(operation)
 	}
 	err = m.operationFailure(ctx, err)
-	if err != nil && m.failure != nil {
+	// A caller-local failed sweep stays in its slice, but exhaustion of the
+	// fixed epoch leaves incomplete evidence even after enumeration finished.
+	if err != nil && (m.failure != nil || (ctx.Err() == nil && agentapi.Failure(err) == agentapi.Limit)) {
 		err = m.fail(err)
 	}
 	return &metadataSlice{inventory: m, remaining: limits.Steps, expires: time.Now().Add(limits.Duration), failure: err}, nil
@@ -850,6 +855,9 @@ func (m *metadataInventory) current(ctx context.Context, id string) (*agentapi.S
 				break
 			}
 		}
+		if !valid && local.PathWithin(path, root) && currentLocatorMissing(path) {
+			continue
+		}
 		if !valid || (current != nil && current.Path != path) {
 			return nil, metadataChanged()
 		}
@@ -884,7 +892,7 @@ func (m *metadataInventory) thread(ctx context.Context, id string) (agentapi.Cod
 	if current != nil {
 		_, _ = io.WriteString(hash, current.Path)
 	}
-	return agentapi.CodexRolloutSet{Current: current, Complete: m.complete, Revision: hex.EncodeToString(hash.Sum(nil))}, nil
+	return agentapi.CodexRolloutSet{Current: current, Revision: hex.EncodeToString(hash.Sum(nil))}, nil
 }
 
 type metadataSlice struct {
@@ -990,7 +998,7 @@ func (s *metadataSlice) Close() error {
 	}
 	s.closed = true
 	if !s.inventory.owner.closed {
-		s.inventory.owner.readBudget.Release(s.charge)
+		s.inventory.owner.readBudget.ReleaseUnscoped(s.charge)
 		s.inventory.charge -= s.charge
 	}
 	s.charge = 0

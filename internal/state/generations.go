@@ -78,6 +78,9 @@ func (s *Store) loadGenerationHead(key agentmeta.SessionKey) (generationHead, bo
 		return h, false, ErrSessionIndexRecoveryRequired
 	}
 	defer func() { _ = file.Close() }()
+	if err := s.retainIndexExtent(2*4097 + 32<<10); err != nil {
+		return h, false, err
+	}
 	data, err := io.ReadAll(io.LimitReader(file, 4097))
 	if err != nil || len(data) > 4096 {
 		return h, false, ErrSessionIndexRecoveryRequired
@@ -138,6 +141,11 @@ func (s *Store) beginGenerationRecoveryGuard(g config.DurableStorageGuard, id st
 	if err != nil {
 		return "", err
 	}
+	if old.NativeBinding != nil {
+		if err := s.checkNativeRegistrationWrite(s.registrationPath(id), old); err != nil {
+			return "", err
+		}
+	}
 	next, err := local.ID()
 	if err != nil {
 		return "", err
@@ -183,10 +191,11 @@ func validateGenerationSuccessor(old, reg archive.SessionRegistration, pending P
 // A decodable journal must not redirect preserved metadata or carry bytes
 // belonging to another generation, even when its registration is intact.
 func validateGenerationPublication(reg archive.SessionRegistration, pending PendingPublication, budget *agentapi.NativeReadBudget, ctx context.Context) error {
+	reservation := budget.Reservation()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if pending.JournalVersion == 2 {
+	if pending.JournalVersion == 5 {
 		if err := pending.ValidatePublication(); err != nil {
 			return err
 		}
@@ -219,10 +228,10 @@ func validateGenerationPublication(reg archive.SessionRegistration, pending Pend
 		return errors.New("recovery publication metadata key differs from registration")
 	}
 	n := int64(len(pending.MetadataBytes))
-	if !budget.Reserve(n) {
+	if !reservation.Reserve(n) {
 		return errStateBudget
 	}
-	defer budget.Release(n)
+	defer reservation.Release(n)
 	var metadata archive.Metadata
 	if json.Unmarshal(pending.MetadataBytes, &metadata) != nil || !generationMetadataMatches(reg, pending, metadata) {
 		return errors.New("recovery publication metadata differs from its fixed source")
@@ -593,6 +602,10 @@ func (s *Store) generationRegistrationAllowed(key agentmeta.SessionKey, reg arch
 		if err != nil {
 			return ErrSessionIndexRecoveryRequired
 		}
+		if err := s.retainIndexExtent(2*4097 + 32<<10); err != nil {
+			_ = file.Close()
+			return err
+		}
 		data, readErr := io.ReadAll(io.LimitReader(file, 4097))
 		_ = file.Close()
 		var receipt generationRecovery
@@ -743,11 +756,15 @@ func (s *Store) FrozenGeneration(reg archive.SessionRegistration) error {
 	}
 	h, found, err := s.loadGenerationHead(key)
 	if err != nil || !found || h.Transition != "" || h.Active == reg.ArchiveSessionID && !h.Retired {
-		return ErrSessionIndexRecoveryRequired
+		return s.indexRecoveryError(err)
 	}
-	n, found, err := readJSON[generationNode](s.generationNodePath(reg.ArchiveSessionID))
+	n, found, err := readIndexControlValue[generationNode](s, s.generationNodePath(reg.ArchiveSessionID))
 	if err != nil || !found || n.Version != 1 || n.Key != key || n.ID != reg.ArchiveSessionID || n.Previous != reg.PreviousGenerationID {
-		return fmt.Errorf("frozen generation has no lineage authority: %w", ErrSessionIdentityConflict)
+		failure := fmt.Errorf("frozen generation has no lineage authority: %w", ErrSessionIdentityConflict)
+		if s.resourceReservation != nil {
+			return errors.Join(failure, err)
+		}
+		return failure
 	}
 	return nil
 }
@@ -927,24 +944,30 @@ func (w *generationDigestWriter) Write(data []byte) (int, error) {
 // Validation streams the canonical gzip into a digest, retaining no second
 // compressed publication. Encoder and compressor scratch share the caller lease.
 func generationSourceDigest(ctx context.Context, bundle archive.SourceBundle, budget *agentapi.NativeReadBudget) (generationDigest, error) {
+	reservation := budget.Reservation()
 	const preflight = 32 << 10
-	if !budget.Reserve(preflight) {
+	if !reservation.Reserve(preflight) {
 		return generationDigest{}, errStateBudget
 	}
-	largest, err := archive.SourceEncodingLineBound(ctx, bundle, budget.Available())
-	budget.Release(preflight)
+	available := reservation.Available()
+	largest, err := archive.SourceEncodingLineBound(ctx, bundle, available)
+	if errors.Is(err, agentmeta.ErrJSONWireLimit) {
+		reservation.Refuse(available + 1)
+	}
+	reservation.Release(preflight)
 	if err != nil {
 		return generationDigest{}, err
 	}
 	const compressor = 1 << 20
-	if largest > (budget.Available()-compressor)/2 {
+	if largest > (reservation.Available()-compressor)/2 {
+		reservation.Refuse(2*largest + compressor)
 		return generationDigest{}, errStateBudget
 	}
 	scratch := 2*largest + compressor
-	if !budget.Reserve(scratch) {
+	if !reservation.Reserve(scratch) {
 		return generationDigest{}, errStateBudget
 	}
-	defer budget.Release(scratch)
+	defer reservation.Release(scratch)
 	writer := &generationDigestWriter{ctx: ctx, Hash: sha256.New()}
 	if err := archive.CompressSource(writer, bundle); err != nil {
 		return generationDigest{}, err

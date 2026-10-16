@@ -52,9 +52,10 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
-	durableInspection     *durableInspectionCache
 	publicationAccounting *publicationAccounting
+	durableInspection     *durableInspectionCache
 	resourceBudget        *agentapi.NativeReadBudget
+	resourceReservation   func() stateReservation
 	resourceContext       context.Context
 	resourceReleases      *[]func()
 	// indexSnapshots uses logical packed authority for qualified-index writes.
@@ -67,7 +68,8 @@ type Store struct {
 	hook bool
 	// onWriteSync, when set by a test, runs where writeUnderLock syncs to
 	// disk outside the lock: once its temporary file is synced, and once it
-	// is renamed into place, before the directory is synced.
+	// is renamed into place, before the directory is synced. Settled first-save
+	// preparation also invokes it after its synced temp and before commit checks.
 	onWriteSync func()
 	// onLockWait, when set by a test, runs before any wait for a lock that
 	// can last (see namedLockWait), with the lock's name.
@@ -130,7 +132,7 @@ var lazyStoreDirs = []string{generationHeadsDir, generationNodesDir, generationR
 // its list against this one, so a new directory cannot be left behind.
 func OwnedEntries() []string {
 	entries := append(append([]string{}, storeDirs...), lazyStoreDirs...)
-	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile, sessionMembershipFile, sessionMembershipLock, sessionRecoveryCursorFile, "temporary-quota")
+	return append(entries, "status.json", storageClockFile, sessionIndexMarkerFile, sessionMembershipFile, sessionMembershipLock, sessionRecoveryCursorFile, sessionIndexAbsenceFile, "temporary-quota")
 }
 
 func safeFileComponent(value string) bool {
@@ -146,6 +148,9 @@ func safeFileComponent(value string) bool {
 func (s *Store) SaveRegistration(reg archive.SessionRegistration) error {
 	if err := reg.Validate(); err != nil {
 		return err
+	}
+	if reg.HistoricalProject != nil && reg.StagedImportSHA256 == "" {
+		return errors.New("historical import registration requires frozen source-set proof")
 	}
 	if !safeFileComponent(reg.ArchiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
@@ -228,6 +233,7 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		if err := json.Unmarshal(current.data, &reg); err != nil {
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
+		originalStage := reg.StagedImportSHA256
 		originalBinding := reg.CodexBinding
 		if originalBinding != nil {
 			copyBinding := *originalBinding
@@ -255,6 +261,9 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 		}
 		if !reg.CodexBinding.PreservesFacts(originalBinding) {
 			return nil, false, errors.New("a registration update cannot change native Codex binding facts")
+		}
+		if originalStage != reg.StagedImportSHA256 {
+			return nil, false, errors.New("a registration update cannot change import staging selection")
 		}
 		if !sameCodexAdmission(originalProof, reg.CodexAdmission) {
 			return nil, false, errors.New("a registration update cannot change Codex admission proof")
@@ -341,6 +350,9 @@ func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build fun
 	if err := reg.Validate(); err != nil {
 		return archive.SessionRegistration{}, false, err
 	}
+	if reg.HistoricalProject != nil && reg.StagedImportSHA256 == "" {
+		return archive.SessionRegistration{}, false, errors.New("historical import registration requires frozen source-set proof")
+	}
 	// Replacement staging remains blind; the locked check protects immutable
 	// admission proof before committing the staged registration.
 	err := s.writeUnderLock(lockedWrite{
@@ -365,6 +377,9 @@ func (s *Store) registerUnderLock(key agentmeta.SessionKey, id string, build fun
 				prior, found, err := s.LoadRegistration(id)
 				if err != nil {
 					return err
+				}
+				if found && prior.StagedImportSHA256 != reg.StagedImportSHA256 {
+					return errors.New("a registration replacement cannot change import staging selection")
 				}
 				if found && !sameCodexAdmission(prior.CodexAdmission, reg.CodexAdmission) {
 					return errors.New("a registration replacement cannot change Codex admission proof")
@@ -407,8 +422,11 @@ func (s *Store) mergeAdmissionRegistration(key agentmeta.SessionKey, reg archive
 		if err := json.Unmarshal(current.data, &existing); err != nil {
 			return reg, err
 		}
-		if existing.NativeSessionID != key.NativeID || agentmeta.Canonical(agentmeta.Builtins(), existing.Harness.Name) != string(key.Agent) || existing.ProjectRoot != reg.ProjectRoot || existing.DestinationID != "" && existing.DestinationID != reg.DestinationID {
+		if existing.NativeSessionID != key.NativeID || agentmeta.Canonical(agentmeta.Builtins(), existing.Harness.Name) != string(key.Agent) || existing.ProjectRoot != reg.ProjectRoot || existing.ProjectID != reg.ProjectID || (existing.HistoricalProject == nil) != (reg.HistoricalProject == nil) || existing.DestinationID != "" && existing.DestinationID != reg.DestinationID {
 			return reg, ErrSessionIdentityConflict
+		}
+		if reg.NativeBinding != nil && existing.NativeBinding != nil && !reg.NativeBinding.PreservesFacts(existing.NativeBinding) {
+			return reg, errors.New("admission cannot contradict native source binding")
 		}
 		if existing.TranscriptPath == "" && existing.ReadsTranscriptFile() && reg.ReadsTranscriptFile() {
 			existing.TranscriptPath = reg.TranscriptPath
@@ -467,7 +485,7 @@ func (s *Store) LoadRegistrations() ([]archive.SessionRegistration, error) {
 // LoadRegistration returns one session's registration, if it has been saved.
 func (s *Store) LoadRegistration(archiveSessionID string) (archive.SessionRegistration, bool, error) {
 	var reg archive.SessionRegistration
-	err := local.Read(s.registrationPath(archiveSessionID), &reg)
+	err := s.readIndexControlJSON(s.registrationPath(archiveSessionID), &reg)
 	if errors.Is(err, os.ErrNotExist) {
 		return archive.SessionRegistration{}, false, nil
 	}
@@ -750,17 +768,34 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 // and metadata bytes are persisted together before the first remote write, so
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
+// CatalogPublication freezes the remote transaction before source upload.
+type CatalogPublication struct {
+	Protocol         uint64                `json:"protocol"`
+	ID               string                `json:"id"`
+	ExpectedRevision string                `json:"expected_revision"`
+	Recovery         *local.CatalogJournal `json:"recovery,omitempty"`
+}
+
 type PendingPublication struct {
+	CursorSelection *StagedSelection    `json:"cursor_commit4,omitempty"`
+	JournalVersion  int                 `json:"journal_version,omitempty"`
+	StagedSelection *StagedSelection    `json:"staged_commit3,omitempty"`
+	Selection       *ReadySelection     `json:"selection_commit,omitempty"`
+	Catalog         *CatalogPublication `json:"commit,omitempty"`
+	// ImportExpectedMetadataSHA256 freezes staged imports' predecessor. Retired
+	// privacy sources become cleanup obligations only after successor readback.
+	ImportExpectedMetadataSHA256 string                    `json:"import_expected_metadata_sha256,omitempty"`
+	ImportRetired                []archive.SourceReference `json:"import_retired,omitempty"`
+
 	nativeTarget     *PublicationNativeTarget
 	hookObservations *PublicationHookObservations
 	migration        *ValidatedOrdinaryMigration
 	privacyOutputs   map[int]PrivacySource
-	JournalVersion   int                   `json:"journal_version,omitempty"`
 	Phase            PublicationPhase      `json:"phase,omitempty"`
 	Preparation      *PreparationAuthority `json:"preparation,omitempty"`
 	Progress         *PreparationProgress  `json:"progress,omitempty"`
 	Cleanup          *CleanupProgress      `json:"cleanup,omitempty"`
-	Commit           *PublicationCommit    `json:"commit,omitempty"`
+	Commit           *PublicationCommit    `json:"source_set_commit5,omitempty"`
 	Sources          []PublicationSource   `json:"sources,omitempty"`
 	// ScanSignature freezes the consumed native observation for resumed history
 	// acknowledgement. It never licenses newer input or a privacy successor.
@@ -788,7 +823,7 @@ type PendingPublication struct {
 func (owned *PendingPublication) SourceReference() archive.SourceReference {
 	p := *owned
 	size := len(p.SourceBytes)
-	if p.JournalVersion == 2 {
+	if p.JournalVersion == 5 {
 		size = p.SourceSize
 		if len(p.Sources) > 0 {
 			size = p.Sources[0].Reference.CompressedBytes
@@ -815,8 +850,32 @@ func (s *Store) pendingPath(id string) string {
 // and protected reads. History validation keeps its separate budget ownership.
 func (owned *PendingPublication) validateComplete() error {
 	pending := *owned
-	if pending.JournalVersion == 2 {
+	if pending.JournalVersion == 5 {
 		return pending.validatePublicationEnvelope()
+	}
+	if err := pending.validateStagedShape(); err != nil {
+		return err
+	}
+	if err := pending.validateReadySelectionShape(); err != nil {
+		return err
+	}
+	if pending.Catalog != nil && (pending.Catalog.ID == "" || len(pending.Catalog.ID) > 128 || len(pending.Catalog.ExpectedRevision) > 128) {
+		return errors.New("invalid catalog publication")
+	}
+	if pending.ImportExpectedMetadataSHA256 != "" {
+		decoded, err := hex.DecodeString(pending.ImportExpectedMetadataSHA256)
+		if err != nil || len(decoded) != sha256.Size {
+			return ErrDurableStorageRecovery
+		}
+	}
+	if len(pending.ImportRetired) > 64 {
+		return ErrDurableStorageRecovery
+	}
+	for _, ref := range pending.ImportRetired {
+		key, err := archive.SourceObjectKey(pending.Bundle, ref.SHA256)
+		if err != nil || ref.Key != key || ref.CompressedBytes <= 0 || ref.CompressedBytes > maxPendingHistoryBytes {
+			return ErrDurableStorageRecovery
+		}
 	}
 	if len(pending.SourceBytes) > maxPendingHistoryBytes {
 		return ErrDurableStorageCapacity
@@ -827,9 +886,15 @@ func (owned *PendingPublication) validateComplete() error {
 	return nil
 }
 
-// validateReadablePending applies the existing publication checksum and JSON
+// validateReadablePendingContext applies the existing publication checksum and JSON
 // preconditions without deriving new ownership or remote-source authority.
-func (s *Store) validateReadablePending(pending PendingPublication) error {
+func (s *Store) validateReadablePendingContext(ctx context.Context, pending PendingPublication) error {
+	if err := s.validateReadySelection(ctx, pending); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := pending.validateComplete(); err != nil {
 		return err
 	}
@@ -839,7 +904,7 @@ func (s *Store) validateReadablePending(pending PendingPublication) error {
 			return errors.New("pending source checksum does not match its persisted bytes")
 		}
 	}
-	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
+	scratch, closeScratch := s.WithReadBudget(ctx, s.resourceBudget)
 	defer closeScratch()
 	var metadata archive.Metadata
 	if err := scratch.unmarshalOwned(pending.MetadataBytes, &metadata); err != nil {
@@ -858,6 +923,9 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
+	if err := pending.ValidateReadySlot(id); err != nil {
+		return err
+	}
 	if err := pending.validateComplete(); err != nil {
 		return err
 	}
@@ -869,7 +937,7 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if err := pending.ValidateHistoryBudgeted(id, s.resourceBudget); err != nil {
 		return err
 	}
-	if pending.JournalVersion == 2 {
+	if pending.JournalVersion == 5 {
 		return config.WithPublicationComposition(s.home, func(g config.PublicationCompositionGuard) error {
 			storage, err := g.Storage(s.home)
 			if err != nil {
@@ -890,6 +958,21 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 // A supported legacy collector pass may quarantine damaged ordinary state.
 // Protected state stays present and returns ErrDurableStorageRecovery instead.
 func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
+	return s.loadPendingContext(s.durableContext(), id)
+}
+
+// LoadPendingContext keeps the supplied context through all selected journal
+// reads and validation while borrowing the current resource reservation owner.
+func (s *Store) LoadPendingContext(ctx context.Context, id string) (PendingPublication, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return PendingPublication{}, false, err
+	}
+	read := *s
+	read.resourceContext = ctx
+	return read.loadPendingContext(ctx, id)
+}
+
+func (s *Store) loadPendingContext(ctx context.Context, id string) (PendingPublication, bool, error) {
 	if !safeFileComponent(id) {
 		return PendingPublication{}, false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -928,12 +1011,20 @@ func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 		}
 		found = true
 	}
+	if errors.Is(err, agentapi.ErrReadBudget) && !errors.Is(err, ErrDurableStorageRecovery) {
+		// The memory ledger refused the read: the publication is intact and
+		// is read again when there is room, never recovered.
+		return PendingPublication{}, true, fmt.Errorf("read pending publication %q: %w", id, err)
+	}
 	if err != nil {
 		return PendingPublication{}, true, fmt.Errorf("read pending publication %q: %w", id, errors.Join(ErrDurableStorageRecovery, err))
 	}
 	if found {
+		if err := pending.ValidateReadySlot(id); err != nil {
+			return PendingPublication{}, true, err
+		}
 		if protected {
-			if err := s.validateReadablePending(pending); err != nil {
+			if err := s.validateReadablePendingContext(ctx, pending); err != nil {
 				return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, err)
 			}
 		}
@@ -1000,6 +1091,19 @@ func (s *Store) RemovePending(id string) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
+	if err := s.checkSelectingPendingRemoval(id); err != nil {
+		return err
+	}
+	if err := s.checkCatalogPendingRemoval(id); err != nil {
+		return err
+	}
+	return s.removePending(id)
+}
+
+func (s *Store) removePending(id string) error {
+	if !safeFileComponent(id) {
+		return errors.New("archive session ID is not a safe file name component")
+	}
 	if _, err := os.Lstat(s.pendingPath(id)); errors.Is(err, os.ErrNotExist) {
 		if owed, e := s.protectedStorage(id); owed || e != nil {
 			return errors.Join(ErrDurableStorageRecovery, e)
@@ -1045,10 +1149,48 @@ type Status struct {
 	// numbers the last error's summary of failed sessions is built from. It
 	// is cleared when a later failure replaces that summary, so status can
 	// trust it to describe the last error.
-	IssueCounts     map[string]int `json:"issue_counts,omitempty"`
-	LastScanAt      time.Time      `json:"last_scan_at,omitzero"`
-	LastPublishedAt time.Time      `json:"last_published_at,omitzero"`
-	PendingCount    int            `json:"pending_count"`
+	IssueCounts map[string]int `json:"issue_counts,omitempty"`
+	// DeferredSessions gives, per archive session ID, why the last pass put
+	// off its scan without failing it (a collector.Deferred* reason, such as
+	// source_changed): the source could not be read completely yet,
+	// and the next pass retries. Such a session is pending; a deferral alone
+	// never makes it one of the SessionIssues.
+	DeferredSessions map[string]string `json:"deferred_sessions,omitempty"`
+	// DeferredSince gives, for each session whose scan the last pass
+	// deferred (one of the DeferredSessions, or of the SessionIssues once
+	// deferred for collector.MaxDeferral) or did not reach, when the run of
+	// passes that each deferred its scan, or left it unopened once the pass's
+	// Codex lookup allowance ran out, began. A session deferred for
+	// collector.MaxDeferral fails instead. One deferred for another reason
+	// fails on every pass that defers it or leaves it unopened. A Codex
+	// session waiting on the lookup allowance fails on the pass its clock
+	// reaches collector.MaxDeferral, and is then retried on a backoff
+	// schedule computed from this clock (see NextRetryAt): the clock keeps
+	// running through every pass that holds it, and stops only when a pass
+	// reads it or fails it for another reason.
+	DeferredSince map[string]time.Time `json:"deferred_since,omitempty"`
+	// NextRetryAt gives, for each Codex session that failed waiting on the
+	// Codex lookup allowance past collector.MaxDeferral, when its next
+	// attempt is due: 1 hour after its DeferredSince reached
+	// collector.MaxDeferral, then 2, 4, and so on, the gap doubling after
+	// each attempt up to collector.LookupRetryMaxGap (7 days), for as long
+	// as it is pending. A pass with no attempt due leaves it unopened and
+	// records no new failure for it, but keeps its issue in SessionIssues. A
+	// time no later than LastScanAt means an attempt is due, for the next
+	// pass to make.
+	NextRetryAt map[string]time.Time `json:"next_retry_at,omitempty"`
+	// UnreachedSessions gives, per archive session ID, each session with a
+	// pending request that the last pass ran out of time before reaching,
+	// and how many such sessions the pass had ordered ahead of it
+	// (collector.Result.Unreached). Such a session is pending and queued for
+	// the next pass; not being reached is neither a failure nor a deferral,
+	// though the pass may also have recorded a failure for it in
+	// SessionIssues (one found before or after its run of sessions, or one
+	// whose DeferredSince is collector.MaxDeferral old).
+	UnreachedSessions map[string]int `json:"unreached_sessions,omitempty"`
+	LastScanAt        time.Time      `json:"last_scan_at,omitzero"`
+	LastPublishedAt   time.Time      `json:"last_published_at,omitzero"`
+	PendingCount      int            `json:"pending_count"`
 	// LastError is every problem the last pass recorded, joined with "; ".
 	// It is kept, with the same contents, for older readers; LastErrors
 	// holds the same problems one per entry. Set both with SetLastErrors
@@ -1254,6 +1396,8 @@ func (s *Store) ScanPending(id string) (bool, error) {
 // Anything that invalidates the assertion removes the token (see
 // RemoveScanSignature's callers).
 type ScanSignature struct {
+	// PublishedProjectName invalidates a retained historical signature after a label change.
+	PublishedProjectName string `json:"published_project_name,omitempty"`
 	// PublishedLabel identifies retained safe native name evidence, independently of lookup time.
 	PublishedLabel string `json:"published_label,omitempty"`
 	// A settled complete authority token carries only compact acknowledged facts.
@@ -1300,6 +1444,13 @@ type ScanSignature struct {
 	// stands only while they do.
 	FailedMaxBytes    int64 `json:"failed_max_bytes,omitempty"`
 	FailedRecordLimit int64 `json:"failed_record_limit,omitempty"`
+	// FailedRawLimit is the raw size limit for the session's harness under
+	// which the failure or gap was reached: raising it reads the source
+	// again. Zero (a signature from before the field) stands under none.
+	FailedRawLimit int64 `json:"failed_raw_limit,omitempty"`
+	// SizeLimit names the limit a size-limit gap (Blocked) stopped at, and
+	// how far over it the source was, for status.
+	SizeLimit *SizeLimitGap `json:"size_limit,omitempty"`
 	// Blocked marks a scan that ended in a recorded capture gap (see
 	// CacheStatusBlocked) at this source state, so an unchanged source is
 	// skipped rather than read again to reach the same gap. For
@@ -1311,6 +1462,34 @@ type ScanSignature struct {
 	// A registration whose observation differs owes a metadata update, so
 	// the session is scanned again however unchanged its source is.
 	PublishedLastHead string `json:"published_last_head,omitempty"`
+}
+
+// SizeLimitKind names which size limit a size-limit gap stopped at. Once
+// written each keeps its spelling.
+type SizeLimitKind string
+
+// Size limits a capture gap can stop at.
+const (
+	// SizeLimitRaw: the source (a Codex thread: every rollout its history
+	// spans) is larger than its harness's raw transcript limit.
+	SizeLimitRaw SizeLimitKind = "raw"
+	// SizeLimitFiltered: what the filter keeps is larger than the filtered
+	// transcript limit.
+	SizeLimitFiltered SizeLimitKind = "filtered"
+	// SizeLimitRecord: one record is larger than the record size limit.
+	SizeLimitRecord SizeLimitKind = "record"
+	// SizeLimitReadBudget: reading the session needs more memory than one
+	// session's share of a pass (collector.SessionReadCeiling).
+	SizeLimitReadBudget SizeLimitKind = "read_budget"
+)
+
+// SizeLimitGap is the limit a size-limit gap stopped at.
+type SizeLimitGap struct {
+	Kind       SizeLimitKind `json:"kind"`
+	LimitBytes int64         `json:"limit_bytes"`
+	// SizeBytes is the size measured against the limit, when known: the
+	// raw or filtered size. Record and read_budget gaps have none.
+	SizeBytes int64 `json:"size_bytes,omitempty"`
 }
 
 // CursorSignature is the Cursor chat state the signature was recorded at.

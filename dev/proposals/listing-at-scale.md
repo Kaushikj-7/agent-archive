@@ -1,7 +1,48 @@
 # Archive listing at scale: implementation plan
 
 Prepared 2026-09-30 against `main` at `dc443c7`. Status: phases 1
-and 2 implemented; phase 3 planned; phase 4 needs its own spec before any code.
+and 2 implemented; phase 3's historical synthetic matrix recorded in #451;
+phase 4 has default-v3 bounded bodies and a gated opt-in catalog implementation.
+Matched scoped-interactive measurements with the repaired command harness
+completed 2026-10-13:16 processes / 104 cases, baseline
+`a187e1b883924fd36c9d6700606a5c2756fc2b6f` and candidate
+`cc26f45aba6c76307aecf3c9d32b2650aef79eed`.
+[Results, hashes and limits](../maintainers/picker-qualification/results-20261013.md)
+cover10k/100k cold/warm/changed and native 20/120 cases. Final source review and
+required hosted checks are tracked in [PR499](https://github.com/wangjohn/agent-archive/pull/499);
+production release gates remain separate.
+This scoped query subset does not qualify every historical listing/full-load path.
+Reconciled 2026-10-11 at `db2ccd3e`. The current
+[listing contract](../maintainers/list-performance.md) specifies indexed bounded
+metadata reads (#320), with 10k/20k correctness and operation-count coverage.
+`internal/reader/list_index_bench_test.go` retains its original 10k benchmark.
+The original 1k/10k/100k cold/warm matrix is recorded in the
+[historical synthetic baseline](../maintainers/list-performance.md#synthetic-baseline-recorded-2026-10-12).
+Its modeled latency and measured local costs remain separate; the retained
+samples used the historical discard-writer harness and do not qualify current
+main or a matched comparison with the repaired harness. Fresh LIST header
+enumeration still grows with archive size, so the original constant-cost index
+goal remains open for the default legacy format. The opt-in catalog-v4 source
+landed in [#460](https://github.com/wangjohn/agent-archive/pull/460), with bounded
+tree reads for eligible queries and complete-summary fallback for complex ones.
+Production S3/R2 construction and migration still refuse unqualified providers;
+provider atomicity/clock, global writer/cutover authority, full-load and matched
+performance acceptance remain gates. See [catalog migration and query](../catalog/migration-and-query.md)
+and the [provider release gate](../catalog/provider-qualification.md).
+The scoped source slice follows the
+[bounded repository picker implementation plan](bounded-repository-picker.md).
+It builds on the shared catalog rather than restoring the historical readiness
+marker design: repository/activity ranges, remote pages and selected-body loading
+replace eager picker archive traversal. The scoped picker implementation supplies typed repository windows and remote
+Older actions for supported interactive paths. Its
+[CLI qualification controls](../maintainers/picker-qualification/README.md)
+separate complete synthetic construction, actual command work and nativeR costs.
+Final integrated-source synthetic paired measurements are recorded above;
+final source review and required hosted checks are tracked in
+[PR499](https://github.com/wangjohn/agent-archive/pull/499), with provider release
+acceptance remaining separate. Legacy destinations retain proportional header discovery.
+
+The phase designs below preserve the original plan.
 Each phase lands before the next one starts. Each phase's PR updates its
 status line below.
 
@@ -9,8 +50,8 @@ status line below.
 | --- | --- | --- |
 | 1 | Parallel range listing | Implemented in [#219](https://github.com/wangjohn/agent-archive/pull/219) |
 | 2 | `AGENT_ARCHIVE_TRACE` timings | Implemented in [#225](https://github.com/wangjohn/agent-archive/pull/225) |
-| 3 | Listing benchmark at 1k, 10k and 100k sessions | Planned |
-| 4 | Index read whose cost doesn't grow with the archive (spec first) | Planned after 1–3 and the session-finding picker work |
+| 3 | Listing benchmark at 1k, 10k and 100k sessions | Historical synthetic matrix recorded in #451; scoped-interactive matched 10k/100k matrix recorded 2026-10-13 (linked above). Other paths/provider gates remain separate. |
+| 4 | Index read whose cost doesn't grow with the archive (spec first) | Default v3 bounds metadata bodies but retains proportional LIST headers. Opt-in catalog tree reads implemented in #460; production qualification and activation remain gated. |
 
 ## Problem
 
@@ -62,7 +103,7 @@ In scope: how the archive is listed and read for `handoff`, `list`, `show` and
 
 Out of scope: which sessions the picker shows and how they are labelled.
 That includes hiding subagents, native titles, repo scoping, filtering, and
-the search matcher. That work is the [session-finding plan](../specs/session-finding.md).
+the search matcher. That work is the [session-finding plan](implemented/session-finding.md).
 Phase 4 below lists what it needs from the listing.
 
 ## Phase 1: parallel range listing
@@ -146,7 +187,10 @@ Size: ~250 lines of production code, ~200 of tests. One PR.
 
 A benchmark in `internal/reader` against a store wrapper that behaves like R2
 as measured above: ~100 ms per request plus ~0.45 ms per listed key, pages of
-1,000. It sleeps at a reduced time scale and reports modeled time. Fixtures:
+1,000. The original design proposed reduced-scale sleeps. The recorded
+historical model instead uses deterministic virtual scheduling and reports
+projected latency separately from measured local work; it does not measure
+current provider latency. Fixtures:
 1k, 10k and 100k sessions, 85% of them subagents, ~1.5 superseded snapshots
 per session. For each fixture it measures:
 
@@ -161,6 +205,10 @@ performance tests. The results are recorded in
 [list-performance.md](../maintainers/list-performance.md) and become phase 4's
 baseline.
 
+Keep the original measured source/toolchain and raw samples pinned. Freeze the
+same repaired output-validation harness on both production baseline and
+optimization candidate before accepting a performance comparison.
+
 Size: ~300 lines, test code only. One PR.
 
 ## Phase 4: reads whose cost doesn't grow with the archive (spec first)
@@ -168,7 +216,9 @@ Size: ~300 lines, test code only. One PR.
 Starts after phases 1–3 merge and after the session-finding picker changes
 land, since it changes where the picker gets its rows. The first PR is a
 spec in `dev/specs`. The build follows in PRs sized by that spec, expected to
-be 4–5. The spec must decide:
+be 4–5. The [CLI performance follow-up plan](cli-performance.md) proposes
+dependencies and catalog work for this remaining goal; it does not activate a
+new format or complete the proportional-header-cost acceptance. The spec must decide:
 
 1. **Index readiness without a manual step.** The collector runs
    `RebuildIndex` once, in the background, on a destination marked as
@@ -197,7 +247,7 @@ be 4–5. The spec must decide:
    deletion. Handoff re-reads the chosen session before using it. The spec
    must say what each command verifies before it shows a row.
 
-What the [session-finding plan](../specs/session-finding.md) needs from phase 4:
+What the [session-finding plan](implemented/session-finding.md) needs from phase 4:
 
 - **(a) Subagent count per parent,** from the parent's `LinkedSessions`, with
   no scan of subagent hints.

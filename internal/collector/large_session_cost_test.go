@@ -342,8 +342,8 @@ func TestLargeNativeGrowingSessionRetainsBudgetProgress(t *testing.T) {
 	}
 }
 
-func (s *countingStore) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
-	data, validator, err := s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+func (s *countingStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	data, validator, err := s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
 	s.recordRead(key, data)
 	return data, validator, err
 }

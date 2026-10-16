@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"sync"
 )
@@ -13,6 +14,7 @@ import (
 // CompressRetainedSource uses the canonical codec with the caller's shared
 // ledger; the returned bytes are owned until release.
 func CompressRetainedSource(ctx context.Context, bundle archive.SourceBundle, budget *NativeReadBudget) (archive.CompressedSource, func(), error) {
+	reservation := budget.Reservation()
 	if budget == nil {
 		return archive.CompressedSource{}, nil, ErrReadBudget
 	}
@@ -24,25 +26,30 @@ func CompressRetainedSource(ctx context.Context, bundle archive.SourceBundle, bu
 	}
 	const compressorScratch = 1 << 20
 	const sizingScratch = 32 << 10
-	if !budget.Reserve(sizingScratch) {
+	if !reservation.Reserve(sizingScratch) {
 		return archive.CompressedSource{}, nil, ErrReadBudget
 	}
-	largest, err := archive.SourceEncodingLineBound(ctx, bundle, budget.Available())
-	budget.Release(sizingScratch)
-	if err != nil {
-		return archive.CompressedSource{}, nil, err
+	available := reservation.Available()
+	largest, err := archive.SourceEncodingLineBound(ctx, bundle, available)
+	if errors.Is(err, agentmeta.ErrJSONWireLimit) {
+		reservation.Refuse(available + 1)
 	}
-	if largest > (budget.Available()-compressorScratch)/2 {
+	reservation.Release(sizingScratch)
+	if err != nil {
+		return archive.CompressedSource{}, nil, errors.Join(ErrReadBudget, err)
+	}
+	if largest > (reservation.Available()-compressorScratch)/2 {
+		reservation.Refuse(2*largest + compressorScratch)
 		return archive.CompressedSource{}, nil, ErrReadBudget
 	}
 	scratch := 2*largest + compressorScratch
-	if !budget.Reserve(scratch) {
+	if !reservation.Reserve(scratch) {
 		return archive.CompressedSource{}, nil, ErrReadBudget
 	}
-	defer budget.Release(scratch)
-	writer := &retainedCompressedWriter{ctx: ctx, budget: budget}
+	defer reservation.Release(scratch)
+	writer := &retainedCompressedWriter{ctx: ctx, reservation: reservation}
 	var once sync.Once
-	release := func() { once.Do(func() { budget.Release(writer.charged) }) }
+	release := func() { once.Do(func() { reservation.Release(writer.charged) }) }
 	if err = archive.CompressSource(writer, bundle); err != nil {
 		release()
 		return archive.CompressedSource{}, nil, err
@@ -53,9 +60,9 @@ func CompressRetainedSource(ctx context.Context, bundle archive.SourceBundle, bu
 
 type retainedCompressedWriter struct {
 	bytes.Buffer
-	ctx     context.Context
-	budget  *NativeReadBudget
-	charged int64
+	ctx         context.Context
+	reservation *NativeReadReservation
+	charged     int64
 }
 
 func (w *retainedCompressedWriter) Write(raw []byte) (int, error) {
@@ -63,7 +70,7 @@ func (w *retainedCompressedWriter) Write(raw []byte) (int, error) {
 		return 0, err
 	}
 	n := int64(len(raw))
-	if n > (128<<20)-int64(w.Len()) || !w.budget.Reserve(n) {
+	if n > (128<<20)-int64(w.Len()) || !w.reservation.Reserve(n) {
 		return 0, ErrReadBudget
 	}
 	w.charged += n

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -38,12 +39,8 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 	if err := s.unmarshalRetained(p.MetadataBytes, &metadata); err != nil {
 		return err
 	}
-	for i := range p.History.Inputs {
-		if p.History.Inputs[i].ParentSessionID == nil {
-			parent := metadata.ParentSessionID
-			p.History.Inputs[i].ParentSessionID = &parent
-		}
-	}
+	// Missing per-input provenance belongs to legacy journals. Decode their
+	// checksum-bound originals before applying the output's resolved parent.
 	if p.History.PrivacyCursor < len(p.History.Inputs) {
 		input := p.History.Inputs[p.History.PrivacyCursor]
 		if err := s.prepareHistoryInput(p, &metadata, input); err != nil {
@@ -85,6 +82,32 @@ func (s *sessionScan) advanceHistoryPreparation(p *state.PendingPublication) err
 	}
 	return s.savePending(p)
 }
+
+// historyInputBundle is input's bundle. The current source of a publication
+// this scan froze from its own candidate (frozenSource) is that candidate,
+// the bundle the publication carries (p.Bundle), compressed in this scan:
+// decoding the staged copy of those bytes again would hold a second copy of
+// a long thread's whole chain, so the bundle is used as it is. Any other
+// input is decoded from its retained bytes, as is the current source of a
+// publication an earlier scan froze, whose bundle may since have gained
+// observations its staged source lacks.
+func (s *sessionScan) historyInputBundle(p *state.PendingPublication, identity archive.Metadata, input state.HistoryInput) (archive.SourceBundle, error) {
+	own := s.frozenSource != (archive.SourceReference{}) && input.Reference == s.frozenSource &&
+		identity.History != nil && input.RevisionID == identity.History.CurrentRevision && input.Reference == p.SourceReference() && !p.CarriesNoSource() &&
+		revisionID(p.Bundle) == input.RevisionID && input.ParentSessionID != nil && *input.ParentSessionID == p.Bundle.ParentSessionID &&
+		(input.SourceSchemaVersion == 0 || input.SourceSchemaVersion == p.Bundle.SchemaVersion)
+	if own {
+		return p.Bundle, nil
+	}
+	if identity.History != nil && input.RevisionID == identity.History.CurrentRevision {
+		currentInputDecodes.Add(1)
+	}
+	return s.loadHistoryInput(identity, input)
+}
+
+// currentInputDecodes counts history preparations that decoded a
+// publication's current source from its retained bytes.
+var currentInputDecodes atomic.Int64
 
 func (s *sessionScan) loadHistoryInput(identity archive.Metadata, input state.HistoryInput) (archive.SourceBundle, error) {
 	selected := identity
@@ -213,7 +236,7 @@ func (s *sessionScan) prepareHistoryInput(p *state.PendingPublication, metadata 
 		return err
 	}
 	inputScope := len(s.retainedReleases)
-	bundle, err := s.loadHistoryInput(*metadata, input)
+	bundle, err := s.historyInputBundle(p, *metadata, input)
 	if err != nil {
 		return err
 	}

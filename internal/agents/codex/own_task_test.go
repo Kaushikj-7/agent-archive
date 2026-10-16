@@ -16,7 +16,7 @@ func TestSnapshotFirstOwnTaskSkipsLargeCopiedPrefixAndRejectsLaterRepair(t *test
 			boundary := uint64(1025)
 			ref, _ := historyFile(t, dir, threadB, threadB, 0, map[string]any{"parent_thread_id": threadA, "session_id": threadA, "subagent_history_start_ordinal": boundary})
 			task := func(id string) map[string]any {
-				return map[string]any{"type": "event_msg", "payload": map[string]any{"type": "task_started", "turn_id": id, "root_turn_id": id, "started_at": "2026-10-01T12:02:00Z"}}
+				return map[string]any{"type": "event_msg", "payload": map[string]any{"type": "task_started", "turn_id": id, "root_turn_id": threadA, "started_at": "2026-10-01T12:02:00Z"}}
 			}
 			rows := []map[string]any{task(threadA)}
 			for n := range 1023 {
@@ -43,16 +43,17 @@ func TestSnapshotFirstOwnTaskSkipsLargeCopiedPrefixAndRejectsLaterRepair(t *test
 				t.Fatal(err)
 			}
 			ledger := provider.env.ReadBudget
+			reservation := ledger.Reservation()
 			usedBefore, _ := ledger.Charged()
 			pressure := ledger.Available() - 6000
-			if !ledger.Reserve(pressure) {
+			if !reservation.Reserve(pressure) {
 				t.Fatal("reserve copied-prefix pressure")
 			}
 			_, err = provider.readHistorySelection(t.Context(), agentapi.ReadLimits{}, selection)
 			if !errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, archive.ErrRecordTooLarge) {
 				t.Fatalf("copied child prefix under transient pressure became permanent: %v", err)
 			}
-			ledger.Release(pressure)
+			reservation.Release(pressure)
 			if used, _ := ledger.Charged(); used > usedBefore {
 				t.Fatal("copied-prefix refusal leaked ownership", used, usedBefore)
 			}

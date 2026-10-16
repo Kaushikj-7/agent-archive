@@ -8,9 +8,27 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"io"
 )
+
+// UnsupportedSourceSchemaError identifies an otherwise readable format header
+// whose schema this binary cannot interpret. It does not verify source ownership
+// or the compressed checksum; callers must establish those independently.
+type UnsupportedSourceSchemaError struct {
+	Version int
+}
+
+func (e *UnsupportedSourceSchemaError) Error() string {
+	return fmt.Sprintf("unsupported source schema version %d; this build reads schema %d only", e.Version, SourceSchemaVersion)
+}
+
+func unsupportedSourceSchema(version int) error {
+	if version == SourceSchemaVersion || version == HistorySourceSchemaVersion {
+		return errors.New("source line 1 is not a JSONL header")
+	}
+	return &UnsupportedSourceSchemaError{Version: version}
+}
 
 // Source bundle wire format, schema versions 2 and 3: gzip of newline-delimited JSON.
 // Every line is one object with a "kind" discriminator, in this order:
@@ -100,19 +118,16 @@ func EncodeSource(w io.Writer, bundle SourceBundle) error {
 		return err
 	}
 	header := sourceHeader(bundle)
+	lines := sourceLineWriter{w: w}
+	encoder := json.NewEncoder(&lines)
 	write := func(value any) error {
-		line, err := json.Marshal(value)
-		if err != nil {
+		if err := encoder.Encode(value); err != nil {
+			if lines.err != nil {
+				return lines.err
+			}
 			return fmt.Errorf("encode source line: %w", err)
 		}
-		if len(line) > MaxSourceLineBytes {
-			return fmt.Errorf("source line of %d bytes exceeds the %d byte line limit", len(line), MaxSourceLineBytes)
-		}
-		if _, err := w.Write(line); err != nil {
-			return err
-		}
-		_, err = w.Write([]byte{'\n'})
-		return err
+		return nil
 	}
 	if err := write(header); err != nil {
 		return err
@@ -139,6 +154,37 @@ func EncodeSource(w io.Writer, bundle SourceBundle) error {
 	return nil
 }
 
+// sourceLineWriter receives one complete JSON value plus the encoder's newline.
+// Checking before forwarding keeps oversized lines out of the destination, while
+// Encoder avoids Marshal's separately allocated copy of each completed value.
+// Keep JSON and newline writes separate to preserve destination error boundaries.
+type sourceLineWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (w *sourceLineWriter) Write(line []byte) (int, error) {
+	jsonBytes := len(line) - 1
+	if jsonBytes > MaxSourceLineBytes {
+		w.err = fmt.Errorf("source line of %d bytes exceeds the %d byte line limit", jsonBytes, MaxSourceLineBytes)
+		return 0, w.err
+	}
+	n, err := w.w.Write(line[:jsonBytes])
+	if err == nil && n != jsonBytes {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		w.err = err
+		return n, err
+	}
+	newlineBytes, err := w.w.Write(line[jsonBytes:])
+	if err == nil && newlineBytes != 1 {
+		err = io.ErrShortWrite
+	}
+	w.err = err
+	return n + newlineBytes, err
+}
+
 func sourceHeader(bundle SourceBundle) SourceHeader {
 	return SourceHeader{
 		History: bundle.History,
@@ -155,12 +201,12 @@ func SourceEncodingLineBound(ctx context.Context, bundle SourceBundle, limit int
 	if err := validateBundle(bundle); err != nil {
 		return 0, err
 	}
-	largest, err := jsonwire.Bound(ctx, sourceHeader(bundle), limit)
+	largest, err := agentmeta.JSONWireBound(ctx, sourceHeader(bundle), limit)
 	if err != nil {
 		return 0, err
 	}
 	check := func(value any) error {
-		n, err := jsonwire.Bound(ctx, value, limit)
+		n, err := agentmeta.JSONWireBound(ctx, value, limit)
 		largest = max(largest, n)
 		return err
 	}
@@ -303,7 +349,7 @@ func (s *sourceDecodeState) decodeLine(raw []byte, unterminated bool, scanErr er
 func sourceUnterminatedError(raw []byte, lineNo int, scanErr error) error {
 	var probe sourceProbe
 	if lineNo == 1 && json.Unmarshal(raw, &probe) == nil && probe.Kind == "" && probe.SchemaVersion != nil {
-		return fmt.Errorf("unsupported source schema version %d; this build reads schema %d only", *probe.SchemaVersion, SourceSchemaVersion)
+		return unsupportedSourceSchema(*probe.SchemaVersion)
 	}
 	switch {
 	case errors.Is(scanErr, ErrSourceTooLarge):
@@ -331,7 +377,7 @@ func sourceLineProbe(raw []byte, lineNo int) (sourceProbe, error) {
 func (s *sourceDecodeState) decodeHeader(raw []byte, probe sourceProbe) (SourceLine, error) {
 	if probe.Kind != SourceLineHeader {
 		if probe.Kind == "" && probe.SchemaVersion != nil {
-			return SourceLine{}, fmt.Errorf("unsupported source schema version %d; this build reads schema %d only", *probe.SchemaVersion, SourceSchemaVersion)
+			return SourceLine{}, unsupportedSourceSchema(*probe.SchemaVersion)
 		}
 		return SourceLine{}, fmt.Errorf("source line 1 is %q, but the header must come first", probe.Kind)
 	}
@@ -340,7 +386,7 @@ func (s *sourceDecodeState) decodeHeader(raw []byte, probe sourceProbe) (SourceL
 		return SourceLine{}, fmt.Errorf("decode source header: %w", err)
 	}
 	if decoded.SchemaVersion != SourceSchemaVersion && decoded.SchemaVersion != HistorySourceSchemaVersion {
-		return SourceLine{}, fmt.Errorf("unsupported source schema version %d; this build reads schema %d only", decoded.SchemaVersion, SourceSchemaVersion)
+		return SourceLine{}, unsupportedSourceSchema(decoded.SchemaVersion)
 	}
 	if decoded.Counts.NativeRecords < 0 || decoded.Counts.NativeText < 0 || decoded.Counts.SupplementalEvidence < 0 {
 		return SourceLine{}, errors.New("source header has negative counts")

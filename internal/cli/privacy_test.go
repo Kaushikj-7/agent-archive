@@ -167,7 +167,7 @@ func TestSetupToleratesBackgroundPrivacyRefresh(t *testing.T) {
 		cfg.BucketPrivacy.State, cfg.BucketPrivacy.Reason = "public_or_risky", "public_bucket_policy"
 		return remote, config.Save(home, cfg)
 	}
-	setupRun(t, env, "retention\n30\ny\n", 0)
+	setupRun(t, env, "retention\ncustom\n30\ny\n", 0)
 	cfg, _, err := config.Load(home)
 	if err != nil || cfg.RetentionDays != 30 || cfg.BucketPrivacy == nil || cfg.BucketPrivacy.State != "public_or_risky" || !cfg.BucketPrivacy.CheckedAt.Equal(at.Add(time.Hour)) {
 		t.Fatalf("background evidence lost: %+v %v", cfg.BucketPrivacy, err)

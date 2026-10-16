@@ -142,6 +142,9 @@ func identityObservationScope() (string, bool) {
 func repositoryStamp(path string) (string, bool) {
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
+		if _, locatorErr := os.Lstat(path); !errors.Is(locatorErr, os.ErrNotExist) {
+			return "", false
+		}
 		digest := sha256.Sum256([]byte("missing:" + path))
 		return hex.EncodeToString(digest[:]), true
 	}

@@ -14,6 +14,7 @@ import (
 // reader does not inspect arbitrary later body fields after a healthy manual
 // configuration downgrade with that mandatory header removed.
 func (s *Store) publishedPrefix(id string) (summary PublishedSummary, found, head bool, info os.FileInfo, err error) {
+	reservation := s.readReservation()
 	home, err := local.OpenRootedHome(s.home)
 	if errors.Is(err, os.ErrNotExist) {
 		return summary, false, false, nil, nil
@@ -58,12 +59,21 @@ func (s *Store) publishedPrefix(id string) (summary PublishedSummary, found, hea
 		return summary, true, false, info, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	if s.resourceBudget != nil {
-		if !s.resourceBudget.Reserve(16 << 10) {
+		if !reservation.Reserve(16 << 10) {
 			return summary, true, false, info, errStateBudget
 		}
-		defer s.resourceBudget.Release(16 << 10)
+		defer reservation.Release(16 << 10)
 	}
-	summary, head, err = readLeadingSummaryProtocol(io.LimitReader(f, 8192), cfg.PublicationCompositionProtection)
+	summary, head, err = readLeadingSummary(io.LimitReader(f, 8192))
+	if errors.Is(err, errSelectingPublishedFullDecode) || cfg.PublicationCompositionProtection || cfg.SourceSetPublicationProtection {
+		read, closeRead := s.WithReadBudget(s.durableContext(), s.resourceBudget)
+		defer closeRead()
+		published, readErr := read.LoadPublishedState(id)
+		if readErr != nil || !published.Found() {
+			return PublishedSummary{}, true, false, info, errors.Join(ErrDurableStorageRecovery, readErr)
+		}
+		summary, head, err = published.Summary(), true, nil
+	}
 	if errors.Is(err, ErrDurableStorageRecovery) {
 		return summary, true, false, info, err
 	}

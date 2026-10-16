@@ -35,6 +35,16 @@ registrations remain readable. A requested damaged identity is recorded absent
 only after a complete census succeeds. Outstanding child candidates retain
 their reserved archive IDs; they cannot recreate a missing parent.
 
+Local discovery admits a session only after a census has recorded its
+identity absent. When a version-1 census is complete, discovery's request
+holds only that session's identity: hooks keep admitting other new sessions
+and subagents, `identity_recovery` stays complete, and the next collector pass
+re-reads every registration and records the requested identity absent (or
+repairs its lost owner) without rebuilding the index. A request made after
+that pass read the registrations waits for the following pass. With no
+complete census, a packed index or damaged evidence, the request starts the
+full recovery described above.
+
 For a completed packed identity index, a new registration or another change
 in local session membership makes the recorded census stale. The
 `identity_recovery` status reports `unknown` until the collector starts a fresh
@@ -83,3 +93,22 @@ home: the complete-snapshot rollback guidance above still applies.
 New automatic admission honors retention and undo removal records. Deliberate
 backfill remains the way to include removed history explicitly. Repeated
 admission preserves original identity, origin, destination and admission times.
+
+## Historical project identity
+
+A historical project uses an explicitly supplied random 128-bit opaque ID,
+independent of any filesystem root, repository key or display label. Its imported
+session keeps the ordinary qualified agent/native archive identity and exact batch
+provenance. A private version-1 `historical_project` proof binds the project ID,
+destination, original and canonical cwd, and bounded required-source cwd evidence.
+Its live `project_root` is empty; the proof cannot coexist with live Codex consent
+or generation recovery authority. Source-set staging binds every proof field.
+These private paths are not source headers or metadata. Published project IDs
+remain opaque; historical labels provide the project name.
+
+Permissions are destination-scoped. Label changes preserve ownership and capture
+age. Exclusions apply to retained dependency evidence even after native deletion.
+Historical imports never recapture growth from the native session. Their local
+handoff reads use retained evidence; native transcript recovery is refused.
+Paired machines reconcile IDs and exact destination decisions, preserving local
+labels and disabled policy and transferring no native source assignments.

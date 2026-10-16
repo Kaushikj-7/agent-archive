@@ -1,7 +1,9 @@
 package collector
 
 import (
+	"context"
 	"errors"
+	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -70,10 +72,9 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 	if err := s.freezePreservedHistoryInputs(&final, history); err != nil {
 		return err
 	}
-	for i := range history.Inputs {
-		parent := final.ParentSessionID
-		history.Inputs[i].ParentSessionID = &parent
-	}
+	// Only the current staged source was built from the final header.
+	parent := p.Bundle.ParentSessionID
+	history.Inputs[0].ParentSessionID = &parent
 	if found {
 		if err := freezeRetiredHistorySources(previous, final, history); err != nil {
 			return err
@@ -112,7 +113,7 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 // resumeHistory never bypasses retained work for a newer request or policy.
 // A policy mismatch stays pending until complete successor preparation can
 // resolve the remote prior/final state without uploading broader bytes.
-func (s *sessionScan) resumeHistory(p state.PendingPublication) (sessionOutcome, error) {
+func (s *sessionScan) resumeHistory(ctx context.Context, p state.PendingPublication) (sessionOutcome, error) {
 	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
 	if err != nil {
 		return outcomeSkipped, err
@@ -140,6 +141,9 @@ func (s *sessionScan) resumeHistory(p state.PendingPublication) (sessionOutcome,
 		return outcomeSkipped, archive.ErrHistoryMutationPending
 	}
 	if latest := s.now.Add(s.opts.minUploadInterval()); p.ReadyAt.After(latest) {
+		if p.Catalog != nil {
+			return outcomeSkipped, state.ErrCatalogJournalFrozen
+		}
 		p.ReadyAt = latest
 		if err := s.savePending(&p); err != nil {
 			return outcomeSkipped, err
@@ -149,7 +153,7 @@ func (s *sessionScan) resumeHistory(p state.PendingPublication) (sessionOutcome,
 		s.readyAt = p.ReadyAt
 		return outcomeRateLimited, nil
 	}
-	return s.publishPending(p)
+	return s.publishPending(ctx, p)
 }
 
 func boundFrozenReferences(final archive.Metadata) error {
@@ -236,22 +240,32 @@ func (s *sessionScan) reactivatedRevision(candidate archive.SourceBundle) (archi
 	return archive.SourceBundle{}, false, nil
 }
 
+// freezePreservedHistoryInputs records each immutable source's original parent
+// before preparation can apply the output envelope's resolved parent.
 func (s *sessionScan) freezePreservedHistoryInputs(final *archive.Metadata, history *state.PendingHistory) error {
 	inputs := s.revisions.historyInputs()
 	for i := range final.History.Preserved {
 		revision := &final.History.Preserved[i]
+		inputs[i].FilterVersion, inputs[i].SourceSchemaVersion = revision.FilterVersion, revision.SourceSchemaVersion
+		mark := len(s.retainedReleases)
+		bundle, err := s.loadHistoryInput(*final, inputs[i])
+		if err != nil {
+			return err
+		}
+		keep := len(s.retainedReleases)
+		if len(bundle.ParentSessionID) > 4096 {
+			return state.ErrDurableStorageRecovery
+		}
+		if err := s.retainCharge(int64(len(bundle.ParentSessionID)+len(bundle.Capture.FilterVersion)) + 32); err != nil {
+			return err
+		}
+		parent, marker := strings.Clone(bundle.ParentSessionID), bundle.NativeChild
+		inputs[i].ParentSessionID, inputs[i].NativeChild = &parent, &marker
 		if revision.FilterVersion == "" || revision.SourceSchemaVersion == 0 {
-			raw, err := s.historyGet(revision.Source.Key, int64(revision.Source.CompressedBytes))
-			if err != nil {
-				return err
-			}
-			bundle, err := s.decodeRevision(*final, revision.RevisionID, raw)
-			if err != nil {
-				return err
-			}
-			revision.FilterVersion, revision.SourceSchemaVersion = bundle.Capture.FilterVersion, bundle.SchemaVersion
+			revision.FilterVersion, revision.SourceSchemaVersion = strings.Clone(bundle.Capture.FilterVersion), bundle.SchemaVersion
 		}
 		inputs[i].FilterVersion, inputs[i].SourceSchemaVersion = revision.FilterVersion, revision.SourceSchemaVersion
+		s.keepRetainedFrom(mark, keep)
 		history.Inputs = append(history.Inputs, inputs[i])
 	}
 	return nil

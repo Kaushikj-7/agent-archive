@@ -27,8 +27,9 @@ func TestRetainedRefilterMakesSmallProgressUnderSharedPressure(t *testing.T) {
 	}
 	scan.releaseRetained()
 	budget := agentapi.NewNativeReadBudget(2 << 20)
+	reservation := budget.Reservation()
 	pressure := int64(1 << 20)
-	if !budget.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
 	scan.retainedBudget = budget
@@ -54,15 +55,15 @@ func TestRetainedRefilterMakesSmallProgressUnderSharedPressure(t *testing.T) {
 	// Complete exhaustion refuses without retaining output, and does not prevent
 	// independent small progress when the unrelated reservation is returned.
 	fill := budget.Available()
-	if !budget.Reserve(fill) {
+	if !reservation.Reserve(fill) {
 		t.Fatal("fill")
 	}
 	_, err = scan.refilterRetained(codex.Filter{}, bundle)
 	if !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatalf("refusal %v", err)
 	}
-	budget.Release(fill)
-	budget.Release(pressure)
+	reservation.Release(fill)
+	reservation.Release(pressure)
 	if _, err := scan.refilterRetained(codex.Filter{}, bundle); err != nil {
 		t.Fatal(err)
 	}
@@ -135,8 +136,9 @@ func TestHistoryVerificationRefusesSharedPressureThenMakesProgress(t *testing.T)
 	remote := &noChecksumHistoryStore{MemoryStore: cloud}
 	scan.remote = remote
 	budget := scan.readBudget()
+	reservation := budget.Reservation()
 	pressure := budget.Available()
-	if !budget.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
 	if err := scan.verifyHistorySource(scan.ctx, pending.SourceKey, pending.SourceSHA256, len(pending.SourceBytes)); !errors.Is(err, agentapi.ErrReadBudget) {
@@ -145,7 +147,7 @@ func TestHistoryVerificationRefusesSharedPressureThenMakesProgress(t *testing.T)
 	if remote.sourceLimitedGets != 0 || remote.sourceGets != 0 {
 		t.Fatal("source was read before reserving")
 	}
-	budget.Release(pressure)
+	reservation.Release(pressure)
 	if err := scan.verifyHistorySource(scan.ctx, pending.SourceKey, pending.SourceSHA256, len(pending.SourceBytes)); err != nil {
 		t.Fatal(err)
 	}
@@ -156,8 +158,9 @@ func TestHistoryVerificationRefusesSharedPressureThenMakesProgress(t *testing.T)
 
 func TestRevisionSizingRefusesSharedPressureAndReleasesScratch(t *testing.T) {
 	budget := agentapi.NewNativeReadBudget(64 << 10)
+	reservation := budget.Reservation()
 	pressure := int64(40 << 10)
-	if !budget.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
 	p := revisionPlanner{budget: budget, plan: &revisionPlan{}}
@@ -168,7 +171,7 @@ func TestRevisionSizingRefusesSharedPressureAndReleasesScratch(t *testing.T) {
 	if used, _ := budget.Charged(); used != pressure {
 		t.Fatalf("refusal changed prior charge: %d", used)
 	}
-	budget.Release(pressure)
+	reservation.Release(pressure)
 	if n, err := p.checkStageEvidence(t.Context(), b); err != nil || n == 0 {
 		t.Fatalf("independent sizing failed: %d %v", n, err)
 	}
@@ -278,9 +281,9 @@ func TestNativeHistoryAliasesRemainChargedAfterProviderClose(t *testing.T) {
 	}
 }
 
-func (s *noChecksumHistoryStore) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+func (s *noChecksumHistoryStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
 	if strings.Contains(key, "/source.") {
 		s.sourceLimitedGets++
 	}
-	return s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+	return s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
 }

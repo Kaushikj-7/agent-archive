@@ -15,14 +15,15 @@ import (
 // The JSON tags spell the Go field names, the format already saved in users'
 // config files: renaming one would make existing configs unreadable.
 type Config struct {
-	Provider        string `json:"Provider"`
-	Bucket          string `json:"Bucket"`
-	Region          string `json:"Region"`
-	Prefix          string `json:"Prefix"`
-	AWSProfile      string `json:"AWSProfile"`
-	R2CredentialRef string `json:"R2CredentialRef"`
-	R2AccountID     string `json:"R2AccountID"`
-	R2Endpoint      string `json:"R2Endpoint"`
+	ArchiveFormat   ArchiveFormat `json:"ArchiveFormat,omitempty"`
+	Provider        string        `json:"Provider"`
+	Bucket          string        `json:"Bucket"`
+	Region          string        `json:"Region"`
+	Prefix          string        `json:"Prefix"`
+	AWSProfile      string        `json:"AWSProfile"`
+	R2CredentialRef string        `json:"R2CredentialRef"`
+	R2AccountID     string        `json:"R2AccountID"`
+	R2Endpoint      string        `json:"R2Endpoint"`
 }
 
 // Config.Provider values.
@@ -64,4 +65,21 @@ func R2Endpoint(endpoint, accountID string) (string, error) {
 		return "", errors.New("invalid R2 endpoint")
 	}
 	return strings.TrimRight(endpoint, "/"), nil
+}
+
+// ArchiveFormat selects the destination protocol; absent remains legacy.
+type ArchiveFormat string
+
+// Supported archive destination protocols.
+const (
+	FormatLegacy    ArchiveFormat = "legacy"
+	FormatCatalogV4 ArchiveFormat = "catalog-v4"
+)
+
+// EffectiveArchiveFormat applies the legacy default to an omitted format.
+func (c Config) EffectiveArchiveFormat() ArchiveFormat {
+	if c.ArchiveFormat == "" {
+		return FormatLegacy
+	}
+	return c.ArchiveFormat
 }

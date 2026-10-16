@@ -473,7 +473,7 @@ func TestStopCommitIsNotHiddenByARememberedFailure(t *testing.T) {
 		t.Fatalf("no signature: %v", err)
 	}
 	signature.Failed, signature.FailedError = true, "unsafe source format"
-	signature.FailedMaxBytes, signature.FailedRecordLimit = opts.maxTranscriptBytes(), recordLimit
+	signature.FailedMaxBytes, signature.FailedRecordLimit, signature.FailedRawLimit = opts.maxTranscriptBytes(), recordLimit, opts.maxRawBytes(reg.Harness.Name)
 	if err := local.SaveScanSignature(reg.ArchiveSessionID, signature); err != nil {
 		t.Fatal(err)
 	}
@@ -490,11 +490,11 @@ func TestStopCommitIsNotHiddenByARememberedFailure(t *testing.T) {
 	}
 }
 
-func (s *failingMetadataGets) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+func (s *failingMetadataGets) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
 	if s.failing && strings.HasSuffix(key, "/metadata.json") {
 		return nil, "", errors.New("storage unavailable")
 	}
-	return s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+	return s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
 }
 
 func TestUnchangedNoValidCurrentHeadDoesNotInventHeadDebt(t *testing.T) {

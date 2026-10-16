@@ -10,10 +10,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -116,17 +118,18 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 	}
 	releaseHooks = releaseOnce(releaseHooks)
 	defer releaseHooks()
+	releaseSearch, err := local.NamedLockWait(home, "search-worker.lock", 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("search indexing is finishing; retry uninstall: %w", err)
+	}
+	releaseSearch = releaseOnce(releaseSearch)
+	defer releaseSearch()
 	// Reload after acquiring the lock; pause/resume may have completed meanwhile.
-	cfg, found, err := config.Load(home)
+	cfg, found, err := loadUninstallConfig(home, purge, previewPending)
 	if err != nil {
 		return err
 	}
-	if purge {
-		pending, _ := unpublishedSessions(home, cfg, found)
-		if pending > previewPending {
-			return fmt.Errorf("new pending evidence appeared while confirming; rerun uninstall to review it")
-		}
-	}
+
 	in := env.installation(home, userHome)
 	hookFiles := env.installedHookFiles(userHome, cfg)
 	changes, skipped, err := planUninstallFiles(userHome, hookFiles, in, installedApps(cfg, found, in.owner().Ports), env.agentRegistry())
@@ -139,17 +142,15 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 	}
 	// The collector for this data directory, and any an earlier release
 	// installed for it under another label. Never another directory's.
-	remove, unverified, err := stopCollectors(collectorRefs(in, userHome), out, userHome, env, skipScheduler)
+	remove, unverified, err := stopInstallationJobs(in, out, env, skipScheduler)
 	if err != nil {
 		return err
 	}
 	// Disable capture before removing hooks. A partial uninstall remains safely disabled.
-	if found {
-		cfg.Archive.Enabled = false
-		if err = config.Save(home, cfg); err != nil {
-			return err
-		}
+	if err = disableCaptureForUninstall(home, &cfg, found); err != nil {
+		return err
 	}
+
 	if err = hooks.Apply(changes); err != nil {
 		if errors.Is(err, hooks.ErrChanged) {
 			return fmt.Errorf("%w; capture is already disabled, so rerun agent-archive uninstall to finish", err)
@@ -175,7 +176,14 @@ func uninstall(purge, yes, skipScheduler bool, stdin io.Reader, out io.Writer, e
 		releaseAdmission = releaseOnce(releaseAdmission)
 		defer releaseAdmission()
 		// The purge releases the locks once their files are gone.
-		if err := purgeLocalData(home, cfg, out, env, func() { releaseAdmission(); releaseHooks(); unlock(); releaseIssued(); release() }); err != nil {
+		if err := purgeLocalData(home, cfg, out, env, func() {
+			releaseAdmission()
+			releaseSearch()
+			releaseHooks()
+			unlock()
+			releaseIssued()
+			release()
+		}); err != nil {
 			return err
 		}
 	}
@@ -199,7 +207,11 @@ func printUninstallSummary(out io.Writer, unverified []unverifiedJob) {
 	terminal.Println(out, "Bucket machine records and remote credentials remain. Remove access using your storage provider; uninstall does not revoke it.")
 	if len(unverified) > 0 {
 		printUnverifiedJobs(out, unverified)
-		terminal.Println(out, "Uninstall complete, except that the background collector was not verified stopped (see above). Remote archives and the CLI executable were kept.")
+		subject := "the background collector was"
+		if slices.ContainsFunc(unverified, func(job unverifiedJob) bool { return job.role == scheduler.Search }) {
+			subject = "one or more background jobs were"
+		}
+		terminal.Printf(out, "Uninstall complete, except that %s not verified stopped (see above). Remote archives and the CLI executable were kept.\n", subject)
 		return
 	}
 	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
@@ -259,13 +271,14 @@ func collectorRefs(in installation, userHome string) []scheduler.Ref {
 			refs = append(refs, job.Ref)
 		}
 	}
-	return refs
+	return append(refs, in.searchRole().ref())
 }
 
 // unverifiedJob is a background job uninstall went on without verifying it
 // stopped, because the scheduler could not be reached (--skip-scheduler).
 type unverifiedJob struct {
-	ref scheduler.Ref
+	ref  scheduler.Ref
+	role scheduler.Role
 	// words are the nouns of the scheduler that could not be reached, kept here
 	// because the summary is printed after a purge has deleted the
 	// configuration that names the scheduler.
@@ -290,8 +303,15 @@ type unverifiedJob struct {
 // say it was not verified stopped.
 func stopCollectors(refs []scheduler.Ref, out io.Writer, userHome string, env Env, skipScheduler bool) (remove []string, unverified []unverifiedJob, err error) {
 	words := env.scheduler().Words()
-	for _, ref := range refs {
-		status := env.jobStatus(userHome, ref)
+	statuses := make([]scheduler.Status, len(refs))
+	for i, ref := range refs {
+		statuses[i] = env.jobStatus(userHome, ref)
+		if statuses[i].State == scheduler.Unknown && !skipScheduler {
+			return nil, nil, errors.New(uninstallUnknownMessage(words, problemOf(statuses[i])))
+		}
+	}
+	for i, ref := range refs {
+		status := statuses[i]
 		if status.State == scheduler.Unknown {
 			problem := problemOf(status)
 			if !skipScheduler {
@@ -382,10 +402,14 @@ func printUnverifiedJobs(out io.Writer, jobs []unverifiedJob) {
 	for _, job := range jobs {
 		words := job.words
 		terminal.Printf(out, "Not verified stopped: %s's %s job may still be running, because %s.\n", words.Manager, job.ref, job.why)
+		subject := "it"
+		if job.role == scheduler.Search {
+			subject = "search indexing"
+		}
 		if job.manual != "" {
-			terminal.Printf(out, "To stop it, run this from a session that can reach %s: %s\n", words.Manager, job.manual)
+			terminal.Printf(out, "To stop %s, run this from a session that can reach %s: %s\n", subject, words.Manager, job.manual)
 		} else {
-			terminal.Printf(out, "To stop it, use %s from a session that can reach %s.\n", words.Tool, words.Manager)
+			terminal.Printf(out, "To stop %s, use %s from a session that can reach %s.\n", subject, words.Tool, words.Manager)
 		}
 	}
 }
@@ -662,7 +686,7 @@ func deleteCredentialRefs(env Env, refs map[string]bool) ([]string, error) {
 // local entry is gone and while it still holds them: held, they are what
 // keeps a hook, collector, or setup from acting on a half-deleted directory,
 // and unlinking before release means a later opener gets its own inode.
-var uninstallLockFiles = []string{"admission-intents.lock", "hooks.lock", "collector.lock", "issued.lock", "setup.lock"}
+var uninstallLockFiles = []string{"search-worker.lock", "admission-intents.lock", "hooks.lock", "collector.lock", "issued.lock", "setup.lock"}
 
 // missingDirs is dir and each of its parents that does not exist, deepest
 // first: what os.MkdirAll(dir) would create.
@@ -738,10 +762,11 @@ func checkRemovableHome(home, userHome string) error {
 // an entry missing here is left behind by uninstall (and reported), never
 // silently deleted.
 var localStateEntries = []string{
-	"discovery-catalog.json", "discovery-health.json",
+	"discovery-catalog.json", "discovery-health.json", "discovery-refused-starts.json",
 	machineRegistrationFile, "config.json", "setup-draft.json", "setup-transaction.json", "imports",
 	"storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
 	"admission-intents", "admission-intents.lock", "admission-replay-cursor.json",
+	"search", "search-worker.lock", "search.log", "search-error.log",
 	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",
 	"cache", handoffDir, "purge-plans", "issued", "issued.lock", "revocations", "revocations.lock", ownKeyFile,
 	// The credential files kept where there is no Keychain (Linux).
@@ -769,7 +794,7 @@ func removeLocalState(home string) (leftover []string, err error) {
 	for _, entry := range entries {
 		name := entry.Name()
 		//lint:ignore LV1001 file names found in the state directory, an open set; these are the lock files
-		if name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" || name == "admission-intents.lock" || name == "issued.lock" {
+		if name == "search-worker.lock" || name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" || name == "admission-intents.lock" || name == "issued.lock" {
 			continue
 		}
 		if !known[name] && !strings.HasPrefix(name, ".pending-") && !isMovedAside(name, known) {
@@ -786,4 +811,36 @@ func removeLocalState(home string) (leftover []string, err error) {
 	// Lock files are skipped here because they are still held; uninstall
 	// removes them after releasing them (see removeLockFiles).
 	return nil, nil
+}
+
+func loadUninstallConfig(home string, purge bool, preview int) (config.Config, bool, error) {
+	cfg, found, err := config.Load(home)
+	if err != nil {
+		return cfg, found, err
+	}
+	if purge {
+		if pending, _ := unpublishedSessions(home, cfg, found); pending > preview {
+			return cfg, found, errors.New("new pending evidence appeared while confirming; rerun uninstall to review it")
+		}
+	}
+	return cfg, found, nil
+}
+
+// stopInstallationJobs retains each unverified role for actionable output.
+func stopInstallationJobs(in installation, out io.Writer, env Env, skip bool) ([]string, []unverifiedJob, error) {
+	remove, unverified, err := stopCollectors(collectorRefs(in, in.userHome), out, in.userHome, env, skip)
+	for i := range unverified {
+		if unverified[i].ref == in.searchRole().ref() {
+			unverified[i].role = scheduler.Search
+		}
+	}
+	return remove, unverified, err
+}
+
+func disableCaptureForUninstall(home string, cfg *config.Config, found bool) error {
+	if !found {
+		return nil
+	}
+	cfg.Archive.Enabled = false
+	return config.Save(home, *cfg)
 }

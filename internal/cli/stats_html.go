@@ -18,7 +18,7 @@ import (
 // statsHTMLFlags are the flags that turn `stats` into a web page: --html, and
 // where the page goes. They follow handoff's --output and --force: the file
 // is written with mode 0600 and an existing file is never replaced without
-// --force. Unlike handoff, the page is written to a temporary file in the same
+// --force. Like handoff, the page is written to a temporary file in the same
 // folder and moved into place, so the file at the path is always either what
 // was there or the whole page, and a symbolic link at the path is refused
 // rather than followed.
@@ -117,7 +117,7 @@ func (f *statsHTMLFlags) write(stdout, stderr io.Writer, computed stats.Stats, f
 	if f.output == "" {
 		// A page cut short by a full disk or a closed pipe must not look
 		// like a whole one.
-		if _, err := stdout.Write(page); err != nil {
+		if err := writeOutput(stdout, page); err != nil {
 			terminal.Printf(stderr, "agent-archive: stats: writing the page: %v\n", err)
 			return 1
 		}
@@ -157,11 +157,34 @@ func writeStatsHTMLFile(path string, page []byte, force bool) error {
 // writeStatsHTMLFileWithLink permits testing a failed atomic create without
 // relying on a particular filesystem or changing process-wide dependencies.
 func writeStatsHTMLFileWithLink(path string, page []byte, force bool, link func(string, string) error) error {
+	return writeAtomicOutput(path, page, force, outputFileOperations{
+		createTemp: func(dir, pattern string) (atomicOutputFile, error) { return os.CreateTemp(dir, pattern) },
+		link:       link, rename: os.Rename,
+	})
+}
+
+// atomicOutputFile is the private temporary output, before publication.
+type atomicOutputFile interface {
+	Name() string
+	Chmod(os.FileMode) error
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+}
+
+// outputFileOperations permits failure injection without process-wide hooks.
+type outputFileOperations struct {
+	createTemp func(string, string) (atomicOutputFile, error)
+	link       func(string, string) error
+	rename     func(string, string) error
+}
+
+func writeAtomicOutput(path string, page []byte, force bool, ops outputFileOperations) error {
 	dir, _ := filepath.Split(path)
 	if dir == "" {
 		dir = "."
 	}
-	tmp, err := os.CreateTemp(dir, ".agent-archive-stats-*.tmp")
+	tmp, err := ops.createTemp(dir, ".agent-archive-stats-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -171,7 +194,7 @@ func writeStatsHTMLFileWithLink(path string, page []byte, force bool, link func(
 		_ = tmp.Close()
 		return err
 	}
-	if _, err := tmp.Write(page); err != nil {
+	if err := writeOutput(tmp, page); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -195,12 +218,12 @@ func writeStatsHTMLFileWithLink(path string, page []byte, force bool, link func(
 		return err
 	}
 	if force {
-		return os.Rename(tmpPath, path)
+		return ops.rename(tmpPath, path)
 	}
 	// os.Link fails if path exists, which makes "create only if absent" one
 	// step. A replacing rename cannot safely substitute for a failed link:
 	// another writer may have created path since the existence check.
-	if err := link(tmpPath, path); err != nil {
+	if err := ops.link(tmpPath, path); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("%s already exists; pass --force to replace it", path)
 		}

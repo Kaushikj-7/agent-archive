@@ -184,7 +184,12 @@ func TestProjectsAreRankedBySpendBeforeTheCut(t *testing.T) {
 // not depend on the input's order.
 func TestTopProjectsBySpendNeverOmitADearerProject(t *testing.T) {
 	t.Parallel()
-	for seed := uint64(1); seed <= 40; seed++ {
+	seeds := uint64(40)
+	if testing.Short() {
+		// Keep the same seeded archives and all assertions for each seed.
+		seeds = 10
+	}
+	for seed := uint64(1); seed <= seeds; seed++ {
 		rng := rand.New(rand.NewPCG(seed, seed*104729))
 		sessions, _ := randomArchive(rng, 40+rng.IntN(160))
 		base := Options{Now: time.Date(2026, time.October, 1, 0, 0, 0, 0, newYork), Location: newYork, Days: 400}

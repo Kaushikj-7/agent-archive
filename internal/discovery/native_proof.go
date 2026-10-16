@@ -36,7 +36,7 @@ func (p *nativeProofPasses) Prove(ctx context.Context, c Candidate) (out Candida
 	p.attempts++
 	pass := p.passes[c.Source.Root]
 	if pass == nil {
-		// Keep only one home active: each provider enforces 128 MiB, so closing
+		// Keep only one home active: each provider shares the pass ledger, so closing
 		// a previous home also keeps the aggregate discovery charge bounded.
 		if err := p.Close(); err != nil {
 			return c, err
@@ -61,7 +61,7 @@ func (p *nativeProofPasses) Prove(ctx context.Context, c Candidate) (out Candida
 		}
 		p.passes[c.Source.Root] = pass
 	}
-	snapshot, err := pass.Read(ctx, agentapi.SourceRef{Kind: c.Source.Kind, Path: c.Source.Locator, Key: c.NativeSessionID}, agentapi.ReadLimits{RawBytes: 128 << 20, RecordBytes: archive.MaxRecordBytes})
+	snapshot, err := pass.Read(ctx, agentapi.SourceRef{Kind: c.Source.Kind, Path: c.Source.Locator, Key: c.NativeSessionID}, agentapi.ReadLimits{RawBytes: archive.MaxRawTranscriptBytesFor(c.Agent), RecordBytes: archive.MaxRecordBytes})
 	if err != nil {
 		return c, err
 	}
@@ -74,7 +74,13 @@ func (p *nativeProofPasses) Prove(ctx context.Context, c Candidate) (out Candida
 	if err != nil {
 		return c, err
 	}
-	facts, task := evidence.Binding, evidence.Task
+	if err := evidence.Binding.ValidateFor("codex"); err != nil {
+		return c, err
+	}
+	if evidence.Binding.Codex == nil {
+		return c, agentapi.ErrInvalidSourceBinding
+	}
+	facts, task := *evidence.Binding.Codex, evidence.Task
 
 	if !task.ValidNativeCreation(facts.NativeCreatedAt) {
 		if task.Seen {

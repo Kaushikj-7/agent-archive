@@ -22,8 +22,9 @@ func assertPrivateWireParity(t *testing.T, value any) {
 		t.Fatal(err)
 	}
 	budget := agentapi.NewNativeReadBudget(128 << 20)
+	owner := budget.Reservation()
 	var actual bytes.Buffer
-	if err := jsonwire.Encode(t.Context(), &actual, value, budget); err != nil {
+	if err := jsonwire.Encode(t.Context(), &actual, value, owner); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(actual.Bytes(), append(expected, '\n')) {
@@ -105,8 +106,9 @@ func TestPublicationStreamingMatchesActualDurableOwners(t *testing.T) {
 func TestPublicationStreamingInheritedPressureNeverResetsLedger(t *testing.T) {
 	s := newTestStore(t)
 	budget := agentapi.NewNativeReadBudget(96 << 10)
+	owner := budget.Reservation()
 	pressure := int64(80 << 10)
-	if !budget.Reserve(pressure) {
+	if !owner.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
 	scoped, closeScope := s.WithReadBudget(t.Context(), budget)
@@ -121,7 +123,7 @@ func TestPublicationStreamingInheritedPressureNeverResetsLedger(t *testing.T) {
 	if used, _ := budget.Charged(); used != pressure {
 		t.Fatal("inherited ledger reset/leak", used)
 	}
-	budget.Release(pressure)
+	owner.Release(pressure)
 	if err := scoped.SavePending(fixture.Bundle.ArchiveSessionID, fixture); err != nil {
 		t.Fatal(err)
 	}

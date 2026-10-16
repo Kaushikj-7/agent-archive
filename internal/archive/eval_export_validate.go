@@ -34,6 +34,7 @@ func ValidateEvalExport(e EvalExport) error {
 		}
 	}
 	check(e.SessionID != "" && e.Harness.Name != "", "missing session ID or harness")
+	check(validEvalRevisionSelection(e), "invalid revision selection")
 	check(e.Project.RepoKey == "" || IsRepoKey(e.Project.RepoKey), "invalid repo_key")
 	if h := e.GitHead; h != nil {
 		check(h.Start != nil || h.Last != nil, "empty git_head")
@@ -51,6 +52,7 @@ func ValidateEvalExport(e EvalExport) error {
 		check(slices.Contains([]ResponseModelStatus{ResponseModelStatusNotExposed, ResponseModelStatusObserved}, m.ResponseModelStatus), "invalid model response status")
 		check(m.TurnCount == nil || *m.TurnCount >= 0, "negative model turn count")
 	}
+	check(validTokenObservationSummary(e.TokenObservations), "invalid token_observations")
 	check(len(e.ModelTokens) <= 32, "too many model_tokens")
 	for _, m := range e.ModelTokens {
 		check(m.Model != "" && utf8.RuneCountInString(m.Model) <= maxModelNameRunes && nonNegativeCounts(m), "invalid model_tokens entry")
@@ -116,4 +118,8 @@ func validEvalGitURL(raw string) bool {
 		return err == nil && address.Zone() == ""
 	}
 	return true
+}
+
+func validEvalRevisionSelection(e EvalExport) bool {
+	return e.RevisionID == "" || (historyID.MatchString(e.RevisionID) && e.Source == EvalExportSourceArchive && e.Detail == EvalExportDetailFull)
 }

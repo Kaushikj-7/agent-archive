@@ -55,6 +55,7 @@ type publicationOriginalHeader struct {
 }
 
 func filterPrivacySource(ctx context.Context, registration archive.SessionRegistration, adapter agentapi.TranscriptFilter, selected archive.Metadata, input PreparationInput, original []byte, oldPolicy, nextPolicy PublicationPolicy, ceiling config.SkillEvidence, budget *agentapi.NativeReadBudget, header *publicationOriginalHeader, admittedRegistration archive.SessionRegistration) (archive.SourceBundle, func(), error) {
+	reservation := budget.Reservation()
 	bundle, closeOriginal, err := decodePrivacyOriginal(ctx, registration, selected, input, original, budget, admittedRegistration)
 	if err != nil {
 		return bundle, nil, err
@@ -78,11 +79,11 @@ func filterPrivacySource(ctx context.Context, registration archive.SessionRegist
 			return archive.SourceBundle{}, nil, ErrDurableStorageRecovery
 		}
 		n := 8*int64(len(h.Body)) + 64<<10
-		if !budget.Reserve(n) {
+		if !reservation.Reserve(n) {
 			closeOriginal()
 			return archive.SourceBundle{}, nil, errStateBudget
 		}
-		closeObservations = func() { budget.Release(n) }
+		closeObservations = func() { reservation.Release(n) }
 		var observations []archive.SupplementalEvidence
 		if err := closedPublicationDecode(h.Body, &observations); err != nil {
 			closeObservations()
@@ -118,14 +119,15 @@ func filterPrivacySource(ctx context.Context, registration archive.SessionRegist
 }
 
 func validatePrivacyAlternative(alternative PublicationPrivacyAlternative, origin archive.Metadata, input PreparationInput, context PublicationContext, budget *agentapi.NativeReadBudget) (string, error) {
+	reservation := budget.Reservation()
 	if len(alternative.MetadataBody) == 0 || len(alternative.MetadataBody) > 32<<20 || alternative.Policy.validate() != nil || alternative.Input.Selection.Role != input.Selection.Role || alternative.Input.Selection.RevisionID != input.Selection.RevisionID || alternative.Input.Selection.CapturedAt.IsZero() {
 		return "", ErrDurableStorageRecovery
 	}
 	n := int64(len(alternative.MetadataBody)) + (64 << 10)
-	if !budget.Reserve(n) {
+	if !reservation.Reserve(n) {
 		return "", agentapi.ErrReadBudget
 	}
-	defer budget.Release(n)
+	defer reservation.Release(n)
 	var metadata archive.Metadata
 	if err := json.Unmarshal(alternative.MetadataBody, &metadata); err != nil {
 		return "", err
@@ -142,7 +144,7 @@ func validatePrivacyAlternative(alternative PublicationPrivacyAlternative, origi
 		if ref != alternative.Input.Reference {
 			continue
 		}
-		revision := metadata.NativeSessionID
+		revision := ""
 		if metadata.History != nil {
 			revision = metadata.History.CurrentRevision
 		}
@@ -165,6 +167,7 @@ func validatePrivacyAlternative(alternative PublicationPrivacyAlternative, origi
 }
 
 func coverPrivacyAlternative(ctx context.Context, registration archive.SessionRegistration, adapter agentapi.TranscriptFilter, chosen archive.SourceBundle, alternative PublicationPrivacyAlternative, setSHA string, nextPolicy PublicationPolicy, sourceReader PublicationPrivacySourceReader, budget *agentapi.NativeReadBudget, admittedRegistration archive.SessionRegistration) (archive.SourceBundle, CoveredPrivacySource, func(), error) {
+	reservation := budget.Reservation()
 	var receipt CoveredPrivacySource
 	original, closeBytes, err := sourceReader.ReadPublicationPrivacySource(ctx, alternative.Input)
 	if err != nil {
@@ -176,8 +179,10 @@ func coverPrivacyAlternative(ctx context.Context, registration archive.SessionRe
 	}
 	selected := alternative.Metadata
 	selected.SourceBundle = alternative.Input.Reference
-	selected.SchemaVersion = archive.HistoryMetadataSchemaVersion
-	selected.History = &archive.RevisionHistory{CurrentRevision: alternative.Input.Selection.RevisionID}
+	if alternative.Metadata.History != nil {
+		selected.SchemaVersion = archive.HistoryMetadataSchemaVersion
+		selected.History = &archive.RevisionHistory{CurrentRevision: alternative.Input.Selection.RevisionID}
+	}
 	selected.CapturedAt = alternative.Input.Selection.CapturedAt
 	selected.FilterVersion = alternative.Input.FilterVersion
 	var header publicationOriginalHeader
@@ -187,10 +192,10 @@ func coverPrivacyAlternative(ctx context.Context, registration archive.SessionRe
 	}
 	defer closeCandidate()
 	comparisonCharge := int64(len(chosen.NativeRecords)+len(candidate.NativeRecords))*16 + (32 << 10)
-	if !budget.Reserve(comparisonCharge) {
+	if !reservation.Reserve(comparisonCharge) {
 		return archive.SourceBundle{}, receipt, nil, agentapi.ErrReadBudget
 	}
-	defer budget.Release(comparisonCharge)
+	defer reservation.Release(comparisonCharge)
 	if !agentapi.OwnedEvidenceCovered(adapter, candidate, chosen) {
 		return archive.SourceBundle{}, receipt, nil, errors.New("frozen original does not cover acknowledged revision evidence")
 	}
@@ -201,14 +206,14 @@ func coverPrivacyAlternative(ctx context.Context, registration archive.SessionRe
 		C []archive.CaptureGap           `json:"C"`
 		D []archive.CaptureGap           `json:"D"`
 	}{chosen.SupplementalEvidence, candidate.SupplementalEvidence, chosen.Capture.Gaps, candidate.Capture.Gaps}
-	n, err := jsonwire.Bound(ctx, envelope, budget.Available())
+	n, err := jsonwire.Bound(ctx, envelope, reservation.Available())
 	if err != nil {
 		return archive.SourceBundle{}, receipt, nil, err
 	}
-	if !budget.Reserve(n) {
+	if !reservation.Reserve(n) {
 		return archive.SourceBundle{}, receipt, nil, agentapi.ErrReadBudget
 	}
-	defer budget.Release(n)
+	defer reservation.Release(n)
 	chosen.SupplementalEvidence = archive.MergeSupplementalEvidence(chosen.SupplementalEvidence, candidate.SupplementalEvidence)
 	gaps := append([]archive.CaptureGap(nil), chosen.Capture.Gaps...)
 	for _, gap := range candidate.Capture.Gaps {
@@ -253,10 +258,16 @@ func decodePrivacyOriginal(ctx context.Context, registration archive.SessionRegi
 	if input.ParentSessionID != nil {
 		selected.ParentSessionID = *input.ParentSessionID
 	}
-	bundle, closeOriginal, err := agentapi.DecodeRevisionSourceLeased(ctx, selected, input.Selection.RevisionID, original, agentapi.SourceReadLimits{}, budget)
+	decode := func() (archive.SourceBundle, func(), error) {
+		if selected.History == nil {
+			return agentapi.DecodeReferencedSourceLeased(ctx, selected, original, agentapi.SourceReadLimits{}, budget)
+		}
+		return agentapi.DecodeRevisionSourceLeased(ctx, selected, input.Selection.RevisionID, original, agentapi.SourceReadLimits{}, budget)
+	}
+	bundle, closeOriginal, err := decode()
 	if err != nil && input.ParentSessionID == nil && selected.NativeChild && registration.NativeChild && selected.ParentSessionID != "" {
 		selected.ParentSessionID = ""
-		bundle, closeOriginal, err = agentapi.DecodeRevisionSourceLeased(ctx, selected, input.Selection.RevisionID, original, agentapi.SourceReadLimits{}, budget)
+		bundle, closeOriginal, err = decode()
 		if err == nil && !bundle.NativeChild {
 			closeOriginal()
 			return archive.SourceBundle{}, nil, ErrDurableStorageRecovery

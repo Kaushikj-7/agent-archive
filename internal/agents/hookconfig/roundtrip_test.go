@@ -24,6 +24,8 @@ func fuzzSpec(name string) Spec {
 		events = append(events, "Interrupt")
 	case agentmeta.Cursor:
 		events = []string{"sessionStart", "beforeSubmitPrompt", "afterAgentResponse", "stop", "sessionEnd", "subagentStop"}
+	case agentmeta.Muse:
+		panic("runtime-only Muse cannot configure hooks")
 	}
 	return Spec{Name: name, Events: events, Flat: flat, Version: flat, Owner: Owner, PrototypeOwner: prototypeOwner}
 }

@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 // withTrace sets AGENT_ARCHIVE_TRACE to value in env, keeping every other
@@ -56,6 +58,50 @@ func TestTraceWritesTheTimingTreeToStderr(t *testing.T) {
 	}
 	if strings.Contains(got, id) || strings.Contains(got, id[:8]) || strings.Contains(got, "sessions/") {
 		t.Errorf("trace names a session or key:\n%s", got)
+	}
+}
+
+// Catalog summaries and cached metadata bodies are distinct work. In
+// particular, a warm summary query must not report a body-cache hit.
+// Not parallel: the trace recorder is process-wide.
+func TestTraceCatalogDistinguishesSummaryReuseFromBodyReads(t *testing.T) {
+	a := newScopedArchive(t)
+	a.add(t, a.id, "private catalog title", a.label, func(m *archive.Metadata) { m.Name = "private catalog name" })
+	env, id := a.env, a.id
+	reads := 0
+	env.observeListBody = func(string, bool) { reads++ }
+	var cold, warm bytes.Buffer
+	for _, tc := range []struct {
+		output *bytes.Buffer
+		reads  int
+		counts string
+		reused string
+	}{
+		{&cold, 1, "sidecars 1, from cache 0, downloaded 1", "from catalog 0"},
+		{&warm, 0, "sidecars 0, from cache 0, downloaded 0", "from catalog 1"},
+	} {
+		reads = 0
+		var stderr bytes.Buffer
+		if code := Run([]string{"list", "--limit", "0"}, nil, tc.output, &stderr, withTrace(env, "1")); code != 0 {
+			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+		}
+		if reads != tc.reads {
+			t.Fatalf("body reads=%d want=%d", reads, tc.reads)
+		}
+		got := stderr.String()
+		for _, want := range []string{"list metadata", "read metadata headers", "read sidecars", "refresh session catalog", "query session catalog", "summaries 1", tc.counts, tc.reused} {
+			if !strings.Contains(got, want) {
+				t.Errorf("trace lacks %q:\n%s", want, got)
+			}
+		}
+		for _, private := range []string{id, id[:8], "sessions/", "private catalog title", "private catalog name", "native-1", "visible", a.dir} {
+			if strings.Contains(got, private) {
+				t.Errorf("trace contains private value %q:\n%s", private, got)
+			}
+		}
+	}
+	if cold.String() != warm.String() {
+		t.Fatal("catalog refresh changed list output")
 	}
 }
 

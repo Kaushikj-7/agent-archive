@@ -46,9 +46,10 @@ const (
 	// from the sibling .meta.json. Filter 15 redacts aa-pair1 pairing bundles,
 	// including truncated payloads. See dev/specs/privacy-filter.md.
 	// Filter 18 additionally accepts pinned opt-in API label evidence.
+	// Filter 19 adds the strictly validated local Muse conversation projection.
 	// Filter 17 retains typed, owning Codex session_labels metadata with
 	// prompt redaction and a bounded display name; it never establishes activity.
-	FilterVersion = "18"
+	FilterVersion = "27"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.
@@ -341,11 +342,13 @@ type ProjectResolution struct {
 // SessionStartedAt is when the conversation began. It is not the capture
 // boundary: project activation and the storage destination compare Admitted().
 type SessionRegistration struct {
-	ProjectResolution  *ProjectResolution   `json:"project_resolution,omitempty"`
-	CodexBinding       *CodexSourceBinding  `json:"codex_binding,omitempty"`
-	CodexCandidatePath string               `json:"codex_candidate_path,omitempty"`
-	CodexAdmission     *CodexAdmissionProof `json:"codex_admission,omitempty"`
-	ArchiveSessionID   string               `json:"archive_session_id"`
+	NativeBinding      *NativeSourceBinding    `json:"native_binding,omitempty"`
+	HistoricalProject  *HistoricalProjectProof `json:"historical_project,omitempty"`
+	ProjectResolution  *ProjectResolution      `json:"project_resolution,omitempty"`
+	CodexBinding       *CodexSourceBinding     `json:"codex_binding,omitempty"`
+	CodexCandidatePath string                  `json:"codex_candidate_path,omitempty"`
+	CodexAdmission     *CodexAdmissionProof    `json:"codex_admission,omitempty"`
+	ArchiveSessionID   string                  `json:"archive_session_id"`
 	// PreviousGenerationID links recovery generations independently of subagents.
 	PreviousGenerationID string `json:"previous_generation_id,omitempty"`
 	// CaptureFrozen forbids further native capture; retained privacy maintenance remains.
@@ -408,6 +411,8 @@ type SessionRegistration struct {
 	// ImportBatch is the backfill run that registered the session. Whether
 	// a registration belongs to an import is InBatch's to say.
 	ImportBatch ImportBatch `json:"import_batch,omitzero"`
+	// StagedImportSHA256 selects durably filtered pre-admission evidence.
+	StagedImportSHA256 string `json:"staged_import_sha256,omitempty"`
 	// DestinationID is config.DestinationID of the storage destination the
 	// session was admitted into. Set once, at registration, by hooks and
 	// backfill; a subagent copies its parent's. Empty on older
@@ -450,6 +455,9 @@ func (r SessionRegistration) Validate() error {
 		return err
 	}
 
+	if err := r.validateNativeBinding(); err != nil {
+		return err
+	}
 	if r.CodexBinding != nil {
 		if r.Harness.Name != "codex" || r.CodexBinding.NativeThreadID != r.NativeSessionID {
 			return errors.New("codex binding requires matching codex registration")
@@ -470,8 +478,8 @@ func (r SessionRegistration) Validate() error {
 	if strings.TrimSpace(r.ArchiveSessionID) == "" || strings.TrimSpace(r.NativeSessionID) == "" {
 		return errors.New("archive and native session IDs are required")
 	}
-	if strings.TrimSpace(r.ProjectID) == "" || strings.TrimSpace(r.ProjectRoot) == "" {
-		return errors.New("project ID and project root are required")
+	if err := r.validateProjectOwnership(); err != nil {
+		return err
 	}
 	if strings.TrimSpace(r.Harness.Name) == "" {
 		return errors.New("harness name is required")
@@ -804,7 +812,8 @@ type Metadata struct {
 	ToolsUsed []ToolUsage `json:"tools_used,omitempty"`
 	// ModelTokens splits the session's token counts by model, sorted by
 	// model id. Omitted when the harness exposed no token accounting.
-	ModelTokens []ModelTokens `json:"model_tokens,omitempty"`
+	ModelTokens       []ModelTokens            `json:"model_tokens,omitempty"`
+	TokenObservations *TokenObservationSummary `json:"token_observations,omitempty"`
 	// MCPCalls counts the session's MCP tool calls by server (the server in
 	// an mcp__<server>__<tool> name), by count descending and then name
 	// ascending, at most MaxMCPCalls of them. Omitted when no MCP call was

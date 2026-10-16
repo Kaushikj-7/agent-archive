@@ -22,14 +22,18 @@ type payloadDigestFact struct {
 }
 
 type payloadDigestFacts struct {
-	ctx    context.Context
-	budget *agentapi.NativeReadBudget
-	facts  []payloadDigestFact
-	err    error
-	charge int64
+	ctx         context.Context
+	reservation stateReservation
+	facts       []payloadDigestFact
+	err         error
+	charge      int64
 }
 
-func newPayloadDigestFacts(ctx context.Context, budget *agentapi.NativeReadBudget, count int) (*payloadDigestFacts, func(), error) {
+func newPayloadDigestFacts(ctx context.Context, budget *agentapi.NativeReadBudget, count int, owners ...stateReservation) (*payloadDigestFacts, func(), error) {
+	var owner stateReservation = budget.Reservation()
+	if len(owners) > 0 {
+		owner = owners[0]
+	}
 	if budget == nil || count == 0 {
 		return nil, func() {}, nil
 	}
@@ -40,12 +44,12 @@ func newPayloadDigestFacts(ctx context.Context, budget *agentapi.NativeReadBudge
 		return nil, func() {}, err
 	}
 	charge := int64(count)*256 + 1024
-	if !budget.Reserve(charge) {
+	if !owner.Reserve(charge) {
 		return nil, func() {}, errStateBudget
 	}
-	f := &payloadDigestFacts{ctx: ctx, budget: budget, facts: make([]payloadDigestFact, 0, count), charge: charge}
+	f := &payloadDigestFacts{ctx: ctx, reservation: owner, facts: make([]payloadDigestFact, 0, count), charge: charge}
 	var once sync.Once
-	return f, func() { once.Do(func() { f.facts = nil; budget.Release(f.charge); f.charge = 0 }) }, nil
+	return f, func() { once.Do(func() { f.facts = nil; owner.Release(f.charge); f.charge = 0 }) }, nil
 }
 
 func (f *payloadDigestFacts) result(err error) error {
@@ -86,7 +90,7 @@ func payloadInlineSHA(source PublicationSource, f *payloadDigestFacts) string {
 	}
 	if len(f.facts) == cap(f.facts) {
 		// Unexpected extra valid shapes compute afresh, never invent a wire refusal.
-		if !f.budget.Reserve(64) {
+		if !f.reservation.Reserve(64) {
 			f.err = errStateBudget
 			return ""
 		}

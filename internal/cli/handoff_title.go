@@ -94,7 +94,7 @@ func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, in
 		// resolveHandoffTarget reports both.
 		return 0, false
 	}
-	r := handoffQueryResolver{opts: opts, query: query, q: parseSessionQuery(query), labels: projectLabels(cfg), skip: skippedSessions(opts, env), home: home, cfg: cfg, interactive: interactive, in: in, stdout: stdout, stderr: stderr, env: env, knownAgents: agentmeta.Names(catalogFor(env))}
+	r := handoffQueryResolver{opts: opts, query: query, q: parseSessionQuery(query), labels: projectLabels(cfg), skip: skippedSessions(opts, env), home: home, cfg: cfg, interactive: interactive, in: in, stdout: stdout, stderr: stderr, env: env, ctx: opts.readCtx}
 	code, done = r.resolve()
 	if done {
 		return code, true
@@ -113,9 +113,9 @@ func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, in
 }
 
 type handoffQueryResolver struct {
-	knownAgents []string
-	opts        *handoffOptions
-	query       string
+	ctx   context.Context
+	opts  *handoffOptions
+	query string
 	// q is the query's words, and labels the configured project names the
 	// matcher reads.
 	q           sessionQuery
@@ -149,26 +149,31 @@ type handoffQueryResolver struct {
 }
 
 func (r *handoffQueryResolver) resolve() (code int, done bool) {
-	ctx := context.Background()
+	ctx := r.ctx
+	if ctx == nil {
+		var stop func()
+		ctx, stop = readCommandContext(r.env)
+		defer stop()
+		r.ctx = ctx
+	}
+	if ctx.Err() != nil {
+		return r.fail(ctx.Err())
+	}
 	opts := r.opts
 	var regs []archive.SessionRegistration
 	if opts.source != "archive" {
 		var err error
 		if regs, err = state.OpenReadOnly(r.home).LoadRegistrations(); err != nil {
+			if isArchiveSessionID(r.query) {
+				return r.fail(err)
+			}
 			terminal.Printf(r.stderr, "agent-archive: handoff: note: could not read this machine's sessions, searching the archive only: %v\n", err)
 		}
-		for _, reg := range regs {
-			if reg.ArchiveSessionID == r.query && (opts.harness == "" || archive.CanonicalHarness(reg.Harness.Name) == opts.harness) {
-				opts.sessionID = r.query
-				return 0, false
-			}
-		}
 	}
-	if opts.source != "local" && isArchiveSessionID(r.query) {
-		if harness, ok := r.exactArchiveSession(ctx); ok {
-			opts.sessionID, opts.harness = r.query, harness
-			return 0, false
-		}
+	if resolved, err := r.resolveExactIdentity(ctx, regs); err != nil {
+		return r.fail(err)
+	} else if resolved {
+		return 0, false
 	}
 	// Only a title needs the scope, and looking it up can run git.
 	var err error
@@ -223,8 +228,54 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 			return r.choose(matches)
 		}
 	}
+	if ctx.Err() != nil {
+		return r.fail(ctx.Err())
+	}
 	terminal.Println(r.stderr, r.noMatchMessage(scanned))
 	return 1, true
+}
+
+// resolveExactIdentity resolves physical identities before title eligibility.
+// A local identity wins without opening the archive; only a genuine miss
+// permits the title search to continue.
+func (r *handoffQueryResolver) resolveExactIdentity(ctx context.Context, regs []archive.SessionRegistration) (bool, error) {
+	opts := r.opts
+	if opts.source != "archive" {
+		identities := map[string]bool{}
+		for _, reg := range regs {
+			name := archive.CanonicalHarness(reg.Harness.Name)
+			if reg.ArchiveSessionID == r.query && (opts.harness == "" || name == opts.harness) {
+				identities[name] = true
+			}
+		}
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if len(identities) > 1 {
+			return false, exactHandoffAmbiguity(r.query)
+		}
+		for name := range identities {
+			opts.sessionID, opts.harness = r.query, name
+			return true, nil
+		}
+	}
+	if opts.source != "local" && isArchiveSessionID(r.query) {
+		harness, outcome, err := r.exactArchiveSession(ctx)
+		if err != nil {
+			return false, err
+		}
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if outcome == exactAmbiguous {
+			return false, exactHandoffAmbiguity(r.query)
+		}
+		if outcome == exactUnique {
+			opts.sessionID, opts.harness = r.query, harness
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // inScope settles on the matches in the scope, this machine's before the
@@ -274,7 +325,9 @@ func (r *handoffQueryResolver) exactID(local []handoffPickerRow) []handoffPicker
 		rows = slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool {
 			return r.skip[handoffSessionKey(row.metadata.Harness.Name, row.metadata.NativeSessionID)]
 		})
-		return exactIDWins(rows, r.q, func(row handoffPickerRow) sessionFields { return sessionFields{SessionID: row.metadata.SessionID} })
+		return exactIDWins(rows, r.q, func(row handoffPickerRow) sessionFields {
+			return sessionFields{SessionID: row.metadata.SessionID, NativeSessionID: row.metadata.NativeSessionID}
+		})
 	}
 	if found := exact(local); len(found) > 0 {
 		return found
@@ -316,43 +369,84 @@ func (r *handoffQueryResolver) openArchive() (storage.ObjectStore, error) {
 		return nil, fmt.Errorf("open storage: %w", err)
 	}
 	r.store = store
+	r.opts.archiveStore = store
 	return store, nil
 }
 
-// exactArchiveSession reads the archive for the query as a full session ID.
-// A miss, and an archive that cannot be read, both leave the title search to
-// go on.
-func (r *handoffQueryResolver) exactArchiveSession(ctx context.Context) (harness string, ok bool) {
+type exactHandoffOutcome uint8
+
+const (
+	exactNotFound exactHandoffOutcome = iota
+	exactUnique
+	exactAmbiguous
+)
+
+func exactHandoffAmbiguity(id string) error {
+	return fmt.Errorf("session ID %q exists under several harnesses; specify --harness", id)
+}
+
+func (r *handoffQueryResolver) fail(err error) (int, bool) {
+	terminal.Printf(r.stderr, "agent-archive: handoff: %v\n", err)
+	return 1, true
+}
+
+// exactArchiveSession distinguishes physical identities before title eligibility.
+func (r *handoffQueryResolver) exactArchiveSession(ctx context.Context) (string, exactHandoffOutcome, error) {
 	store, err := r.openArchive()
 	if err != nil {
-		r.archiveErr = err
-		return "", false
+		return "", exactNotFound, err
 	}
-	harnesses := r.knownAgents
+	var keys []string
 	if r.opts.harness != "" {
-		harnesses = []string{r.opts.harness}
+		key, keyErr := archive.MetadataObjectKey(r.opts.harness, r.query)
+		if keyErr != nil {
+			return "", exactNotFound, keyErr
+		}
+		_, err = store.Get(ctx, key)
+		if err == nil {
+			keys = []string{key}
+		}
+		if errors.Is(err, storage.ErrNotFound) {
+			err = nil
+		}
+	} else {
+		keys, err = r.exactRegisteredKeys(ctx, store)
 	}
-	var found []string
-	for _, name := range harnesses {
+	if err != nil {
+		return "", exactNotFound, err
+	}
+	if err = ctx.Err(); err != nil {
+		return "", exactNotFound, err
+	}
+	if len(keys) == 0 {
+		return "", exactNotFound, nil
+	}
+	if len(keys) > 1 {
+		return "", exactAmbiguous, nil
+	}
+	parts := strings.Split(keys[0], "/")
+	return parts[len(parts)-3], exactUnique, nil
+}
+
+// exactRegisteredKeys probes only registered harnesses through the store view.
+// A full-ID miss must not enumerate the archive before a local title match.
+func (r *handoffQueryResolver) exactRegisteredKeys(ctx context.Context, store storage.ObjectStore) ([]string, error) {
+	var keys []string
+	for _, name := range agentmeta.Names(catalogFor(r.env)) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		key, err := archive.MetadataObjectKey(name, r.query)
 		if err != nil {
-			return "", false
+			return nil, err
 		}
-		if _, err := store.Get(ctx, key); err != nil {
-			if !errors.Is(err, storage.ErrNotFound) {
-				r.archiveErr = err
-				return "", false
-			}
-			continue
+		if _, err = store.Get(ctx, key); err == nil {
+			keys = append(keys, key)
+		} else if !errors.Is(err, storage.ErrNotFound) {
+			return nil, fmt.Errorf("read metadata %q: %w", key, err)
 		}
-		found = append(found, name)
 	}
-	// The same ID under several harnesses is not guessed; the title search
-	// reports whatever else matches.
-	if len(found) != 1 {
-		return "", false
-	}
-	return found[0], true
+	return keys, nil
 }
 
 // archiveRows is the archive's top-level sessions, read once, which also reads
@@ -370,7 +464,7 @@ func (r *handoffQueryResolver) archiveRows() []handoffPickerRow {
 		return nil
 	}
 	stop := startActivity(r.stdout, "Finding sessions…")
-	sessions, err := loadSessionsForBrowse(r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness}}, r.stderr, "handoff")
+	sessions, err := loadSessionsForBrowseContext(r.ctx, r.env, store, listOptions{filter: reader.Filter{Harness: r.opts.harness}}, r.stderr, "handoff")
 	stop()
 	if err != nil {
 		r.archiveErr = err
@@ -397,6 +491,9 @@ func handoffRowKey(m archive.Metadata) string {
 
 // choose settles on one of several or one matching row.
 func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, done bool) {
+	if r.ctx != nil && r.ctx.Err() != nil {
+		return r.fail(r.ctx.Err())
+	}
 	row := matches[0]
 	if len(matches) > 1 {
 		// A parent's hint counts the archive's subagents, when it was read.
@@ -409,9 +506,9 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 			r.printCandidates(matches, format)
 			return 1, true
 		}
-		format.Style, format.GroupByProject, format.Numbered = styleFor(r.stdout), true, true
+		format.Style, format.GroupByDay, format.Numbered = styleFor(r.stdout), true, true
 		rows := formatHandoffRows(matches, format)
-		picked, selected, code := runBrowser(context.Background(), r.env, r.in.prompter(r.stdout), r.stdout, r.stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: rowChoices(rows, format), Query: r.query, Command: "handoff"})
+		picked, selected, code := runBrowser(r.ctx, r.env, r.in.prompter(r.stdout), r.stdout, r.stderr, browserSpec{Mode: pickSession, Verb: "Hand off", Choices: rowChoices(rows, format), Query: r.query, Command: "handoff"})
 		if code != 0 {
 			return code, true
 		}
@@ -427,6 +524,9 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 			return 1, true
 		}
 		row = matches[i]
+	}
+	if r.ctx != nil && r.ctx.Err() != nil {
+		return r.fail(r.ctx.Err())
 	}
 	r.opts.sessionID, r.opts.harness = row.metadata.SessionID, row.metadata.Harness.Name
 	return 0, false

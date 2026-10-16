@@ -14,7 +14,8 @@ func TestOrdinaryOwnTaskScannerRequiresAndReleasesSharedScratch(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	ref, _ := historyFile(t, dir, threadA, threadA, 0, nil, strings.Repeat("x", 1<<20))
-	ledger := agentapi.NewNativeReadBudget(relatedRawBudget)
+	ledger := agentapi.NewNativeReadBudget(passReadBudget)
+	reservation := ledger.Reservation()
 	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{ReadBudget: ledger})
 	if err != nil {
 		t.Fatal(err)
@@ -31,19 +32,19 @@ func TestOrdinaryOwnTaskScannerRequiresAndReleasesSharedScratch(t *testing.T) {
 	}
 	usedBefore, _ := ledger.Charged()
 	remaining := ledger.Available()
-	if !ledger.Reserve(remaining) {
+	if !reservation.Reserve(remaining) {
 		t.Fatal("reserve")
 	}
 	_, err = ordinary.FirstOwnTask(t.Context())
-	if !agentapi.HasFailure(err, agentapi.Unavailable) {
+	if !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatal("scanner allocated with full ledger", err)
 	}
-	ledger.Release(remaining)
+	reservation.Release(remaining)
 	if _, err := ordinary.FirstOwnTask(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	used, peak := ledger.Charged()
-	if used != usedBefore || peak > relatedRawBudget {
+	if used != usedBefore || peak > passReadBudget {
 		t.Fatal("scanner charge leaked", used, usedBefore, peak)
 	}
 }
@@ -62,9 +63,10 @@ func TestHistoryUnterminatedBoundaryRequiresSharedScratchAndRetries(t *testing.T
 		t.Fatal(err)
 	}
 	ledger := pass.env.ReadBudget
+	reservation := ledger.Reservation()
 	before, _ := ledger.Charged()
 	pressure := ledger.Available()
-	if !ledger.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("reserve pressure")
 	}
 	if _, err := pass.graph(t.Context(), selection.leaf); !errors.Is(err, agentapi.ErrReadBudget) {
@@ -74,7 +76,7 @@ func TestHistoryUnterminatedBoundaryRequiresSharedScratchAndRetries(t *testing.T
 	if used != before+pressure {
 		t.Fatal("refused scratch charge leaked")
 	}
-	ledger.Release(pressure)
+	reservation.Release(pressure)
 	bundle := historyRead(t, pass, ref)
 	if len(bundle.NativeRecords) != 2 {
 		t.Fatal("history committed an unterminated record")
@@ -88,19 +90,25 @@ func TestHistoryUnterminatedBoundaryRequiresSharedScratchAndRetries(t *testing.T
 	}
 }
 
-func TestIdleNativeExtentReopensOnlyAfterReservation(t *testing.T) {
+// TestOpenRolloutChargesHeldBytesNotFileLength: a rollout is read through
+// its descriptor, so an open snapshot of a large file holds its header and
+// scratch, never its length, and a cached idle file holds its header alone.
+func TestOpenRolloutChargesHeldBytesNotFileLength(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	ref, _ := historyFile(t, dir, threadA, threadA, 0, nil, strings.Repeat("safe text ", 10000))
+	ref, raw := historyFile(t, dir, threadA, threadA, 0, nil, strings.Repeat("safe text ", 200000))
 	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &ref}}
 	pass := historyPass(t, dir, lookup).(*relatedSourcePass)
+	ledger := pass.env.ReadBudget
+	reservation := ledger.Reservation()
 	snap, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	file := pass.files[ref.Path]
-	if file == nil || !file.rawCharged {
-		t.Fatal("live raw extent uncharged")
+	live, _ := ledger.Charged()
+	if file == nil || live != sourceHeaderCharge+ordinaryScratch || int64(len(raw)) <= live {
+		t.Fatal("live snapshot charge", live, len(raw))
 	}
 	facts, err := snap.(agentapi.SourceAdmissionFacts).AdmissionFacts(t.Context())
 	if err != nil {
@@ -109,27 +117,27 @@ func TestIdleNativeExtentReopensOnlyAfterReservation(t *testing.T) {
 	if err := snap.Close(); err != nil {
 		t.Fatal(err)
 	}
-	ledger := pass.env.ReadBudget
 	before, _ := ledger.Charged()
-	if file.rawCharged || before < sourceHeaderCharge || pass.files[ref.Path] != file {
-		t.Fatal("idle extent or header ownership", before)
+	if before != sourceHeaderCharge || pass.files[ref.Path] != file {
+		t.Fatal("idle header ownership", before)
 	}
 	pressure := ledger.Available()
-	if !ledger.Reserve(pressure) {
+	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
-	if _, err := pass.Signature(t.Context(), ref); !errors.Is(err, agentapi.ErrReadBudget) {
-		t.Fatal("cached signature bypassed reservation", err)
+	// Observing a cached file holds nothing new.
+	if _, err := pass.Signature(t.Context(), ref); err != nil {
+		t.Fatal("cached signature needs no new charge", err)
 	}
 	if _, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{}); !errors.Is(err, agentapi.ErrReadBudget) {
-		t.Fatal("cached read bypassed reservation", err)
+		t.Fatal("cached read bypassed its scratch reservation", err)
 	}
-	if pass.files[ref.Path] != file || file.rawCharged || facts.PhysicalProducerVersion != "0.160.0" {
+	if pass.files[ref.Path] != file || facts.Codex.PhysicalProducerVersion != "0.160.0" {
 		t.Fatal("refusal evicted live header facts")
 	}
-	ledger.Release(pressure)
+	reservation.Release(pressure)
 	snap, err = pass.Read(t.Context(), ref, agentapi.ReadLimits{})
-	if err != nil || !file.rawCharged {
+	if err != nil {
 		t.Fatal("cached reopen failed", err)
 	}
 	if err := snap.Close(); err != nil {
@@ -141,5 +149,39 @@ func TestIdleNativeExtentReopensOnlyAfterReservation(t *testing.T) {
 	used, _ := ledger.Charged()
 	if used != 0 {
 		t.Fatal("cached owners leaked", used)
+	}
+}
+
+func TestPriorOrdinarySnapshotClosePreservesCurrentScope(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ref, _ := historyFile(t, dir, threadA, threadA, 0, nil, "owned task")
+	ledger := agentapi.NewNativeReadBudget(passReadBudget)
+	pass, err := (SourceProvider{}).OpenPass(t.Context(), agentapi.SourceEnvironment{ReadBudget: ledger})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := pass.Read(t.Context(), ref, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := ledger.BeginScope(10)
+	defer end()
+	current := ledger.Reservation()
+	if !current.Reserve(10) {
+		t.Fatal("current reserve")
+	}
+	if err := snap.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := pass.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if current.Reserve(1) || !ledger.ScopeExceeded() {
+		t.Fatal("prior snapshot cleanup freed current scope charges")
+	}
+	current.Release(10)
+	if used, _ := ledger.Charged(); used != 0 {
+		t.Fatal("cleanup leaked", used)
 	}
 }

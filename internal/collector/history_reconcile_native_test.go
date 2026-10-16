@@ -76,7 +76,7 @@ func reconciliationFixture(t *testing.T) (*sessionScan, *reconciliationLookup) {
 	a := reconciliationNative(t, root, revisionThread, 0, false, "common", "A-only")
 	b := reconciliationNative(t, root, revisionB, 2, true, "B-only")
 	c := reconciliationNative(t, root, revisionC, 2, true, "C-only")
-	lookup := &reconciliationLookup{set: agentapi.CodexRolloutSet{Current: &c, Candidates: []agentapi.SourceRef{a, b, c}, Revision: "complete", Complete: true}, refs: map[string][]agentapi.SourceRef{revisionThread: {a}, revisionB: {b}, revisionC: {c}}}
+	lookup := &reconciliationLookup{set: agentapi.CodexRolloutSet{Current: &c, Candidates: []agentapi.SourceRef{a, b, c}, Revision: "current"}, refs: map[string][]agentapi.SourceRef{revisionThread: {a}, revisionB: {b}, revisionC: {c}}}
 	local := newTestStore(t)
 	reg := registration(t, a.Path)
 	reg.NativeSessionID = revisionThread
@@ -101,6 +101,9 @@ func reconciliationFixture(t *testing.T) (*sessionScan, *reconciliationLookup) {
 	return newSessionScan(t.Context(), local, storagetest.NewMemoryStore(), reg, state.Request{}, published, now, opts), lookup
 }
 
+// B and C both continue from A; Codex's index names C. The current chain is
+// A then C; B, an observed same-thread rollout off that chain, is preserved
+// beside A without taking part in selection.
 func TestNativeRevisionReconciliationFirstABCUsesActualPorts(t *testing.T) {
 	scan, _ := reconciliationFixture(t)
 	read, ok, err := scan.read()
@@ -136,40 +139,32 @@ func TestNativeRevisionReconciliationFirstABCUsesActualPorts(t *testing.T) {
 }
 
 func TestRunRevisionReconciliationStaysPendingWithoutAcknowledgement(t *testing.T) {
-	for _, incomplete := range []bool{false, true} {
-		t.Run(strconv.FormatBool(incomplete), func(t *testing.T) {
-			scan, lookup := reconciliationFixture(t)
-			lookup.set.Complete = !incomplete
-			if err := scan.local.SaveRequest(scan.id(), "stop", scan.now); err != nil {
-				t.Fatal(err)
-			}
-			req, found, err := scan.local.LoadRequest(scan.id())
-			if err != nil || !found {
-				t.Fatal(err)
-			}
-			scan.req = req
-			outcome, err := scan.run()
-			if outcome != outcomeSkipped || err == nil {
-				t.Fatal("reconciliation settled", outcome, err)
-			}
-			if incomplete && !agentapi.HasFailure(err, agentapi.Unavailable) {
-				t.Fatal("incomplete coverage not pending", err)
-			}
-			if !incomplete && !errors.Is(err, archive.ErrHistoryMutationPending) {
-				t.Fatal("publication fence lost", err)
-			}
-			current, found, err := scan.local.LoadRequest(scan.id())
-			if err != nil || !found || current.Token != req.Token {
-				t.Fatal("request acknowledged before lifecycle", err)
-			}
-			if _, found, err := scan.local.LoadScanSignature(scan.id()); err != nil || found {
-				t.Fatal("pending reconciliation settled signature", err)
-			}
-			objects, err := scan.remote.List(t.Context(), "")
-			if err != nil || len(objects) != 0 {
-				t.Fatal("fenced reconciliation wrote remote", err)
-			}
-		})
+	scan, _ := reconciliationFixture(t)
+	if err := scan.local.SaveRequest(scan.id(), "stop", scan.now); err != nil {
+		t.Fatal(err)
+	}
+	req, found, err := scan.local.LoadRequest(scan.id())
+	if err != nil || !found {
+		t.Fatal(err)
+	}
+	scan.req = req
+	outcome, err := scan.run(scan.ctx)
+	if outcome != outcomeSkipped || err == nil {
+		t.Fatal("reconciliation settled", outcome, err)
+	}
+	if !errors.Is(err, archive.ErrHistoryMutationPending) {
+		t.Fatal("publication fence lost", err)
+	}
+	current, found, err := scan.local.LoadRequest(scan.id())
+	if err != nil || !found || current.Token != req.Token {
+		t.Fatal("request acknowledged before lifecycle", err)
+	}
+	if _, found, err := scan.local.LoadScanSignature(scan.id()); err != nil || found {
+		t.Fatal("pending reconciliation settled signature", err)
+	}
+	objects, err := scan.remote.List(t.Context(), "")
+	if err != nil || len(objects) != 0 {
+		t.Fatal("fenced reconciliation wrote remote", err)
 	}
 }
 
@@ -303,7 +298,7 @@ func TestNativeRevisionReconciliationOrdinaryAppendAndUnchangedCost(t *testing.T
 	a := lookup.refs[revisionThread][0]
 	lookup.set.Current = &a
 	lookup.set.Candidates = []agentapi.SourceRef{a}
-	outcome, err := scan.run()
+	outcome, err := scan.run(scan.ctx)
 	if err != nil || outcome != outcomePublished {
 		t.Fatal("ordinary initial publication", outcome, err)
 	}
@@ -662,5 +657,30 @@ func TestNativeReconciliationDoesNotTreatMissingSourceBookkeepingAsRevision(t *t
 		if revision.RevisionID == "" {
 			t.Fatal("invented empty revision")
 		}
+	}
+}
+
+// B, the observed rollout off the current chain A then C, cannot be read.
+// It is only a best-effort historical revision, so the chain's own
+// reconciliation still succeeds without it, preserving A.
+func TestNativeRevisionReconciliationSkipsUnreadableOffChainRollout(t *testing.T) {
+	scan, lookup := reconciliationFixture(t)
+	read, ok, err := scan.read()
+	if err != nil || !ok {
+		t.Fatal("native read", err)
+	}
+	active, _, err := scan.build(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lookup.refs[revisionB][0].Path, []byte("not a rollout\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := scan.reconcileRevisions(read, active)
+	if err != nil {
+		t.Fatal("an unreadable off-chain rollout blocked the chain's reconciliation: ", err)
+	}
+	if plan.Current != revisionC || len(plan.Preserved) != 1 || plan.Preserved[0].RevisionID != revisionThread {
+		t.Fatalf("plan: %#v", plan)
 	}
 }

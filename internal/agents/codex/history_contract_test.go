@@ -175,14 +175,14 @@ func TestHistoryCumulativeAccountingDoesNotBecomeOwnedUsage(t *testing.T) {
 	}
 }
 
-func TestHistorySelectionRejectsDisconnectedCycle(t *testing.T) {
+func TestHistorySelectionRejectsSelfBasedCandidate(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	seed, _ := historyFile(t, dir, threadA, threadA, 0, nil, "tip")
 	cycle, _ := historyFile(t, dir, rolloutC, threadA, 1, map[string]any{"history_base": codexmeta.CodexHistoryPosition{RolloutID: rolloutC, EndOrdinal: 1, EndByteOffset: 1}})
-	l := &historyLookup{thread: agentapi.CodexRolloutSet{Complete: true, Candidates: []agentapi.SourceRef{seed, cycle}}, rollouts: map[string][]agentapi.SourceRef{rolloutC: {cycle}}}
-	if _, e := historyPass(t, dir, l).Read(t.Context(), seed, agentapi.ReadLimits{}); e == nil {
-		t.Fatal("accepted disconnected candidate graph")
+	l := &historyLookup{thread: agentapi.CodexRolloutSet{Candidates: []agentapi.SourceRef{seed, cycle}}, rollouts: map[string][]agentapi.SourceRef{rolloutC: {cycle}}}
+	if _, e := historyPass(t, dir, l).Read(t.Context(), seed, agentapi.ReadLimits{}); agentapi.Failure(e) != agentapi.FormatMismatch {
+		t.Fatal("accepted a candidate that continues from itself", e)
 	}
 }
 
@@ -317,12 +317,12 @@ func TestSharedPrefixCacheStillProvesNativeRewrite(t *testing.T) {
 	}
 }
 
-func TestCompleteConnectedLineageSelectsUniqueTip(t *testing.T) {
+func TestObservedLineageSelectsUniqueTip(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	base, raw := historyFile(t, dir, threadA, threadA, 0, nil, "before")
 	leaf, _ := historyFile(t, dir, rolloutC, threadA, 2, map[string]any{"history_base": codexmeta.CodexHistoryPosition{RolloutID: threadA, EndOrdinal: 2, EndByteOffset: uint64(len(raw))}}, "after")
-	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Complete: true, Candidates: []agentapi.SourceRef{leaf, base}}, rollouts: map[string][]agentapi.SourceRef{threadA: {base}}}
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Candidates: []agentapi.SourceRef{leaf, base}}, rollouts: map[string][]agentapi.SourceRef{threadA: {base}}}
 	b := historyRead(t, historyPass(t, dir, lookup), base)
 	if b.History.ActiveRolloutID != rolloutC || len(b.NativeRecords) != 4 {
 		t.Fatalf("unique tip selection: %+v", b.History)
@@ -396,6 +396,9 @@ func TestRelatedRecordLimitIsTypedAndReleasesBudget(t *testing.T) {
 }
 
 func TestRelatedMillionRecordLimit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full million-record physical history limit; daily and exact candidates")
+	}
 	t.Parallel()
 	dir := t.TempDir()
 	leaf, _ := historyFile(t, dir, threadB, threadB, 0, map[string]any{"parent_thread_id": threadA, "history_mode": "legacy"})
@@ -415,6 +418,33 @@ func TestRelatedMillionRecordLimit(t *testing.T) {
 	if p.(*relatedSourcePass).bytes != 0 {
 		t.Fatal("record count failure retained budget")
 	}
+}
+
+// A warmed prefix's count still passes through the aggregate production cap.
+// Physical streaming to that cap remains in TestRelatedMillionRecordLimit.
+func TestRelatedCachedRecordCountLimitIsTypedAndReleasesBudget(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	base, raw := historyFile(t, dir, threadA, threadA, 0, nil, "before")
+	leaf, _ := historyFile(t, dir, threadB, threadB, 2, map[string]any{"parent_thread_id": threadA, "history_base": codexmeta.CodexHistoryPosition{RolloutID: threadA, EndOrdinal: 2, EndByteOffset: uint64(len(raw))}}, "own")
+	lookup := &historyLookup{thread: agentapi.CodexRolloutSet{Current: &leaf}, rollouts: map[string][]agentapi.SourceRef{threadA: {base}}}
+	p := historyPass(t, dir, lookup)
+	historyRead(t, p, leaf)
+	pass := p.(*relatedSourcePass)
+	facts := pass.files[base.Path].validated
+	if facts == nil || facts.records != 2 {
+		t.Fatal("small prefix was not validated")
+	}
+	facts.records = archive.MaxHistoryRecords + 1
+	_, err := p.Read(t.Context(), leaf, agentapi.ReadLimits{})
+	var sourceErr *agentapi.SourceError
+	if agentapi.Failure(err) != agentapi.Limit || !errors.As(err, &sourceErr) || sourceErr.Cause != agentapi.CauseHistoryRecordLimit {
+		t.Fatalf("cached count failure classification: %v", err)
+	}
+	if pass.bytes != 0 {
+		t.Fatal("record count failure retained budget")
+	}
+	historyRead(t, p, leaf)
 }
 
 func TestOrdinaryCurrentLookupKeepsLegacySourceAndRevalidates(t *testing.T) {

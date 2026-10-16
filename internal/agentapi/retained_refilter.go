@@ -14,6 +14,7 @@ import (
 // RefilterRetainedSource owns the existing retained transform and transfers all
 // returned output leases. The caller keeps the original input lease alive.
 func RefilterRetainedSource(ctx context.Context, reg archive.SessionRegistration, adapter TranscriptFilter, input archive.SourceBundle, budget *NativeReadBudget) (out archive.SourceBundle, release func(), err error) {
+	reservation := budget.Reservation()
 	if budget == nil {
 		return out, nil, ErrReadBudget
 	}
@@ -27,12 +28,16 @@ func RefilterRetainedSource(ctx context.Context, reg archive.SessionRegistration
 		return out, nil, err
 	}
 	const sizingScratch = 32 << 10
-	if !budget.Reserve(sizingScratch) {
+	if !reservation.Reserve(sizingScratch) {
 		return out, nil, ErrReadBudget
 	}
 	largest := int64(0)
 	for _, record := range input.NativeRecords {
-		n, e := jsonwire.Bound(ctx, record, budget.Available())
+		available := reservation.Available()
+		n, e := jsonwire.Bound(ctx, record, available)
+		if errors.Is(e, jsonwire.ErrLimit) {
+			reservation.Refuse(available + 1)
+		}
 		if e != nil {
 			err = e
 			break
@@ -42,22 +47,23 @@ func RefilterRetainedSource(ctx context.Context, reg archive.SessionRegistration
 	for _, text := range input.NativeText {
 		largest = max(largest, int64(len(text.Content)))
 	}
-	budget.Release(sizingScratch)
+	reservation.Release(sizingScratch)
 	if err != nil {
-		return out, nil, err
+		return out, nil, errors.Join(ErrReadBudget, err)
 	}
 	scanner := int64(64 << 10)
 	for scanner < largest+1 && scanner < int64(archive.MaxRecordBytes+1) {
 		scanner = min(scanner*2, int64(archive.MaxRecordBytes+1))
 	}
-	if largest > (budget.Available()-scanner)/3 {
+	if largest > (reservation.Available()-scanner)/3 {
+		reservation.Refuse(3*largest + scanner)
 		return out, nil, ErrReadBudget
 	}
 	scratch := 3*largest + scanner
-	if !budget.Reserve(scratch) {
+	if !reservation.Reserve(scratch) {
 		return out, nil, ErrReadBudget
 	}
-	defer budget.Release(scratch)
+	defer reservation.Release(scratch)
 	var leases []func()
 	var once sync.Once
 	closeAll := func() {
@@ -77,17 +83,21 @@ func RefilterRetainedSource(ctx context.Context, reg archive.SessionRegistration
 		return out, nil, err
 	}
 	leases = append(leases, closeFilter)
+	if reg.StagedImportSHA256 != "" {
+		filtered.Format = input.Capture.SourceFormat
+	}
 	var decoded int64
 	for _, row := range filtered.Records {
-		if int64(len(row)) > budget.Available()-decoded {
+		if int64(len(row)) > reservation.Available()-decoded {
+			reservation.Refuse(decoded + int64(len(row)))
 			return out, nil, ErrReadBudget
 		}
 		decoded += int64(len(row))
 	}
-	if !budget.Reserve(decoded) {
+	if !reservation.Reserve(decoded) {
 		return out, nil, ErrReadBudget
 	}
-	leases = append(leases, func() { budget.Release(decoded) })
+	leases = append(leases, func() { reservation.Release(decoded) })
 	out, err = archive.NewSourceBundle(reg, adapter, filtered, input.Capture.CapturedAt, input.SupplementalEvidence)
 	if err != nil {
 		return out, nil, err
@@ -116,6 +126,7 @@ func RefilterRetainedSource(ctx context.Context, reg archive.SessionRegistration
 }
 
 func refilterRetainedRows(ctx context.Context, reg archive.SessionRegistration, adapter TranscriptFilter, input archive.SourceBundle, budget *NativeReadBudget) (archive.FilteredTranscript, func(), error) {
+	reservation := budget.Reservation()
 	var filtered archive.FilteredTranscript
 	var closeFilter func()
 	var err error
@@ -130,57 +141,63 @@ func refilterRetainedRows(ctx context.Context, reg archive.SessionRegistration, 
 		if !ok {
 			return filtered, nil, ErrReadBudget
 		}
-		capBytes := min(int64(32<<20), max(int64(0), (budget.Available()-(64<<10))/2))
-		if capBytes <= 0 || !budget.Reserve(capBytes) {
+		capBytes := min(int64(32<<20), max(int64(0), (reservation.Available()-(64<<10))/2))
+		if capBytes <= 0 {
+			reservation.Refuse((64 << 10) + 2)
+			return filtered, nil, ErrReadBudget
+		}
+		if !reservation.Reserve(capBytes) {
 			return filtered, nil, ErrReadBudget
 		}
 		filtered, err = bounded.RefilterBounded(ctx, input, reg.SessionStartedAt, ReadLimits{Records: archive.MaxHistoryRecords, FilteredBytes: capBytes, ReadBudget: budget})
 		if err != nil {
-			budget.Release(capBytes)
+			reservation.Release(capBytes)
 			return filtered, nil, err
 		}
 		n := int64(filtered.Boundary.RetainedBytes)
 		if n < 0 || n > capBytes {
-			budget.Release(capBytes)
+			reservation.Release(capBytes)
 			return filtered, nil, ErrReadBudget
 		}
-		budget.Release(capBytes - n)
-		closeFilter = func() { budget.Release(n) }
+		reservation.Release(capBytes - n)
+		closeFilter = func() { reservation.Release(n) }
 	}
 	return filtered, closeFilter, nil
 }
 
 func detachRefilterEnvelope(ctx context.Context, out archive.SourceBundle, budget *NativeReadBudget) (archive.SourceBundle, func(), error) {
+	reservation := budget.Reservation()
 	envelope := out
 	envelope.NativeRecords = nil
 	envelope.NativeText = nil
 	envelope.Ordinals = nil
-	if !budget.Reserve((32 << 10)) {
+	if !reservation.Reserve((32 << 10)) {
 		return out, nil, ErrReadBudget
 	}
-	n, e := jsonwire.Bound(ctx, envelope, budget.Available()/2)
-	budget.Release((32 << 10))
+	n, e := jsonwire.Bound(ctx, envelope, reservation.Available()/2)
+	reservation.Release((32 << 10))
 	if e != nil {
 		return out, nil, e
 	}
-	if !budget.Reserve(2 * n) {
+	if !reservation.Reserve(2 * n) {
 		return out, nil, ErrReadBudget
 	}
 	raw, e := json.Marshal(envelope)
 	if e != nil {
-		budget.Release(2 * n)
+		reservation.Release(2 * n)
 		return out, nil, e
 	}
 	var detached archive.SourceBundle
 	e = json.Unmarshal(raw, &detached)
-	budget.Release(n)
+	reservation.Release(n)
 	if e != nil {
-		budget.Release(n)
+		reservation.Release(n)
 		return out, nil, e
 	}
 	detached.NativeRecords = out.NativeRecords
 	out = detached
-	return out, func() { budget.Release(n) }, nil
+	var once sync.Once
+	return out, func() { once.Do(func() { reservation.Release(n) }) }, nil
 }
 
 func ordinaryRefilterEnvelope(out archive.SourceBundle, filtered archive.FilteredTranscript) bool {

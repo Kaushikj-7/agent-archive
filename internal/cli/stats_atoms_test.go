@@ -109,7 +109,7 @@ func TestStatsUsageRowsKeepNamesCountsAndCommandsTogether(t *testing.T) {
 		if page == pageDetail {
 			shownSkills, shownServers = statsMaxUseRows, statsMaxUseRows
 		}
-		for width := statsMinWidth; width <= 250; width++ {
+		for _, width := range statsMatrixWidths() {
 			for _, m := range modes {
 				glyphs := unicodeGlyphs
 				if m.ascii {
@@ -146,4 +146,23 @@ func TestStatsUsageRowsKeepNamesCountsAndCommandsTogether(t *testing.T) {
 			}
 		}
 	}
+}
+
+// statsMatrixWidths keeps the full width sweep by default. Short mode keeps
+// the narrow command-wrapping widths and each layout threshold's neighbors.
+func statsMatrixWidths() []int {
+	if testing.Short() {
+		var widths []int
+		for w := statsMinWidth; w <= statsBarWidth+5; w++ {
+			widths = append(widths, w)
+		}
+		return append(widths, statsFullWidth-1, statsFullWidth, statsFullWidth+1,
+			statsUnknownWidth-1, statsUnknownWidth, statsUnknownWidth+1,
+			statsMaxWidth-1, statsMaxWidth, statsMaxWidth+1, 250)
+	}
+	var widths []int
+	for w := statsMinWidth; w <= 250; w++ {
+		widths = append(widths, w)
+	}
+	return widths
 }

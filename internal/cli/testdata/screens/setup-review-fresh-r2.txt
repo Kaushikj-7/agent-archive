@@ -30,6 +30,9 @@ Step 1 of 3 · Choose what to capture
 
 Step 2 of 3 · Connect storage
 
+Storage · Account
+Account → Storage → Verification
+
 ? Where should your archive live?
 
   1) Cloudflare R2 (default)
@@ -40,6 +43,9 @@ Step 2 of 3 · Connect storage
 › Choose [1]: r2-existing
 ✓ Provider Cloudflare R2
 
+Storage · Account
+Account → Storage → Verification
+
 ? R2 account ID or bucket URL
 
   Find the account ID or S3 endpoint in Cloudflare Dashboard > Storage &
@@ -49,6 +55,9 @@ Step 2 of 3 · Connect storage
 
 › Account: 0123456789abcdef0123456789abcdef
 ✓ R2 account ID or bucket URL 0123456789abcdef0123456789abcdef
+
+Storage · Storage
+Account → Storage → Verification
 
 ? Bucket name
 
@@ -70,15 +79,19 @@ Step 2 of 3 · Connect storage
 ✓ Credential received
 
 
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  · Bucket privacy not verified. Check that public access is disabled for the bucket in the Cloudflare dashboard.
 
 Step 3 of 3 · Review and start
   Apps      Claude Code
   Projects  ~/src/web-app
   Skills    Metadata, including user folders
   Storage   r2://team-archive/agent-archive/
-  Keep for  90 days
+  Keep for  90 days · Sessions with no new activity for 90 days are deleted from
+            your bucket; change with Edit a setting, or keep forever
   ✓ Storage connected
   ! Bucket privacy unknown · check public access in the Cloudflare dashboard
   ! Setup imports the last 7 days of included projects; older history is separate.

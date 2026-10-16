@@ -29,8 +29,11 @@ hooks, collector, and local state.
   your branch first: uncommitted changes stay on the machine that made them.
   See [handoff](handoff.md#finding-a-session-by-repository).
 - **Retention is per machine too.** Each machine's retention setting applies
-  to the sessions it owns. Set the same value on every machine if you want one
-  policy.
+  to the sessions it owns, including Keep forever. Pairing copies the preference
+  once; later changes do not propagate. Set the same value on every machine if
+  you want one policy. Upgrade a receiving machine before pairing a Keep forever
+  installation: older receivers reject that bundle. Provider lifecycle rules
+  apply to the shared bucket independently and can override any machine's policy.
 - **Credentials.** Each machine needs its own access to the bucket: an AWS
   profile, or R2 credentials entered in its own setup (stored in that
   machine's Keychain on macOS, or in a private file under its data directory
@@ -353,9 +356,27 @@ deliver the code separately from the pairing file. The first three characters of
 are sufficient; use `yo-` for `yo-yo`, including the hyphen.
 Review the destination before capture settings: an existing destination change
 requires explicit consent. Source apps that are absent here are skipped.
-Finish receiver setup before choosing **I'm finished** on the source. Only the
-receiver confirms that the machine is connected. Preparing spare keys for future
+The source shows **Transfer prepared**, **File delivered locally**, and **Code
+available**. These describe delivery, not successful receiver setup. Choose
+**Close transfer instructions** when finished; receiver completion remains
+unconfirmed on the source. The receiver progresses through **Review settings**,
+**Check storage**, and **Save configuration**, then says **Paired successfully**
+only after its configuration commits. There is no automatic acknowledgement
+back to the source. Preparing spare keys for future
 machines happens afterward and does not invalidate this pairing if it fails.
+
+Cancelling on the source records local cancellation but does not delete transferred
+files or invalidate their encrypted contents. Dedicated R2 cancellation attempts
+key deletion and reports confirmed deletion or pending cleanup; shared R2 access
+requires replacing the key everywhere. S3 pairing issues no AWS credential and
+cannot revoke the receiver’s local profile. Bundle expiry prevents a new open
+after the authenticated expiry tolerance, but never revokes storage access.
+
+If receiver storage verification or configuration commit fails, existing capture
+remains unchanged. Retry the same unexpired pairing, or finish/discard saved setup
+where offered. Reusing the same pairing reuses its staged credential; it does not
+issue another provider key. An expired bundle requires a new pairing from the
+source. Delete file copies when no longer needed.
 
 Explicit shared-key pairing shares the active R2 key. Cancelling a pairing, expiry, and deleting a
 machine record do not remove access. Replace the shared key on every machine to

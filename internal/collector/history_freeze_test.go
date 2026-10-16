@@ -118,7 +118,7 @@ func TestHistoryPolicyMismatchReplacesDescriptorButKeepsOriginalEvidence(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := scan.publish(read, candidate); !errors.Is(err, archive.ErrHistoryMutationPending) {
+			if _, err := scan.publish(scan.ctx, read, candidate); !errors.Is(err, archive.ErrHistoryMutationPending) {
 				t.Fatal(err)
 			}
 			p, found, err := scan.local.LoadPublicationPending(scan.id())
@@ -142,7 +142,7 @@ func TestHistoryPolicyMismatchReplacesDescriptorButKeepsOriginalEvidence(t *test
 				t.Fatal(err)
 			}
 			scan.opts.SkillEvidence = config.SkillEvidenceNone
-			if _, handled, err := scan.resume(); err == nil || !handled {
+			if _, handled, err := scan.resume(scan.ctx); err == nil || !handled {
 				t.Fatal("policy bypass", err)
 			}
 			after, err := os.ReadFile(path)
@@ -171,7 +171,7 @@ func TestJournalSaveFailureRetainsVisibleSourceOnlyRecovery(t *testing.T) {
 	if err := os.MkdirAll(journal, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := scan.run(); err == nil {
+	if _, err := scan.run(scan.ctx); err == nil {
 		t.Fatal("journal failure ignored")
 	}
 	dir := filepath.Join(scan.local.Home(), "sessions", scan.id(), "pending-sources")
@@ -234,7 +234,7 @@ func TestJournalSaveFailureRetainsVisibleSourceOnlyRecovery(t *testing.T) {
 
 func TestMissingFrozenInputCannotUseChangedNativeBytes(t *testing.T) {
 	scan, _ := reconciliationFixture(t)
-	if _, err := scan.run(); !errors.Is(err, archive.ErrHistoryMutationPending) {
+	if _, err := scan.run(scan.ctx); !errors.Is(err, archive.ErrHistoryMutationPending) {
 		t.Fatal(err)
 	}
 	p, found, err := scan.local.LoadPending(scan.id())
@@ -247,7 +247,7 @@ func TestMissingFrozenInputCannotUseChangedNativeBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := bytes.Clone(p.MetadataBytes)
-	if _, _, err := scan.resume(); err == nil {
+	if _, _, err := scan.resume(scan.ctx); err == nil {
 		t.Fatal("missing frozen input regenerated")
 	}
 	after, found, err := scan.local.LoadPending(scan.id())
@@ -308,7 +308,7 @@ func TestFrozenDescriptorUsesExactAcknowledgedPredecessorAndRetainedTimes(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := scan.publish(read, candidate); !errors.Is(err, archive.ErrHistoryMutationPending) {
+	if _, err := scan.publish(scan.ctx, read, candidate); !errors.Is(err, archive.ErrHistoryMutationPending) {
 		t.Fatal(err)
 	}
 	p, found, err := scan.local.LoadPending(scan.id())

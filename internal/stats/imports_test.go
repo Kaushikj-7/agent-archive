@@ -39,8 +39,8 @@ func TestStatsImportBoundary(t *testing.T) {
 		codexFactsPath,
 	)
 	for _, path := range all {
-		if strings.HasPrefix(path, modulePrefix) && path != archivePath && path != identityPath && path != wirePath && path != codexFactsPath {
-			t.Errorf("internal/stats reaches %s; only internal/archive and its pure agentmeta/jsonwire/codexmeta dependencies are allowed", path)
+		if strings.HasPrefix(path, modulePrefix) && path != archivePath && path != identityPath && path != codexFactsPath {
+			t.Errorf("internal/stats reaches %s; only internal/archive and its pure agentmeta/codexmeta dependencies are allowed", path)
 		}
 	}
 	importgraph.Forbid(t, "internal/stats (transitively)", all, "net/http", "os/exec")

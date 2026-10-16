@@ -1,6 +1,9 @@
 package stats
 
-import "time"
+import (
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"time"
+)
 
 // Grouping is what Options.By breaks the window down by.
 type Grouping string
@@ -137,11 +140,13 @@ const MCPScope = "Claude Code and Cursor only; Codex MCP calls are not recorded.
 // A subagent whose parent is not in the input (an orphan) is counted as a
 // session of its own and reported in Coverage.OrphanSubagents.
 type Stats struct {
-	Window   Window    `json:"window"`
-	Prices   PriceInfo `json:"prices"`
-	Coverage Coverage  `json:"coverage"`
-	Daily    []Day     `json:"daily"`
-	Peak     *Peak     `json:"peak,omitempty"`
+	TokenObservations   *archive.TokenObservationSummary `json:"token_observations,omitempty"`
+	ObservationSessions int                              `json:"observation_sessions,omitempty"`
+	Window              Window                           `json:"window"`
+	Prices              PriceInfo                        `json:"prices"`
+	Coverage            Coverage                         `json:"coverage"`
+	Daily               []Day                            `json:"daily"`
+	Peak                *Peak                            `json:"peak,omitempty"`
 	// PeakSpend is the day with the highest estimated cost. Nil when no day
 	// had a priced cost above zero.
 	PeakSpend *PeakSpend `json:"peak_spend,omitempty"`
@@ -220,6 +225,7 @@ type PriceInfo struct {
 
 // Coverage says how much of the window the numbers rest on.
 type Coverage struct {
+	ObservationOnlySessions int `json:"observation_only_sessions,omitempty"`
 	// FirstRecordedDay is the earliest available session day, clamped to the
 	// requested window start when earlier history exists. It is an evidence
 	// boundary, not proof of continuous capture.
@@ -296,6 +302,7 @@ type Measure struct {
 
 // CostMeasure is a Measure of estimated cost with what limits it.
 type CostMeasure struct {
+	ObservationOnlySessions int `json:"observation_only_sessions,omitempty"`
 	Measure
 	Partial        bool  `json:"partial"`
 	Approximate    bool  `json:"approximate"`
@@ -326,6 +333,8 @@ type Overview struct {
 
 // Cost is an estimate in the price table's currency, at list price.
 type Cost struct {
+	// ObservationOnlySessions counts members excluded from billing, including observed zero.
+	ObservationOnlySessions int `json:"observation_only_sessions,omitempty"`
 	// USD is null when no token in scope could be priced (the field keeps
 	// its historical name whatever the currency).
 	USD *float64 `json:"usd"`

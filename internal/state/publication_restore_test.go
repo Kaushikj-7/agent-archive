@@ -33,7 +33,7 @@ func TestPublicationBlockedExactRestorePreservesSelectingProof(t *testing.T) {
 		t.Fatal("exact restore", err)
 	}
 	published, err = s.LoadPublishedState(p.Bundle.ArchiveSessionID)
-	if err != nil || published.state.PublicationVersion != 2 || published.state.Commit == nil {
+	if err != nil || published.state.PublicationVersion != 5 || published.state.Commit == nil {
 		t.Fatal("restart lost selecting proof", err)
 	}
 	before, err := os.ReadFile(s.publishedPath(p.Bundle.ArchiveSessionID))

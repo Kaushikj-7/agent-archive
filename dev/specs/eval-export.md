@@ -22,8 +22,8 @@ documented, versioned format, from two sources:
 | --- | --- | --- |
 | Reads | The bucket: metadata sidecars, and verified source bundles for full detail | Transcript files on this machine, filtered as the collector filters them |
 | Needs | agent-archive set up | Only the binary: no setup, and the data directory is never created |
-| `git_head` | As the hooks recorded it ([the commit a session started on](git-head.md)) | Absent: a transcript file records no commit, and nothing is guessed |
-| `replay` | As the hook recorded it ([replay sessions](replay-sessions.md)) | Absent: only a hook records it |
+| `git_head` | As the hooks recorded it ([the commit a session started on](../proposals/implemented/git-head.md)) | Absent: a transcript file records no commit, and nothing is guessed |
+| `replay` | As the hook recorded it ([replay sessions](../proposals/implemented/replay-sessions.md)) | Absent: only a hook records it |
 | `feedback` | Yes | Absent: feedback is attached to archived sessions |
 | `project.root`, `transcript_path` | Absent: sidecars hold no paths | Present: the paths never leave this machine, and the tool needs them to exclude its own sessions by working directory and to ask for a transcript again |
 
@@ -44,7 +44,7 @@ The four ways of naming sessions are mutually exclusive; `--project`,
 - The name follows the CLI's `purge plan`/`purge apply` grouping: `eval` is
   the group, `export` its one action, which leaves room for later actions
   without claiming top-level names. It is not in the agent skill's command
-  list ([agent skills](agent-skill.md)): the skill is for pulling a session
+  list ([agent skills](../proposals/implemented/agent-skill.md)): the skill is for pulling a session
   into a conversation, and a full export of many sessions is exactly the
   context flood the skill avoids.
 - **Read-only and headless.** It never prompts, pages, opens a picker, or
@@ -173,7 +173,8 @@ exactly what it means there. A session record:
 - `files_edited` lists the files the editing calls named (Edit, Write,
   apply_patch, …), in the order first edited, relative to the session's first
   working directory when inside it; `counts.files_touched` counts the same
-  set. It is empty for a Cursor text transcript, which records no calls.
+  set. It is absent when edited-file evidence is unavailable, including a
+  Cursor text transcript, and empty when observable evidence records no edits.
 - `branch` is the first branch the transcript records (Claude Code's
   `gitBranch`), the branch the session started on; Codex and Cursor record
   none. It is absent when that first branch is `HEAD` (a detached checkout)
@@ -226,7 +227,7 @@ does not recognize as a secret, like `show --transcript`.
 
 The eval runner, Harbor integration, containers, grading, and the inference of
 a start commit for sessions without one (see
-[the commit a session started on](git-head.md#not-done-here-inferring-a-start-for-older-sessions))
+[the commit a session started on](../proposals/implemented/git-head.md#not-done-here-inferring-a-start-for-older-sessions))
 belong to the external tool.
 
 ## Tests
@@ -252,3 +253,15 @@ belong to the external tool.
   bundle while the full pass reports it; one error record per missing input
   without stopping the rest; an invalid sidecar as an error record at both
   details; the bound; usage errors; not set up.
+
+### Explicit native revision selection
+
+`agent-archive eval export SESSION_ID --revision REVISION_ID --detail full`
+selects one exact parent rollout UUID from validated metadata history. Selection
+requires one explicit archive ID; metadata-only, batch/stdin and local discovery
+inputs are usage errors. The record carries optional `revision_id`, and its
+capture time, filter and harness provenance come from verified selected bytes.
+Derived fields are rebuilt from that revision rather than copied from active
+metadata. Current children are neither resolved nor included. Unknown IDs or
+invalid history produce an error record and an operational failure without an
+active fallback. Ordinary exports omit `revision_id` and retain their contract.

@@ -1,8 +1,13 @@
 $ agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps claude --project ~/src/web-app
   ✓ Claude Code hooks: ~/.claude/settings.json
   ✓ Background job: launchctl responds
+
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 Apps: Claude Code. Projects: 1. Storage: Amazon S3 bucket team-archive.
 Skill evidence: metadata. User-level skill roots outside selected projects may be scanned.
   ! Bucket privacy not verified: public-access settings could not be read.

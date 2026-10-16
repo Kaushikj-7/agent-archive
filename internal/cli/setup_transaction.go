@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/retention"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/scheduler/host"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
@@ -99,9 +100,9 @@ func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int
 
 // sessionsAdmittedInto counts the registrations that record cfg's
 // destination and that cfg accepts: when setup switches back to a
-// destination used before, these resume there. Subagents go with their
-// parents and are not counted. A registration without a destination ID
-// stays behind.
+// destination used before, these resume there. Independent native children
+// are counted; dependent subagents go with their parents and are not counted.
+// A registration without a destination ID stays behind.
 func sessionsAdmittedInto(home string, cfg config.Config) (int, error) {
 	regs, err := state.OpenReadOnly(home).LoadRegistrations()
 	if err != nil {
@@ -109,7 +110,7 @@ func sessionsAdmittedInto(home string, cfg config.Config) (int, error) {
 	}
 	id, count := cfg.DestinationID(), 0
 	for _, r := range regs {
-		if r.ParentSessionID == "" && r.DestinationID == id && cfg.AcceptSession(r) {
+		if (r.NativeChild || r.ParentSessionID == "") && r.DestinationID == id && cfg.AcceptSession(r) {
 			count++
 		}
 	}
@@ -158,25 +159,37 @@ func reviewChanges(home string, old, next config.Config, p *prompter, env Env) e
 				"They published nothing and will not be captured at the new destination either.")
 		}
 	}
-	if next.RetentionDays < old.RetentionDays {
+	if config.RetentionShorter(next.RetentionDays, old.RetentionDays) {
 		store := state.OpenReadOnly(home)
 		regs, err := store.LoadRegistrations()
 		if err != nil {
 			return err
 		}
 		cutoff := env.now().Add(-time.Duration(next.RetentionDays) * 24 * time.Hour)
-		count := 0
+		count, localCount := 0, 0
+		preview, err := retention.NewExpiryPreview(store, env.now(), next.AcceptSession)
+		if err != nil {
+			return fmt.Errorf("cannot preview retention effect: %w", err)
+		}
 		for _, r := range regs {
-			if !old.AcceptSession(r) {
+			if r.ParentSessionID != "" && !r.NativeChild {
 				continue
 			}
-			bundle, _, _, found, err := store.LoadPublished(r.ArchiveSessionID)
+			expired, err := preview.SessionExpired(r, config.RetentionDuration(next.RetentionDays))
 			if err != nil {
 				return fmt.Errorf("cannot preview retention effect: %w", err)
 			}
-			if found && !bundle.Capture.CapturedAt.IsZero() && !bundle.Capture.CapturedAt.After(cutoff) {
-				count++
+			if expired {
+				if next.InCurrentDestination(r) {
+					count++
+				} else {
+					localCount++
+				}
 			}
+		}
+
+		if localCount > 0 {
+			p.warn(fmt.Sprintf("Shorter retention: %s from previous destinations will be eligible for local cleanup; their remote archives stay untouched.", countNoun(localCount, "session")))
 		}
 		// The cutoff is a time of day, so the date says "on or before": a
 		// session from earlier that day is counted too. It is the date where
@@ -213,6 +226,11 @@ func carriedImportedHarnesses(committed, harnesses, stopImported []string) []str
 }
 
 func applySetup(home, userHome, executable string, old config.Config, next *config.Config, stopImported []string, env Env) error {
+	if next.SearchIndexing {
+		if err := config.SetSearchIndexing(next, true); err != nil {
+			return err
+		}
+	}
 	if len(next.Harnesses) > 0 && setupNeedsProject(*next) {
 		return errors.New("no project is included; include a project before saving these capture settings")
 	}
@@ -226,6 +244,11 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 		return err
 	}
 	defer releaseHooks()
+	releaseSearch, err := local.NamedLockWait(home, "search-worker.lock", 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("search indexing is finishing; retry setup: %w", err)
+	}
+	defer releaseSearch()
 	current, _, err := config.Load(home)
 	if err != nil {
 		return err
@@ -288,6 +311,7 @@ func claudeConfigDir(files hooks.Files) string { return filepath.Dir(files["clau
 // mergeCommittedSetupState carries operational ownership from the committed
 // configuration, never from a resumable draft. It does no I/O.
 func mergeCommittedSetupState(old config.Config, next *config.Config, stopImported []string) {
+	config.PreserveWriterFence(next, old)
 	// Operational ownership comes from committed state, never a resumable
 	// draft. A crash after commit can leave a pre-commit draft on disk.
 	next.RetiredMachineAssignments = append([]config.MachineAssignment(nil), old.RetiredMachineAssignments...)
@@ -481,7 +505,10 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	if len(relabeled) > 0 {
 		firstRelabeled, moreRelabeled = relabeled[0], relabeled[1:]
 	}
-	journal := setupjournal.Journal{Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: jobChanges[0].Path, WasLoaded: jobActive(job.State), Backend: in.sched().Name(), JobRef: string(plan.Ref)}
+	journal := setupjournal.Journal{NativeAuthorityProtection: next.NativeAuthorityProtection || len(next.NativeRoots) > 0, Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: jobChanges[0].Path, WasLoaded: jobActive(job.State), Backend: in.sched().Name(), JobRef: string(plan.Ref)}
+	if err := planSearchSetup(home, userHome, executable, old, *next, env, &journal); err != nil {
+		return setupjournal.Journal{}, err
+	}
 	return journal, nil
 }
 
@@ -585,6 +612,11 @@ func abandonRecovery(out io.Writer, env Env) error {
 		return err
 	}
 	defer releaseHooks()
+	releaseSearch, err := local.NamedLockWait(home, "search-worker.lock", 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("search indexing is finishing; retry setup: %w", err)
+	}
+	defer releaseSearch()
 	var journal setupjournal.Journal
 	err = local.Read(setupjournal.JournalPath(home), &journal)
 	if os.IsNotExist(err) {
@@ -666,7 +698,7 @@ func protectSetupWriter(home string, current config.Config, proposed ...config.C
 	if setupjournal.TransactionPending(home) {
 		return errors.New("setup pending before writer protection")
 	}
-	if len(proposed) > 0 && ((proposed[0].CodexCapture != nil && current.CodexCapture == nil) || (proposed[0].CodexHistoryProtection && !current.CodexHistoryProtection) || (proposed[0].GenerationProtection && !current.GenerationProtection) || (proposed[0].DurableStorageProtection && !current.DurableStorageProtection)) {
+	if len(proposed) > 0 && (((proposed[0].NativeAuthorityProtection || len(proposed[0].NativeRoots) > 0) && !current.NativeAuthorityProtection) || (proposed[0].SearchLifecycleProtection && !current.SearchLifecycleProtection) || (proposed[0].CodexCapture != nil && current.CodexCapture == nil) || (proposed[0].CodexHistoryProtection && !current.CodexHistoryProtection) || (proposed[0].GenerationProtection && !current.GenerationProtection) || (proposed[0].DurableStorageProtection && !current.DurableStorageProtection) || (proposed[0].RetentionProtection && !current.RetentionProtection) || (proposed[0].ImportStagingProtection && !current.ImportStagingProtection)) {
 		if _, found, err := config.Load(home); err != nil {
 			return err
 		} else if found {

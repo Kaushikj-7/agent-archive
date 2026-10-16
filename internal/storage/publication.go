@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 )
 
 // ErrPublicationConflict keeps an obsolete or unknown mutation pending without
@@ -40,15 +41,17 @@ type ValidatedPublicationReadback struct {
 	sha      string
 	body     []byte
 	etag     string
-	consumed bool
+	consumed *atomic.Bool
 }
 
 // Consume transfers the exact response once for its bound metadata key and body.
 func (r *ValidatedPublicationReadback) Consume(key string, metadata []byte) ([]byte, string, error) {
-	if r == nil || r.consumed || r.key != key || r.sha != SHA256Hex(metadata) || len(r.body) != len(metadata) || SHA256Hex(r.body) != r.sha {
+	if r == nil || r.consumed == nil || r.key != key || r.sha != SHA256Hex(metadata) || len(r.body) != len(metadata) || SHA256Hex(r.body) != r.sha {
 		return nil, "", ErrPublicationConflict
 	}
-	r.consumed = true
+	if !r.consumed.CompareAndSwap(false, true) {
+		return nil, "", ErrPublicationConflict
+	}
 	return r.body, r.etag, nil
 }
 
@@ -95,7 +98,7 @@ func PutResolvedSourceSetThenMetadataReadback(ctx context.Context, store ObjectS
 		if len(body) != len(metadata) || SHA256Hex(body) != next {
 			return fmt.Errorf("verify committed metadata: %w", ErrChecksumMismatch)
 		}
-		receipt = &ValidatedPublicationReadback{key: key, sha: next, body: body, etag: etag}
+		receipt = &ValidatedPublicationReadback{key: key, sha: next, body: body, etag: etag, consumed: &atomic.Bool{}}
 		return nil
 	})
 	return receipt, err
@@ -107,13 +110,11 @@ func ReadPublicationMetadata(ctx context.Context, store ObjectStore, key string)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var body []byte
-	var err error
-	if getter, ok := store.(LimitedGetter); ok {
-		body, err = getter.GetLimited(ctx, key, 32<<20)
-	} else {
-		body, err = store.Get(ctx, key)
+	getter, ok := store.(LimitedGetter)
+	if !ok {
+		return nil, ErrVersionedReadUnavailable
 	}
+	body, err := getter.GetLimited(ctx, key, 32<<20)
 	if err == nil && len(body) > 32<<20 {
 		return nil, ErrObjectTooLarge
 	}
@@ -204,9 +205,18 @@ func verifyResolvedSourceSet(ctx context.Context, store ObjectStore, sources []S
 		if resolve != nil {
 			data, releaseBytes, err := resolve(ctx, i)
 			if err != nil {
+				if releaseBytes != nil {
+					releaseBytes()
+				}
 				return err
 			}
 			source.Bytes, release = data, releaseBytes
+			if len(data) > 0 && (len(data) != source.Size || !VerifySHA256(data, source.SHA256)) {
+				if release != nil {
+					release()
+				}
+				return ErrChecksumMismatch
+			}
 		}
 		operation := func() error {
 			if verify == nil {
@@ -245,7 +255,7 @@ func ReadPublicationMetadataRevision(ctx context.Context, store ObjectStore, key
 		return nil, "", ErrObjectTooLarge
 	}
 	if getter, ok := store.(LimitedVersionedGetter); ok {
-		body, etag, err := getter.GetVersionedLimited(ctx, key, limit)
+		body, etag, err := getter.GetLimitedVersioned(ctx, key, limit)
 		if !errors.Is(err, ErrVersionedReadUnavailable) {
 			if err == nil && int64(len(body)) > limit {
 				return nil, "", ErrObjectTooLarge

@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -113,7 +114,7 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	}
 	payload, err := pairing.Open(bundle, code, env.now())
 	if err != nil {
-		return err
+		return fmt.Errorf("%w; for a wrong code, retry this bundle with the code delivered separately; for an expired bundle, ask the source for a new pairing. Expiry does not revoke storage access", err)
 	}
 	// Validation above is direct: setup's transaction does not call Config.Save.
 	home, err := env.home()
@@ -146,6 +147,7 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	if result, refused := refuseNetworkHome(opts, out, errOut, env); refused {
 		return fmt.Errorf("network home refused (exit %d)", result)
 	}
+	terminal.Println(p.out, "Pairing · Review settings")
 	cfg, err := reviewPairingDestination(p, payload, existing, found, opts, env)
 	if err != nil {
 		return err
@@ -162,7 +164,43 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	if err != nil {
 		return err
 	}
-	pairedAt := env.now().UTC()
+	cfg, err = assignPairedMachine(cfg, payload, env.now())
+	if err != nil {
+		return err
+	}
+
+	cfg, err = stagePairingCredential(home, cfg, payload, env)
+	if err != nil {
+		return err
+	}
+	checks := preflight(env, home, userHome, preflightScope{apps: cfg.Harnesses, kept: existing.Harnesses, r2: cfg.Storage.Provider == credentials.ProviderR2, credentialRef: cfg.Storage.R2CredentialRef})
+	checks.print(p)
+	if checks.blocked() {
+		return &preflightError{checks: checks, yes: opts.yes}
+	}
+	terminal.Println(p.out, "Pairing · Check storage")
+	if err = runStorageCheck(p, &cfg, env); err != nil {
+		return fmt.Errorf("paired storage check failed; existing capture is unchanged, retry this pairing or finish/discard the saved setup")
+	}
+	if err = reviewWithoutQuestions(home, existing, cfg, p, env); err != nil {
+		return err
+	}
+	cfg.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, cfg.Harnesses, nil)
+	skills := planSkillOptOut(env, home, userHome, exe, existing, cfg)
+	discoveries := env.discoverApplications(userHome)
+	terminal.Println(p.out, "Pairing · Save configuration")
+	if err = applySetup(home, userHome, exe, existing, &cfg, nil, env); err != nil {
+		return fmt.Errorf("pairing setup did not commit: %w; retry the same pairing or finish/discard the saved setup", err)
+	}
+	printPairingConnected(out, cfg.MachineName, payload, opts.yes)
+	if err = finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, env.now(), setupFinish{env: env, userHome: userHome, interactive: !opts.yes, skills: skills}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func assignPairedMachine(cfg config.Config, payload pairing.Payload, now time.Time) (config.Config, error) {
+	pairedAt := now.UTC()
 	kind := config.MachineAssignmentAWSProfile
 	sharedWith := ""
 	if cfg.Storage.Provider == credentials.ProviderR2 {
@@ -175,42 +213,17 @@ func setupPairing(opts setupOptions, stdin io.Reader, out, errOut io.Writer, env
 	}
 	cfg.MachineName = payload.Name
 	cfg.MachineAssignment = &config.MachineAssignment{DestinationID: cfg.DestinationID(), Kind: kind, SlotID: payload.SlotID, AccessKeyID: payload.AccessKeyID, RecipientID: payload.RecipientID, IssuerID: payload.IssuerID, SharedWith: sharedWith, PairingID: payload.PairingID, PairedFrom: payload.IssuerID, PairedAt: &pairedAt}
-	if err = cfg.ValidateMachine(); err != nil {
-		return fmt.Errorf("invalid paired machine assignment")
+	if err := cfg.ValidateMachine(); err != nil {
+		return cfg, fmt.Errorf("invalid paired machine assignment")
 	}
 
-	cfg, err = stagePairingCredential(home, cfg, payload, env)
-	if err != nil {
-		return err
-	}
-	checks := preflight(env, home, userHome, preflightScope{apps: cfg.Harnesses, kept: existing.Harnesses, r2: cfg.Storage.Provider == credentials.ProviderR2, credentialRef: cfg.Storage.R2CredentialRef})
-	checks.print(p)
-	if checks.blocked() {
-		return &preflightError{checks: checks, yes: opts.yes}
-	}
-	if err = runStorageCheck(p, &cfg, env); err != nil {
-		return fmt.Errorf("paired storage check failed; existing capture is unchanged, retry this pairing or finish/discard the saved setup")
-	}
-	if err = reviewWithoutQuestions(home, existing, cfg, p, env); err != nil {
-		return err
-	}
-	cfg.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, cfg.Harnesses, nil)
-	skills := planSkillOptOut(env, home, userHome, exe, existing, cfg)
-	discoveries := env.discoverApplications(userHome)
-	if err = applySetup(home, userHome, exe, existing, &cfg, nil, env); err != nil {
-		return fmt.Errorf("pairing setup did not commit: %w; retry the same pairing or finish/discard the saved setup", err)
-	}
-	printPairingConnected(out, cfg.MachineName, payload, opts.yes)
-	if err = finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, env.now(), setupFinish{env: env, userHome: userHome, interactive: !opts.yes, skills: skills}); err != nil {
-		return err
-	}
-	return nil
+	return cfg, nil
 }
 
 func printPairingConnected(out io.Writer, name string, payload pairing.Payload, yes bool) {
-	terminal.Printf(out, "%s %s is connected. Paired with %s.\n%s.\n", guidedOK(out), name, payload.IssuerName, pairingCredentialDescription(payload))
+	terminal.Printf(out, "%s Paired successfully · %s is connected. Paired with %s.\n%s.\n", guidedOK(out), name, payload.IssuerName, pairingCredentialDescription(payload))
 	if !yes {
-		terminal.Println(out, "You can finish on the source machine and delete the pairing file.")
+		terminal.Println(out, "Configuration saved here. The source does not receive automatic confirmation; close its transfer instructions and delete your pairing file copies.")
 	}
 }
 
@@ -292,7 +305,17 @@ func reviewPairingDestination(p *prompter, payload pairing.Payload, existing con
 
 func pairingCaptureSettings(p *prompter, payload pairing.Payload, cfg, existing config.Config, userHome string, opts setupOptions, env Env) (config.Config, error) {
 	var err error
+	// Pairing carries storage/capture settings, never another machine's search consent.
+	cfg.SearchIndexing = existing.SearchIndexing
+	if opts.searchIndexing != "" {
+		if err := config.SetSearchIndexing(&cfg, opts.searchIndexing == searchIndexingOn); err != nil {
+			return cfg, err
+		}
+	}
 	cfg.RetentionDays = payload.RetentionDays
+	if payload.RetentionDays == 0 {
+		cfg.RetentionProtection = true
+	}
 	cfg.RequireSkillUse = payload.RequireSkillUse
 	cfg.SkillEvidence = config.SkillEvidence(payload.SkillEvidence)
 	cfg.NoSkills = payload.NoSkills
@@ -305,6 +328,15 @@ func pairingCaptureSettings(p *prompter, payload pairing.Payload, cfg, existing 
 			}
 			terminal.Printf(p.out, "Handoff %s arguments: %s\n", agent, strings.Join(quoted, " "))
 		}
+	}
+	var historical []config.HistoricalProject
+	for _, project := range payload.HistoricalProjects {
+		historical = append(historical, config.HistoricalProject{ID: project.ID, Label: project.Label, Permissions: []config.HistoricalProjectPermission{{DestinationID: cfg.DestinationID(), Enabled: project.Enabled}}})
+		terminal.Printf(p.out, "Historical project %s [%s]: import-only permission for this destination. Local decisions are preserved.\n", project.Label, project.ID)
+	}
+	cfg.HistoricalProjects = config.ReconcileHistoricalProjects(existing.HistoricalProjects, historical)
+	if len(cfg.HistoricalProjects) > 0 {
+		cfg.HistoricalProjectProtection = true
 	}
 	cfg.Archive.Projects, err = pairScope(p, payload, existing, userHome, env, opts.yes)
 	if err != nil {
@@ -323,7 +355,7 @@ func pairingCaptureSettings(p *prompter, payload pairing.Payload, cfg, existing 
 					return cfg, e
 				}
 				if choice == "cancel" {
-					return cfg, fmt.Errorf("pairing setup cancelled before commit")
+					return cfg, fmt.Errorf("pairing setup cancelled before commit; existing capture is unchanged. Delete your bundle copies; issued storage access is not revoked here")
 				}
 				if choice == "retry" && slices.Contains(env.detectHarnesses(userHome), app) {
 					apps = append(apps, app)
@@ -379,11 +411,11 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 				return cfg, e
 			}
 			if choice == "cancel" {
-				return cfg, fmt.Errorf("pairing cancelled; nothing was changed")
+				return cfg, fmt.Errorf("pairing cancelled before commit; existing capture is unchanged. The transferred bundle remains usable until expiry; delete your copies. Issued storage access is not revoked here")
 			}
 			if choice == "save" {
 				if setupNeedsProject(cfg) {
-					p.warn("Include a project with Edit settings → Projects before saving these capture settings.")
+					p.warn("Include a project with Edit a setting → Projects before saving these capture settings.")
 					continue
 				}
 				break
@@ -414,7 +446,7 @@ func reviewPairingSettings(p *prompter, payload pairing.Payload, cfg, existing c
 
 func pairingReviewAction(p *prompter) (string, error) {
 	return p.guidedChoice(promptModel{Question: "Review pairing settings", Default: "cancel",
-		Primary:   []option{{"save", "Save the displayed destination and capture settings"}, {"edit", "Edit settings"}},
+		Primary:   []option{{"save", "Save the displayed destination and capture settings"}, {"edit", "Edit a setting"}},
 		Secondary: []actionOption{{"details", "d", "Full settings and privacy"}, {"cancel", "q", "Cancel"}}})
 }
 

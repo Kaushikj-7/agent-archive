@@ -86,11 +86,11 @@ func TestFilterRefusesARecordOverTheLimit(t *testing.T) {
 // Go string). The test measures both the peak heap in use, sampled while the
 // filter runs, and the total allocated.
 func TestLargeRecordMemoryCeiling(t *testing.T) {
+	recordBytes := uint64(32 << 20)
 	if testing.Short() {
-		t.Skip("allocates a 32 MB record")
+		recordBytes = 2 << 20
 	}
-	const recordBytes = 32 << 20
-	jsonl := smallClaudePrompt + "\n" + bigToolResultRecord(recordBytes) + "\n"
+	jsonl := smallClaudePrompt + "\n" + bigToolResultRecord(int(recordBytes)) + "\n"
 
 	runtime.GC()
 	var before runtime.MemStats
@@ -126,8 +126,8 @@ func TestLargeRecordMemoryCeiling(t *testing.T) {
 	runtime.ReadMemStats(&after)
 	allocated := after.TotalAlloc - before.TotalAlloc
 	peakAbove := int64(peak) - int64(before.HeapInuse)
-	t.Logf("32 MiB record (bulk in a dropped field): peak heap in use %.1f MiB above baseline (sampled), %.1f MiB allocated in total, %d bytes retained",
-		float64(peakAbove)/(1<<20), float64(allocated)/(1<<20), filtered.Boundary.RetainedBytes)
+	t.Logf("%d MiB record (bulk in a dropped field): peak heap in use %.1f MiB above baseline (sampled), %.1f MiB allocated in total, %d bytes retained",
+		recordBytes>>20, float64(peakAbove)/(1<<20), float64(allocated)/(1<<20), filtered.Boundary.RetainedBytes)
 	// A loose regression bound, not a target: the measured cost is a few
 	// times the record's size.
 	if allocated > 12*recordBytes {

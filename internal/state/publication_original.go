@@ -149,6 +149,7 @@ func originalRole(p PendingPublication, raw []byte, destination, admission strin
 }
 
 func (s *Store) validateOriginalEvidence(e PublicationOriginalEvidence, id string) error {
+	reservation := s.readReservation()
 	total := int64(0)
 	for _, role := range []*PublicationOriginalRole{e.MigrationOrigin, e.PrivacyOrigin} {
 		if role != nil {
@@ -159,10 +160,10 @@ func (s *Store) validateOriginalEvidence(e PublicationOriginalEvidence, id strin
 		}
 	}
 	if s.resourceBudget != nil {
-		if !s.resourceBudget.Reserve(total) {
+		if !reservation.Reserve(total) {
 			return errStateBudget
 		}
-		defer s.resourceBudget.Release(total)
+		defer reservation.Release(total)
 	}
 	return e.validate(id)
 }
@@ -191,6 +192,7 @@ func (e PublicationOriginalEvidence) validate(id string) error {
 }
 
 func (s *Store) rootedPublicationBytes(g config.DurableStorageGuard, path string) (raw []byte, closeBytes func(), err error) {
+	reservation := s.readReservation()
 	home, err := g.RootedHome(s.home)
 	if err != nil {
 		return nil, nil, err
@@ -205,10 +207,10 @@ func (s *Store) rootedPublicationBytes(g config.DurableStorageGuard, path string
 	}
 	release := func() {}
 	if s.resourceBudget != nil {
-		if !s.resourceBudget.Reserve(2 * n) {
+		if !reservation.Reserve(2 * n) {
 			return nil, nil, errStateBudget
 		}
-		release = func() { s.resourceBudget.Release(2 * n) }
+		release = func() { reservation.Release(2 * n) }
 	}
 	fail := func(e error) ([]byte, func(), error) { release(); return nil, nil, e }
 	f, err := home.Root.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
@@ -290,6 +292,13 @@ func (s *Store) savePublicationPendingGuard(g config.DurableStorageGuard, id str
 		if target == installed {
 			return s.savePendingGuard(s.durableContext(), g, id, p)
 		}
+		if p.Preparation.Purpose == PublicationPrivacyRewrite && previous.JournalVersion == 5 && evidence.PrivacyOrigin == nil {
+			role, e := originalRole(previous, old, p.Preparation.DestinationID, p.Preparation.AdmissionContext)
+			if e != nil {
+				return e
+			}
+			evidence.PrivacyOrigin = role
+		}
 		evidence.Link = EvidenceReplacement{Version: 1, Target: target, PreviousTarget: installed, PreviousEvidenceSHA256: evidence.SHA256}
 	} else if !errors.Is(readErr, os.ErrNotExist) {
 		return readErr
@@ -299,6 +308,12 @@ func (s *Store) savePublicationPendingGuard(g config.DurableStorageGuard, id str
 			return e
 		}
 		evidence = PublicationOriginalEvidence{Version: 2, Kind: OriginalEvidence, SessionID: id, OwnerSHA256: role.FrozenContextSHA256, DestinationID: p.Preparation.DestinationID, AdmissionContext: p.Preparation.AdmissionContext, MigrationOrigin: role, Link: EvidenceReplacement{Version: 1, Target: target, PreviousTarget: evidenceTarget(previous, old)}}
+	} else if p.Preparation.Purpose == PublicationPrivacyRewrite && previous.JournalVersion == 5 {
+		role, e := originalRole(previous, old, p.Preparation.DestinationID, p.Preparation.AdmissionContext)
+		if e != nil {
+			return e
+		}
+		evidence = PublicationOriginalEvidence{Version: 2, Kind: OriginalEvidence, SessionID: id, OwnerSHA256: role.FrozenContextSHA256, DestinationID: p.Preparation.DestinationID, AdmissionContext: p.Preparation.AdmissionContext, PrivacyOrigin: role, Link: EvidenceReplacement{Version: 1, Target: target, PreviousTarget: evidenceTarget(previous, old)}}
 	} else {
 		return s.savePendingGuard(s.durableContext(), g, id, p)
 	}
@@ -315,6 +330,7 @@ func (s *Store) savePublicationPendingGuard(g config.DurableStorageGuard, id str
 // LoadPublicationPending is the publication owner's closed migration replay.
 // Generic native/deletion eligibility retains its opaque-evidence refusal.
 func (s *Store) LoadPublicationPending(id string) (pending PendingPublication, found bool, err error) {
+	reservation := s.readReservation()
 	pending, found, err = s.LoadPending(id)
 	if err == nil {
 		return pending, found, nil
@@ -324,7 +340,7 @@ func (s *Store) LoadPublicationPending(id string) (pending PendingPublication, f
 		return pending, found, errors.Join(err, probe)
 	}
 	cfg, present, e := config.Load(s.home)
-	if e != nil || !present || !cfg.PublicationCompositionProtection {
+	if e != nil || !present || !cfg.SourceSetPublicationProtection {
 		return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, e)
 	}
 	if !safeFileComponent(id) {
@@ -366,10 +382,10 @@ func (s *Store) LoadPublicationPending(id string) (pending PendingPublication, f
 		if target != evidence.Link.Target && target != evidence.Link.PreviousTarget {
 			return ErrDurableStorageRecovery
 		}
-		if pending.JournalVersion == 2 && (pending.Preparation.DestinationID != evidence.DestinationID || pending.Preparation.AdmissionContext != evidence.AdmissionContext || pending.Preparation.OwnerSHA256 != evidence.OwnerSHA256) {
+		if pending.JournalVersion == 5 && (pending.Preparation.DestinationID != evidence.DestinationID || pending.Preparation.AdmissionContext != evidence.AdmissionContext || pending.Preparation.OwnerSHA256 != evidence.OwnerSHA256) {
 			return ErrDurableStorageRecovery
 		}
-		if e = s.validateReadablePending(pending); e != nil {
+		if e = s.validateReadablePendingContext(s.durableContext(), pending); e != nil {
 			return e
 		}
 		if e = pending.ValidateHistoryBudgeted(id, s.resourceBudget); e != nil {
@@ -377,10 +393,10 @@ func (s *Store) LoadPublicationPending(id string) (pending PendingPublication, f
 		}
 		if s.resourceBudget != nil {
 			n := int64(len(body))
-			if !s.resourceBudget.Reserve(n) {
+			if !reservation.Reserve(n) {
 				return errStateBudget
 			}
-			*s.resourceReleases = append(*s.resourceReleases, func() { s.resourceBudget.Release(n) })
+			*s.resourceReleases = append(*s.resourceReleases, func() { reservation.Release(n) })
 		}
 		return nil
 	})
@@ -390,6 +406,20 @@ func (s *Store) LoadPublicationPending(id string) (pending PendingPublication, f
 // SettlePublicationMigration removes only the migration role after a full local
 // selecting commit. Privacy-original discharge remains its lifecycle owner's work.
 func (s *Store) SettlePublicationMigration(id string, p PendingPublication) error {
+	return s.settlePublicationEvidence(id, p, false)
+}
+
+// SettleOrdinaryPublicationPrivacy releases the exact original only after its
+// ordinary privacy successor is fully selected in durable published state.
+// The collector records retirement and consumes its closing proof before this.
+func (s *Store) SettleOrdinaryPublicationPrivacy(id string, p PendingPublication) error {
+	if p.History != nil || p.Commit == nil || p.Commit.Purpose != PublicationPrivacyRewrite {
+		return ErrDurableStorageRecovery
+	}
+	return s.settlePublicationEvidence(id, p, true)
+}
+
+func (s *Store) settlePublicationEvidence(id string, p PendingPublication, privacy bool) error {
 	owed, err := s.hasPublicationEvidence(id)
 	if err != nil || !owed {
 		return err
@@ -423,10 +453,13 @@ func (s *Store) SettlePublicationMigration(id string, p PendingPublication) erro
 		if migrationSelectingStateChanged(published, p, evidence) {
 			return ErrDurableStorageRecovery
 		}
-		if p.JournalVersion != 2 || p.Phase != PublicationReady || p.ValidatePublication() != nil || evidence.Link.Target != evidenceTarget(p, nil) {
+		if p.JournalVersion != 5 || p.Phase != PublicationReady || p.ValidatePublication() != nil || evidence.Link.Target != evidenceTarget(p, nil) {
 			return ErrDurableStorageRecovery
 		}
 		evidence.MigrationOrigin = nil
+		if privacy {
+			evidence.PrivacyOrigin = nil
+		}
 		if evidence.PrivacyOrigin != nil {
 			evidence.SHA256 = originalEvidenceSHA(evidence)
 			return s.writeDurableGuard(s.durableContext(), g, evidencePath(id), evidence)
@@ -471,12 +504,13 @@ func (s *Store) SettlePublicationMigration(id string, p PendingPublication) erro
 // Evidence is exactly one original control file. Anonymous siblings cannot be
 // interpreted or ignored by an owning replay or a native eligibility guard.
 func (s *Store) validatePublicationEvidenceDirectory(root *os.Root, id string) (err error) {
+	reservation := s.readReservation()
 	const charge = 64 << 10
-	if s.resourceBudget != nil && !s.resourceBudget.Reserve(charge) {
+	if s.resourceBudget != nil && !reservation.Reserve(charge) {
 		return errStateBudget
 	}
 	if s.resourceBudget != nil {
-		defer s.resourceBudget.Release(charge)
+		defer reservation.Release(charge)
 	}
 	dir, err := privateDirectory(root, filepath.Join("publication-evidence", id), false)
 	if err != nil {

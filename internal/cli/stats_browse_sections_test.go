@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/wangjohn/agent-archive/internal/stats"
 	"strings"
 	"testing"
 
@@ -17,7 +18,7 @@ func TestStatsScreenSurvivesSectionsDisappearingWithAOneDayWindow(t *testing.T) 
 	for _, s := range spread("claude", "claude-opus-5", statsNow, statsNow.Location(), 70, 3, 9, true) {
 		sessions = append(sessions, s.build())
 	}
-	inputs := statsInputs{sessions: sessions, now: statsNow, location: statsNow.Location()}
+	inputs := statsInputs{hasSessions: len(sessions) > 0, prepared: stats.Prepare(sessions, stats.PrepareOptions{Location: statsNow.Location()}), now: statsNow, location: statsNow.Location()}
 	// The one-day window first, at its end, then 7 and 30 days; another view,
 	// at its end, then 90 days and around to one day again.
 	run := runScreen(t, screenOptions{width: width, height: height, days: 1, inputs: &inputs},

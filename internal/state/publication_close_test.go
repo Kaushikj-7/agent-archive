@@ -36,8 +36,9 @@ func TestPublicationQuotaCloseRefusesClassificationAndReleasesLoan(t *testing.T)
 				t.Fatal(err)
 			}
 			budget := agentapi.NewNativeReadBudget(8 << 20)
+			owner := budget.Reservation()
 			const pressure = 32 << 10
-			if !budget.Reserve(pressure) {
+			if !owner.Reserve(pressure) {
 				t.Fatal("pressure marker")
 			}
 			scoped, end := s.WithReadBudget(t.Context(), budget)
@@ -88,8 +89,9 @@ func TestPublicationRootedReadClosePreservesCanceledErrorAndExactLoan(t *testing
 				t.Fatal(err)
 			}
 			budget := agentapi.NewNativeReadBudget(8 << 20)
+			owner := budget.Reservation()
 			const pressure = 32 << 10
-			if !budget.Reserve(pressure) {
+			if !owner.Reserve(pressure) {
 				t.Fatal("pressure marker")
 			}
 			ctx, cancel := context.WithCancel(t.Context())

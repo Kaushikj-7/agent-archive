@@ -1,6 +1,7 @@
 package backfill
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -22,6 +24,8 @@ import (
 // and no path: projects are named by project ID and sessions by archive
 // session ID. Registrations point back to it through ImportBatch.
 type Batch struct {
+	stagedResult *stagedBatchResult
+
 	// ID is <local date>-<n>, n counting that day's imports from 1.
 	ID        string    `json:"id"`
 	StartedAt time.Time `json:"started_at"`
@@ -44,6 +48,9 @@ type Batch struct {
 	ProjectsKeptOut []string `json:"projects_kept_out,omitempty"`
 	// Sessions are the archive session IDs the import registered.
 	Sessions []string `json:"sessions"`
+	// StagedSessions records selected durable evidence, independently of
+	// registration and remotely verified publication. It contains no locators.
+	StagedSessions []string `json:"staged_sessions,omitempty"`
 	// Subagents are the archive session IDs given to the imported sessions'
 	// subagent transcripts. Each registers when the collector validates it.
 	Subagents []string `json:"subagents"`
@@ -93,7 +100,7 @@ type BatchFilters struct {
 func (p Plan) BatchFilters() BatchFilters {
 	f := p.Filters
 	out := BatchFilters{
-		Harnesses: []string{}, ProjectIDs: []string{}, MappingDigest: mappingDigest(f.ProjectMappings),
+		Harnesses: []string{}, ProjectIDs: []string{}, MappingDigest: f.mappingDigest(),
 		Since: f.Since, Until: f.Until, SinceArg: f.SinceArg, UntilArg: f.UntilArg,
 		IncludeHome: f.IncludeHome, IncludeTemp: f.IncludeTemp, IncludeRemoved: f.IncludeRemoved,
 	}
@@ -115,6 +122,9 @@ func (p Plan) BatchFilters() BatchFilters {
 func (b *Batch) Reconcile(store *state.Store) error {
 	regs, err := store.LoadRegistrations()
 	if err != nil {
+		return err
+	}
+	if err := b.reconcileStagedSources(store); err != nil {
 		return err
 	}
 	parents := map[string]bool{}
@@ -175,18 +185,22 @@ func sameBound(day, arg, otherDay, otherArg string) bool {
 // the configured root with project, the plan's own spelling; ok is false
 // when one of them is no longer configured.
 func (f BatchFilters) Flags(p Plan, projectRoot func(id string) (string, bool)) (flags string, ok bool) {
-	if f.MappingDigest != "" && f.MappingDigest != mappingDigest(p.Filters.ProjectMappings) {
+	if f.MappingDigest != "" && f.MappingDigest != p.Filters.mappingDigest() {
 		return "", false
 	}
 	var out []string
 	if f.MappingDigest != "" {
-		keys := make([]string, 0, len(p.Filters.ProjectMappings))
-		for old := range p.Filters.ProjectMappings {
-			keys = append(keys, old)
-		}
-		sort.Strings(keys)
-		for _, old := range keys {
-			out = append(out, "--map-project "+shellWord(old+"="+p.Filters.ProjectMappings[old]))
+		if p.Filters.BulkMappings {
+			return "", false // Bulk input stays private; rerun with the same reviewed assignments.
+		} else {
+			keys := make([]string, 0, len(p.Filters.ProjectMappings))
+			for old := range p.Filters.ProjectMappings {
+				keys = append(keys, old)
+			}
+			sort.Strings(keys)
+			for _, old := range keys {
+				out = append(out, "--map-project "+shellWord(old+"="+p.Filters.ProjectMappings[old]))
+			}
 		}
 	}
 	for _, h := range f.Harnesses {
@@ -404,4 +418,64 @@ func addUnique(list []string, values ...string) []string {
 		}
 	}
 	return list
+}
+
+func (b *Batch) reconcileStagedSources(store *state.Store) error {
+	cfg, found, err := config.Load(store.Home())
+	if err != nil {
+		return err
+	}
+	if !found || !cfg.ImportStagingProtection {
+		return nil
+	}
+	if cfg.StagedSelectionProtection && b.stagedResult == nil {
+		reader, closeResults := store.WithImportResultScope(context.Background())
+		b.stagedResult = &stagedBatchResult{reader: reader, close: closeResults}
+	}
+	pageStore := store
+	if b.stagedResult != nil {
+		pageStore = b.stagedResult.reader
+	}
+	for after := ""; ; {
+		stages, next, closePage, err := pageStore.ImportStagesOwned(context.Background(), after, 50)
+		if err != nil {
+			return err
+		}
+		for _, stage := range stages {
+			id := stage.Registration.ArchiveSessionID
+			if !stage.Registration.InBatch(b.ID) || slices.Contains(b.StagedSessions, id) {
+				continue
+			}
+			if stage.TypedSelection {
+				copied, err := b.stagedResult.reader.RetainImportID(context.Background(), id)
+				if err != nil {
+					closePage()
+					return err
+				}
+				id = copied
+			}
+			b.StagedSessions = append(b.StagedSessions, id)
+		}
+		closePage()
+		if next == "" {
+			break
+		}
+		after = next
+	}
+	return nil
+}
+
+// Copies of Batch share this result owner. Close only after every alias and
+// serialized/report/upload use has ended; it is idempotent, not a proof.
+type stagedBatchResult struct {
+	reader *state.Store
+	close  func()
+}
+
+// CloseStagedResults releases copied staged-result IDs after all batch aliases
+// finish using them; repeated calls and legacy batches are safe.
+func (b *Batch) CloseStagedResults() {
+	if b.stagedResult != nil {
+		b.stagedResult.close()
+	}
 }

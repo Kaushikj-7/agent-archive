@@ -4,10 +4,12 @@
 dependencies. It runs on macOS (Intel and Apple Silicon) and on Linux (x86-64
 and arm64).
 
-v0.2.0 provides binaries for all four supported platform and architecture
-combinations. After installing, try `agent-archive handoff` inside a project
-to continue an existing Claude Code or Codex conversation before creating a
-bucket or running setup. See [native local selection and limits](../guides/handoff.md#before-setup-native-local-sessions).
+The latest published release, v0.1.1, provides macOS binaries for Intel and
+Apple Silicon. Linux support and newer CLI features described in these docs
+are available by [building the current checkout](#build-from-source); they
+have not yet been published in a release. With a current source build, try
+`agent-archive handoff` inside a project to continue an existing Claude Code
+or Codex conversation before creating a bucket or running setup. See [native local selection and limits](../guides/handoff.md#before-setup-native-local-sessions).
 
 For persistent capture and cross-machine history, continue with [setup](setup.md).
 If you want to pull in older sessions, you can import them with
@@ -84,12 +86,22 @@ Windows is not supported.
 
 ## Install with the script
 
+The pinned release below is for macOS. On Linux, [build from source](#build-from-source)
+until a release with Linux assets is published.
+
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.2.0/install.sh | AGENT_ARCHIVE_VERSION=v0.2.0 sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 sh
 ```
 
-[`install.sh`](../../install.sh) is short; read it first if you prefer. It
-downloads the release binary for your operating system and architecture
+The pinned v0.1.1 script installs macOS binaries, verifies the checksum and
+Developer ID signature, and never runs setup or refresh. Read its
+[published script](https://github.com/wangjohn/agent-archive/blob/v0.1.1/install.sh)
+before running it.
+
+The current-checkout [`install.sh`](../../install.sh) is short; read it first
+if you prefer. Its behavior below applies when installing a release containing
+the corresponding features and assets. It downloads the release binary for
+your operating system and architecture
 (`agent-archive-darwin-arm64`, `-darwin-amd64`, `-linux-arm64` or
 `-linux-amd64`), checks it against the release's `SHA256SUMS` (which catches
 a damaged download; both files come from the same release), and installs it
@@ -111,18 +123,57 @@ character, such as a home directory named `/home/o'brien`); install the
 binary elsewhere with `AGENT_ARCHIVE_INSTALL_DIR`.
 
 **On Linux** the binary is not signed, so the checksum only guards against a
-damaged download. The installer says so and prints the command that confirms
-the binary came from this repository's release workflow, which needs the
-[GitHub CLI](https://cli.github.com/):
+damaged download. After the checksum passes and before anything is installed
+or run, the current-checkout installer checks the downloaded file's GitHub
+build-provenance attestation with the [GitHub CLI](https://cli.github.com/),
+and there are three outcomes:
 
-```sh
-gh attestation verify "$(command -v agent-archive)" --repo wangjohn/agent-archive
-```
+- **`gh` is on your `PATH`:** the installer runs
 
-Linux release binaries are available starting with v0.2.0. v0.1.1 and earlier
-are macOS only. An architecture other than x86-64 and arm64 is refused.
+  ```sh
+  gh attestation verify <downloaded file> --repo wangjohn/agent-archive \
+    --signer-workflow wangjohn/agent-archive/.github/workflows/release.yml \
+    --deny-self-hosted-runners --hostname github.com
+  ```
 
-Run the same command again to upgrade. On a machine that is already set up (a
+  adding `--source-ref refs/tags/<tag>` when `AGENT_ARCHIVE_VERSION` names a
+  release. (`--hostname github.com` keeps a `GH_HOST` that names a GitHub
+  Enterprise host from redirecting the check.) Where a `timeout` command
+  exists, the check is limited to 120 seconds. If the attestation verifies,
+  it prints
+  `Attestation verified (GitHub build provenance, wangjohn/agent-archive)`
+  and installs. If `gh` checks and the attestation does not match, or there
+  is none, the install stops and nothing is installed or run. If `gh` cannot
+  perform the check (it is not signed in, too old to have `gh attestation`,
+  or hits a network error or the time limit), the installer prints a warning
+  with `gh`'s message, then the not-signed warning and the command to run,
+  and installs without an attestation check.
+- **`gh` is not on your `PATH`:** the installer prints the not-signed warning
+  and the `gh attestation verify` command before proceeding, then installs
+  exactly as before, without an attestation check.
+- **Strict mode, `AGENT_ARCHIVE_REQUIRE_ATTESTATION=1`:** the install is
+  refused unless the attestation can be and is verified: it fails when `gh`
+  is absent, when verification fails or cannot be checked, and — before
+  downloading anything — when combined with `AGENT_ARCHIVE_DOWNLOAD_URL`,
+  because a custom download source has no GitHub attestation to verify. Run
+  it as
+  `AGENT_ARCHIVE_REQUIRE_ATTESTATION=1 sh install.sh` (or in the environment
+  of the `curl | sh` command). `0` or unset means off; any other value is
+  refused, so a typo never silently turns strict mode off.
+
+To verify a Linux binary yourself before anything is installed, download it
+(and `SHA256SUMS`) from the release, verify it, and only then install it:
+that is the [install a release build by hand](#install-a-release-build-by-hand)
+flow below, whose step 3 is this same `gh attestation verify` check.
+
+The current installer supports Linux asset selection, but no published release
+has Linux binaries yet. v0.1.1 and earlier are macOS only. An architecture
+other than x86-64 and arm64 is refused.
+
+Run the same pinned command again to reinstall that version; choose a newer
+published tag when upgrading. The current-checkout installer adds the following
+refresh behavior, which the v0.1.1 installer does not have: on a machine already
+set up (a
 `config.json` in `~/.local/share/agent-archive`, or in `AGENT_ARCHIVE_HOME`
 when that is set), the installer then runs the new binary's
 `agent-archive setup --refresh` and prints its one-line result. That brings
@@ -141,10 +192,10 @@ Upgrades keep your capture settings. If you want to pull in older sessions,
 you can import them with `agent-archive backfill`.
 
 To pin both the installer script and the published release, or to choose a
-directory, use this `v0.2.0` example:
+directory on macOS, use this `v0.1.1` example:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.2.0/install.sh | AGENT_ARCHIVE_VERSION=v0.2.0 AGENT_ARCHIVE_INSTALL_DIR="$HOME/bin" sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 AGENT_ARCHIVE_INSTALL_DIR="$HOME/bin" sh
 ```
 
 ## Build from source
@@ -233,8 +284,10 @@ build such as `go run`'s.
 1. Download the binary for your machine from the
    [latest release](https://github.com/wangjohn/agent-archive/releases/latest)
    (`agent-archive-darwin-arm64` for Apple Silicon, `agent-archive-darwin-amd64`
-   for Intel, `agent-archive-linux-arm64` or `agent-archive-linux-amd64` on
-   Linux), and `SHA256SUMS` from the same release.
+   for Intel), and `SHA256SUMS` from the same release. The current published
+   release has no Linux assets; use a source build on Linux. When a release
+   includes Linux assets, their names are `agent-archive-linux-arm64` and
+   `agent-archive-linux-amd64`.
 2. Select the binary for this machine and verify its checksum. Run these commands
    in the directory containing the downloads, in the same shell as the steps
    below:
@@ -266,8 +319,22 @@ build such as `go run`'s.
    Compare the reported `TeamIdentifier` with `team_id` in
    [`install.sh`](../../install.sh). On either system, if you have the GitHub
    CLI, also run
-   `gh attestation verify "$asset" --repo wangjohn/agent-archive` to check
-   that this release asset was built by the repository's release workflow.
+
+   ```sh
+   gh attestation verify "$asset" --repo wangjohn/agent-archive \
+     --signer-workflow wangjohn/agent-archive/.github/workflows/release.yml \
+     --deny-self-hosted-runners --hostname github.com
+   ```
+
+   (add `--source-ref refs/tags/<tag>` for the release you downloaded) to
+   check that this release asset was built by the repository's release
+   workflow.
+   On Linux this attestation check is the authenticity check: run it on the
+   downloaded file, before `chmod`/`mv` in the next step and before ever
+   running it, and do not install the file if it fails. The release's
+   `SHA256SUMS` is attested too, so the same command with `SHA256SUMS` in
+   place of `"$asset"` also confirms the checksums themselves came from that
+   workflow run.
 
 4. Make the selected binary executable and install it in a directory you own:
 

@@ -55,6 +55,9 @@ Choose which apps to include:
 
 Step 2 of 3 · Connect storage
 
+Storage · Account
+Account → Storage → Verification
+
 ? Where should your archive live?
 
   1) Cloudflare R2
@@ -78,6 +81,9 @@ Step 2 of 3 · Connect storage
 › Choose [1]: e
 ✓ Use an existing bucket
 
+Storage · Account
+Account → Storage → Verification
+
 ? Which AWS profile has access to the bucket?
 
   1) default (default)
@@ -87,6 +93,9 @@ Step 2 of 3 · Connect storage
 
 › Choose [1]:
 ✓ default
+
+Storage · Storage
+Account → Storage → Verification
 
 ? Which bucket should sessions be stored in?
 
@@ -101,8 +110,12 @@ Step 2 of 3 · Connect storage
 
 Bucket agent-archive-alex is in eu-west-2; using that region.
 
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 Step 3 of 3 · Review and start
   Apps      Codex
@@ -110,7 +123,8 @@ Step 3 of 3 · Review and start
   Codex     Included projects only
   Skills    Metadata, including user folders
   Storage   s3://agent-archive-alex/agent-archive/
-  Keep for  90 days
+  Keep for  90 days · Sessions with no new activity for 90 days are deleted from
+            your bucket; change with Edit a setting, or keep forever
   ✓ Storage connected
   ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:

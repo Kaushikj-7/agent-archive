@@ -36,7 +36,7 @@ func (s *sessionScan) beginPublicationAttempt() (func(), error) {
 	if err := s.ctx.Err(); err != nil {
 		return nil, err
 	}
-	budget := s.readBudget()
+	budget := s.readBudget().Reservation()
 	if !budget.Reserve(4096) {
 		return nil, errRetainedBudget
 	}
@@ -50,7 +50,7 @@ func (s *sessionScan) beginPublicationAttempt() (func(), error) {
 	}, nil
 }
 
-func (s *sessionScan) publicationRemote() storage.ObjectStore {
+func (s *sessionScan) sourceSetRemote() storage.ObjectStore {
 	if s.publicationAttempt != nil {
 		return s.publicationAttempt.store
 	}
@@ -64,7 +64,7 @@ func (s publicationTransactionStore) GetLimited(ctx context.Context, key string,
 	return s.scan.historyGet(key, limit)
 }
 
-func (s publicationTransactionStore) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+func (s publicationTransactionStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
 	return s.scan.historyGetRevision(ctx, key, limit)
 }
 
@@ -72,7 +72,7 @@ func (s *sessionScan) historyGetRevision(ctx context.Context, key string, limit 
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
-	getter, ok := s.publicationRemote().(storage.LimitedVersionedGetter)
+	getter, ok := s.sourceSetRemote().(storage.LimitedVersionedGetter)
 	if !ok {
 		return nil, "", storage.ErrVersionedReadUnavailable
 	}
@@ -81,11 +81,11 @@ func (s *sessionScan) historyGetRevision(ctx context.Context, key string, limit 
 	}
 	// Exact final length is known at C. The provider checks it before allocation;
 	// its opaque validator belongs to this SAME response, not a later HEAD.
-	budget := s.readBudget()
+	budget := s.readBudget().Reservation()
 	if !budget.Reserve(limit + 4096) {
 		return nil, "", errRetainedBudget
 	}
-	body, etag, err := getter.GetVersionedLimited(ctx, key, limit)
+	body, etag, err := getter.GetLimitedVersioned(ctx, key, limit)
 	if err != nil || int64(len(body)) > limit || len(etag) > 4096 {
 		budget.Release(limit + 4096)
 		if err == nil {
@@ -154,7 +154,7 @@ func (r *publicationClosingReadback) consumeSelection(s *sessionScan, p state.Pe
 	// This is already a ready sealed transaction, so sealPending only checks
 	// the current adapter/policy/destination/admission and performs no write.
 	if baseline {
-		if p.History == nil || !p.History.MaintenanceOwed || p.History.Preparing || r.frame.baselineCommit == nil || *r.frame.baselineCommit != *p.Commit || p.Commit.DestinationID != s.reg.DestinationID || p.Commit.AdmissionContext != s.publicationAdmission() || !baselineSkillCeilingAllows(s.opts.skillEvidence(), pendingSkillMode(p.SkillEvidence)) {
+		if p.History == nil || !p.History.MaintenanceOwed || p.History.Preparing || r.frame.baselineCommit == nil || *r.frame.baselineCommit != *p.Commit || p.Commit.DestinationID != s.reg.DestinationID || p.Commit.AdmissionContext != s.publicationAdmission() || !baselineSkillPoliciesSupported(s.opts.skillEvidence(), pendingSkillMode(p.SkillEvidence)) {
 			return state.ErrDurableStorageRecovery
 		}
 		adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
@@ -199,19 +199,17 @@ func (s publicationTransactionStore) ValidatePublicationPosition(ctx context.Con
 
 // Filter/adapter strings have no monotonic ordering. Baseline acknowledgement
 // makes no upgrade claim; only the concrete skill ceiling has an order.
-func baselineSkillCeilingAllows(current, frozen config.SkillEvidence) bool {
-	rank := func(p config.SkillEvidence) int {
+// baselineSkillPoliciesSupported validates policy names for acknowledgement of
+// exact bytes already remote. Both tightening and loosening may acknowledge
+// that baseline; retained transformation still enforces each original ceiling.
+func baselineSkillPoliciesSupported(current, frozen config.SkillEvidence) bool {
+	known := func(p config.SkillEvidence) bool {
 		switch p {
-		case config.SkillEvidenceNone:
-			return 0
-		case config.SkillEvidenceMetadata:
-			return 1
-		case config.SkillEvidenceBody:
-			return 2
+		case config.SkillEvidenceNone, config.SkillEvidenceMetadata, config.SkillEvidenceBody:
+			return true
 		default:
-			return -1
+			return false
 		}
 	}
-	a, b := rank(current), rank(frozen)
-	return a >= 0 && b >= 0 && a <= b
+	return known(current) && known(frozen)
 }

@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/stats"
 	"regexp"
 	"slices"
 	"strings"
@@ -81,6 +82,18 @@ func statsShapes() []statsShape {
 			}
 			return append(append(all, subs...), spread("cursor", "cursor-auto", now, loc, 60, 4, 8, false)...)
 		}},
+		{"old descendants of recent roots", func(now time.Time, loc *time.Location) []syntheticSession {
+			roots := spread("claude", "claude-opus-5", now, loc, 5, 3, 11, true)
+			all := slices.Clone(roots)
+			for i, root := range roots {
+				child := root
+				child.id, child.parent, child.captured = fmt.Sprintf("old-child-%d", i), root.id, now.AddDate(0, 0, -800)
+				grandchild := child
+				grandchild.id, grandchild.parent, grandchild.captured = fmt.Sprintf("old-grandchild-%d", i), child.id, now.AddDate(0, 0, -900)
+				all = append(all, child, grandchild)
+			}
+			return all
+		}},
 		{"day boundaries", func(now time.Time, loc *time.Location) []syntheticSession {
 			// Sessions on the first and last second of days around every
 			// window's edge, and around the month rank's.
@@ -109,14 +122,28 @@ func statsShapes() []statsShape {
 }
 
 // fetched is what a run that reads for the longest of windows would read of
-// sessions: those captured from the bound statsFetchFrom sets, as the reader
-// filters them.
+// sessions: date matches plus descendants of those matches. This oracle walks
+// backwards through parents independently of the reader's forward queue.
 func fetched(sessions []archive.Metadata, now time.Time, loc *time.Location, windows []int) []archive.Metadata {
 	from := statsFetchFrom(now, loc, slices.Max(windows))
+	byID := make(map[string]archive.Metadata, len(sessions))
+	for _, m := range sessions {
+		byID[m.SessionID] = m
+	}
 	var out []archive.Metadata
 	for _, m := range sessions {
-		if !m.CapturedAt.Before(from) {
-			out = append(out, m)
+		seen := make(map[string]bool)
+		for current := m; !seen[current.SessionID]; {
+			if !current.CapturedAt.Before(from) {
+				out = append(out, m)
+				break
+			}
+			seen[current.SessionID] = true
+			parent, found := byID[current.ParentSessionID]
+			if !found {
+				break
+			}
+			current = parent
 		}
 	}
 	return out
@@ -142,6 +169,14 @@ func TestStatsInteractiveWindowsEqualStaticRunsForEveryShape(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, at := range moments {
+			if testing.Short() {
+				// Keep New Year in each zone plus its DST transition; UTC has
+				// the ordinary September run. All shapes and window cycles stay.
+				season := map[string]int{"UTC": 9, "America/New_York": 3, "Australia/Lord_Howe": 10}[zone]
+				if at.month != 1 && at.month != season {
+					continue
+				}
+			}
 			now := time.Date(at.year, time.Month(at.month), at.day, at.hour, at.minute, 0, 0, loc)
 			for _, shape := range statsShapes() {
 				var metas []archive.Metadata
@@ -153,18 +188,25 @@ func TestStatsInteractiveWindowsEqualStaticRunsForEveryShape(t *testing.T) {
 				for _, start := range []int{7, 14, 200} {
 					windows, _ := statsWindowCycle(start)
 					shared := fetched(metas, now, loc, windows)
+					prepared := stats.Prepare(shared, stats.PrepareOptions{Location: loc})
 					for _, days := range windows {
 						alone := fetched(metas, now, loc, []int{days})
-						got, err := json.Marshal(statsInputs{sessions: shared, now: now, location: loc}.compute(days, true))
+						got, err := json.Marshal(statsInputs{hasSessions: len(shared) > 0, prepared: prepared, now: now, location: loc}.compute(days, true))
 						if err != nil {
 							t.Fatal(err)
 						}
-						want, err := json.Marshal(statsInputs{sessions: alone, now: now, location: loc}.compute(days, true))
+						want, err := json.Marshal(statsInputs{hasSessions: len(alone) > 0, prepared: stats.Prepare(alone, stats.PrepareOptions{Location: loc}), now: now, location: loc}.compute(days, true))
 						if err != nil {
 							t.Fatal(err)
 						}
 						if string(got) != string(want) {
 							t.Fatalf("%s %s at %v: window %d read for the cycle from %d differs from a static --days %d:\n%s\n---- static:\n%s", zone, shape.name, now, days, start, days, got, want)
+						}
+						if shape.name == "old descendants of recent roots" {
+							complete, err := json.Marshal(statsInputs{hasSessions: len(metas) > 0, prepared: stats.Prepare(metas, stats.PrepareOptions{Location: loc}), now: now, location: loc}.compute(days, true))
+							if err != nil || string(got) != string(complete) {
+								t.Fatalf("%s window %d: old descendants differ from complete engine accounting: %v", zone, days, err)
+							}
 						}
 					}
 				}
@@ -235,7 +277,7 @@ func hostileInputs() statsInputs {
 			}.build())
 		}
 	}
-	return statsInputs{sessions: sessions, now: statsNow, location: statsNow.Location()}
+	return statsInputs{hasSessions: len(sessions) > 0, prepared: stats.Prepare(sessions, stats.PrepareOptions{Location: statsNow.Location()}), now: statsNow, location: statsNow.Location()}
 }
 
 // Whatever the terminal's size and however hostile the names, every frame is
@@ -245,8 +287,16 @@ func TestStatsScreenNeverExceedsTheTerminalWhateverTheNames(t *testing.T) {
 	t.Parallel()
 	inputs := hostileInputs()
 	filters := statsFilters{Harness: "claude", Model: "日本語日本語日本語日本語日本語日本語\x1b[31m" + strings.Repeat("m", 300)}
-	for _, width := range []int{1, 20, 39, 40, 59, 60, 79, 80, 100, 120, 250} {
-		for _, height := range []int{1, 2, 5, 24, 60} {
+	widths := []int{1, 20, 39, 40, 59, 60, 79, 80, 100, 120, 250}
+	heights := []int{1, 2, 5, 24, 60}
+	if testing.Short() {
+		// Retain degenerate, footer-only and normal-height frames, all
+		// views, color, hostile names and layout threshold neighbors.
+		widths = []int{1, 39, 40, 41, 59, 60, 61, 79, 80, 81, 119, 120, 121, 250}
+		heights = []int{1, 2, 24}
+	}
+	for _, width := range widths {
+		for _, height := range heights {
 			// Color adds escape sequences to every row: one height is enough.
 			colors := []bool{false}
 			if height == 24 {

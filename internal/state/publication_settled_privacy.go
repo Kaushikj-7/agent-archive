@@ -66,6 +66,7 @@ func settledPrivacySHA(p SettledPrivacyPreparation) string {
 }
 
 func (s *Store) mintSettledPrivacy(p publishedState) (publishedState, error) {
+	reservation := s.readReservation()
 	release, err := s.publicationValidationLoan(p)
 	if err != nil {
 		return p, err
@@ -97,13 +98,13 @@ func (s *Store) mintSettledPrivacy(p publishedState) (publishedState, error) {
 	factCharge := int64(16<<10)*int64(len(a.Inputs)+1) + int64(len(origin.SessionID)+len(origin.NativeSessionID)+len(origin.ProjectID)+len(origin.MachineID)+len(origin.Harness.Name)+len(origin.Harness.Version)+len(origin.Harness.Mode)+len(origin.Origin)+len(origin.StartedAtSource)+len(origin.PreviousGenerationID))
 	// The decoded identity strings are newly owned facts, rather than aliases
 	// into the preparation. Retain their exact bytes after the decoding loan ends.
-	if !s.resourceBudget.Reserve(factCharge) {
+	if !reservation.Reserve(factCharge) {
 		return p, errStateBudget
 	}
 	keepFacts := false
 	defer func() {
 		if !keepFacts {
-			s.resourceBudget.Release(factCharge)
+			reservation.Release(factCharge)
 		}
 	}()
 	projection := &SettledPrivacyPreparation{NativeTarget: a.NativeTarget, Inputs: make([]SettledPrivacyInput, 0, len(a.Inputs)), Version: 1, OriginalPreparationSHA256: a.SHA256, Kind: a.Kind, SessionID: origin.SessionID, NativeSessionID: origin.NativeSessionID, ProjectID: origin.ProjectID, MachineID: origin.MachineID, Harness: origin.Harness, Origin: origin.Origin, ImportedAt: origin.ImportedAt, StartedAtSource: origin.StartedAtSource, PreviousGenerationID: origin.PreviousGenerationID, StartedAt: origin.StartedAt.UTC(), OwnerSHA256: a.OwnerSHA256, DestinationID: a.DestinationID, AdmissionContext: a.AdmissionContext, PolicyContext: a.PolicyContext, Purpose: a.Purpose, Predecessor: a.Predecessor, PredecessorSHA256: a.PredecessorSHA256, PreviousSetSHA256: previousSet, OriginMetadataSHA256: a.OriginMetadataSHA256, OriginSetSHA256: a.OriginSetSHA256, MetadataSHA256: p.Commit.MetadataSHA256, SourceSetSHA256: p.Commit.SourceSetSHA256, PayloadSetSHA256: p.Commit.PayloadSetSHA256, PrivacySHA256: p.Commit.PrivacySHA256}
@@ -126,7 +127,7 @@ func (s *Store) mintSettledPrivacy(p publishedState) (publishedState, error) {
 		return p, err
 	}
 	if s.resourceBudget != nil {
-		*s.resourceReleases = append(*s.resourceReleases, func() { s.resourceBudget.Release(factCharge) })
+		*s.resourceReleases = append(*s.resourceReleases, func() { reservation.Release(factCharge) })
 		keepFacts = true
 	}
 	return p, nil
@@ -174,6 +175,7 @@ func sameOptionalTime(a, b *time.Time) bool {
 // and overlapping encoder buffers before any selecting validation allocates.
 // Source payload bytes remain borrowed; validation hashes them without cloning.
 func (s *Store) publicationValidationLoan(p publishedState) (func(), error) {
+	reservation := s.readReservation()
 	if err := s.durableContext().Err(); err != nil {
 		return nil, err
 	}
@@ -216,10 +218,10 @@ func (s *Store) publicationValidationLoan(p publishedState) (func(), error) {
 		return nil, ErrDurableStorageCapacity
 	}
 	n := 8*metadataBytes + int64(facts+1)*(16<<10)
-	if !s.resourceBudget.Reserve(n) {
+	if !reservation.Reserve(n) {
 		return nil, errStateBudget
 	}
-	return func() { s.resourceBudget.Release(n) }, nil
+	return func() { reservation.Release(n) }, nil
 }
 
 func (s *Store) validateSelectingPublishedBudgeted(p publishedState) error {

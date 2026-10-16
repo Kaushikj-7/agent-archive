@@ -526,21 +526,29 @@ matching rule wins.
    Unsettled sources can renew at most eight bounded evidence epochs per plan;
    exhausted renewal leaves admission pending with the instruction to rerun.
    File membership/header observations renew through at most 65,536 observed
-   native paths per slice, including directory and absent-store stamps; changed
-   or larger inventories require a new plan and keep automatic recovery pending.
-   The inventory checks membership, not content: added, removed or replaced
-   paths (file identity), mode changes, truncation and same-size rewrites change
-   it, but a transcript growing in place does not when a planned session owns
-   that file (its header came from that same file). Running agents append to
-   their transcripts, and header facts come from complete leading records that
-   an append cannot change; a header no complete record decided already keeps
-   recovery unavailable. The owning session's own source observation still
-   skips it as `source_changed` and still governs its witness renewal, but
-   that check only runs for imported sessions' sources and for the witness a
-   recovery relies on: a same-inode rewrite that grows any other owned
-   transcript is not detected. Agents append rather than rewrite in place, so
-   this limit is accepted. Paths no session owns keep the full size and
-   modification-time comparison.
+   native paths per slice, including directory and absent-store stamps; larger
+   inventories, and removed, replaced or rewritten observed paths, require a new
+   plan and keep automatic recovery pending. Membership that only grew (a
+   directory stamp moved, an absent path appeared) is judged by the transcripts
+   added (see [Recorded project recovery](#recorded-project-recovery)).
+   Owned transcripts may grow in place only when the bounded prefix consumed
+   by their original native header inspection is unchanged. Renewal checks all
+   such header participants, including filtered, nonselected and negative
+   ownership evidence, not only imported sessions and selected root witnesses.
+   Discovery retains only a digest and byte count of bytes already read, never
+   transcript content; the existing 8 MiB header and 65,536-path bounds remain.
+   Growing files are reopened through their retained provider root with regular
+   file, symlink/containment, inode, mode and before/after observation checks.
+   Each coalesced inventory renewal has an additional strict 128 MiB aggregate
+   prefix-read cap, charged before opening/reading; exhaustion is unavailable
+   evidence and cannot certify a partial inventory. This new stricter resource
+   cap is unqualified pending workload validation. Genuine tail appends leave
+   the inspected prefix unchanged; replacement, truncation, same-size metadata
+   changes and rewritten leading bytes invalidate the plan. Unchanged files
+   retain stat-only renewal. Imported source checks and selected witness checks
+   still apply independently. These are observations, not an atomic snapshot;
+   restored unchanged-size timestamps and changes reversed between observations
+   remain limits of the existing checks.
    Known plain-folder and absent-cwd ownership is also renewed, so a newly
    created checkout cannot evade clone evidence. This is an observation boundary,
    not an atomic filesystem snapshot.
@@ -873,6 +881,45 @@ so existing metadata is byte-identical and the parser version stays the same.
 The source bundle doesn't change either: a transcript hashes the same whether
 a hook or backfill registered it.
 
+## Durable evidence for confirmed imports
+
+Confirmed imports freeze selected, privacy-filtered evidence before registration.
+The private staging journal records the selected source set, immutable native and
+archive identity, destination, policy context, and child ownership. Registration
+selects its checksum atomically. A staging or quota failure leaves that candidate
+unadmitted; completed groups remain recoverable. Dry-run creates no staging.
+
+Import staging shares the 1 GiB durable publication quota, including atomic
+replacement allowance. Each stage reserves bounded control space for cancellation.
+Selected revision sets have a 32 MiB retained input allowance, and each serialized
+journal has a conservative 32 MiB encoded allowance, including identity and child
+context. Each qualified child has its own bounded journal; the shared 1 GiB quota
+also bounds their aggregate staging. Admission preflights the largest record or
+text and refilter output against the shared 128 MiB recovery budget. Encoded
+expansion and large-record scratch can lower the accepted input size; these are
+upper bounds, not a promise that every 32 MiB transcript fits. An oversized
+selection remains unadmitted instead of producing a journal the collector cannot
+read. Scheduled admission recovery visits at most 50 session
+directories per group and persists its cursor. Foreground backfill can publish a
+completed group to free capacity; setup and `--background` leave a resumable capacity
+error for later collection and retry.
+
+Native deletion after preparation does not remove selected evidence. Recovery
+rechecks current destination, exclusions and pause, and reapplies current privacy
+rules to retained evidence. History publication uses the existing revision journal:
+verified immutable sources precede metadata, and verified metadata and source
+readback precede local completion and staging removal. The history display reports
+staged/admitted progress separately from remotely verified sessions.
+
+Cancellation before admission journals and cleans unreferenced preparation.
+Admitted staging survives cancellation, pause and upload failure. Undo includes
+selected preparations that crashed before registration and records removal before
+releasing their bytes. Unknown or damaged obligations remain protected for recovery.
+
+Import staging permanently enables the `import-staging-v9` writer fence. Earlier
+mutating binaries must refuse the installation before updating registrations or
+publication state. A later finite retention preference does not remove this fence.
+
 ## Registration and concurrency
 
 The lock order stays `setup.lock` → `collector.lock` → `hooks.lock`. A hook
@@ -1203,14 +1250,16 @@ Backfill's uniqueness proof is over the clone roots its evidence names: the
 configured roots plus the live repository roots of every observed session, from
 every app, before output filters. Evidence that could name a root but was not
 observed (an unreadable store or folder, a session whose folder is unknown or
-unreadable, a changed native inventory, an unavailable or unsettled Cursor
+unreadable, a native inventory that changed other than by added transcripts,
+an added transcript whose folder cannot be told, an unavailable or unsettled Cursor
 database, an exhausted budget, more than 1,024 distinct witness roots) is a
 recorded gap. Evidence that names no root (a Cursor chat with no folder,
 workspace reference or message folder) cannot be a clone and is not a gap. Gaps are kept as a finite set of (app, cause)
 values and isolated by app: a gap blocks recorded-key recovery only for the
 sessions of the app whose evidence is missing, and a gap that cannot be
-attributed to one app (a changed native inventory, the 1,024-root bound, an
-unreadable folder of unknown app) blocks every app. A gap in another app's
+attributed to one app (a native inventory that changed other than by added
+transcripts, the 1,024-root bound, an unreadable folder of unknown app) blocks
+every app. A gap in another app's
 evidence does not block. This holds with or without `--harness`: an app the
 filter leaves out still contributes the witnesses it observed (they can make a
 recovery ambiguous or name its destination), and its gaps block only its own
@@ -1245,13 +1294,14 @@ from another source can propose. Such a proof used Cursor's chats only as
 possible clones, and a change can at most remove one (the proof stays
 unique) or add one (a second checkout known only to Cursor, the residual
 above).
-A native transcript that was only appended to after its header was read (same
-file, same mode, larger size) keeps its own `source_changed` skip but stays
-clone evidence that cannot propose a destination, and further appends renew
-it; a truncation, replacement or other rewrite is still a gap. Header facts
-come from leading complete records, so an append cannot change them. An
-in-place rewrite that grows the file is indistinguishable from an append by
-file metadata; that is the accepted residual of the rule. The candidate
+An append-shaped native change (same file and mode, larger size) remains
+`source_changed` for its own session. It can become noneligible clone evidence
+only after the complete original-header prefix inventory check succeeds. The
+same coalesced prefix check runs before witness renewal, covering hidden and
+negative participants as well as selected witnesses. Stat growth alone is never
+proof of an append: a growing rewrite of inspected bytes blocks recovery.
+Unchanged and genuine tail-appended prefixes retain their prior roles; strict
+root containment and finite prefix/path/deadline bounds still apply. The candidate
 diagnostic names the highest-priority blocking cause instead of
 `project_inventory_unavailable`: `project_budget_exhausted`,
 `project_witness_limit` (retrying cannot help; an exact `--map-project`
@@ -1259,6 +1309,86 @@ can), `native_store_unreadable`, `cursor_database_unavailable`,
 `native_inventory_changed`, `cursor_chat_folder_unavailable`, then
 `session_folder_unknown`. Exact mappings and configured-path ownership do not
 depend on the witness inventory.
+
+Temporary checkouts remain clone membership even when default capture excludes
+those sessions. A temporary root with a Git marker can make a recorded-key match
+ambiguous or unavailable; a plain temporary folder cannot. This also applies to
+transcripts added while planning or confirming. Clone membership alone never
+enables capture or a proposed destination; temporary capture still requires its
+existing explicit option and all ordinary source/filter/permission checks.
+
+Running agents keep creating transcripts while a plan is made and confirmed
+(a review agent in a temporary clone starts a rollout every minute), and a new
+transcript can only add evidence: it cannot take away a clone another
+transcript named. So a native inventory whose only change is added membership
+does not fail every recorded recovery. The plan keeps the entry names of each
+folder it listed (within the 65,536-observation bound), and each app's own
+discovery runs again over a view of its stores in which a folder whose stamp
+did not move shows only its entries on the way to one that did (or to an
+absent path that now exists, or a folder the plan could not list in full):
+only changed and new folders are listed again, in full, and observations the
+renewal just took are not repeated, so the work follows what changed rather
+than the size of the stores. At most 4,096 entries the plan did not list are
+walked, and the headers of transcripts the plan did not observe are read with
+discovery's header readers, at most 64 transcripts and 16 MiB together; past
+any of these bounds (including a header the byte bound would cut short) the
+change is unattributed and blocks every app, as before. A folder that cannot
+be listed leaves its app's store incomplete. A transcript added under another
+of an app's roots with the name of one already there (a Codex rollout copied
+to `archived_sessions`) is judged by its own header rather than hidden behind
+the copy discovery prefers; it can only add evidence. Another spelling of an
+observed transcript (a symlinked store) is told by file identity against the
+observed transcripts of the same name. A listed store that is a symlink
+(`archived_sessions` or `projects` linked to another disk) is also stamped
+through the link, before it is listed: the link's own stamp does not move when
+the folder it names gains entries. That folder stays strict (replaced, removed
+or no longer named fails every recovery); a link that named no folder (a file,
+nothing, a link loop) was listed as nothing or as the app's unreadable store,
+and is listed again only once it names something else. Each
+added transcript is judged by the root its folder resolves to, with committed
+configuration only:
+
+- A folder that is not an existing, unconfigured repository root (a configured
+  project, a plain or temporary folder, a deleted folder) names no clone that
+  could compete with a recorded key and is ignored, as the witness inventory
+  ignores it.
+- A root the witness inventory already holds adds nothing; a new Cursor chat in
+  a project folder a planned chat was found in names that folder's root.
+- A new root found while planning joins the inventory as evidence that cannot
+  propose a destination, so the recovery resolver reads its key and a clone of
+  the same repository makes the recovery ambiguous; its renewal accepts
+  appends. Found after planning (confirmation or an admission slice), the new
+  root's key is read and every recorded-key recovery of that key fails; a
+  keyless root (as a proposed root above) or a repository without a key
+  matches none.
+- An added transcript whose folder cannot be told (no folder, a header that is
+  not understood or whose IDs disagree, a Cursor project folder no planned chat
+  had, a root whose key cannot be read), and a store that can no longer be
+  listed in full, is a `native_inventory_changed` gap of that app, isolated
+  like any other per-app gap. After planning it blocks that app's
+  recorded-key recoveries and recoveries of unknown app.
+
+Removed, replaced or rewritten observed transcripts and directories stay
+strict for every app. An entry removed from a listed directory that discovery
+never observed (not a transcript of the store's layout) was never evidence.
+
+Confirmation admits recovered sessions one by one. A session whose project or
+source evidence is no longer current when the import is confirmed (its own
+transcript changed, its proof's evidence changed, or a new clone of its
+repository appeared) is left out as `source_changed`, as planning leaves out a
+transcript that changed while it was read, and the rest of the confirmed plan
+is imported: a strict subset of what was confirmed. The configuration change
+is recomputed for what is left: a proposed project only the left-out sessions
+needed is not added, and every remaining proof is bound to that configuration
+(`PolicyContext`). The import says how many were left out and to run backfill
+again (setup names its own retry command). Confirmation still refuses, with
+nothing changed, when no session would be left or when the check ran out of
+time or was cancelled, since a session that read as changed then may only have
+run out of time. It also refuses when a dropped proposed project nests with a
+plain folder the import still adds (one inside the other): the plan decided
+what to keep out of that folder with the dropped project as a project of its
+own, so without it the folder would capture what the plan never checked.
+Admission slices already skip a stale session per session.
 
 `--map-project OLD_CWD=CONFIGURED_ROOT` is exact and invocation-local, with at
 most 128 mappings and 4,096 bytes per absolute path. The first equals sign is
@@ -1338,3 +1468,59 @@ separate 1024-root bound above. No-context programmatic import callers get a
 30-second validation deadline per slice. Filesystem proof checks cannot
 prevent a change after their final observation; the next admission slice or
 pass refreshes the evidence.
+
+## Historical-only ownership and bounded mapping files
+
+Step 6a, merged in [#433](https://github.com/wangjohn/agent-archive/pull/433)
+(`18ca0c48`), adds `--mapping-file FILE`, strict JSON schema 1, bounded to 4 MiB and
+16,384 mappings/definitions. Each exact absolute original cwd targets either an
+already included `configured_root` or an opaque `historical_project_id`.
+`historical_projects` definitions supply stable 32-character lowercase hex IDs
+and bounded labels. Duplicate fields, conflicting normalized cwds, ambiguous
+null/multiple targets and invalid UTF-8 are refused before source discovery.
+Existing repeatable `--map-project` remains compatible and capped at 128.
+Assignments are normalized and hashed canonically; target type and immutable ID
+participate, label/order/filename do not. Batch destination binding supplies the
+independent destination component. Confirmation fingerprints current policy.
+Text previews show bounded assignments and explicit historical-only project rows;
+JSON previews expose all requested assignments, without transcript locators.
+
+Historical identity and destination-scoped permissions live separately from
+`Archive.Projects`. Only admitted identities receive new permissions; disabled
+local decisions and labels are never changed by importing assignments. The
+`backfill projects list|rename|enable|disable` command manages explicit policy
+under setup/collector/hooks locks. Setup preserves committed identities and
+policy. Pairing transfers bounded IDs, labels and current-destination decisions,
+never original cwds or native mappings, and preserves recipient decisions.
+
+A private version-1 historical proof binds ID, destination, original/canonical
+cwd and bounded physical dependency cwd evidence. `ProjectRoot` is empty. It is
+import-only, mutually exclusive with live Codex consent, and bound by durable
+staging. Every admission/publication checks current exclusions against this
+frozen evidence, including exclusions introduced after native deletion. Required
+excluded physical ancestors refuse complete import as `excluded_history`; the
+complete-history validator is unchanged. Original source location restrictions
+remain in effect. Supported complete native revisions use original thread
+creation/producer/cwd facts independently of selected physical revision facts.
+
+Initial publication uses the existing staged source set. Once published, every
+maintenance and local-read path uses retained sources; native growth or recovery
+cannot extend ownership. Privacy, parser and display updates preserve capture
+age and alternative revision references. Exact readback rejects remote metadata
+that omits a locally published history manifest. Retention checks ownership and
+current destination independently of publication permission, so disabled imports
+still expire under finite retention and remain under Keep forever.
+Historical protection with disabled future discovery skips unsolicited native
+inventory. Independently admitted live owners still find their lineage through the rollout lookup;
+explicitly enabled discovery and explicit import staging retain their native reads.
+
+Exact batch undo/purge removes only owned sessions and evidence. Historical
+identities and permissions remain explicit configuration, including shared
+identities; undo does not alter them or any live capture policy. A path-based
+`--project` filter cannot select the empty historical root. The permanent
+`historical-projects-v10` writer capability composes all lower protections and
+survives disable, expiry, undo and rollback. Earlier writers refuse mutation.
+See the [mapping schema](../../schemas/backfill-mapping.schema.json),
+[policy schema](../../schemas/historical-projects.schema.json),
+[private proof schema](../../schemas/historical-project-proof.schema.json), and
+[guide](../../docs/guides/backfill.md#historical-only-projects).

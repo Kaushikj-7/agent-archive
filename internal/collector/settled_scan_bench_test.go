@@ -166,7 +166,7 @@ func TestOneChangedFileAmidSettledSessionsFiltersOnce(t *testing.T) {
 	}
 }
 
-func (s *settledReadStore) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+func (s *settledReadStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
 	s.recordRead(key)
-	return s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+	return s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
 }

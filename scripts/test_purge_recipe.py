@@ -1,15 +1,23 @@
 """Execute every documented bucket-purge block against a disposable fake bucket."""
+import argparse
+import itertools
 import json
 import os
 from pathlib import Path
 import re
 import shutil
 import stat
+import sys
 import subprocess
 import tempfile
+import time
 import unittest
 
 DOCS = Path(__file__).resolve().parent.parent / 'docs'
+TIER = 'full'
+CASE_EVIDENCE = []
+METHOD_TIMINGS = []
+
 RECIPE_PAGES = [DOCS / 'security' / 'archive-cleanup.md', DOCS / 'getting-started' / 'uninstall.md']
 
 FAKE_AWS = r'''#!/bin/sh
@@ -106,6 +114,62 @@ def write_executable(path, body):
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+def resume_cases(tier):
+    """Only reviewed repetitions move cadence; every mode retains failure/restart."""
+    full = [(prefix, mode, prepare, boundary)
+            for prefix in ('agent-archive/', 'nested/archive/', '')
+            for mode, prepare, count in [('unreferenced', 'unreferenced', 3),
+                                        ('machine', 'machine "$machine"', 6),
+                                        ('old', 'old 10', 4), ('all', 'all', 9)]
+            for boundary in range(1, count + (1 if mode == 'all' and not prefix else 0) + 1)]
+    if tier == 'full':
+        return full, []
+    selected = []
+    for case in full:
+        prefix, mode, prepare, boundary = case
+        count = {'unreferenced': 3, 'machine': 6, 'old': 4, 'all': 9}[mode]
+        maximum = count + (1 if mode == 'all' and not prefix else 0)
+        boundaries = {1, maximum} if tier == 'pr' else {1, (maximum+1)//2, maximum}
+        if boundary in boundaries and (tier == 'daily' or prefix == 'agent-archive/'):
+            selected.append(case)
+    return selected, [case for case in full if case not in selected]
+
+
+class EvidenceResult(unittest.TextTestResult):
+    def startTest(self, test):
+        super().startTest(test)
+        self.method_started = time.monotonic()
+        self.method_case_start = len(CASE_EVIDENCE)
+
+    def stopTest(self, test):
+        import purge_ci
+        children = CASE_EVIDENCE[self.method_case_start:]
+        METHOD_TIMINGS.append({'test': test.id(), 'seconds': time.monotonic() - self.method_started,
+                               'case_count': len(children), 'cases_sha256': purge_ci.digest(children)})
+        super().stopTest(test)
+
+    def addSubTest(self, test, subtest, err):
+        super().addSubTest(test, subtest, err)
+        CASE_EVIDENCE.append({'test': test.id(), 'case': dict(subtest.params),
+                              'status': 'pass' if err is None else 'fail'})
+
+    def addSuccess(self, test):
+        super().addSuccess(test)
+        CASE_EVIDENCE.append({'test': test.id(), 'status': 'pass'})
+
+    def addSkip(self, test, reason):
+        super().addSkip(test, reason)
+        CASE_EVIDENCE.append({'test': test.id(), 'status': 'skip', 'reason': reason})
+
+    def addFailure(self, test, err):
+        super().addFailure(test, err)
+        CASE_EVIDENCE.append({'test': test.id(), 'status': 'fail'})
+
+    def addError(self, test, err):
+        super().addError(test, err)
+        CASE_EVIDENCE.append({'test': test.id(), 'status': 'fail'})
+
+
 class PurgeRecipeTest(unittest.TestCase):
     shells = [s for s in ('bash', 'zsh') if shutil.which(s)]
 
@@ -128,7 +192,7 @@ class PurgeRecipeTest(unittest.TestCase):
             for name in ([current] if current else []) + others:
                 (base / name).write_bytes(b'gz')
             if current:
-                metadata = {'filter_version': str(version), 'machine_id': (machine or ['m-other'])[0],
+                metadata = {'schema_version': 1, 'filter_version': str(version), 'machine_id': (machine or ['m-other'])[0],
                             'source_bundle': {'key': f'sessions/{directory}/{current}'}}
                 (base / 'metadata.json').write_text(json.dumps(metadata))
         for key in extra:
@@ -204,6 +268,95 @@ class PurgeRecipeTest(unittest.TestCase):
             'cursor/cccc': (None, ['source.c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1.jsonl.gz'], 0),
             'cursor/dddd': ('source.d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1.jsonl.gz', [], 10, 'm-retired'),
         }
+
+    def history_metadata(self, bucket, prefix):
+        path = bucket / prefix / 'sessions/codex/bbbb/metadata.json'
+        metadata = json.loads(path.read_text())
+        metadata['schema_version'] = 2
+        metadata['history'] = {'current_revision': '11111111-1111-4111-8111-111111111111',
+                               'preserved': []}
+        current = metadata['source_bundle']
+        current['sha256'] = Path(current['key']).name.split('.')[1]
+        current['compressed_bytes'] = 2
+        for index, hex_digit in enumerate(('e', 'f'), start=2):
+            name = 'source.' + hex_digit * 64 + '.jsonl.gz'
+            (path.parent / name).write_bytes(b'gz')
+            metadata['history']['preserved'].append({
+                'revision_id': str(index) * 8 + '-' + str(index) * 4 + '-4' + str(index) * 3 + '-8' + str(index) * 3 + '-' + str(index) * 12,
+                'captured_at': '2024-02-29T12:00:00.123+05:30', 'filter_version': '9',
+                'source': {'key': 'sessions/codex/bbbb/' + name,
+                           'sha256': hex_digit * 64, 'compressed_bytes': 2}})
+        path.write_text(json.dumps(metadata))
+        return path, metadata
+
+    def test_preserved_revisions_survive_unreferenced_cleanup(self):
+        for shell in self.shells:
+            for prefix in ('agent-archive/', 'nested/archive/', ''):
+                with self.subTest(shell=shell, prefix=prefix):
+                    bucket = self.build(prefix)
+                    self.history_metadata(bucket, prefix)
+                    result = self.run_recipe(shell, prefix, ['list', 'delete'])
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    for key in ('e', 'f'):
+                        self.assertIn(prefix + 'sessions/codex/bbbb/source.' + key * 64 + '.jsonl.gz', self.keys(bucket))
+                    self.assertEqual(len(self.attempts()), 3)
+
+    def test_invalid_history_blocks_selective_cleanup(self):
+        for shell in self.shells:
+            for invalid in ('missing', 'cross-session', 'duplicate', 'revision', 'digest', 'schema', 'false-preserved', 'invalid-time', 'invalid-day', 'fractional-size', 'false-source-schema'):
+                with self.subTest(shell=shell, invalid=invalid):
+                    bucket = self.build()
+                    path, metadata = self.history_metadata(bucket, 'agent-archive/')
+                    refs = metadata['history']['preserved']
+                    if invalid == 'missing':
+                        (bucket / 'agent-archive' / refs[0]['source']['key']).unlink()
+                    elif invalid == 'cross-session':
+                        refs[0]['source']['key'] = refs[0]['source']['key'].replace('/bbbb/', '/aaaa/')
+                    elif invalid == 'duplicate':
+                        refs[1]['source'] = refs[0]['source']
+                    elif invalid == 'revision':
+                        refs[0]['revision_id'] = 'invalid'
+                    elif invalid == 'digest':
+                        refs[0]['source']['sha256'] = 'a' * 64
+                    elif invalid == 'schema':
+                        metadata['schema_version'] = 1
+                    elif invalid == 'false-preserved':
+                        metadata['history']['preserved'] = False
+                    elif invalid == 'invalid-time':
+                        refs[0]['captured_at'] = '2026-10-01Tinvalid'
+                    elif invalid == 'invalid-day':
+                        refs[0]['captured_at'] = '2026-02-30T12:00:00Z'
+                    elif invalid == 'fractional-size':
+                        refs[0]['source']['compressed_bytes'] = 2.5
+                    elif invalid == 'false-source-schema':
+                        refs[0]['source_schema_version'] = False
+                    path.write_text(json.dumps(metadata))
+                    before = self.keys(bucket)
+                    result = self.run_recipe(shell, 'agent-archive/', ['list', 'delete'])
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(self.attempts(), [])
+                    self.assertEqual(self.keys(bucket), before)
+
+    def test_new_preserved_reference_invalidates_plan(self):
+        for shell in self.shells:
+            with self.subTest(shell=shell):
+                bucket = self.build()
+                path, metadata = self.history_metadata(bucket, 'agent-archive/')
+                before = self.keys(bucket)
+                source = 'sessions/codex/bbbb/source.' + 'a' * 64 + '.jsonl.gz'
+                (bucket / 'agent-archive' / source).write_bytes(b'gz')
+                before = self.keys(bucket)
+                metadata['history']['preserved'].append({
+                    'revision_id': '44444444-4444-4444-8444-444444444444',
+                    'captured_at': '2026-10-01T12:00:00Z', 'filter_version': '8',
+                    'source': {'key': source, 'sha256': 'a' * 64, 'compressed_bytes': 2}})
+                replacement = self.root / 'replacement.json'
+                replacement.write_text(json.dumps(metadata))
+                result = self.run_recipe(shell, 'agent-archive/', ['list', 'delete'],
+                    between='cp "' + str(replacement) + '" "' + str(path) + '"')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.attempts(), [])
+                self.assertEqual(self.keys(bucket), before)
 
     def test_unreferenced_sources_keep_current_and_scope(self):
         for shell in self.shells:
@@ -466,38 +619,37 @@ exit 0
                             self.assertFalse(any(k.startswith(prefix) for k in remaining))
 
     def test_resume_every_deletion_boundary_in_fresh_shell(self):
+        selected, omitted = resume_cases(TIER)
         for shell in self.shells:
-            for prefix in ('agent-archive/', 'nested/archive/', ''):
-                for mode, prepare, count in [('unreferenced', 'unreferenced', 3),
-                                             ('machine', 'machine "$machine"', 6),
-                                             ('old', 'old 10', 4), ('all', 'all', 9)]:
-                    for boundary in range(1, count + (1 if mode == 'all' and not prefix else 0) + 1):
-                        with self.subTest(shell=shell, prefix=prefix, mode=mode, boundary=boundary):
-                            bucket = self.build(prefix, extra=['outside/keep'])
-                            before = self.keys(bucket)
-                            contents = {k: (bucket / k).read_bytes() for k in before}
-                            tail = r'''
+            for prefix, mode, prepare, boundary in omitted:
+                CASE_EVIDENCE.append({'test': self.id(), 'case': {'shell': shell, 'prefix': prefix, 'mode': mode, 'boundary': boundary}, 'status': 'NOT RUN', 'reason': TIER+' representative repeated boundaries'})
+            for prefix, mode, prepare, boundary in selected:
+                with self.subTest(shell=shell, prefix=prefix, mode=mode, boundary=boundary):
+                    bucket = self.build(prefix, extra=['outside/keep'])
+                    before = self.keys(bucket)
+                    contents = {k: (bucket / k).read_bytes() for k in before}
+                    tail = r'''
 original=$purge_dir
 purge_apply && exit 91
 unset FAKE_RM_FAIL_AT
 "$FAKE_SHELL" -c '. "$FAKE_HELPERS"; bucket=my-archive-bucket; prefix=$2; purge_resume "$1" && purge_apply' recovery "$original" "$prefix"
 '''
-                            names = ['list'] if mode == 'unreferenced' else ['list', {'machine':'machine', 'old':'old-sessions', 'all':'all'}[mode]]
-                            result = self.run_recipe(shell, prefix, names,
-                                env_extra={'FAKE_RM_FAIL_AT': str(boundary)}, tail=tail)
-                            self.assertEqual(result.returncode, 0, result.stderr)
-                            remaining = self.keys(bucket)
-                            if mode == 'unreferenced':
-                                expected = [k for k in before if not (k.endswith('.jsonl.gz') and
-                                    ('/cursor/cccc/' in k or '/claude/aaaa/source.a0' in k or '/claude/aaaa/source.a1' in k))]
-                            elif mode == 'all':
-                                expected = [k for k in before if not k.startswith(prefix)]
-                            else:
-                                dirs = ['claude/aaaa'] + (['cursor/dddd'] if mode == 'machine' else [])
-                                expected = [k for k in before if not any(k.startswith(f'{prefix}sessions/{d}/') for d in dirs)]
-                            self.assertEqual(remaining, expected)
-                            self.assertEqual({k: (bucket / k).read_bytes() for k in remaining},
-                                             {k: contents[k] for k in expected})
+                    names = ['list'] if mode == 'unreferenced' else ['list', {'machine':'machine', 'old':'old-sessions', 'all':'all'}[mode]]
+                    result = self.run_recipe(shell, prefix, names,
+                        env_extra={'FAKE_RM_FAIL_AT': str(boundary)}, tail=tail)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    remaining = self.keys(bucket)
+                    if mode == 'unreferenced':
+                        expected = [k for k in before if not (k.endswith('.jsonl.gz') and
+                            ('/cursor/cccc/' in k or '/claude/aaaa/source.a0' in k or '/claude/aaaa/source.a1' in k))]
+                    elif mode == 'all':
+                        expected = [k for k in before if not k.startswith(prefix)]
+                    else:
+                        dirs = ['claude/aaaa'] + (['cursor/dddd'] if mode == 'machine' else [])
+                        expected = [k for k in before if not any(k.startswith(f'{prefix}sessions/{d}/') for d in dirs)]
+                    self.assertEqual(remaining, expected)
+                    self.assertEqual({k: (bucket / k).read_bytes() for k in remaining},
+                                     {k: contents[k] for k in expected})
 
     def test_expired_and_single_use_attempts_need_reviewed_resume(self):
         for shell in self.shells:
@@ -793,4 +945,43 @@ mv() {
 
 
 if __name__ == '__main__':
-    unittest.main()
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--tier', choices=('pr', 'daily', 'full'), default='full')
+    parser.add_argument('--evidence', type=Path)
+    parser.add_argument('--workers', type=int, choices=(1, 2), default=1)
+    parser.add_argument('--shard', type=int)
+    args, remaining = parser.parse_known_args()
+    TIER = args.tier
+    if os.environ.get('GITHUB_ACTIONS') == 'true' and (not shutil.which('jq') or not all(shutil.which(s) for s in ('bash','zsh'))):
+        raise SystemExit('CI purge requires jq, bash and zsh; missing prerequisites are not passes')
+    import purge_ci
+    catalog = purge_ci.methods()
+    proof, assigned = None, catalog
+    if args.workers == 2:
+        if args.shard not in (0, 1) or remaining or not args.evidence:
+            raise SystemExit('sharded purge requires --shard 0/1, evidence and the complete discovered suite')
+        if PurgeRecipeTest.shells != ['bash', 'zsh']:
+            raise SystemExit('sharded purge requires bash and zsh')
+        assigned = purge_ci.assignments(catalog)[args.shard]
+        proof = purge_ci.source_proof()
+    elif args.shard is not None:
+        raise SystemExit('--shard requires --workers 2')
+    program = unittest.main(argv=[sys.argv[0], *remaining], exit=False,
+                            defaultTest=[f'PurgeRecipeTest.{name}' for name in assigned] if proof else None,
+                            testRunner=unittest.TextTestRunner(resultclass=EvidenceResult))
+    if args.evidence:
+        source = subprocess.check_output(['git','-C',str(DOCS.parent),'rev-parse','HEAD'],text=True).strip()
+        args.evidence.parent.mkdir(parents=True,exist_ok=True)
+        receipt = {'schema':1, 'source':source, 'tier':TIER,
+                   'success':program.result.wasSuccessful(), 'cases':CASE_EVIDENCE,
+                   'method_timings': METHOD_TIMINGS}
+        if proof:
+            post_proof = purge_ci.source_proof()
+            if post_proof != proof:
+                raise SystemExit('purge source changed during execution')
+            receipt.update(schema=2, worker=args.shard, workers=args.workers,
+                           source_proof=proof, post_source_proof=post_proof,
+                           catalog=catalog, catalog_sha256=purge_ci.digest(catalog),
+                           assigned=assigned, shells=PurgeRecipeTest.shells)
+        args.evidence.write_text(json.dumps(receipt,indent=2)+'\n')
+    sys.exit(not program.result.wasSuccessful())

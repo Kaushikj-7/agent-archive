@@ -79,7 +79,7 @@ func TestNativeParentPolicySuccessorPreservesOriginalHeaderAuthority(t *testing.
 			}
 			scan.reg.NativeChild, scan.reg.ParentSessionID = true, "qualified-late-parent"
 			scan.opts.SkillEvidence = config.SkillEvidenceBody
-			if _, handled, err := scan.prepareRetainedHistoryWork(); !handled || !errors.Is(err, archive.ErrHistoryMutationPending) {
+			if _, handled, err := scan.prepareRetainedHistoryWork(scan.ctx); !handled || !errors.Is(err, archive.ErrHistoryMutationPending) {
 				t.Fatal("actual maintenance did not freeze", handled, err)
 			}
 			p, found, err := scan.local.LoadPending(scan.id())
@@ -132,7 +132,7 @@ func TestNativeParentPolicySuccessorPreservesOriginalHeaderAuthority(t *testing.
 				t.Fatal(err)
 			}
 			scan.opts.SkillEvidence = config.SkillEvidenceNone
-			if _, err := scan.resumeHistory(p); !errors.Is(err, archive.ErrHistoryMutationPending) {
+			if _, err := scan.resumeHistory(scan.ctx, p); !errors.Is(err, archive.ErrHistoryMutationPending) {
 				t.Fatal("completed repair policy successor", err)
 			}
 			next, found, err := scan.local.LoadPending(scan.id())
@@ -152,7 +152,7 @@ func TestNativeParentPolicySuccessorPreservesOriginalHeaderAuthority(t *testing.
 					t.Fatal("original input changed")
 				}
 			}
-			if outcome, err := scan.publishPending(next); err != nil || outcome != outcomePublished {
+			if outcome, err := scan.publishPending(scan.ctx, next); err != nil || outcome != outcomePublished {
 				t.Fatal("strict repair readback", outcome, err)
 			}
 			final, err := scan.remote.Get(t.Context(), next.MetadataKey)

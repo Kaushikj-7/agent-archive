@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
 	"io"
 	"sync"
@@ -82,15 +82,16 @@ func (Filter) MeaningfulRevisionRecord(b archive.SourceBundle, i int) bool {
 }
 
 func retainedEncoder(ctx context.Context, limits agentapi.ReadLimits) func(map[string]any) ([]byte, error) {
+	reservation := limits.ReadBudget.Reservation()
 	return func(value map[string]any) ([]byte, error) {
-		n, err := jsonwire.Bound(ctx, value, limits.FilteredBytes)
+		n, err := agentmeta.JSONWireBound(ctx, value, limits.FilteredBytes)
 		if err != nil {
 			return nil, agentapi.ReadBudgetLimit(err)
 		}
-		if !limits.ReadBudget.Reserve(n) {
+		if !reservation.Reserve(n) {
 			return nil, agentapi.ReadBudgetLimit(errors.New("safe record encoder exceeds shared budget"))
 		}
-		defer limits.ReadBudget.Release(n)
+		defer reservation.Release(n)
 		return json.Marshal(value)
 	}
 }
@@ -103,68 +104,75 @@ func (f Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c age
 }
 
 func (f Filter) filterLeased(ctx context.Context, in agentapi.NativeInput, c agentapi.FilterContext, budget *agentapi.NativeReadBudget, retained *archive.SourceBundle) (archive.FilteredTranscript, func(), error) {
+	reservation := budget.Reservation()
 	var total int64
 	if in.File != nil {
 		scanner, err := nativeScannerCharge(ctx, in.File, c.Limits, budget)
 		if err != nil {
 			return archive.FilteredTranscript{}, func() {}, err
 		}
-		if !budget.Reserve(scanner) {
+		if !reservation.Reserve(scanner) {
 			return archive.FilteredTranscript{}, func() {}, errFilterBudget
 		}
-		defer budget.Release(scanner)
+		defer reservation.Release(scanner)
 	}
 	history := in.Records != nil
 	if history {
-		in.Records = &leasedHistoryInput{input: in.Records, budget: budget, owned: &total}
+		in.Records = &leasedHistoryInput{input: in.Records, owned: &total, reservation: reservation}
 	}
 	var once sync.Once
-	release := func() { once.Do(func() { budget.Release(total) }) }
+	release := func() { once.Do(func() { reservation.Release(total) }) }
 	before := func(n int) (func(), error) {
-		if !budget.Reserve(int64(n)) {
+		if !reservation.Reserve(int64(n)) {
 			return nil, agentapi.ReadBudgetLimit(errors.New("native decoded row exceeds shared budget"))
 		}
-		return func() { budget.Release(int64(n)) }, nil
+		return func() { reservation.Release(int64(n)) }, nil
 	}
 	encoder := func(value map[string]any) ([]byte, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		const countScratch = 32 << 10
-		if !budget.Reserve(countScratch) {
+		if !reservation.Reserve(countScratch) {
 			return nil, agentapi.ReadBudgetLimit(errors.New("native encoding preflight exceeds shared budget"))
 		}
-		n, err := jsonwire.Bound(ctx, value, budget.Available()/2)
-		budget.Release(countScratch)
+		available := reservation.Available()
+		n, err := agentmeta.JSONWireBound(ctx, value, available/2)
+		if errors.Is(err, agentmeta.ErrJSONWireLimit) {
+			// The encoding and its retained copy need more than all that
+			// remains, beside the scratch still held.
+			reservation.Refuse(available + 2)
+		}
+		reservation.Release(countScratch)
 		if err != nil {
 			return nil, agentapi.ReadBudgetLimit(err)
 		}
-		if !budget.Reserve(n) {
+		if !reservation.Reserve(n) {
 			return nil, agentapi.ReadBudgetLimit(errors.New("native encoder exceeds shared budget"))
 		}
-		defer budget.Release(n)
-		if !budget.Reserve(n) {
+		defer reservation.Release(n)
+		if !reservation.Reserve(n) {
 			return nil, agentapi.ReadBudgetLimit(errors.New("native filtered output exceeds shared budget"))
 		}
 		ordinalBytes := int64(0)
 		if history {
 			ordinalBytes = 8
-			if !budget.Reserve(ordinalBytes) {
-				budget.Release(n)
+			if !reservation.Reserve(ordinalBytes) {
+				reservation.Release(n)
 				return nil, errFilterBudget
 			}
 		}
 		data, err := json.Marshal(value)
 		if err != nil {
-			budget.Release(n + ordinalBytes)
+			reservation.Release(n + ordinalBytes)
 			return nil, err
 		}
 		actual := int64(len(data))
 		if actual > n {
-			budget.Release(n + ordinalBytes)
-			return nil, agentapi.ReadBudgetLimit(jsonwire.ErrLimit)
+			reservation.Release(n + ordinalBytes)
+			return nil, agentapi.ReadBudgetLimit(agentmeta.ErrJSONWireLimit)
 		}
-		budget.Release(n - actual)
+		reservation.Release(n - actual)
 		total += actual + ordinalBytes
 		return data, nil
 	}

@@ -48,6 +48,12 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 			ascii  bool
 		}{{80, 24, false}, {100, 30, false}, {60, 20, false}, {36, 20, true}} {
 			for _, color := range []bool{false, true} {
+				if testing.Short() && color != (size.width == 100 || size.ascii) {
+					// Keep every flow and size, with plain and colored Unicode
+					// plus the narrow ASCII screen. Full mode keeps both colors
+					// at every size, including their presentation interactions.
+					continue
+				}
 				name := fmt.Sprintf("%s-%dx%d", flow, size.width, size.height)
 				if color {
 					name += ".color"
@@ -68,7 +74,7 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 					}
 					switch flow {
 					case guidedFlowPairingSource:
-						env, home, _ := pairingSourceFixture(t)
+						env, home, _ := pairingSourceFixtureAt(t, t.TempDir(), pairingDisplayFixtureHome(t))
 						env.Now = func() time.Time { return screenNow }
 						env.Clipboard = func([]byte) error { return nil }
 						env.Interrupts = noInterrupts
@@ -97,8 +103,8 @@ func TestGuidedFullCommandTranscripts(t *testing.T) {
 							t.Fatal("pairing did not check storage before completed capture")
 						}
 					case guidedFlowHandoffFile:
-						f := newHandoffFixture(t, false)
-						path := filepath.Join(t.TempDir(), "handoff.md")
+						home, project, path := handoffDisplayFixturePaths(t)
+						f := newHandoffFixtureForAt(t, false, "codex", handoffTranscript, home, project)
 						run([]string{"handoff", f.id}, "w\n"+path+"\n", f.env)
 						normalize = func(s string) string {
 							s = strings.ReplaceAll(s, f.id, "SESSION")
@@ -378,7 +384,7 @@ func normalizeGuidedPairingCode(text string) string {
 func TestGuidedPairingCodeNormalizationPreservesInstructionsAndControls(t *testing.T) {
 	t.Parallel()
 	code := "aardvark abandoned abbreviate abdomen abhorrence abiding"
-	kept := "\x1b[?1049h\x1b[2J\x1b[H2. Enter the pairing code on the other machine\n\n" + code + "\n\nKeep this screen open while entering the code there.\nPress Enter to hide.\n\x1b[?1049l\n? Pairing\n\n[Enter] I'm finished\n"
+	kept := "\x1b[?1049h\x1b[2J\x1b[H2. Enter the pairing code on the other machine\n\n" + code + "\n\nKeep this screen open while entering the code there.\nPress Enter to hide.\n\x1b[?1049l\n? Pairing\n\n[Enter] Close transfer instructions\n"
 	want := strings.Replace(kept, "\n"+code+"\n", "\nPAIRING_CODE\n", 1)
 	if got := normalizeGuidedPairingCode(kept); got != want {
 		t.Fatalf("normalization changed prompt structure: %q", got)

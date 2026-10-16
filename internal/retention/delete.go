@@ -39,6 +39,12 @@ func DeleteWholeSession(ctx context.Context, store storage.ObjectStore, harness,
 			}
 		}
 	}
+	if transactional, ok := store.(interface {
+		DeleteSession(context.Context, string) error
+		CatalogMetadataAuthority() bool
+	}); ok && transactional.CatalogMetadataAuthority() {
+		return transactional.DeleteSession(ctx, metadataKey)
+	}
 	if err := store.Delete(ctx, metadataKey); err != nil {
 		return fmt.Errorf("delete metadata: %w", err)
 	}

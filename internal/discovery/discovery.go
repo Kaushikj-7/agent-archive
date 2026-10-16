@@ -32,8 +32,7 @@ const (
 	// Reprobe older cached observations so they acquire explicit format profiles.
 	catalogVersion = 6
 	maxCatalog     = 8192
-	// Keep disposable hints smaller than the accepted catalog limit. Coverage
-	// and requested proofs retain their independent capacity and continuation.
+	// Keep disposable hints smaller than the accepted catalog limit.
 	maxObservationCache = 2048
 	maxDirectories      = 4096
 	maxRetries          = 256
@@ -84,9 +83,11 @@ type cached struct {
 	ActiveHint        bool        `json:"active_hint,omitempty"`
 }
 
+// catalog is the persisted discovery state. Earlier writers also kept a
+// native_coverage epoch here; a read ignores that field and the next write
+// drops it.
 type catalog struct {
 	Recovery sourcefacts.RecoveryInventory `json:"project_recovery,omitempty"`
-	Coverage *coverageInventory            `json:"native_coverage,omitempty"`
 	Version  int                           `json:"version"`
 	Roots    []string                      `json:"roots"`
 	Queue    []directory                   `json:"queue"`
@@ -94,18 +95,43 @@ type catalog struct {
 	Health   Health                        `json:"health"`
 	Priority map[string]int64              `json:"priority,omitempty"`
 	Retries  []SourceDescriptor            `json:"retries,omitempty"`
+	// Classifier is the header classification the cached observations'
+	// refusals were made under (see reclassify).
+	Classifier int `json:"classifier,omitempty"`
+}
+
+// headerClassifier revises which Codex headers capture understands without
+// discarding the whole catalog: 1 accepts agent-created top-level threads.
+const headerClassifier = 1
+
+// reclassify drops cached observations that an older header classification
+// refused as an unsupported execution without any identity, so each is read
+// again, once, under the current one. A cached refusal is otherwise kept for
+// as long as the file is unchanged, and an archived rollout never changes:
+// its identity would stay unknown to the rollout lookup. A refusal that kept
+// its identity (a guardian review child, say) is not read again. Every other
+// cached observation stays.
+func (c *catalog) reclassify() {
+	if c.Classifier >= headerClassifier {
+		return
+	}
+	for path, entry := range c.Cache {
+		if entry.Observation.Outcome == outcomeUnsupportedExec && entry.Observation.Identity == nil {
+			delete(c.Cache, path)
+		}
+	}
+	c.Classifier = headerClassifier
 }
 
 // Options contains injectable clocks and stop signals; it cannot override
 // source format support or authorize capture.
 type Options struct {
 	nativeOnly    bool
-	inventoryOnly bool
 	Sources       agentapi.SourcesLookup
 	CodexRollouts agentapi.CodexRolloutLookup
 	Now           func() time.Time
 	Stop          func() bool
-	// Rollouts receives the validated observations and bounded coverage state.
+	// Rollouts receives the validated observations.
 	RepositoryIdentity        sourcefacts.RepositoryLookup
 	RepositoryIdentityCurrent func(sourcefacts.RepositoryIdentity) bool
 	Rollouts                  *CodexRolloutLookup
@@ -115,6 +141,11 @@ type Options struct {
 // before any storage initialization. Each admission revalidates permissions
 // under hooks.lock, never holding it while reading source files.
 func Run(ctx context.Context, store *state.Store, cfg config.Config, o Options) (Health, error) {
+	// Historical ownership does not start future native inventory. Registered
+	// capture owners still find their lineage through the rollout lookup.
+	if cfg.HistoricalProjectProtection && (cfg.Discovery == nil || !cfg.Discovery.Enabled) {
+		return Health{}, nil
+	}
 	return runWithAdapters(ctx, store, cfg, o, registeredAdapters())
 }
 
@@ -137,10 +168,6 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 		h.Pending = true
 		return h, err
 	}
-	if c.Coverage != nil && c.Coverage.Phase == coverageValidate {
-		h.Supported = c.Health.Supported
-		h.Formats = slices.Clone(c.Health.Formats)
-	}
 	allowance := Budget
 	checkpointAllowance := Budget
 	if o.Rollouts != nil {
@@ -152,7 +179,10 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	}
 	started := time.Now()
 	if o.Rollouts != nil {
-		defer func() { o.Rollouts.remaining -= time.Since(started) }()
+		// Discovery's time includes the lookup calls it makes, which charge
+		// themselves as they end; charge the whole once, not those twice.
+		before := o.Rollouts.remaining
+		defer func() { o.Rollouts.remaining = before - time.Since(started) }()
 	}
 	// Observation may exhaust its slice while the durable queue/proofs still
 	// need saving. Keep the reserved checkpoint second inside the same pass
@@ -170,24 +200,20 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	resolver := sourcefacts.NewProjectResolver()
 	recovery := sourcefacts.NewRecoveryResolver(cfg.Archive.Projects, nil, canonicalProjectPath, o.RepositoryIdentity, &c.Recovery)
 	recovery.Validate = o.RepositoryIdentityCurrent
-	priority := scan{nativeOnly: o.nativeOnly, inventoryOnly: o.inventoryOnly, proofs: proofs, resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts}
+	refused := admissionRefusedStarts(store.Home(), cfg, adapter.Agent(), o)
+	priority := scan{nativeOnly: o.nativeOnly, proofs: proofs, resolver: resolver, recovery: recovery, store: store, cfg: cfg, catalog: &c, health: &h, now: now, adapter: adapter, priority: true, ctx: ctx, rollouts: o.Rollouts, refused: refused}
 	// The shared lookup owns the only native index projection. Production
 	// observation uses the shared directory worker rather than opening native
 	// SQLite via the legacy settled-only scheduling hint adapter.
 	if o.Rollouts == nil {
 		priority.observeIndexHints(ctx, o, roots, deadline)
 	}
-	if !o.nativeOnly && !o.inventoryOnly {
+	if !o.nativeOnly {
 		priority.observeActiveHints(ctx, o, roots, deadline)
 		priority.observeRetries(o)
 	}
 
 	priority.observeDirectories(o, deadline)
-	// A just-validated inventory can prove deferred native ownership before the
-	// next pass starts a new coverage epoch. The same deadline/ledger still applies.
-	if !o.nativeOnly && !o.inventoryOnly && hasValidatedCoverage(c.Coverage) {
-		priority.observeRetries(o)
-	}
 	h.NativeValidationBytes, h.NativeValidationReads, h.NativeValidationOpens = proofs.bytes, proofs.reads, proofs.opens
 	h.NativeValidationAttempts = proofs.attempts
 	h.ProjectOperations = resolver.Operations
@@ -200,27 +226,25 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	}
 	pruneCatalog(&c)
 	c.Health = h
-	if c.Coverage != nil {
-		if err := c.Coverage.validate(roots); err != nil {
-			return h, err
-		}
-	}
 	if o.nativeOnly {
 		if o.Rollouts != nil {
 			o.Rollouts.catalog = &c
 		}
 		return h, nil
 	}
-	if err := persistNativeCatalog(checkpointCtx, o.Rollouts, path, c); err != nil {
-		return h, errors.Join(errors.New("discovery state write failed; retry next scan"), err)
+	if err := checkpointCatalog(checkpointCtx, o.Rollouts, path, &c, &h); err != nil {
+		return h, err
 	}
 	if o.Rollouts != nil {
 		o.Rollouts.catalog = &c
-		o.Rollouts.coverageDirty = false // checkpoint includes observation changes
+		o.Rollouts.dirty = false // this checkpoint supersedes a deferred one
 	}
 	if err := writeHealth(store.Home(), h); err != nil {
 		return h, err
 	}
+	// The record only lets status point at backfill; failing to write it
+	// leaves the previous one, and the next pass writes it again.
+	_ = refused.save(store.Home(), c.Cache)
 	return h, nil
 }
 
@@ -434,12 +458,14 @@ func admitSession(store *state.Store, candidate Candidate, project, generation s
 	}
 	// A silent loss of both derived indexes is indistinguishable from a new
 	// identity. Only the existing registration census can authorize that miss.
+	// Asking for this key's proof leaves a complete census in force for every
+	// other key, so live hooks keep admitting while discovery waits a pass.
 	absent, err := store.SessionIndexAbsent(sessionKey(candidate.Agent, candidate.NativeSessionID))
 	if err != nil {
 		return false, err
 	}
 	if !absent {
-		err := store.RequestSessionIndexRecovery(sessionKey(candidate.Agent, candidate.NativeSessionID))
+		err := store.RequestSessionIndexAbsence(sessionKey(candidate.Agent, candidate.NativeSessionID))
 		return false, errors.Join(state.ErrSessionIndexRecoveryRequired, err)
 	}
 	if err := validateAdmissionGeneration(cfg, candidate, project, generation, now, facts, factsOK); err != nil {
@@ -548,7 +574,6 @@ func continuationLocator(store *state.Store, agent, native string, source Source
 
 type scan struct {
 	nativeOnly          bool
-	inventoryOnly       bool
 	proofs              *nativeProofPasses
 	rollouts            *CodexRolloutLookup
 	resolver            *sourcefacts.ProjectResolver
@@ -562,6 +587,9 @@ type scan struct {
 	ctx                 context.Context
 	priority            bool
 	reservedDirectories int
+	// refused records sessions refused for starting shortly before the
+	// start floor, for status (nil when the pass admits nothing).
+	refused *refusedStarts
 }
 
 func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
@@ -593,10 +621,11 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 			return true, true
 		}
 		headerCharge := int64(sourcefacts.HeaderBytes + 128<<10)
-		if s.rollouts != nil && !s.rollouts.readBudget.Reserve(headerCharge) {
+		reservation := s.probeReservation()
+		if !reservation.Reserve(headerCharge) {
 			return true, true
 		}
-		memberChanged := !hit || entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || entry.SourceFingerprint != source.CoverageFingerprint
+		memberChanged := !hit || entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || entry.SourceFingerprint != source.EntryFingerprint
 		observation := s.adapter.Inspect(s.ctx, source.Source)
 		h.Probes++
 		if s.rollouts != nil {
@@ -605,8 +634,8 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 		h.Bytes += observation.Bytes
 		h.NativeReadBytes += observation.NativeReadBytes
 		h.NativeReadOperations += observation.NativeReadOperations
-		entry = cached{SourceFingerprint: source.CoverageFingerprint, Size: source.Fingerprint.Size, Mtime: source.Fingerprint.Mtime, Checked: now, Observation: observation}
-		if !s.retainProbedObservation(entry, headerCharge) {
+		entry = cached{SourceFingerprint: source.EntryFingerprint, Size: source.Fingerprint.Size, Mtime: source.Fingerprint.Mtime, Checked: now, Observation: observation}
+		if !s.retainProbedObservation(entry, headerCharge, reservation) {
 			return true, true
 		}
 		c.Cache[loc] = entry
@@ -628,7 +657,7 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 	if s.rollouts != nil {
 		s.rollouts.Observe(source.Source, source.Fingerprint, entry.Observation.Identity)
 	}
-	if s.nativeOnly || s.inventoryOnly {
+	if s.nativeOnly {
 		return false, false
 	}
 	return s.admitObservation(source, entry)
@@ -665,7 +694,12 @@ func (s scan) admitObservation(source SourceEntry, entry cached) (bool, bool) {
 	}
 	h.Supported = true
 	h.observeFormat(candidate)
-	if s.removalBlocks(candidate) {
+	if blocked, removed := s.removalBlocks(candidate); blocked {
+		// Only a lookup that found the removal settles the record; one that
+		// failed decides nothing about the session.
+		if removed {
+			s.refused.settle(candidate)
+		}
 		return false, false
 	}
 	// Lookup homes may include hooks/import locations for already admitted
@@ -677,14 +711,24 @@ func (s scan) admitObservation(source SourceEntry, entry cached) (bool, bool) {
 	return s.admitCandidate(candidate, loc)
 }
 
+// probeReservation captures the probe's owner. Without a shared lookup the
+// disabled budget preserves the unbudgeted discovery path.
+func (s scan) probeReservation() *agentapi.NativeReadReservation {
+	var budget *agentapi.NativeReadBudget
+	if s.rollouts != nil {
+		budget = s.rollouts.readBudget
+	}
+	return budget.Reservation()
+}
+
 // retainProbedObservation transfers the probe scratch to a catalog fact owner
 // before returning the scratch, including when retained ownership is refused.
-func (s scan) retainProbedObservation(entry cached, scratch int64) bool {
+func (s scan) retainProbedObservation(entry cached, scratch int64, reservation *agentapi.NativeReadReservation) bool {
 	if s.rollouts == nil {
 		return true
 	}
 	retained := s.rollouts.retainObservation(s.ctx, entry)
-	s.rollouts.readBudget.Release(scratch)
+	reservation.Release(scratch)
 	return retained
 }
 
@@ -745,16 +789,17 @@ func (s scan) enqueueDirectory(d directory, path string) bool {
 
 // removalBlocks avoids repeat census work for a known removed source. Retention
 // and removal share collector.lock with the scanner's production caller.
-func (s scan) removalBlocks(candidate Candidate) bool {
+// removed is true only when the lookup succeeded and found a removal.
+func (s scan) removalBlocks(candidate Candidate) (blocked, removed bool) {
 	if _, removed, err := s.store.Removal(candidate.Agent, candidate.NativeSessionID); err != nil {
 		s.health.Outcomes["removal_unavailable"]++
 		s.health.Errors = appendUnique(s.health.Errors, "removal_unavailable")
-		return true
+		return true, false
 	} else if removed {
 		s.health.Outcomes["removed_session"]++
-		return true
+		return true, true
 	}
-	return false
+	return false, false
 }
 
 func pruneCatalog(c *catalog) {
@@ -787,11 +832,13 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 	physical := cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects
 	if prior, blocked := s.retainedProject(candidate); blocked {
 		h.Outcomes["project_not_authorized"]++
+		s.refused.settle(candidate)
 		return false, false
 	} else if prior != nil {
 		if prior.ProjectResolution != nil && prior.ProjectResolution.OriginalCwd == candidate.WorkingDirectory {
 			if p, matched := sourcefacts.ConfiguredOwner(cfg.Archive.Projects, canonicalProjectPath(candidate.WorkingDirectory), canonicalProjectPath); matched && !p.Included {
 				h.Outcomes["project_not_authorized"]++
+				s.refused.settle(candidate)
 				return false, false
 			}
 			ownedRoot = prior.ProjectRoot
@@ -830,6 +877,8 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 				h.Outcomes[string(outcome)]++
 				if outcome != sourcefacts.RecoveryExcluded {
 					s.retainRetry(candidate.Source)
+				} else {
+					s.refused.settle(candidate)
 				}
 				return false, false
 			}
@@ -845,6 +894,7 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 			return false, false
 		}
 		h.Outcomes["project_not_authorized"]++
+		s.refused.settle(candidate)
 		return false, false
 	}
 	generation, authorized := cfg.DiscoveryGeneration(candidate.Agent, root, candidate.StartedAt, now)
@@ -855,10 +905,83 @@ func (s scan) admitCandidate(candidate Candidate, loc string) (bool, bool) {
 		_, existing, err := store.ArchiveSessionID(sessionKey(candidate.Agent, candidate.NativeSessionID))
 		if err != nil || !existing {
 			h.Outcomes["start_not_authorized"]++
+			if err == nil && s.startOnlyRefusal(candidate.Agent, root, facts.Cwd) {
+				s.refuseProven(candidate, loc)
+			} else if err == nil {
+				s.refused.settle(candidate)
+			}
 			return false, false
 		}
 	}
+	s.refused.settle(candidate)
 	return s.finishCandidate(candidate, loc, root, generation, ownedRoot, physical, facts)
+}
+
+// startOnlyRefusal reports whether a session refused as start_not_authorized
+// would be admitted had it started now: refused for its start alone, not
+// also by a project rule (in all-projects scope an excluded project refuses
+// through the same check), so backfill can import it.
+func (s scan) startOnlyRefusal(agent, root, cwd string) bool {
+	if s.cfg.EffectiveCodexCaptureScope() == config.CodexAllProjects {
+		_, ok := s.cfg.CodexDiscoveryGeneration(root, cwd, s.now, s.now)
+		return ok
+	}
+	_, ok := s.cfg.DiscoveryGeneration(agent, root, s.now, s.now)
+	return ok
+}
+
+// refuseProven records a start-refused candidate only once it passes the
+// native admission proof finishCandidate requires before admitting one, so a
+// provisional observation (incomplete metadata, pending related history) or
+// a session whose own task fails the proof is not named as one backfill
+// imports. A recorded session is not proven again, and past
+// maxRefusedProofs a pass leaves the rest for later passes.
+func (s scan) refuseProven(candidate Candidate, loc string) {
+	r := s.refused
+	if r == nil {
+		return
+	}
+	if !r.eligible(candidate, loc) {
+		r.settle(candidate)
+		return
+	}
+	if candidate.SnapshotProven {
+		r.refuse(candidate, loc)
+		return
+	}
+	if r.recorded(candidate, loc, s.catalog.Cache) || r.proofs >= maxRefusedProofs {
+		return
+	}
+	r.proofs++
+	proven, err := s.proofs.Prove(s.ctx, candidate)
+	if err != nil {
+		if nativeProofOutcome(err) == string(outcomeOwnTaskRejected) && s.ctx.Err() == nil {
+			s.rejectOwnTask(loc)
+		}
+		r.settle(candidate)
+		return
+	}
+	if !validCandidate(proven, proven.Source, s.adapter.Agent(), s.now) {
+		r.settle(candidate)
+		return
+	}
+	r.refuse(proven, loc)
+}
+
+// rejectOwnTask keeps a decisive own-task rejection in the catalog, so the
+// unchanged source is not proven again, and drops its pending retry.
+func (s scan) rejectOwnTask(loc string) {
+	c := s.catalog
+	entry := c.Cache[loc]
+	entry.Observation.Outcome = outcomeOwnTaskRejected
+	c.Cache[loc] = entry
+	kept := c.Retries[:0]
+	for _, pending := range c.Retries {
+		if pending.Locator != loc {
+			kept = append(kept, pending)
+		}
+	}
+	c.Retries = kept
 }
 
 func (s scan) finishCandidate(candidate Candidate, loc, root, generation, ownedRoot string, physical bool, facts sourcefacts.ProjectFacts) (bool, bool) {
@@ -869,16 +992,7 @@ func (s scan) finishCandidate(candidate Candidate, loc, root, generation, ownedR
 			outcome := nativeProofOutcome(err)
 			h.Outcomes[outcome]++
 			if outcome == string(outcomeOwnTaskRejected) && s.ctx.Err() == nil {
-				entry := c.Cache[loc]
-				entry.Observation.Outcome = outcomeOwnTaskRejected
-				c.Cache[loc] = entry
-				kept := c.Retries[:0]
-				for _, pending := range c.Retries {
-					if pending.Locator != loc {
-						kept = append(kept, pending)
-					}
-				}
-				c.Retries = kept
+				s.rejectOwnTask(loc)
 			} else {
 				s.retainRetry(candidate.Source)
 			}
@@ -948,33 +1062,21 @@ func prepareCatalog(ctx context.Context, store *state.Store, cfg config.Config, 
 	if o.Rollouts != nil {
 		roots = slices.Clone(o.Rollouts.roots)
 	}
-	if c.Coverage != nil && c.Coverage.Version != 1 {
-		return c, path, roots, errors.New("native coverage requires a newer writer")
-	}
 	if catalogNeedsReset(c, roots) {
 		c = catalog{}
-	}
-	if o.Rollouts != nil {
-		if o.Rollouts.coverage != nil && o.Rollouts.coverage.validate(roots) == nil {
-			c.Coverage = o.Rollouts.coverage
-		}
-		if c.Coverage == nil || c.Coverage.validate(roots) != nil {
-			c.Coverage = newCoverage(roots)
-		}
-		o.Rollouts.coverage = c.Coverage
-		c.Coverage.reserveFacts = o.Rollouts.reserveCatalog
-		if c.Coverage.Phase == coverageComplete {
-			c.Coverage.restart()
-			c.Queue = nil
+		if o.Rollouts != nil {
+			// The discarded catalog's charge goes with it.
+			o.Rollouts.releaseRestored()
 		}
 	}
+	c.reclassify()
 	c.Version = catalogVersion
 	c.Roots = roots
 	if c.Cache == nil {
 		c.Cache = map[string]cached{}
 	}
 	h.LastReconciled = c.Health.LastReconciled
-	if len(c.Queue) == 0 && (c.Coverage == nil || c.Coverage.Phase == coverageObserve) {
+	if len(c.Queue) == 0 {
 		for _, root := range roots {
 			for _, path := range adapter.InitialDirectories() {
 				next := directory{Root: root, Path: path}
@@ -993,7 +1095,7 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 	// Retry unavailable directories before the remaining backlog next pass,
 	// without revisiting them in this pass or consuming forward queue slots.
 	var unavailable []directory
-	for (c.Coverage == nil || c.Coverage.Phase == coverageObserve) && len(c.Queue) > 0 && discoveryProbeAvailable(h, o.Rollouts) && h.Entries < 2048 && time.Now().Before(deadline) {
+	for len(c.Queue) > 0 && discoveryProbeAvailable(h, o.Rollouts) && h.Entries < 2048 && time.Now().Before(deadline) {
 		if scanStopped(s.ctx, o) {
 			break
 		}
@@ -1010,31 +1112,20 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 			unavailable = append(unavailable, d)
 			continue
 		}
-		worker := scan{nativeOnly: s.nativeOnly, inventoryOnly: s.inventoryOnly, proofs: s.proofs, resolver: s.resolver, recovery: s.recovery, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts}
-		advanced := true
+		worker := scan{nativeOnly: s.nativeOnly, proofs: s.proofs, resolver: s.resolver, recovery: s.recovery, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts, refused: s.refused}
 		for _, source := range batch.Entries {
 			if scanStopped(s.ctx, o) || time.Now().After(deadline) {
 				finished = false
 				next = d.Offset
-				advanced = false
 				break
 			}
 			retry, stop := worker.visitEntry(d, source)
 			if retry {
 				finished = false
 				next = d.Offset
-				advanced = false
 			}
 			if stop {
 				break
-			}
-		}
-
-		if c.Coverage != nil {
-			if batch.coverage == nil {
-				c.Coverage.Failed = true
-			} else {
-				c.Coverage.recordBatch(d, *batch.coverage, next, finished, advanced)
 			}
 		}
 		if !finished {
@@ -1043,12 +1134,6 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 		}
 	}
 	c.Queue = append(unavailable, c.Queue...)
-	if c.Coverage != nil {
-		if c.Coverage.Phase == coverageObserve && len(c.Queue) == 0 {
-			c.Coverage.beginValidation()
-		}
-		advanceCoverageValidation(s.ctx, c, h, s.adapter, deadline, o)
-	}
 }
 
 func (s scan) recoverProject(candidate Candidate) (archive.ProjectResolution, sourcefacts.RecoveryOutcome, bool) {
@@ -1096,7 +1181,7 @@ func (s scan) recoveryEvidenceOutcome(candidate Candidate, loc string) string {
 
 // Rejected-task fingerprints schedule revalidation; they never grant admission.
 func cachedEntryNeedsProbe(entry cached, source SourceEntry) bool {
-	return cachedObservationNeedsProbe(entry.Observation, source.Source) || entry.Observation.Outcome == outcomeOwnTaskRejected && (entry.SourceFingerprint == "" || entry.SourceFingerprint != source.CoverageFingerprint)
+	return cachedObservationNeedsProbe(entry.Observation, source.Source) || entry.Observation.Outcome == outcomeOwnTaskRejected && (entry.SourceFingerprint == "" || entry.SourceFingerprint != source.EntryFingerprint)
 }
 
 func cachedEntryNeedsRefresh(entry cached, source SourceEntry, now time.Time, retryDelay time.Duration) bool {
@@ -1172,13 +1257,38 @@ func validateAdmissionGeneration(cfg config.Config, candidate Candidate, project
 	return nil
 }
 
-func hasValidatedCoverage(coverage *coverageInventory) bool {
-	return coverage != nil && coverage.Phase == coverageComplete && coverage.proofEpoch == coverage.Epoch
+func catalogPending(c catalog, nativeOnly bool) bool {
+	return len(c.Queue) > 0 || !nativeOnly && len(c.Retries) > 0
 }
 
-func catalogPending(c catalog, nativeOnly bool) bool {
-	return len(c.Queue) > 0 || !nativeOnly && len(c.Retries) > 0 || c.Coverage != nil && c.Coverage.Phase != coverageComplete
+// deferCheckpoint hands a catalog whose checkpoint ran out of its slice to
+// the lookup's close, which writes it without the pass deadline, so the
+// pass's observations are not lost. Other write failures stay this pass's.
+func (l *CodexRolloutLookup) deferCheckpoint(c *catalog, err error) {
+	if l != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+		l.catalog = c
+		l.dirty = true
+	}
 }
+
+// checkpointCatalog persists the pass's catalog. One that, even without its
+// observation cache, is past the size the next read accepts is not written:
+// the previous file stays and health says so. Return the refusal so the caller
+// cannot mark unwritten queue changes as checkpointed.
+func checkpointCatalog(ctx context.Context, lookup *CodexRolloutLookup, path string, c *catalog, h *Health) error {
+	err := persistCatalog(ctx, lookup, path, *c)
+	if errors.Is(err, errCatalogTooLarge) {
+		h.Errors = append(h.Errors, "catalog_over_cap")
+	}
+	if err != nil {
+		lookup.deferCheckpoint(c, err)
+		return errors.Join(errors.New("discovery state write failed; retry next scan"), err)
+	}
+	return nil
+}
+
+// persistCatalog is persistNativeCatalog; tests replace it to fail a checkpoint.
+var persistCatalog = persistNativeCatalog
 
 func persistNativeCatalog(ctx context.Context, lookup *CodexRolloutLookup, path string, c catalog) error {
 	if lookup != nil {

@@ -85,9 +85,12 @@ the collector stops retrying until the parser version or the source
 changes. `status` counts these as unrefreshable summaries; see
 [local state](local-state.md).
 
-**Retention.** How long a session is kept: 90 days by default (1 to 36,500),
-counted from its last capture. Only the machine that captured a session deletes
-it; see [multiple machines](../guides/multiple-machines.md).
+**Retention.** Automatic whole-session expiry: 90 days by default, 1 to 36,500
+days for a finite policy, or **Keep forever** (`retention_days: 0`). Finite
+retention ages from the last meaningful capture, including preserved revisions.
+The owning machine applies its own policy; see
+[multiple machines](../guides/multiple-machines.md). Forever still permits privacy
+and superseded-source cleanup, explicit deletion and provider lifecycle expiry.
 
 **Source bundle (source).** The gzip-compressed, filtered transcript of one
 session, `source.<sha256>.jsonl.gz`, plus supplemental evidence (hook

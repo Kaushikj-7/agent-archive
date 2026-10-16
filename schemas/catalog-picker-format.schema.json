@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/catalog-picker-format.schema.json",
+  "title": "Scoped picker head descriptor",
+  "description": "Picker member of head protocol 11/schema 5. The exact descriptor is required on both head and coordinator. Complete indexed construction, verified activation and permanent writer protection are required.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["Version", "RowSchema", "Capabilities"],
+  "properties": {
+    "Version": {"const": 1},
+    "RowSchema": {"const": 1},
+    "Capabilities": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"const": "scoped-picker-v1"}}
+  }
+}

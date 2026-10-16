@@ -187,7 +187,7 @@ func TestListHidesSubagentsAndJSONKeepsThem(t *testing.T) {
 	if !strings.Contains(out, "3 sessions (4 subagent sessions hidden; search to find one).") {
 		t.Fatalf("footer:\n%s", out)
 	}
-	if !strings.Contains(out, "Orchestrate the release · 3 subagents") || !strings.Contains(out, "A separate task · 1 subagent ") {
+	if !strings.Contains(out, "Orchestrate the release · 3 subagents") || !strings.Contains(out, "A separate task · 1 subagent\n") {
 		t.Fatalf("the parents carry no hint:\n%s", out)
 	}
 	if strings.Contains(out, "Child task") {
@@ -373,7 +373,7 @@ func TestShowSeveralMatchesPrintTheCandidateTable(t *testing.T) {
 	if want := fmt.Sprintf(`agent-archive: show: "wobbly" matches 2 sessions in %s; pass one ID:`, a.label); lines[0] != want {
 		t.Fatalf("first line %q, want %q\n%s", lines[0], want, errOut)
 	}
-	if !strings.Contains(errOut, "wobbly01  codex") || !strings.Contains(errOut, "#213") || !strings.Contains(errOut, "Fix wobbly retention test") || strings.Contains(errOut, "Reviewer") {
+	if !strings.Contains(errOut, "\n  WHEN  AGENT  PR    ID        TITLE\n") || !strings.Contains(errOut, "  codex  #213  wobbly01  Fix wobbly retention test · 1 subagent\n") || !strings.Contains(errOut, "  codex  -     wobbly02  Fix wobbly hook-lock test\n") || strings.Contains(errOut, "Reviewer") {
 		t.Fatalf("rows:\n%s", errOut)
 	}
 	if !strings.Contains(errOut, "\nNext: agent-archive show wobbly01\n") || !strings.HasSuffix(errOut, "      (or: agent-archive list \"wobbly\" --json)\n") {
@@ -550,11 +550,9 @@ func TestListBrowserHidesSubagents(t *testing.T) {
 	}
 }
 
-// An exact short ID wins before the tiers in every command: a session in
-// another project, or in the archive only, is the answer over an in-scope
-// title that mentions its ID, so a candidate table's Next line takes the row
-// it names.
-func TestExactShortIDWinsOverTheScopeInEveryCommand(t *testing.T) {
+// List and handoff retain exact short-ID precedence. Show combines the ID
+// candidate with title matches, then applies the scope tiers.
+func TestShortIDPrecedenceInListHandoffAndShow(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
 	f.addArchivedWith(t, "abcd1234", "The real one", "billing", nil)
@@ -577,7 +575,7 @@ func TestExactShortIDWinsOverTheScopeInEveryCommand(t *testing.T) {
 	if got := namedIDs(out, "abcd1234", "wxyz9999"); !sameStrings(got, []string{"abcd1234"}) {
 		t.Fatalf("list listed %v:\n%s", got, out)
 	}
-	if out, _, code := a.runShow(t, "abcd1234", "--json"); code != 0 || !strings.Contains(out, `"session_id": "abcd1234"`) {
+	if out, _, code := a.runShow(t, "abcd1234", "--json"); code != 0 || !strings.Contains(out, `"session_id": "wxyz9999"`) {
 		t.Fatalf("show: code=%d\n%s", code, out)
 	}
 }

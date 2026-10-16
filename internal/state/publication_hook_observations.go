@@ -33,14 +33,15 @@ type PublicationHookObservations struct {
 // from the owning current request/candidate. Only its actual transform can mint
 // a PrivacySource receipt. It never consults a later request or native source.
 func FreezePublicationHookObservations(ctx context.Context, p *PendingPublication, body []byte, destination, admission, policy string, budget *agentapi.NativeReadBudget) error {
+	reservation := budget.Reservation()
 	if p.Preparation != nil || p.Commit != nil || len(body) == 0 || len(body) > 32<<20 || len(p.MetadataBytes) > 32<<20 || budget == nil {
 		return ErrDurableStorageRecovery
 	}
 	n := 8*int64(len(body)+len(p.MetadataBytes)) + 64<<10
-	if !budget.Reserve(n) {
+	if !reservation.Reserve(n) {
 		return errStateBudget
 	}
-	defer budget.Release(n)
+	defer reservation.Release(n)
 	if err := ctx.Err(); err != nil {
 		return err
 	}

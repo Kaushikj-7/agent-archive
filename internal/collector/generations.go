@@ -18,6 +18,9 @@ import (
 // The caller closes the returned data lease
 // after the preview and any returned publication have finished their consumers.
 func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (builder func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error), release func(), resultErr error) {
+	if reg.HistoricalProject != nil {
+		return nil, func() {}, errors.New("historical imports cannot recover native continuation; preview a new explicit import")
+	}
 	if reg.IsChild() || !reg.ReadsTranscriptFile() {
 		return nil, func() {}, errors.New("recovery supports top-level transcript files only; start a fresh parent session for subagent recovery")
 	}
@@ -92,7 +95,7 @@ func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistrat
 // may republish it with its original capture age; no native source or current
 // skill inventory is observed, even if the live transcript grew or vanished.
 func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
-	if err := s.local.FrozenGeneration(s.reg); err != nil {
+	if err := s.retainedOnlyAuthority(); err != nil {
 		return outcomeSkipped, err
 	}
 	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
@@ -103,11 +106,22 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 		return outcomeSkipped, err
 	} else if found {
 		if pending.History != nil {
-			return s.resumeHistory(pending)
+			return s.resumeHistory(s.ctx, pending)
 		}
 		if pending.Bundle.Capture.FilterVersion != archive.FilterVersion || pending.Bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(pending.Bundle.SupplementalEvidence, s.opts.skillEvidence()) {
-			return outcomeSkipped, errors.New("frozen pending privacy policy changed; retain evidence for refilter and reconcile")
-		} else if _, err := s.publishPending(pending); err != nil {
+			if pending.Commit != nil {
+				return outcomeSkipped, errors.New("frozen pending privacy policy changed; retain evidence for refilter and reconcile")
+			}
+			if pending.Catalog != nil {
+				return outcomeSkipped, state.ErrCatalogJournalFrozen
+			}
+			// Stronger privacy supersedes a retained-history maintenance retry.
+			// Rebuild below from the last acknowledged publication, without native
+			// input and without carrying the discarded retry's newer age forward.
+			if err := s.local.RemovePending(s.id()); err != nil {
+				return outcomeSkipped, err
+			}
+		} else if _, err := s.publishPending(s.ctx, pending); err != nil {
 			return outcomeSkipped, err
 		}
 	}
@@ -143,11 +157,16 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 		if rendered.declined {
 			return outcomeSkipped, errors.New("frozen history maintenance cannot decline an existing publication")
 		}
-		pending := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), Bundle: filtered, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, ReadyAt: s.now, Attempted: true}
+		pending := state.PendingPublication{ImportExpectedMetadataSHA256: func() string {
+			if s.reg.StagedImportSHA256 != "" {
+				return metadataSHA(s.published.Metadata())
+			}
+			return ""
+		}(), SkillEvidence: string(s.opts.skillEvidence()), Bundle: filtered, SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata, ReadyAt: s.now, Attempted: true}
 		if err := s.savePending(&pending); err != nil {
 			return outcomeSkipped, err
 		}
-		outcome, err := s.publishPending(pending)
+		outcome, err := s.publishPending(s.ctx, pending)
 		if err != nil {
 			return outcome, err
 		}
@@ -168,10 +187,7 @@ func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bo
 	if err := checkPublicationSessionRead(p.ctx, p.local, reg, p.opts); err != nil {
 		return false, signature, err
 	}
-	if settled, _, err := p.owesNothing(reg.ArchiveSessionID, false); err != nil || !settled {
-		return false, signature, err
-	}
-	if err := p.local.FrozenGeneration(reg); err != nil {
+	if err := p.retainedSignatureAuthority(reg); err != nil {
 		return false, signature, err
 	}
 	if owed, err := p.linkOwed(reg); err != nil || owed {
@@ -181,11 +197,23 @@ func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bo
 	if err != nil || !found || !signature.Frozen || signature.SourceSetVersion != sourceSetVersion(reg) || signature.Failed {
 		return false, signature, err
 	}
+	if reg.HistoricalProject != nil && signature.PublishedProjectName != p.opts.historicalProjectName(reg) {
+		return false, signature, nil
+	}
 	adapterVersion, known := harnessAdapterVersion(p.opts.Sources, reg.Harness.Name)
 	if !known || signature.ParserVersion != p.opts.parserVersionFor(reg.Harness.Name) || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != p.opts.skillEvidence() || signature.PublishedLastHead != headFingerprint(reg.LastHead) {
 		return false, signature, nil
 	}
-	return true, signature, nil
+	unchanged, _, err := p.owesNothing(reg.ArchiveSessionID, false)
+	return unchanged, signature, err
+}
+
+func (p *pass) retainedSignatureAuthority(reg archive.SessionRegistration) error {
+	if reg.HistoricalProject == nil {
+		return p.local.FrozenGeneration(reg)
+	}
+	s := sessionScan{reg: reg}
+	return s.validateHistoricalSnapshot()
 }
 
 func (s *sessionScan) recordFrozenSignature() error {
@@ -202,13 +230,22 @@ func (s *sessionScan) recordFrozenSignature() error {
 	if !known {
 		return nil
 	}
+	projectName := ""
+	if s.reg.HistoricalProject != nil {
+		var metadata archive.Metadata
+		if err := s.unmarshalRetained(s.published.Metadata(), &metadata); err != nil {
+			return err
+		}
+		projectName = metadata.ProjectName
+	}
 	summary := s.published.Summary()
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
 		SourceSetDigest: summary.SourceSetDigest, CurrentRevision: summary.CurrentRevision,
 		SourceSchemaVersion: summary.SourceSchemaVersion, MetadataSchemaVersion: summary.MetadataSchemaVersion,
 		SourceSetComplete: summary.SourceSetComplete, MeaningfulCapturedAt: summary.MeaningfulCapturedAt,
-		SourceSetVersion: sourceSetVersion(s.reg),
-		Frozen:           true, SkillEvidence: string(s.opts.skillEvidence()),
+		SourceSetVersion:     sourceSetVersion(s.reg),
+		PublishedProjectName: projectName,
+		Frozen:               true, SkillEvidence: string(s.opts.skillEvidence()),
 		ParserVersion: s.parserVersion(), FilterVersion: archive.FilterVersion,
 		AdapterVersion: adapterVersion, PublishedLastHead: s.publishedLastHead(),
 	})
@@ -259,17 +296,26 @@ func generationRecoveryBuilder(ctx context.Context, owner *sessionScan, filtered
 		if err := pending.ValidateHistoryBudgeted(id, owner.readBudget()); err != nil {
 			return latest, state.PendingPublication{}, err
 		}
-		preparationScan := *owner
-		preparationScan.reg = latest
-		policy, err := preparationScan.publicationPolicy(bundle)
-		if err != nil {
-			return latest, state.PendingPublication{}, err
-		}
-		pending, err = state.PreparePublicationV2(pending, state.PublicationPredecessor{State: state.PredecessorAbsent}, latest.DestinationID, preparationScan.publicationAdmission(), policy, state.PublicationCapture)
-		if err != nil {
-			return latest, state.PendingPublication{}, err
+		if history != nil {
+			preparationScan := *owner
+			preparationScan.reg = latest
+			policy, err := preparationScan.publicationPolicy(bundle)
+			if err != nil {
+				return latest, state.PendingPublication{}, err
+			}
+			pending, err = state.PreparePublicationV2(pending, state.PublicationPredecessor{State: state.PredecessorAbsent}, latest.DestinationID, preparationScan.publicationAdmission(), policy, state.PublicationCapture)
+			if err != nil {
+				return latest, state.PendingPublication{}, err
+			}
 		}
 		returned = true
 		return latest, pending, nil
 	}, closeData
+}
+
+func (s *sessionScan) retainedOnlyAuthority() error {
+	if s.reg.HistoricalProject != nil {
+		return s.reg.ValidateHistoricalProject()
+	}
+	return s.local.FrozenGeneration(s.reg)
 }

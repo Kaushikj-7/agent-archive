@@ -106,7 +106,7 @@ func TestRunRecoversWholeHistoryAuthorityAfterStateLoss(t *testing.T) {
 		t.Run(map[bool]string{false: "missing", true: "corrupt"}[corrupt], func(t *testing.T) {
 			t.Parallel()
 			producer, pending := privacyJournal(t)
-			if _, err := producer.publishPending(pending); err != nil {
+			if _, err := producer.publishPending(producer.ctx, pending); err != nil {
 				t.Fatal("real complete history publication", err)
 			}
 			local := newTestStore(t)

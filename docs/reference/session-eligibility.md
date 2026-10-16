@@ -24,7 +24,7 @@ Already accepted registrations retain their original start time on resume. An ab
 
 For included projects, skipped starts (including a declined Cursor first prompt) produce a bounded local diagnostic with application, project, reason, and time. Reasons include a project that is not yet active, an unproven start, setup in progress, and a hook that could not acquire the capture lock before its deadline (`hook_busy`). Setup holds an open transaction: hooks register nothing then, so a start that lands in that window says so instead of disappearing. Writing diagnostics does not wait for setup's lock, so it is best effort. If both the capture and diagnostics locks are busy, the hook writes an explanation to stderr; `status` may have no record of that missed event. Diagnostic records contain no transcript, native session ID, or transcript path. Excluded project paths are not recorded, and a recorded diagnostic is dropped once its project is excluded: `status` reports only currently included projects, and saving a setup that excludes a project prunes its stored entries. When a start is declined for more than one reason, the diagnostic names the most specific one: a project that is not yet active is reported as such even if the start was also a resume. `status` and `status --json` show these reasons; hooks remain local and return successfully to the agent.
 
-When a proven first-start event times out waiting for the capture lock, the hook writes a private admission intent. Cursor also keeps a minimal response/stop follow-up when it supplies the transcript path before the first prompt has registered or when the capture lock is busy. The intent contains the app, event name, native session ID, selected project, destination ID, transcript path, and observation time, but no conversation text or raw hook payload. A follow-up cannot admit a session by itself. The next collector pass rechecks the current configuration, destination, and project activation before replay. Setup removes intents for projects or destinations it changes, and pause clears pending intents. Intents are limited to 128 files and expire after 24 hours. `hook_busy` remains visible even if replay succeeds so the user can see that capture was delayed. A full queue or a second lock timeout is reported on hook stderr. Other missed lifecycle events are not replayed; a later collector pass still scans an admitted session's transcript.
+When a proven first-start event times out waiting for the capture lock, the hook writes a private admission intent. Cursor also keeps a minimal response/stop follow-up when it supplies the transcript path before the first prompt has registered or when the capture lock is busy. The intent contains the app, event name, native session ID, selected project, destination ID, transcript path, and observation time, but no conversation text or raw hook payload. A follow-up cannot admit a session by itself. A Claude Code (or other non-Codex) subagent completion is queued the same way when the capture lock is busy or local identity recovery is pending; its intent adds only the subagent's native ID, transcript path and sanitized type, and replay waits for the parent's registration. The next collector pass rechecks the current configuration, destination, and project activation before replay. Setup removes intents for projects or destinations it changes, and pause clears pending intents. Intents are limited to 128 files, of which subagent completions may fill at most half, and expire after 24 hours. `hook_busy` remains visible even if replay succeeds so the user can see that capture was delayed. A full queue or a second lock timeout is reported on hook stderr. Other missed lifecycle events are not replayed; a later collector pass still scans an admitted session's transcript.
 
 ## Imported sessions
 
@@ -73,3 +73,19 @@ members, with nested children removed before their selected parents. Children
 keep their own source, so removing a parent does not break child readback. Undo
 keeps a project included while another batch has independently imported native
 children there, including children whose parent link has resolved.
+
+## Historical-only imports
+
+A confirmed mapping-file import can admit complete supported evidence without a
+live checkout or Git. Its separate historical project proof requires an enabled
+import permission for the exact destination and selected imported app. Explicit
+original/canonical cwd and required-history-source exclusions still win. Home,
+temporary and above-home restrictions apply before assignment. The proof grants
+no hooks, discovery, watchers or future-project inclusion.
+
+Admission freezes filtered staging. First publication can recover after native
+source deletion; later capture uses retained evidence only, preserving capture
+age through privacy/parser/label maintenance. Disabling permission stops new
+admission and publication, while finite retention and explicit undo/purge retain
+their deletion authority. Re-enable applies only to the recorded destination.
+An existing ordinary archive owner is never reassigned by a historical mapping.

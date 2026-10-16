@@ -539,7 +539,7 @@ func TestBlockedSessionWithoutPublicationSkipsRegeneration(t *testing.T) {
 	}
 }
 
-func (s *countedGets) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+func (s *countedGets) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
 	s.gets++
-	return s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+	return s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
 }

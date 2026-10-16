@@ -323,7 +323,7 @@ func TestMixedNamespacesShareOpaqueCoverageAndLegacyReaderFallsBack(t *testing.T
 		t.Fatal(err)
 	}
 	// A prior v2 reader sees no v2 revision for this current canonical header.
-	if _, _, err := selectListingRevisions(objects, map[string]listingindex.Revision{}, Filter{}, 1, ListOptions{}); err == nil {
+	if _, _, err := selectListingRevisions(objects, map[RevisionID]listingindex.Revision{}, Filter{}, 1, ListOptions{}); err == nil {
 		t.Fatal("legacy discovery falsely claims current coverage")
 	}
 }

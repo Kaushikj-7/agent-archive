@@ -16,6 +16,7 @@ OK Credential received
 > Credential:
 OK Credential received
 
+Pairing · Review settings
 Pairing destination
 
 AWS profile/settings transfer from
@@ -36,7 +37,10 @@ Step 3 of 3 · Review and start
   Storage
     s3://synthetic/agent-archive/
   Keep for
-    90 days
+    90 days · Sessions with no new
+    activity for 90 days are deleted
+    from your bucket; change with
+    Edit a setting, or keep forever
   ! Storage not checked yet ·
     Connection will be checked after
     you confirm these settings
@@ -52,7 +56,7 @@ Step 3 of 3 · Review and start
 
   1) Save the displayed destination
      and capture settings
-  2) Edit settings
+  2) Edit a setting
 
   [d] Full settings and privacy
   [Enter] Cancel
@@ -64,8 +68,14 @@ OK Save the displayed destination
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl
     responds
+Pairing · Check storage
+
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   · Codex capture: Automatic discovery plus hooks when approved.
   · Codex scope: Included projects only.
   · Exceptions: None configured.
@@ -78,9 +88,10 @@ Apps: Codex. Projects: 1. Storage: Amazon S3 bucket synthetic.
 Skill evidence: metadata. User-level skill roots outside selected projects may be scanned.
   ! Bucket privacy not verified: public-access settings could not be read.
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-OK laptop is connected. Paired with studio.
+Pairing · Save configuration
+OK Paired successfully · laptop is connected. Paired with studio.
 AWS profile/settings transfer.
-You can finish on the source machine and delete the pairing file.
+Configuration saved here. The source does not receive automatic confirmation; close its transfer instructions and delete your pairing file copies.
 
 ✓ Setup complete · Automatic capture is on
 Installed /handoff, which continues a session in another agent: ~/.agents/skills/handoff/SKILL.md

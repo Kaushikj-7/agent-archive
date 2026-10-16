@@ -3,6 +3,7 @@ package state
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -91,7 +93,7 @@ type publishedState struct {
 	Preparation        *PreparationAuthority      `json:"preparation,omitempty"`
 	Payloads           []PublicationSource        `json:"payloads,omitempty"`
 	Cleanup            *CleanupProgress           `json:"cleanup,omitempty"`
-	Commit             *PublicationCommit         `json:"commit,omitempty"`
+	Commit             *PublicationCommit         `json:"source_set_commit5,omitempty"`
 	Sources            []archive.SourceReference  `json:"sources,omitempty"`
 	PredecessorUnknown bool                       `json:"predecessor_unknown,omitempty"`
 	MetadataBytes      []byte                     `json:"metadata_bytes,omitempty"`
@@ -244,8 +246,11 @@ func (p publishedState) summaryFromMetadata(m archive.Metadata) PublishedSummary
 }
 
 type publishedSnapshot struct {
-	Bundle      archive.SourceBundle `json:"bundle"`
-	PublishedAt time.Time            `json:"published_at"`
+	CursorSelection *StagedSelection     `json:"cursor_commit4,omitempty"`
+	StagedSelection *StagedSelection     `json:"staged_commit3,omitempty"`
+	Selection       *ReadySelection      `json:"selection_commit,omitempty"`
+	Bundle          archive.SourceBundle `json:"bundle"`
+	PublishedAt     time.Time            `json:"published_at"`
 	// Source is the source object this publication's metadata points at:
 	// exactly the key, digest, and size that were uploaded. The next
 	// publication names the object it supersedes from it. Rebuilding that
@@ -288,7 +293,7 @@ func (p publishedState) detachedLastPublished() *publishedSnapshot {
 	if p.LastPublished == nil || !p.LastPublished.SameAsBundle {
 		return p.LastPublished
 	}
-	return &publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.LastPublished.PublishedAt, Source: p.LastPublished.Source}
+	return &publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.LastPublished.PublishedAt, Source: p.LastPublished.Source, Selection: p.LastPublished.Selection}
 }
 
 // lastPublishedSource returns the source reference of the last publication,
@@ -345,7 +350,7 @@ func (p publishedState) next(bundle archive.SourceBundle, publishedAt time.Time,
 		last = &snapshot
 	}
 	if status == CacheStatusPublished {
-		if p.PublicationVersion != 2 {
+		if p.PublicationVersion != 5 {
 			commit, sources = nil, nil
 		}
 		// The candidate becoming the current bundle is exactly what was just
@@ -408,6 +413,21 @@ func PublishedStateLoads() int64 { return publishedStateLoads.Load() }
 // LoadPublishedState reads a session's published state. A session with none
 // yet yields an empty one (Found reports false) that saves create.
 func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) {
+	return s.loadPublishedStateContext(s.durableContext(), archiveSessionID)
+}
+
+// LoadPublishedStateContext inherits the invocation context without creating a
+// different resource scope or releasing the caller's retained decoded owner.
+func (s *Store) LoadPublishedStateContext(ctx context.Context, archiveSessionID string) (*Published, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	read := *s
+	read.resourceContext = ctx
+	return read.loadPublishedStateContext(ctx, archiveSessionID)
+}
+
+func (s *Store) loadPublishedStateContext(ctx context.Context, archiveSessionID string) (*Published, error) {
 	if !safeFileComponent(archiveSessionID) {
 		return nil, errors.New("archive session ID is not a safe file name component")
 	}
@@ -419,6 +439,16 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 		// In a collector pass a corrupt file was moved aside: reported once,
 		// then the session is one that never published (quarantineInPass).
 		return nil, fmt.Errorf("read published state %q: %w", archiveSessionID, s.afterLoss(archiveSessionID, err))
+	}
+	if found && (p.state.PublicationVersion == 3 || p.state.PublicationVersion == 4) {
+		if err := p.preserveStagedPublished(ctx, &p.state); err != nil {
+			return nil, err
+		}
+	}
+	if found && p.state.PublicationVersion == 2 {
+		if err := p.preserveReadyPublished(ctx, &p.state); err != nil {
+			return nil, err
+		}
 	}
 	p.found = found
 	// Derive from the decoded source authority once per work scan, including
@@ -437,6 +467,12 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 }
 
 func (p *Published) write(next publishedState) error {
+	if err := p.preserveStagedPublished(p.store.durableContext(), &next); err != nil {
+		return err
+	}
+	if err := p.preserveReadyPublished(p.store.durableContext(), &next); err != nil {
+		return err
+	}
 	summary, err := p.store.summaryBudgeted(next)
 	if err != nil {
 		return err
@@ -451,7 +487,7 @@ func (p *Published) write(next publishedState) error {
 			releaseCandidate()
 		}
 	}()
-	if next.PublicationVersion == 2 {
+	if next.PublicationVersion == 5 {
 		if err := p.store.validateSelectingPublishedBudgeted(next); err != nil {
 			return err
 		}
@@ -567,8 +603,9 @@ func (s *Store) LoadPublishedSummary(archiveSessionID string) (summary Published
 // published state file. ok is false when there is none to trust: no file,
 // an older file without one, or anything unexpected, all of which the
 // caller answers with a full decode.
+var errSelectingPublishedFullDecode = errors.New("selecting publication requires full validated decode")
 
-func readLeadingSummaryProtocol(reader io.Reader, composition bool) (summary PublishedSummary, ok bool, err error) {
+func readLeadingSummary(reader io.Reader) (summary PublishedSummary, ok bool, err error) {
 	decoder := json.NewDecoder(bufio.NewReaderSize(reader, 4096))
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
 		return summary, false, errors.Join(io.ErrUnexpectedEOF, err)
@@ -577,15 +614,12 @@ func readLeadingSummaryProtocol(reader io.Reader, composition bool) (summary Pub
 	if err != nil {
 		return summary, false, err
 	}
-	if key == "publication_version" {
+	if name, ok := key.(string); ok && strings.EqualFold(name, "publication_version") {
 		var version int
-		if err := decoder.Decode(&version); err != nil || version != 2 || !composition {
+		if decoder.Decode(&version) != nil || (version != 2 && version != 3 && version != 4 && version != 5) {
 			return summary, false, ErrDurableStorageRecovery
 		}
-		key, err = decoder.Token()
-		if err != nil {
-			return summary, false, err
-		}
+		return summary, false, errSelectingPublishedFullDecode
 	}
 	if key != "summary" {
 		return summary, false, nil
@@ -815,7 +849,7 @@ func (p *Published) SaveRepublishedMetadata(pending PendingPublication, at time.
 	next.PublishedAt = at
 	// A legacy acknowledged publication replaces the old seal, not just its body.
 	// Its complete references remain readable from the exact cached metadata.
-	if next.PublicationVersion != 2 {
+	if next.PublicationVersion != 5 {
 		next.Commit, next.Sources = nil, nil
 	}
 	next.PredecessorUnknown = false
@@ -894,4 +928,10 @@ func (s *Store) PublishedMetadata(archiveSessionID string) ([]byte, error) {
 		return nil, fmt.Errorf("read published state %q: %w", archiveSessionID, os.ErrNotExist)
 	}
 	return p.Metadata(), nil
+}
+
+// readLeadingSummaryProtocol preserves the legacy prefix-reader port. Selecting
+// protocols always require the complete validated decoder.
+func readLeadingSummaryProtocol(reader io.Reader, _ bool) (PublishedSummary, bool, error) {
+	return readLeadingSummary(reader)
 }

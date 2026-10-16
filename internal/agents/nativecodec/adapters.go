@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"io"
 	"slices"
@@ -30,7 +31,7 @@ func (CodexAdapter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error)
 	return filterJSONL(r, "codex-jsonl", map[string]bool{
 		"session_meta": true, "turn_context": true, "response_item": true,
 		"event_msg": true, "message": true, "token_usage_record": true,
-	}, nil, nil)
+	}, nil)
 }
 
 // ClaudeAdapter handles a small, explicit subset of Claude Code JSONL event
@@ -47,6 +48,17 @@ func (ClaudeAdapter) Version() string { return adapterVersion }
 // through the shared privacy filter, and labels the result claude-jsonl.
 func (ClaudeAdapter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error) {
 	return filterClaudeJSONL(r, nil)
+}
+
+// FilterClaudeRetainedBounded applies the ordinary privacy codec while refusing
+// retained output beyond the caller's allowance before accumulating it.
+func FilterClaudeRetainedBounded(r io.Reader, boundary archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterJSONL(r, "claude-jsonl", map[string]bool{"user": true, "assistant": true, "tool_use": true, "tool_result": true, "message": true, "summary": true}, nil, boundary)
+}
+
+// FilterCursorRetainedBounded is the equivalent ordinary Cursor record codec.
+func FilterCursorRetainedBounded(r io.Reader, boundary archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterJSONL(r, "cursor-jsonl", map[string]bool{"session": true, "message": true, "tool_call": true, "tool_result": true, "event": true, "turn_ended": true}, nil, boundary)
 }
 
 // FilterSubagentJSONL is FilterJSONL for a Claude Code subagent's transcript
@@ -69,7 +81,7 @@ func filterClaudeJSONL(r io.Reader, lead map[string]any, bounds ...archive.Captu
 	return filterJSONL(r, "claude-jsonl", map[string]bool{
 		"user": true, "assistant": true, "tool_use": true, "tool_result": true,
 		"message": true, "summary": true,
-	}, lead, nil, bounds...)
+	}, lead, bounds...)
 }
 
 // CursorAdapter filters hook-provided JSONL records, a hook-provided text
@@ -94,7 +106,7 @@ func filterCursorJSONL(r io.Reader, bounds ...archive.CaptureBoundary) (archive.
 	return filterJSONL(r, "cursor-jsonl", map[string]bool{
 		"session": true, "message": true, "tool_call": true, "tool_result": true,
 		"event": true, "turn_ended": true,
-	}, nil, nil, bounds...)
+	}, nil, bounds...)
 }
 
 // textRole is the lower-case role name of a Cursor text transcript section
@@ -386,11 +398,15 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (archive.
 	return result, nil
 }
 
-func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any, validateMeta func([]byte) error, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
-	return filterJSONLEncoded(r, format, knownTypes, lead, validateMeta, nil, nil, bounds...)
+func filterJSONL(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterJSONLEncoded(r, format, knownTypes, lead, nil, nil, nil, bounds...)
 }
 
 func filterJSONLEncoded(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any, validateMeta func([]byte) error, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterJSONLWithOutput(r, format, knownTypes, lead, validateMeta, encoder, beforeRecord, nil, bounds...)
+}
+
+func filterJSONLWithOutput(r io.Reader, format string, knownTypes map[string]bool, lead map[string]any, validateMeta func([]byte) error, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), inspect func(map[string]any), bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
 	scanner := bufio.NewScanner(r)
 	// Individual native JSONL records can contain tool output. A hard limit keeps
 	// filtering bounded; exceeding it is refused rather than silently
@@ -399,15 +415,19 @@ func filterJSONLEncoded(r io.Reader, format string, knownTypes map[string]bool, 
 	// its maximum and the initial buffer's capacity, so the initial buffer
 	// must not exceed the limit either.
 	scanner.Buffer(make([]byte, min(64*1024, maxRecordBytes+1)), maxRecordBytes+1)
-	return filterRecordsObserved(format, knownTypes, lead, func() ([]byte, bool) {
+	return filterRecordsWithOutput(format, knownTypes, lead, func() ([]byte, bool) {
 		if scanner.Scan() {
 			return scanner.Bytes(), true
 		}
 		return nil, false
-	}, scanner.Err, validateMeta, nil, nil, encoder, beforeRecord, bounds...)
+	}, scanner.Err, validateMeta, nil, nil, encoder, beforeRecord, inspect, bounds...)
 }
 
 func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error, retained func(int), own func(string) bool, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterRecordsWithOutput(format, knownTypes, lead, next, readError, validateMeta, retained, own, encoder, beforeRecord, nil, bounds...)
+}
+
+func filterRecordsWithOutput(format string, knownTypes map[string]bool, lead map[string]any, next func() ([]byte, bool), readError func() error, validateMeta func([]byte) error, retained func(int), own func(string) bool, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), inspect func(map[string]any), bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
 	next, readError = boundRecordSource(next, readError, bounds)
 	result := archive.FilteredTranscript{Format: format, NativeStartComplete: true}
 	records := recordReservations{before: beforeRecord}
@@ -421,6 +441,9 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 	// their own code.
 	var omittedKeys, deniedKeys keyNameSet
 	addGap := func(code string, record int, detail string) {
+		if inspect != nil {
+			return
+		}
 		key := fmt.Sprintf("%s:%s", code, detail)
 		if !gapSet[key] {
 			gapSet[key] = true
@@ -463,7 +486,7 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 			continue
 		}
 		kind, _ := raw["type"].(string)
-		noteOwnedNativeIdentity(&result, raw, kind, own)
+		noteOutputNativeIdentity(&result, raw, kind, own, inspect != nil)
 		if err := validateMetadataReserved(kind, line, validateMeta, beforeRecord); err != nil {
 			return archive.FilteredTranscript{}, err
 		}
@@ -505,9 +528,11 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 		if !keep {
 			continue
 		}
-		observeHarness(&result, safe)
-		noteSafeIdentity(&result, safe)
-		if err := retainEncodedRecord(&result, safe, encoder, bounds); err != nil {
+		if inspect == nil {
+			observeHarness(&result, safe)
+			noteSafeIdentity(&result, safe)
+		}
+		if err := outputEncodedRecord(&result, safe, encoder, bounds, inspect); err != nil {
 			return archive.FilteredTranscript{}, err
 		}
 	}
@@ -515,14 +540,18 @@ func filterRecordsObserved(format string, knownTypes map[string]bool, lead map[s
 		return archive.FilteredTranscript{}, err
 	}
 	filteredLead.writeTo(&result, addGap, omittedKeys.add)
+	addOutputKeyGaps(omittedKeys, deniedKeys, addGap)
+	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
+	return result, nil
+}
+
+func addOutputKeyGaps(omittedKeys, deniedKeys keyNameSet, addGap func(string, int, string)) {
 	if detail := omittedKeys.detail("omitted keys: "); detail != "" {
 		addGap("unknown_field_omitted", 0, detail)
 	}
 	if detail := deniedKeys.detail(deniedToolArgumentIntro); detail != "" {
 		addGap("sensitive_or_hidden_field_omitted", 0, detail)
 	}
-	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
-	return result, nil
 }
 
 func cursorRoleRecord(format, kind string, raw map[string]any) bool {
@@ -704,7 +733,7 @@ func recordCarriesConversation(record map[string]any) bool {
 	return conversationRecordTypes[strings.ToLower(strings.TrimSpace(kind))]
 }
 
-const adapterVersion = "0.18.0"
+const adapterVersion = "0.27.0"
 
 var maxRecordBytes = archive.MaxRecordBytes
 
@@ -811,6 +840,16 @@ func filteredReadComplete(err error, lines, recognized int) error {
 	return nil
 }
 
+// noteOutputNativeIdentity keeps identical time evidence in both output modes.
+// Only the retained mode needs the unbounded native identifier collections.
+func noteOutputNativeIdentity(result *archive.FilteredTranscript, raw map[string]any, kind string, own func(string) bool, inspection bool) {
+	if !inspection {
+		noteOwnedNativeIdentity(result, raw, kind, own)
+	} else if !isClaudeTitleRecord(raw) {
+		noteRecordTime(result, raw)
+	}
+}
+
 func noteOwnedNativeIdentity(result *archive.FilteredTranscript, raw map[string]any, kind string, own func(string) bool) {
 	if own == nil || own(kind) {
 		noteNativeIdentity(result, raw)
@@ -863,14 +902,25 @@ func encodeSafeRecord(value map[string]any, encoder func(map[string]any) ([]byte
 	return json.Marshal(value)
 }
 
-func retainEncodedRecord(result *archive.FilteredTranscript, safe map[string]any, encoder func(map[string]any) ([]byte, error), bounds []archive.CaptureBoundary) error {
+func outputEncodedRecord(result *archive.FilteredTranscript, safe map[string]any, encoder func(map[string]any) ([]byte, error), bounds []archive.CaptureBoundary, inspect func(map[string]any)) error {
 	encoded, err := encodeSafeRecord(safe, encoder)
+	if errors.Is(err, agentapi.ErrReadBudget) {
+		// The caller's memory ledger refused the record, not its content:
+		// no claim that the source format is unsafe.
+		return err
+	}
 	if err != nil {
 		return errors.Join(&archive.FilterError{Reason: "safe record cannot be encoded"}, err)
 	}
 	if bytesBoundReached(bounds, result.Boundary.RetainedBytes, len(encoded)) {
 		return archive.ErrRecordTooLarge
 	}
-	retain(result, encoded)
+	if inspect != nil {
+		inspect(safe)
+		result.Boundary.RetainedRecords++
+		result.Boundary.RetainedBytes += len(encoded)
+	} else {
+		retain(result, encoded)
+	}
 	return nil
 }

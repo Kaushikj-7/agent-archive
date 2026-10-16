@@ -35,6 +35,9 @@ Step 1 of 3 · Choose what to capture
 
 Step 2 of 3 · Connect storage
 
+Storage · Account
+Account → Storage → Verification
+
 ? Where should your archive live?
 
   1) Cloudflare R2 (default)
@@ -45,12 +48,18 @@ Step 2 of 3 · Connect storage
 › Choose [1]: s3-existing
 ✓ Provider Amazon S3
 
+Storage · Account
+Account → Storage → Verification
+
 ? AWS profile
 
   [:back] Back to storage options
 
 › Answer: work
 ✓ AWS profile work
+
+Storage · Storage
+Account → Storage → Verification
 
 ? Which bucket should sessions be stored in?
 
@@ -64,8 +73,12 @@ Step 2 of 3 · Connect storage
 
 Bucket team-archive is in us-east-1; using that region.
 
+Storage · Verification
+Account → Storage → Verification
 Checking your storage connection…
 ✓ Connected to your storage.
+  ! Bucket privacy not verified: public-access settings could not be read.
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 Step 3 of 3 · Review and start
   Apps      Codex
@@ -73,7 +86,8 @@ Step 3 of 3 · Review and start
   Codex     All current and future projects (Codex only)
   Skills    Metadata, including user folders
   Storage   s3://team-archive/agent-archive/
-  Keep for  90 days
+  Keep for  90 days · Sessions with no new activity for 90 days are deleted from
+            your bucket; change with Edit a setting, or keep forever
   ✓ Storage connected
   ! Bucket privacy unknown · public-access settings could not be read
     Make sure public access is off:
@@ -106,6 +120,7 @@ Next, in each app
   any non-excluded current or future project; no hook approval needed.
   Optional hook capture: Codex: run /hooks and approve the archive hooks; they
   capture sessions that start after that (or after /clear).
+Setup's recent import only covers explicitly included projects. Review earlier Codex sessions in other projects with agent-archive backfill --since 7d.
 Check progress with agent-archive status.
   · Another machine: agent-archive machines pair
 

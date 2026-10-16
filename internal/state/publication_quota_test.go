@@ -46,7 +46,7 @@ func TestPublicationQuotaLegacyReplacementHasNoCredit(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		usage, e := q.usage(t.Context())
+		usage, e := q.usageContext(t.Context())
 		if e != nil {
 			return e
 		}
@@ -96,7 +96,7 @@ func TestPublicationFirstEvidenceControlRefusesBeforeDirectoryCreation(t *testin
 				t.Error(err)
 			}
 		}()
-		e = q.write(t.Context(), "publication-evidence/synthetic/original.json", 3, func(w io.Writer) error { _, err := w.Write([]byte("{}\n")); return err })
+		e = q.writeContext(t.Context(), "publication-evidence/synthetic/original.json", 3, func(w io.Writer) error { _, err := w.Write([]byte("{}\n")); return err })
 		if !errors.Is(e, ErrDurableStorageCapacity) {
 			t.Fatal("first control charge not enforced", e)
 		}
@@ -106,5 +106,36 @@ func TestPublicationFirstEvidenceControlRefusesBeforeDirectoryCreation(t *testin
 	}
 	if _, err = os.Lstat(filepath.Join(s.home, "publication-evidence")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("refused write created directory or temp", err)
+	}
+}
+
+// Source-set accounting must coexist with the mature ordinary selecting cache.
+func TestSourceSetQuotaPreservesOrdinarySelectingPeer(t *testing.T) {
+	s, p := readySelectionFixture(t)
+	published, err := s.LoadPublishedState(p.Bundle.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = published.SaveReadyPublication(p, p.ReadyAt); err != nil {
+		t.Fatal(err)
+	}
+	if err = config.WithPublicationComposition(s.Home(), func(g config.PublicationCompositionGuard) error {
+		storage, err := g.Storage(s.Home())
+		if err != nil {
+			return err
+		}
+		q, err := s.openDurableQuota(storage)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = q.Close() }()
+		_, err = q.usageContext(t.Context())
+		return err
+	}); err != nil {
+		t.Fatalf("valid ordinary selecting peer blocked source-set quota: %v", err)
+	}
+	loaded, err := s.LoadPublishedState(p.Bundle.ArchiveSessionID)
+	if err != nil || loaded.state.PublicationVersion != 2 || loaded.state.LastPublished == nil || loaded.state.LastPublished.Selection == nil || *loaded.state.LastPublished.Selection != *p.Selection {
+		t.Fatalf("ordinary authority changed: %v", err)
 	}
 }

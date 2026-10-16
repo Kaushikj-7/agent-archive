@@ -152,6 +152,9 @@ func (s *Store) RemoveSuperseded(archiveSessionID, key string) error {
 // nothing reads it: backfill consults removal records only for sessions
 // that are not registered.
 func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.SessionKey, deferForWork bool, removal *RemovalRecord) (forgotten bool, err error) {
+	if err := s.refuseTypedStagedRetirement(archiveSessionID); err != nil {
+		return false, err
+	}
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -323,6 +326,9 @@ func (s *Store) OrphanChangedAt(archiveSessionID string) time.Time {
 // does not wait for a subagent candidate's lock under the request lock: a
 // held one fails the attempt with ErrBusy, for the next sweep to retry.
 func (s *Store) ForgetOrphan(archiveSessionID string) (forgotten bool, err error) {
+	if err := s.refuseTypedStagedRetirement(archiveSessionID); err != nil {
+		return false, err
+	}
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -385,6 +391,9 @@ func (s *Store) SessionDir(archiveSessionID string) string {
 // to write for the session, UpdateRegistration reports it forgotten, and
 // RegisterNewSession assigns a fresh archive ID instead of reusing this one.
 func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey) error {
+	if err := s.refuseTypedStagedRetirement(archiveSessionID); err != nil {
+		return err
+	}
 	if err := s.CheckDurableSessionRead(archiveSessionID); err != nil {
 		return err
 	}
@@ -416,25 +425,19 @@ func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey)
 // forgetSession is ForgetSession; withCandidates false is for a caller that
 // already removed the session's subagent candidates under their locks.
 func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey, withCandidates bool, revision, retirement *local.Staged) error {
+	if err := s.refuseTypedStagedRetirement(archiveSessionID); err != nil {
+		return err
+	}
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
-	if key.NativeID != "" {
-		if err := key.Validate(); err != nil {
-			return err
-		}
-		reg, found, err := s.LoadRegistration(archiveSessionID)
-		if err != nil {
-			return err
-		}
-		if found {
-			actual, err := registrationKey(reg)
-			if err != nil || actual != key || reg.ArchiveSessionID != archiveSessionID {
-				return ErrSessionIdentityConflict
-			}
-		}
+	if err := s.validateForgottenSessionIdentity(archiveSessionID, key); err != nil {
+		return err
 	}
 	if err := s.CheckDurableSessionRead(archiveSessionID); err != nil {
+		return err
+	}
+	if err := s.checkCatalogPendingRemoval(archiveSessionID); err != nil {
 		return err
 	}
 	if withCandidates {
@@ -460,6 +463,8 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 		s.supersededPath(archiveSessionID),
 		s.refreshSkipPath(archiveSessionID),
 		filepath.Join(s.SessionDir(archiveSessionID), "verification.json"),
+		filepath.Join(s.home, importStageRelative(archiveSessionID)),
+		filepath.Join(s.home, importCancelRelative(archiveSessionID)),
 	}
 
 	// The session's own candidate is gone (removed above, under this lock),
@@ -490,6 +495,12 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 		}
 		s.invalidatePublishedAccounting(path)
 		remove := os.Remove
+		if path == filepath.Join(s.home, importStageRelative(archiveSessionID)) {
+			remove = func(string) error { return s.RemoveImportStage(archiveSessionID) }
+		}
+		if path == filepath.Join(s.home, importCancelRelative(archiveSessionID)) {
+			remove = func(string) error { return s.removeImportCancellation(archiveSessionID) }
+		}
 		if path == s.registrationPath(archiveSessionID) {
 			remove = func(path string) error { return s.removeRegistrationWithRevision(path, revision) }
 		}
@@ -510,6 +521,26 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 	if len(entries) == 0 {
 		if err := os.Remove(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove session directory %q: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// validateForgottenSessionIdentity checks any supplied native key before removals.
+func (s *Store) validateForgottenSessionIdentity(archiveSessionID string, key agentmeta.SessionKey) error {
+	if key.NativeID != "" {
+		if err := key.Validate(); err != nil {
+			return err
+		}
+		reg, found, err := s.LoadRegistration(archiveSessionID)
+		if err != nil {
+			return err
+		}
+		if found {
+			actual, err := registrationKey(reg)
+			if err != nil || actual != key || reg.ArchiveSessionID != archiveSessionID {
+				return ErrSessionIdentityConflict
+			}
 		}
 	}
 	return nil

@@ -76,7 +76,7 @@ func TestPlanUndoRefusesBatchWithoutID(t *testing.T) {
 	f.register("hook-session", "/p", "", fixedNow.UTC())
 	for _, id := range []string{"", "not-an-id"} {
 		b := Batch{ID: id, StartedAt: fixedNow.Add(-time.Hour)}
-		if _, err := PlanUndo(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home}, f.store, f.cfg, []Batch{b}, b, ""); err == nil {
+		if _, err := PlanUndo(Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home}, f.store, f.cfg, []Batch{b}, b, ""); err == nil {
 			t.Fatalf("ID %q: planned an undo", id)
 		}
 	}
@@ -121,7 +121,7 @@ func TestPlanUndoSelectsOnlyProvablyImportedRegistrations(t *testing.T) {
 			batches = append(batches, b)
 		}
 		for _, b := range batches {
-			plan, err := PlanUndo(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home}, f.store, f.cfg, batches, b, "")
+			plan, err := PlanUndo(Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home}, f.store, f.cfg, batches, b, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -148,8 +148,9 @@ func TestImportBatchComparedOnlyThroughInBatch(t *testing.T) {
 	t.Parallel()
 	// file -> why it reads the recorded ID.
 	recordedAllowed := map[string]string{
-		"internal/backfill/batch.go": "lists the IDs in use, so a new import picks another",
-		"internal/backfill/undo.go":  "names the import a kept project belongs to",
+		"internal/backfill/batch.go":     "lists the IDs in use, so a new import picks another",
+		"internal/backfill/undo.go":      "names the import a kept project belongs to",
+		"internal/state/import_stage.go": "locates the confirmed batch journal; membership still uses InBatch",
 	}
 	membership := map[string]bool{"Contains": true, "ContainsFunc": true, "Index": true, "IndexFunc": true, "EqualFold": true, "Compare": true, "HasPrefix": true, "HasSuffix": true}
 	skipDirs := map[string]bool{"testdata": true, "vendor": true}

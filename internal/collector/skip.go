@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -20,10 +21,15 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 	var unchanged bool
 	var signature state.ScanSignature
 	var err error
-	if reg.CaptureFrozen {
+	if reg.RetainedOnly() {
 		unchanged, signature, err = p.unchangedFrozenSinceLastScan(reg)
 	} else {
 		unchanged, signature, err = p.unchangedSinceLastScan(reg)
+	}
+	if errors.Is(err, agentapi.ErrReadBudget) && !errors.Is(err, state.ErrDurableStorageRecovery) {
+		// Too little read memory to check is not a change: the scan itself
+		// meets the same refusal and records it as a gap or a deferral.
+		return false
 	}
 	if err != nil {
 		p.fail(id, fmt.Errorf("check transcript for changes: %w", err))
@@ -45,7 +51,7 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 		p.fail(id, unchangedSinceFailureError{message: failure, cursor: reg.SourceKind == archive.SourceKindCursorSQLite})
 		return true
 	}
-	if entry, ok := p.opts.labels[id]; ok && entry.Label.Fingerprint() != signature.PublishedLabel && (signature.Blocked == "" || signature.Blocked == state.BlockedReasonTranscriptMissing) {
+	if entry, ok := p.opts.labels[id]; ok && entry.Label.Fingerprint() != signature.PublishedLabel && (signature.Blocked == "" || (signature.Blocked == state.BlockedReasonTranscriptMissing || sizeLimitGap(signature.Blocked)) && !p.retainedHistorySet(id)) {
 		if p.labelStates[id] != nil {
 			return false
 		}
@@ -55,10 +61,11 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 		p.labelBytes += n
 		if err == nil {
 			p.labelStates[id] = published
-			return false
 		}
-		// Keep the durable observation owed, without blocking normal capture.
-		delete(p.opts.labels, id)
+		// A publication too large for the narrow decode (a long thread, or a
+		// history source set) is loaded by the scan itself, which publishes
+		// the name with the session's own read ceiling.
+		return false
 	}
 	// Settled, or a recorded gap at the same state. A request on the gap is
 	// completed without a read, as a block completes it: the chat is still
@@ -69,11 +76,20 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 			return true
 		}
 	}
-	p.noteGap(id, signature.Blocked)
+	p.noteGap(reg, signature.Blocked, signature.SizeLimit)
 	// Nothing to read, nothing to compare, nothing to journal.
 	p.result.Skipped = append(p.result.Skipped, id)
 	p.opts.progress(id, false)
 	return true
+}
+
+// retainedHistorySet reports whether the session's publication is a history
+// source set, or cannot be told apart from one. refreshLabels renames only an
+// ordinary retained source, so rescanning a history set whose transcript is
+// gone, for a name, would never settle: its rename waits for the transcript.
+func (p *pass) retainedHistorySet(id string) bool {
+	summary, _, err := p.local.LoadPublishedSummary(id)
+	return err != nil || summary.CurrentRevision != "" || summary.SourceSchemaVersion == archive.HistorySourceSchemaVersion || summary.MetadataSchemaVersion == archive.HistoryMetadataSchemaVersion
 }
 
 // unchangedSinceLastScan answers the spec's "transcript changed?" question
@@ -153,7 +169,7 @@ func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchange
 	if signature.ParserVersion != p.opts.parserVersionFor(reg.Harness.Name) || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != p.opts.skillEvidence() {
 		return false, signature, nil
 	}
-	if (signature.Failed || sizeLimitGap(signature.Blocked)) && (signature.FailedMaxBytes != p.opts.maxTranscriptBytes() || signature.FailedRecordLimit != recordLimit) {
+	if (signature.Failed || sizeLimitGap(signature.Blocked)) && (signature.FailedMaxBytes != p.opts.maxTranscriptBytes() || signature.FailedRecordLimit != recordLimit || signature.FailedRawLimit != p.opts.maxRawBytes(reg.Harness.Name) || readCeilingChanged(signature)) {
 		return false, signature, nil
 	}
 	if !sourceStillAt(p.ctx, reader, signature) {
@@ -225,10 +241,14 @@ func sizeLimitGap(reason state.BlockedReason) bool {
 	return reason == state.BlockedReasonTranscriptTooLarge || reason == state.BlockedReasonRecordTooLarge
 }
 
-// noteGap counts a session sitting in a size-limit gap, for status.
-func (p *pass) noteGap(id string, reason state.BlockedReason) {
+// noteGap counts a session sitting in a size-limit gap, and the limit it
+// stopped at when known, for status.
+func (p *pass) noteGap(reg archive.SessionRegistration, reason state.BlockedReason, limit *state.SizeLimitGap) {
 	if sizeLimitGap(reason) {
-		p.sizeLimited = append(p.sizeLimited, id)
+		p.sizeLimited = append(p.sizeLimited, reg.ArchiveSessionID)
+		if limit != nil {
+			p.sizeLimits = append(p.sizeLimits, SizeLimitLabel(reg.Harness.Name, *limit))
+		}
 	}
 }
 
@@ -301,8 +321,9 @@ func (s *sessionScan) recordBlockedSignature(reason state.BlockedReason, observe
 		SourceSignature: signaturePointer(*observed), SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
-		FailedMaxBytes: s.opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit,
-		Blocked: reason, PublishedLastHead: s.publishedLastHead(),
+		FailedMaxBytes: s.opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit, FailedRawLimit: s.opts.maxRawBytes(s.reg.Harness.Name),
+		SizeLimit: s.sizeLimit,
+		Blocked:   reason, PublishedLastHead: s.publishedLastHead(),
 		PublishedLabel: s.publishedLabel(),
 	})
 }
@@ -317,6 +338,9 @@ func missingSource(reg archive.SessionRegistration) *sourceState {
 }
 
 func sourceSetVersion(reg archive.SessionRegistration) int {
+	if reg.HistoricalProject != nil {
+		return 4
+	}
 	if reg.Harness.Name == "codex" {
 		if reg.NativeChild || reg.CodexBinding.RequiresOwnTask() {
 			return 3 // Revalidate first-task creation evidence for related native owners.

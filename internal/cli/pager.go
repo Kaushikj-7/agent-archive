@@ -43,11 +43,19 @@ func withPager(ctx context.Context, stdout, stderr io.Writer, env pagerDependenc
 		_, err := stdout.Write(buf.Bytes())
 		return err
 	}
+	owner := readPhase(ctx)
+	if owner != nil {
+		owner.Pause()
+		defer owner.Resume()
+	}
 	pagerCtx, stopPager := context.WithCancel(ctx)
 	defer stopPager()
 	watch := watchPagerSignals(env, stopPager)
 	_, _, err := run.page(pagerCtx, stdout, stderr, env, buf.Bytes(), watch.interrupted)
 	if sig := watch.stop(); sig != nil {
+		if owner != nil {
+			owner.cancel()
+		}
 		env.exit(signalExitCode(sig))
 	}
 	return err

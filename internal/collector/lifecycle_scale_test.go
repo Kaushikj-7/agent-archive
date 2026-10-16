@@ -111,8 +111,8 @@ func (s lifecycleRemote) GetLimited(ctx context.Context, key string, limit int64
 	return data, err
 }
 
-func (s lifecycleRemote) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
-	data, etag, err := s.MemoryStore.GetVersionedLimited(ctx, key, limit)
+func (s lifecycleRemote) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	data, etag, err := s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
 	s.cost.remoteGets++
 	s.cost.remoteBytes += int64(len(data))
 	return data, etag, err
@@ -169,7 +169,7 @@ func runLifecycleScale(t *testing.T, n int) {
 		t.Fatal(err)
 	}
 	cost := &lifecycleIO{}
-	lookup := &lifecycleLookup{reconciliationLookup: &reconciliationLookup{set: agentapi.CodexRolloutSet{Current: &a, Candidates: []agentapi.SourceRef{a}, Revision: "initial", Complete: true}, refs: map[string][]agentapi.SourceRef{revisionThread: {a}}}, budget: agentapi.NewNativeReadBudget(128 << 20)}
+	lookup := &lifecycleLookup{reconciliationLookup: &reconciliationLookup{set: agentapi.CodexRolloutSet{Current: &a, Candidates: []agentapi.SourceRef{a}, Revision: "initial"}, refs: map[string][]agentapi.SourceRef{revisionThread: {a}}}, budget: agentapi.NewNativeReadBudget(128 << 20)}
 	remote := lifecycleRemote{MemoryStore: storagetest.NewMemoryStore(), cost: cost}
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	opts := Options{MachineID: "machine", Sources: lifecycleSources{SourcesLookup: testSources, cost: cost}, Parsers: testParsers, CodexRollouts: lookup, ConfiguredCodexHomes: []string{nativeHome}, Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}

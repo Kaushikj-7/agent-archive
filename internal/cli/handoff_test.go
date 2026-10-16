@@ -65,7 +65,12 @@ func newHandoffFixture(t *testing.T, sync bool) handoffFixture {
 // transcript, whose PROJECT is replaced by the project directory.
 func newHandoffFixtureFor(t *testing.T, sync bool, harness, transcriptTemplate string) handoffFixture {
 	t.Helper()
-	home, project := t.TempDir(), t.TempDir()
+	return newHandoffFixtureForAt(t, sync, harness, transcriptTemplate, t.TempDir(), t.TempDir())
+}
+
+// newHandoffFixtureForAt registers the same genuine hook fixture at owned paths.
+func newHandoffFixtureForAt(t *testing.T, sync bool, harness, transcriptTemplate, home, project string) handoffFixture {
+	t.Helper()
 	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	transcript := filepath.Join(project, harness+".jsonl")
 	if err := os.WriteFile(transcript, []byte(strings.ReplaceAll(transcriptTemplate, "PROJECT", project)), 0o600); err != nil {
@@ -302,7 +307,7 @@ func TestHandoffLatestWithoutMatchListsRecentSessions(t *testing.T) {
 	if code != 1 || out != "" {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
-	for _, want := range []string{"no session for", "Recent archived sessions:", "codex", "this machine", "agent-archive handoff " + f.id} {
+	for _, want := range []string{"no session for", "Recent archived sessions:", "\n  WHEN  AGENT  MACHINE ", "  Codex  this machine", "agent-archive handoff " + f.id} {
 		if !strings.Contains(errOut, want) {
 			t.Fatalf("stderr missing %q:\n%s", want, errOut)
 		}
@@ -530,6 +535,62 @@ func TestHandoffFileWithoutSetupDoesNotCreateTheDataDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(home); !os.IsNotExist(err) {
 		t.Fatalf("data directory created: %v", err)
+	}
+}
+
+// longHandoffTranscript is a Claude Code transcript of many exchanges, each
+// with many short agent messages and tool calls, ending with finalText.
+func longHandoffTranscript(t *testing.T, finalText string) string {
+	t.Helper()
+	var transcript strings.Builder
+	n := 0
+	for i := range 30 {
+		fmt.Fprintf(&transcript, `{"type":"user","uuid":"u%d","timestamp":"2026-01-02T00:00:00Z","message":{"role":"user","content":"prompt %d: keep going"}}`+"\n", i, i)
+		for j := range 15 {
+			n++
+			fmt.Fprintf(&transcript, `{"type":"assistant","uuid":"x%d","timestamp":"2026-01-02T00:00:01Z","message":{"id":"x%d","role":"assistant","content":[{"type":"text","text":"exchange %d note %d: still in progress, polling CI again"}]}}`+"\n", n, n, i, j)
+			fmt.Fprintf(&transcript, `{"type":"assistant","uuid":"a%d","timestamp":"2026-01-02T00:00:01Z","message":{"id":"m%d","role":"assistant","content":[{"type":"tool_use","id":"t%d","name":"Bash","input":{"command":"gh pr view %d"}}]}}`+"\n", n, n, n, n)
+			fmt.Fprintf(&transcript, `{"type":"user","uuid":"r%d","timestamp":"2026-01-02T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t%d","content":"%s"}]}}`+"\n", n, n, strings.Repeat(`{\"state\":\"SUCCESS\"} `, 40))
+		}
+	}
+	fmt.Fprintf(&transcript, `{"type":"assistant","uuid":"final","timestamp":"2026-01-02T00:00:03Z","message":{"id":"final","role":"assistant","content":[{"type":"text","text":%q}]}}`+"\n", finalText)
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte(transcript.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// A long session is fitted within the limit without a warning, keeping
+// every prompt and the final message.
+func TestHandoffLongSessionFitsTheLimit(t *testing.T) {
+	t.Parallel()
+	path := longHandoffTranscript(t, "all checks passed; ready to merge")
+	env := testEnv(t, filepath.Join(t.TempDir(), "never-set-up"), time.Now())
+	out, errOut, code := runHandoff(t, env, "--file", path, "--harness", "claude", "--max-bytes", "5000")
+	if code != 0 || len(out) > 5000 || strings.Contains(errOut, "warning") {
+		t.Fatalf("code=%d size=%d stderr=%s", code, len(out), errOut)
+	}
+	for _, want := range []string{"prompt 0: keep going", "prompt 29: keep going", "all checks passed; ready to merge", "condensed to the prompt's first line and counts"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// A final message over the limit by itself is cut, with a warning; JSON,
+// which cannot be cut, is left whole with the older warning.
+func TestHandoffCutsAnOversizedFinalMessage(t *testing.T) {
+	t.Parallel()
+	path := longHandoffTranscript(t, strings.Repeat("a very long final report line\n", 600))
+	env := testEnv(t, filepath.Join(t.TempDir(), "never-set-up"), time.Now())
+	out, errOut, code := runHandoff(t, env, "--file", path, "--harness", "claude", "--max-bytes", "12000")
+	if code != 0 || len(out) > 12000 || !strings.Contains(errOut, "cut to the 12000-byte limit") || !strings.Contains(out, "**Cut here:") || !strings.Contains(out, "Omitted to fit") {
+		t.Fatalf("code=%d size=%d stderr=%s\n%s", code, len(out), errOut, out)
+	}
+	out, errOut, code = runHandoff(t, env, "--file", path, "--harness", "claude", "--max-bytes", "12000", "--format", "json")
+	if code != 0 || len(out) <= 12000 || !strings.Contains(errOut, "over the 12000-byte limit") {
+		t.Fatalf("json: code=%d size=%d stderr=%s", code, len(out), errOut)
 	}
 }
 

@@ -2,6 +2,7 @@
 package builtin
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -12,6 +13,9 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/claude"
 	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/agents/cursor"
+	"github.com/wangjohn/agent-archive/internal/agents/muse"
+	"github.com/wangjohn/agent-archive/internal/agents/nativecapture"
+	"github.com/wangjohn/agent-archive/internal/nativefacts"
 )
 
 // Integration binds implemented operations to an identity declaration.
@@ -41,6 +45,7 @@ type Integration struct {
 
 // Registry holds validated immutable lookups and operation projections.
 type Registry struct {
+	fixedCapture   *fixedCursorCapture
 	catalog        agentmeta.Catalog
 	sourceBindings map[string]Integration
 	bindings       map[agentmeta.ID]Integration
@@ -131,11 +136,13 @@ func NewBuiltins() *Registry {
 	r, err := New(agentmeta.Builtins(), []Integration{
 		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Skills: claude.Skills(), Imports: claude.Imports(), Evidence: claude.CapabilityEvidence{}, Version: claude.VersionInspector{}, NativeHeaders: claude.NativeHeaders{}, Discovery: claude.NativeHeaders{}, NativePaths: claude.ProjectEvidence{}, Worktrees: claude.ProjectEvidence{}, Children: claude.Children{}, Sources: claude.SourceProvider{}, Filter: claude.Filter{}, Runtime: claude.RuntimeDetector{}, Hooks: claude.Hooks(), Decoder: claude.Decoder(), Parser: claude.Parser{}, Preview: claude.Previewer{}},
 		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Skills: codex.Skills(), Imports: codex.Imports(), Evidence: codex.CapabilityEvidence{}, Version: codex.VersionInspector{}, NativeHeaders: codex.NativeHeaders{}, Discovery: codex.NativeHeaders{}, NativePaths: codex.ProjectEvidence{}, Sources: codex.SourceProvider{}, Filter: codex.Filter{}, Runtime: codex.RuntimeDetector{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Parser: codex.Parser{}, Preview: codex.Previewer{}, Labels: codex.LabelProvider{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Skills: cursor.Skills(), Imports: cursor.Imports(), Evidence: cursor.CapabilityEvidence{}, Version: cursor.VersionInspector{}, Discovery: cursor.Discovery{}, NativePaths: cursor.ProjectEvidence{}, Workspace: cursor.ProjectEvidence{}, DatabaseCatalog: cursor.DatabaseCatalogInspector{}, Sources: cursor.SourceProvider{}, Filter: cursor.Filter{}, Runtime: cursor.RuntimeDetector{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Parser: cursor.Parser{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Skills: cursor.Skills(), Imports: cursor.Imports(), Evidence: cursor.CapabilityEvidence{}, Version: cursor.VersionInspector{}, Discovery: cursor.Discovery{}, NativePaths: cursor.ProjectEvidence{}, Workspace: cursor.ProjectEvidence{}, DatabaseCatalog: cursor.DatabaseCatalogInspector{}, Sources: cursor.SourceProvider{}, Filter: cursor.Filter{}, Runtime: cursor.RuntimeDetector{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Parser: cursor.Parser{}, Labels: cursor.LabelProvider{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Muse}, NativeHeaders: muse.NativeHeaders{}, Discovery: muse.NativeHeaders{}, Preview: muse.Previewer{}, Runtime: muse.RuntimeDetector{}, Sources: muse.SourceProvider{}, Filter: muse.Filter{}, Parser: muse.Parser{}},
 	})
 	if err != nil {
 		panic(err)
 	}
+	r.fixedCapture = &fixedCursorCapture{}
 	return r
 }
 
@@ -453,4 +460,19 @@ func (n nativeLabels) LookupLabels(name string) (agentapi.LabelProvider, bool) {
 		return codex.NativeLabelProvider{Host: n.host}, true
 	}
 	return n.registry.LookupLabels(name)
+}
+
+type fixedCursorCapture struct{}
+
+func (*fixedCursorCapture) capture(request *nativefacts.CaptureRequest) (*nativecapture.Proof, error) {
+	return cursor.CaptureSettledRequest(request)
+}
+
+// CaptureSettledCursor projects only the private real provider installed by NewBuiltins.
+// Arbitrary Registry.New Integration bindings cannot acquire capture authority.
+func (r *Registry) CaptureSettledCursor(request *nativefacts.CaptureRequest) (*nativecapture.Proof, error) {
+	if r == nil || r.fixedCapture == nil {
+		return nil, errors.New("settled capture requires builtin provider")
+	}
+	return r.fixedCapture.capture(request)
 }

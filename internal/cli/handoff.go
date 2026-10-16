@@ -13,16 +13,17 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/nativesessions"
 	"github.com/wangjohn/agent-archive/internal/reader"
-	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -67,6 +68,12 @@ var errHandoffNotSetUp = errors.New("handoff not set up")
 // rendered byte comes from a filtered bundle, whether that bundle was
 // downloaded or built in memory from a local transcript.
 func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies) int {
+	return runHandoffWithInput(args, stdin, stdout, stderr, env, nil)
+}
+
+// runHandoffWithInput shares the ordinary handoff pipeline while preserving
+// buffered answers from a preceding browser and the original terminal identity.
+func runHandoffWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies, input *typedInput) int {
 	// Every question below (the picker, "Continue in:", running a launched
 	// agent here) depends on this, which is false inside an agent's shell
 	// even when that shell is a pseudo-terminal.
@@ -83,11 +90,15 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	// Every prompt reads through one buffer, so an answer typed (or
 	// scripted) ahead for a later prompt is not lost to an earlier one's.
 	// A launched agent gets stdin itself: it must see the terminal.
-	input := newTypedInput(stdin)
+	if input == nil {
+		input = newTypedInput(stdin)
+	}
 	answers := input.answers
 	// Only an argument the person typed is a query; an ID the picker or the
 	// calling agent chose below is already a session's.
 
+	var selectedPicker *handoffPickerSelection
+	opts.selection = &selectedPicker
 	var target handoffTarget
 	if opts.file == "" {
 		cfg, found, loadErr := env.loadHandoffConfig(home)
@@ -97,12 +108,8 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		}
 		opts.config = &handoffConfigState{cfg, found}
 		if !found {
-			if setupjournal.TransactionPending(home) {
-				terminal.Println(stderr, "agent-archive: handoff: setup recovery is pending; run agent-archive setup")
-				return 1
-			}
-			if _, e := os.Lstat(draftPath(home)); !errors.Is(e, os.ErrNotExist) {
-				terminal.Println(stderr, "agent-archive: handoff: saved setup is pending or inaccessible; run agent-archive setup")
+			if reason := pendingSetupReason(home); reason != "" {
+				terminal.Printf(stderr, "agent-archive: handoff: %s; run agent-archive setup\n", reason)
 				return 1
 			}
 			opts.native = true
@@ -124,17 +131,30 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	}
 	if !opts.native {
 		if opts.sessionID != "" {
+			readCtx, stopQueryReads := readCommandContext(env)
+			defer stopQueryReads()
+			opts.readCtx = catalog.WithReadView(readCtx)
 			if code, done := resolveHandoffQuery(&opts, home, interactive, input, stdout, stderr, env); done {
 				return code
 			}
 		}
 		if opts.sessionID == "" && !opts.latest && opts.file == "" {
+			readCtx, stopPickerReads := readCommandContext(env)
+			defer stopPickerReads()
+			opts.readCtx = catalog.WithReadView(readCtx)
 			if code, done := chooseHandoffSession(&opts, home, interactive, input, stdout, stderr, env); done {
 				return code
 			}
 		}
-		target, err = resolveHandoffTarget(opts, home, stderr, env, newRepoMatchGate(opts, interactive, answers, stderr, stdin))
+		// Reading the chosen session can take a while (its transcript is
+		// downloaded and parsed), so a spinner shows until the first
+		// question or message; finishHandoff stops it.
+		opts.preparing = sync.OnceFunc(startActivity(stdout, "Preparing handoff…"))
+		defer opts.preparing()
+		quiet := &pausingWriter{w: stderr, stop: opts.preparing}
+		target, err = resolveHandoffTarget(opts, home, quiet, env, newRepoMatchGate(opts, interactive, answers, quiet, stdin))
 		if err != nil {
+			opts.preparing()
 			if errors.Is(err, errRepoMatchNotUsed) {
 				// The gate said why, and how to use the session.
 				return 1
@@ -147,27 +167,60 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 			return 1
 		}
 	}
+	return finishHandoff(opts, target, home, interactive, input, stdin, stdout, stderr, env)
+}
+
+// finishHandoff starts only after source resolution; the caller retains its
+// read cleanup until delivery returns and all prompts share the original input.
+func finishHandoff(opts handoffOptions, target handoffTarget, home string, interactive bool, input *typedInput, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies) int {
+	answers := input.answers
+	var err error
+	if opts.preparing == nil {
+		opts.preparing = sync.OnceFunc(startActivity(stdout, "Preparing handoff…"))
+	}
+	// Everything up to the first question, or the handoff itself, is still
+	// preparing: what is written before then stops the spinner first. A
+	// launched agent gets the real stderr below.
+	defer opts.preparing()
+	preparingErr := &pausingWriter{w: stderr, stop: opts.preparing}
+	// Reading is complete. Release signal ownership before destination
+	// prompts and launched agents take over terminal interaction.
+	if opts.readCtx != nil {
+		if owner := readPhase(opts.readCtx); owner != nil {
+			owner.Pause()
+		}
+	}
+	if opts.readCtx != nil && opts.readCtx.Err() != nil {
+		terminal.Printf(preparingErr, "agent-archive: handoff: %v\n", opts.readCtx.Err())
+		return 1
+	}
 	if target.describe != "" {
-		terminal.Printf(stderr, "handoff: using %s\n", target.describe)
+		terminal.Printf(preparingErr, "handoff: using %s\n", target.describe)
 	}
 	if !target.analyzed {
 		target, err = analyzeTarget(context.Background(), parsersFor(env), target)
 		if err != nil {
-			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+			terminal.Printf(preparingErr, "agent-archive: handoff: %v\n", err)
 			return 1
 		}
 	}
 	h, err := archive.BuildHandoffWithAnalysis(target.bundle, target.analysis, target.metadata, archive.HandoffOptions{Source: target.source, StartedAt: target.startedAt, LastActivityAt: target.lastActivityAt,
 		Checkout: handoffCheckout(opts, env)})
 	if err != nil {
-		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+		terminal.Printf(preparingErr, "agent-archive: handoff: %v\n", err)
 		return 1
+	}
+	if opts.revision != "" {
+		h.Session.RevisionID = opts.revision
+		h.Session.CapturedAt = &target.bundle.Capture.CapturedAt
+		h.Session.FilterVersion = target.bundle.Capture.FilterVersion
 	}
 	if target.native != nil {
 		h.Session.ArchiveSessionID = ""
 	}
-	noteBranchDifference(h, stderr)
-	rendered := prepareHandoff(h, target.bundle, opts, home, stderr, env)
+	noteBranchDifference(h, preparingErr)
+	rendered := prepareHandoff(h, target.bundle, opts, home, preparingErr, env)
+	opts.preparing()
 	dest := handoffDestination(opts.to)
 	if offersDestinations(opts, interactive) {
 		p := newPrompter(answers, stdout)
@@ -195,6 +248,10 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		}
 		dest = choice.dest
 		p.close()
+	}
+	if opts.readCtx != nil && opts.readCtx.Err() != nil {
+		terminal.Printf(stderr, "agent-archive: handoff: %v\n", opts.readCtx.Err())
+		return 1
 	}
 	if dest != "" {
 		// Run from inside an agent (interaction is off there), without a
@@ -229,8 +286,17 @@ func resolveHandoffTarget(opts handoffOptions, home string, stderr io.Writer, en
 		// The calling agent is the source of a direct handoff.
 		skip = nil
 	}
-	resolver := handoffResolver{ctx: context.Background(), env: env, home: home, cfg: cfg,
-		harness: opts.harness, source: opts.source, skip: skip, gate: gate, stderr: stderr}
+	ctx := opts.readCtx
+	if ctx == nil {
+		var stopReads func()
+		ctx, stopReads = readCommandContext(env)
+		defer stopReads()
+	}
+	resolver := handoffResolver{ctx: ctx, env: env, home: home, cfg: cfg,
+		revision: opts.revision, harness: opts.harness, source: opts.source, skip: skip, gate: gate, stderr: stderr, store: opts.archiveStore}
+	if opts.selection != nil && *opts.selection != nil {
+		return resolver.selectedPicker(*opts.selection)
+	}
 	if !opts.latest {
 		return resolver.byID(opts.sessionID)
 	}
@@ -262,7 +328,6 @@ type handoffRenderPlan struct {
 	fullPath string
 	full     []byte
 	fitted   archive.Handoff
-	fits     bool
 }
 
 // planHandoffRendering decides what to trim and where an untrimmed copy
@@ -271,8 +336,8 @@ func planHandoffRendering(h archive.Handoff, bundle archive.SourceBundle, opts h
 	fullPath := handoffFullPath(home, bundle, opts.format)
 	full := renderHandoff(h, opts)
 	h.FullRecordPath = fullPath
-	fitted, fits := archive.FitHandoff(h, opts.maxBytes, func(h archive.Handoff) int { return len(renderHandoff(h, opts)) })
-	return handoffRenderPlan{fullPath: fullPath, full: full, fitted: fitted, fits: fits}
+	fitted, _ := archive.FitHandoff(h, opts.maxBytes, func(h archive.Handoff) int { return len(renderHandoff(h, opts)) })
+	return handoffRenderPlan{fullPath: fullPath, full: full, fitted: fitted}
 }
 
 func prepareHandoff(h archive.Handoff, bundle archive.SourceBundle, opts handoffOptions, home string, stderr io.Writer, env handoffFileDependencies) []byte {
@@ -296,15 +361,25 @@ func prepareHandoff(h archive.Handoff, bundle archive.SourceBundle, opts handoff
 		fitted.FullRecordPath = ""
 	}
 	rendered := renderHandoff(fitted, opts)
-	if !plan.fits {
-		terminal.Printf(stderr, "agent-archive: handoff: warning: still %d bytes after trimming, over the %d-byte limit\n", len(rendered), opts.maxBytes)
+	if opts.maxBytes <= 0 || len(rendered) <= opts.maxBytes {
+		return rendered
 	}
-	return rendered
+	// FitHandoff could not fit: one part (where it left off, the plan, the
+	// file list, the last exchange) is over the limit by itself, or the
+	// session has so many exchanges that their prompts' first lines are.
+	// Markdown is cut at a line;
+	// JSON cannot be cut and still parse, so it is left whole.
+	if opts.format == "json" {
+		terminal.Printf(stderr, "agent-archive: handoff: warning: still %d bytes after trimming, over the %d-byte limit\n", len(rendered), opts.maxBytes)
+		return rendered
+	}
+	terminal.Printf(stderr, "agent-archive: handoff: warning: still %d bytes after trimming; cut to the %d-byte limit\n", len(rendered), opts.maxBytes)
+	return archive.CutHandoffMarkdown(rendered, fitted, opts.maxBytes)
 }
 
 func writeHandoffResult(rendered []byte, opts handoffOptions, stdout, stderr io.Writer) error {
 	if opts.output == "" {
-		if _, err := stdout.Write(rendered); err != nil {
+		if err := writeOutput(stdout, rendered); err != nil {
 			return err
 		}
 		return nil
@@ -402,12 +477,15 @@ func hasPrompt(analysis archive.Analysis) bool {
 }
 
 type handoffResolver struct {
-	ctx     context.Context
-	env     handoffResolverDependencies
-	home    string
-	cfg     config.Config
-	harness string
-	source  string
+	// store preserves the query read view's destination authority.
+	store    storage.ObjectStore
+	revision string
+	ctx      context.Context
+	env      handoffResolverDependencies
+	home     string
+	cfg      config.Config
+	harness  string
+	source   string
 	// skip holds qualified session identities `--latest` must pass over: the agent
 	// session running the command.
 	skip map[agentmeta.SessionKey]bool
@@ -424,6 +502,9 @@ type handoffResolver struct {
 // byID resolves an explicit archive session ID: the local registration first
 // (fresh, and available while paused or offline), then the archive.
 func (r handoffResolver) byID(id string) (handoffTarget, error) {
+	if err := r.ctx.Err(); err != nil {
+		return handoffTarget{}, err
+	}
 	// localErr is why the local transcript could not be used; with --source
 	// auto the archive's published copy is tried next, and both reasons are
 	// reported if it fails too.
@@ -454,9 +535,13 @@ func (r handoffResolver) byID(id string) (handoffTarget, error) {
 }
 
 func (r handoffResolver) archiveByID(id string) (handoffTarget, error) {
-	store, err := r.env.openStore(r.cfg)
-	if err != nil {
-		return handoffTarget{}, fmt.Errorf("open storage: %w", err)
+	store := r.store
+	if store == nil {
+		var err error
+		store, err = r.env.openStore(r.cfg)
+		if err != nil {
+			return handoffTarget{}, fmt.Errorf("open storage: %w", err)
+		}
 	}
 	key, err := locateMetadataKey(r.ctx, store, r.harness, id)
 	if err != nil {
@@ -466,7 +551,7 @@ func (r handoffResolver) archiveByID(id string) (handoffTarget, error) {
 }
 
 func (r handoffResolver) fromArchive(store storage.ObjectStore, key, describe string) (handoffTarget, error) {
-	metadata, bundle, err := reader.RefreshAndLoad(r.ctx, store, key, reader.Limits{})
+	metadata, bundle, err := loadArchiveSelection(r.ctx, store, key, r.revision, parsersFor(r.env))
 	if err != nil {
 		if errors.Is(err, reader.ErrRefreshRequired) {
 			return handoffTarget{}, errors.New("the session's source bundle is not available (it may have just been replaced or deleted by retention); retry")
@@ -789,34 +874,26 @@ func (r handoffResolver) noMatch(dir string, sessions []archive.Metadata, now ti
 		b.WriteString("\nSessions captured before repository keys (parser 0.16.0) carry none until they are\nrefreshed on the Mac that captured them.")
 	}
 	b.WriteString(" Recent archived sessions:\n")
+	// The session lists' words: WHEN first, in their short time, and the
+	// agent by name.
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	// The table is built in memory, where writes cannot fail.
+	terminal.Println(tw, "  WHEN\tAGENT\tMACHINE\tCOMMAND")
 	for i, m := range sessions {
 		if i == handoffFallbackRows {
 			break
 		}
-		// The table is built in memory, where writes cannot fail.
-		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", cappedLine(m.Harness.Name, 20), relativeAge(now, lastActivity(m)), r.machineLabel(m.MachineID), handoffCommandFor(m.SessionID))
+		_, agent := agentLabel(m.Harness.Name)
+		terminal.Printf(tw, "  %s\t%s\t%s\t%s\n", shortWhen(now, lastActivity(m)), cappedLine(agent, 20), r.machineLabel(m.MachineID), handoffCommandFor(m.SessionID))
 	}
 	_ = tw.Flush()
 	return errors.New(strings.TrimRight(b.String(), "\n"))
 }
 
-// relativeAge renders how long ago t was, coarsely.
+// relativeAge renders how long ago t was, coarsely. It is longWhen, which
+// the session lists will call directly.
 func relativeAge(now, t time.Time) string {
-	if t.IsZero() {
-		return "at an unknown time"
-	}
-	d := now.Sub(t)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return plural(int(d/time.Minute), "minute") + " ago"
-	case d < 48*time.Hour:
-		return plural(int(d/time.Hour), "hour") + " ago"
-	default:
-		return plural(int(d/(24*time.Hour)), "day") + " ago"
-	}
+	return longWhen(now, t)
 }
 
 func plural(n int, unit string) string {
@@ -875,24 +952,11 @@ func pruneHandoffs(home string, now time.Time) {
 // writeHandoffOutput writes the rendered handoff with mode 0600, refusing to
 // replace an existing file unless force is set.
 func writeHandoffOutput(path string, data []byte, force bool) error {
-	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
-	if force {
-		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	err := writeStatsHTMLFile(path, data, force)
+	// Report the requested destination, rather than a private temporary name.
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return &os.PathError{Op: pathErr.Op, Path: path, Err: pathErr.Err}
 	}
-	f, err := os.OpenFile(path, flags, 0o600)
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("%s already exists; pass --force to replace it", path)
-		}
-		return err
-	}
-	if err := f.Chmod(0o600); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
+	return err
 }

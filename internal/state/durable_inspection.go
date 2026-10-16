@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -297,8 +298,11 @@ func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner) 
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	defer func() {
-		err = errors.Join(err, home.Check(), home.Close())
-		if err != nil {
+		cleanup := errors.Join(home.Check(), home.Close())
+		// A read the memory ledger refused names no recovery: it is retried.
+		refused := cleanup == nil && errors.Is(err, agentapi.ErrReadBudget)
+		err = errors.Join(err, cleanup)
+		if err != nil && !refused {
 			err = errors.Join(ErrDurableStorageRecovery, err)
 		}
 	}()
@@ -356,7 +360,7 @@ func (s *Store) validateDurableReadPending(id string, history bool, owner *publi
 	var readErr error
 	if owner != nil {
 		pending, readable, readErr = scratch.LoadPublicationPending(id)
-		if readErr == nil && readable && pending.JournalVersion == 2 {
+		if readErr == nil && readable && pending.JournalVersion == 5 {
 			var metadata archive.Metadata
 			readErr = scratch.unmarshalOwned(pending.MetadataBytes, &metadata)
 			reg := owner.registration
@@ -396,5 +400,5 @@ func (s *Store) validateDurableReadReceipt(home *local.RootedHome, id string, fo
 	} else if !errors.Is(receiptErr, os.ErrNotExist) {
 		return errors.Join(ErrDurableStorageRecovery, receiptErr)
 	}
-	return nil
+	return s.durableContext().Err()
 }

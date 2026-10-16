@@ -82,7 +82,7 @@ nothing.
 ## Replay sessions
 
 A session is marked as a replay when `AGENT_ARCHIVE_REPLAY` is set in the
-environment of the hook that registers it ([the design](../../dev/specs/replay-sessions.md)).
+environment of the hook that registers it ([the design](../../dev/proposals/implemented/replay-sessions.md)).
 The hook reads its own environment, which it inherits from whatever starts it:
 
 | App | Where the hook's environment comes from | Status |
@@ -105,15 +105,25 @@ Claude child capture is `fixture_validated`: documented `SubagentStop` provides
 `session_id`, `agent_id`, and `agent_transcript_path`, and synthetic JSONL fixtures
 exercise the adapter. This does not certify any installed app version. A child
 file must expose matching native parent and agent IDs and complete timestamp
-provenance. Unknown formats are rejected. Codex and Cursor child capture remain
-unavailable until their native identity formats are proven.
+provenance. Unknown formats are rejected.
 
-`SubagentStart` is deliberately not a freshness signal: Claude also fires it
+Codex native child capture is implemented with validated native identity,
+creation and first-own-task evidence. Children have their own admission,
+consent, activity and import ownership; capture does not require a stop hook
+or an archived parent. An unresolved parent link remains explicit and does
+not authorize a child through the parent's consent. The
+[Codex history contract](../../dev/specs/codex-history.md) records the
+identity and retained-source checks. Adapter fixtures and synthetic lifecycle
+tests do not certify child capture for every installed app version or
+platform; no new live child-capture acceptance is claimed here. Cursor child
+capture remains unavailable until its native identity format is proven.
+
+For Claude, `SubagentStart` is deliberately not a freshness signal: it also fires
 when resuming or messaging an existing agent. A stop stages a local candidate;
 background collection establishes native eligibility. Nothing reads the child
 transcript or contacts storage in the hook.
 
-A child's records must end by its latest `SubagentStop`. An agent resumed
+A Claude child's records must end by its latest `SubagentStop`. An agent resumed
 after that stop writes past it; the collector keeps the child at what the
 stop covered and waits, not failing, until the next stop or until the
 transcript has written nothing for 30 minutes, when its last record becomes
@@ -143,7 +153,7 @@ is still counted as a prompt. Matching its text is deliberately not done.
 
 No app reports the commit it is working on, so agent-archive's hook asks git
 itself, in the directory the payload names (see
-[the design](../../dev/specs/git-head.md)). What each app gives it:
+[the design](../../dev/proposals/implemented/git-head.md)). What each app gives it:
 
 | App | Registering hook | Directory | Stop hooks that read HEAD again |
 | --- | --- | --- | --- |

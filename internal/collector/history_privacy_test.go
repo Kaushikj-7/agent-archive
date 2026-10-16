@@ -28,7 +28,7 @@ import (
 func privacyJournal(t *testing.T) (*sessionScan, state.PendingPublication) {
 	t.Helper()
 	scan, _ := reconciliationFixture(t)
-	if _, err := scan.run(); !errors.Is(err, archive.ErrHistoryMutationPending) {
+	if _, err := scan.run(scan.ctx); !errors.Is(err, archive.ErrHistoryMutationPending) {
 		t.Fatal(err)
 	}
 	p, found, err := scan.local.LoadPending(scan.id())
@@ -149,7 +149,7 @@ func TestStricterHistoryPriorStagesAllOriginalsAndLeavesRequestsOwed(t *testing.
 	if err != nil || len(objects) != 0 {
 		t.Fatal("stricter preparation uploaded", err)
 	}
-	if outcome, err := scan.publishPending(next); err != nil || outcome != outcomePublished {
+	if outcome, err := scan.publishPending(scan.ctx, next); err != nil || outcome != outcomePublished {
 		t.Fatal("prepared successor failed", err)
 	}
 	assertCompleteHistory(t, scan, next, scan.remote)
@@ -587,12 +587,12 @@ func (s *privacyPutStore) GetLimited(ctx context.Context, key string, limit int6
 	return s.ObjectStore.(storage.LimitedGetter).GetLimited(ctx, key, limit)
 }
 
-func (s *privacyPutStore) GetVersionedLimited(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+func (s *privacyPutStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
 	getter, ok := s.ObjectStore.(storage.LimitedVersionedGetter)
 	if !ok {
 		return nil, "", storage.ErrVersionedReadUnavailable
 	}
-	return getter.GetVersionedLimited(ctx, key, limit)
+	return getter.GetLimitedVersioned(ctx, key, limit)
 }
 
 func TestCommittedHistoryMaintenanceObligationSurvivesMissingOriginalRestart(t *testing.T) {
@@ -664,7 +664,7 @@ func TestCommittedHistoryMaintenanceObligationSurvivesMissingOriginalRestart(t *
 	if _, err := scan.local.StagePendingSource(scan.id(), original.Reference, packed.Bytes); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := scan.resumeHistory(p); !errors.Is(err, archive.ErrHistoryMutationPending) {
+	if _, err := scan.resumeHistory(scan.ctx, p); !errors.Is(err, archive.ErrHistoryMutationPending) {
 		t.Fatal(err)
 	}
 	next, found, err := scan.local.LoadPublicationPending(scan.id())
@@ -834,7 +834,8 @@ func TestPublicationPrivacyFactoryOwnsExactTransformAndLease(t *testing.T) {
 	nextPolicy := state.PublicationPolicy{FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(), SkillEvidence: config.SkillEvidenceNone}
 	frozen := state.PublicationContext{DestinationID: scan.reg.DestinationID, AdmissionContext: scan.publicationAdmission()}
 	budget := agentapi.NewNativeReadBudget(128 << 20)
-	if !budget.Reserve(int64(len(packed.Bytes))) {
+	reservation := budget.Reservation()
+	if !reservation.Reserve(int64(len(packed.Bytes))) {
 		t.Fatal("fixture source loan")
 	}
 	hooks := []archive.SupplementalEvidence{{Kind: archive.EvidenceKindExplicitFeedback, Provenance: "synthetic-hook", ObservedAt: scan.now, Payload: map[string]any{"text": "combined hook sk-abcdefghijklmnopqrstuv"}}}
@@ -842,10 +843,10 @@ func TestPublicationPrivacyFactoryOwnsExactTransformAndLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !budget.Reserve(int64(len(hookBody))) {
+	if !reservation.Reserve(int64(len(hookBody))) {
 		t.Fatal("observation fixture loan")
 	}
-	defer budget.Release(int64(len(hookBody)))
+	defer reservation.Release(int64(len(hookBody)))
 	candidate := state.PendingPublication{Bundle: original, MetadataBytes: body, MetadataKey: p.MetadataKey, SourceKey: ref.Key, SourceSHA256: ref.SHA256, SourceBytes: packed.Bytes, SkillEvidence: "body", History: &state.PendingHistory{Version: 1, Preparing: true}}
 	if err := state.FreezePublicationHookObservations(t.Context(), &candidate, hookBody, frozen.DestinationID, frozen.AdmissionContext, nextPolicy.Context(), budget); err != nil {
 		t.Fatal(err)
@@ -917,7 +918,7 @@ func TestPublicationPrivacyFactoryOwnsExactTransformAndLease(t *testing.T) {
 			t.Fatal("rejected observation leaked loan")
 		}
 	}
-	budget.Release(int64(len(packed.Bytes)))
+	reservation.Release(int64(len(packed.Bytes)))
 }
 
 func TestPublicationPrivacySettlementMintBudgetRefusalRetainsFullPending(t *testing.T) {
@@ -1104,5 +1105,66 @@ func assertOriginalHistoryInput(t *testing.T, store *state.Store, id string, got
 	}
 	if !reflect.DeepEqual(got, original) {
 		t.Fatal("original evidence/provenance changed", got, original)
+	}
+}
+
+func TestCommittedHistoryAcknowledgesNarrowerBaselineAfterSkillPolicyLoosens(t *testing.T) {
+	for _, frozen := range []config.SkillEvidence{config.SkillEvidenceNone, config.SkillEvidenceMetadata} {
+		t.Run(string(frozen), func(t *testing.T) {
+			scan, _ := reconciliationFixture(t)
+			scan.opts.SkillEvidence = frozen
+			if _, err := scan.run(scan.ctx); !errors.Is(err, archive.ErrHistoryMutationPending) {
+				t.Fatal(err)
+			}
+			p, found, err := scan.local.LoadPending(scan.id())
+			if err != nil || !found {
+				t.Fatal(found, err)
+			}
+			for p.History.Preparing {
+				if err := scan.advanceHistoryPreparation(&p); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, stage := range p.History.Sources {
+				raw, err := scan.local.ReadPendingSource(scan.id(), stage)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := scan.remote.Put(t.Context(), stage.Reference.Key, raw); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := scan.remote.Put(t.Context(), p.MetadataKey, p.MetadataBytes); err != nil {
+				t.Fatal(err)
+			}
+			p.Attempted = true
+			if err := scan.local.SavePending(scan.id(), p); err != nil {
+				t.Fatal(err)
+			}
+			counted := &privacyPutStore{ObjectStore: scan.remote}
+			scan.remote = counted
+			scan.opts.SkillEvidence = config.SkillEvidenceBody
+			if _, err := scan.resumeStricterHistory(p); !errors.Is(err, archive.ErrHistoryMutationPending) {
+				t.Fatal("narrower committed baseline could not be acknowledged", err)
+			}
+			acknowledged, found, err := scan.published.LastPublishedMetadata()
+			if err != nil || !found || acknowledged.SourceBundle != p.SourceReference() {
+				t.Fatal("exact narrower baseline was not acknowledged", found, err)
+			}
+			for _, key := range counted.puts {
+				if key == p.MetadataKey || strings.Contains(key, "/source.") {
+					t.Fatal("acknowledgement rewrote remote source or metadata", key)
+				}
+			}
+			next, found, err := scan.local.LoadPublicationPending(scan.id())
+			if err != nil || !found || next.Preparation == nil {
+				t.Fatal("retained successor was not frozen", found, err)
+			}
+			for _, input := range next.Preparation.Inputs {
+				if input.SkillPolicy != string(frozen) {
+					t.Fatal("successor lost the original evidence ceiling", input.SkillPolicy)
+				}
+			}
+		})
 	}
 }

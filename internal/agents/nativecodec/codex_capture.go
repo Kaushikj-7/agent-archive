@@ -42,3 +42,9 @@ func FilterCodexRetainedEncodedJSONL(r io.Reader, encoder func(map[string]any) (
 func FilterCodexCaptureEncodedJSONL(r io.Reader, filename string, encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), boundary archive.CaptureBoundary) (archive.FilteredTranscript, error) {
 	return filterJSONLEncoded(r, "codex-jsonl", map[string]bool{"session_meta": true, "turn_context": true, "response_item": true, "event_msg": true, "message": true, "token_usage_record": true}, nil, func(line []byte) error { return codexCaptureMetadata(line, filename) }, encoder, beforeRecord, boundary)
 }
+
+// InspectCodexCaptureEncodedJSONL runs the capture loop with a synchronous safe
+// object observer. Encoded rows are counted exactly and discarded after use.
+func InspectCodexCaptureEncodedJSONL(r io.Reader, filename string, inspect func(map[string]any), encoder func(map[string]any) ([]byte, error), beforeRecord func(int) (func(), error), boundary archive.CaptureBoundary) (archive.FilteredTranscript, error) {
+	return filterJSONLWithOutput(r, "codex-jsonl", map[string]bool{"session_meta": true, "turn_context": true, "response_item": true, "event_msg": true, "message": true, "token_usage_record": true}, nil, func(line []byte) error { return codexCaptureMetadata(line, filename) }, encoder, beforeRecord, inspect, boundary)
+}
