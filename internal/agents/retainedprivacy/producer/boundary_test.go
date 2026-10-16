@@ -91,6 +91,16 @@ func retainedBoundaryProblems(path string, raw []byte) []string {
 		if !allowedFiles[path] {
 			fail("unreviewed source in the sealed operation domain")
 		}
+		if want, ok := retainedDomainImports[path]; ok {
+			if len(imports) != len(want) {
+				fail("sealed-domain import surface changed")
+			}
+			for name, imported := range imports {
+				if want[name] != imported {
+					fail("sealed-domain type or operation import identity changed: " + name)
+				}
+			}
+		}
 		for _, imported := range imports {
 			if imported == "unsafe" || imported == "reflect" {
 				fail("retained domain cannot bypass private proof fields")
@@ -131,7 +141,7 @@ func retainedBoundaryProblems(path string, raw []byte) []string {
 		return true
 	})
 	if domainSource {
-		problems = append(problems, retainedDeclarationProblems(path, file)...)
+		problems = append(problems, retainedDeclarationProblems(path, file, imports)...)
 	}
 
 	for _, decl := range file.Decls {
@@ -218,7 +228,7 @@ func retainedBoundaryProblems(path string, raw []byte) []string {
 	return problems
 }
 
-func retainedDeclarationProblems(path string, file *ast.File) []string {
+func retainedDeclarationProblems(path string, file *ast.File, imports map[string]string) []string {
 	var problems []string
 	fail := func(message string) { problems = append(problems, message) }
 	allowedTypes := map[string]bool{}
@@ -258,6 +268,26 @@ func retainedDeclarationProblems(path string, file *ast.File) []string {
 		allowed["supportedSkill"] = "func(string) bool"
 		allowed["limitSkills"] = "func([]archive.SupplementalEvidence, string) []archive.SupplementalEvidence"
 	}
+	if strings.Contains(path, "/internal/sealed/") {
+		allowedNames := map[*ast.Ident]bool{}
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch n := node.(type) {
+			case *ast.SelectorExpr:
+				allowedNames[n.Sel] = true
+			case *ast.FuncDecl:
+				if path == "internal/agents/retainedprivacy/internal/sealed/proof.go" && n.Name.Name == "New" && n.Recv == nil {
+					allowedNames[n.Name] = true
+				}
+			}
+			return true
+		})
+		ast.Inspect(file, func(node ast.Node) bool {
+			if name, ok := node.(*ast.Ident); ok && name.Name == "New" && !allowedNames[name] {
+				fail("bare sealed constructor reference escaped its declaration")
+			}
+			return true
+		})
+	}
 	for _, decl := range file.Decls {
 		switch declaration := decl.(type) {
 		case *ast.GenDecl:
@@ -270,19 +300,22 @@ func retainedDeclarationProblems(path string, file *ast.File) []string {
 					if path != "internal/agents/retainedprivacy/proof.go" && item.Assign.IsValid() {
 						fail("private construction types cannot be aliased")
 					}
-					if item.Name.Name == "Proof" || item.Name.Name == "Request" {
-						if path == "internal/agents/retainedprivacy/proof.go" {
-							continue
+					if path == "internal/agents/retainedprivacy/proof.go" {
+						selector, ok := item.Type.(*ast.SelectorExpr)
+						var qualifier *ast.Ident
+						if ok {
+							qualifier, _ = selector.X.(*ast.Ident)
 						}
-						shape, ok := item.Type.(*ast.StructType)
-						want := "transform"
-						if item.Name.Name == "Request" {
-							want = "state"
+						if !item.Assign.IsValid() || !ok || qualifier == nil || selector.Sel.Name != item.Name.Name || imports[qualifier.Name] != retainedDomain+"/internal/sealed" {
+							fail("public aliases must bind the exact sealed type and import identity")
 						}
-						if !ok || len(shape.Fields.List) != 1 || len(shape.Fields.List[0].Names) != 1 || shape.Fields.List[0].Names[0].Name != want {
-							fail("opaque evidence must have exactly its private shared-state field")
+					} else if want, ok := retainedStructShapes[item.Name.Name]; ok {
+						shape, err := parser.ParseExpr(want)
+						if err != nil || retainedStructShape(item.Type) != retainedStructShape(shape) {
+							fail("sealed custody field shape changed: " + item.Name.Name)
 						}
 					}
+
 				case *ast.ValueSpec:
 					fail("sealed domain cannot expose or retain a mutable package-level issuer")
 				}
@@ -321,6 +354,50 @@ func retainedDeclarationProblems(path string, file *ast.File) []string {
 		}
 	}
 	return problems
+}
+
+// Signatures and field types below resolve only through these exact imports.
+var retainedDomainImports = map[string]map[string]string{
+	"internal/agents/retainedprivacy/proof.go":                   {"context": "context", "agentapi": "github.com/wangjohn/agent-archive/internal/agentapi", "sealed": "github.com/wangjohn/agent-archive/internal/agents/retainedprivacy/internal/sealed"},
+	"internal/agents/retainedprivacy/internal/sealed/request.go": {"bytes": "bytes", "context": "context", "json": "encoding/json", "errors": "errors", "sync": "sync", "agentapi": "github.com/wangjohn/agent-archive/internal/agentapi", "agentmeta": "github.com/wangjohn/agent-archive/internal/agentmeta", "archive": "github.com/wangjohn/agent-archive/internal/archive"},
+	"internal/agents/retainedprivacy/internal/sealed/proof.go":   {"bytes": "bytes", "context": "context", "sha256": "crypto/sha256", "hex": "encoding/hex", "json": "encoding/json", "errors": "errors", "sync": "sync", "time": "time", "agentapi": "github.com/wangjohn/agent-archive/internal/agentapi", "agentmeta": "github.com/wangjohn/agent-archive/internal/agentmeta", "archive": "github.com/wangjohn/agent-archive/internal/archive"},
+	"internal/agents/retainedprivacy/producer/transform.go":      {"errors": "errors", "sync": "sync", "agentapi": "github.com/wangjohn/agent-archive/internal/agentapi", "agentmeta": "github.com/wangjohn/agent-archive/internal/agentmeta", "claude": "github.com/wangjohn/agent-archive/internal/agents/claude", "codex": "github.com/wangjohn/agent-archive/internal/agents/codex", "cursor": "github.com/wangjohn/agent-archive/internal/agents/cursor", "muse": "github.com/wangjohn/agent-archive/internal/agents/muse", "sealed": "github.com/wangjohn/agent-archive/internal/agents/retainedprivacy/internal/sealed", "archive": "github.com/wangjohn/agent-archive/internal/archive"},
+}
+
+// Every custody and data carrier is closed, including unexported fields and tags.
+// A function-valued issuer cannot be smuggled through an otherwise unchanged method.
+var retainedStructShapes = map[string]string{
+	"Policy":       "struct {\n\tFilterVersion  string `json:\"filter_version\"`\n\tAdapterVersion string `json:\"adapter_version\"`\n\tSkillEvidence  string `json:\"skill_evidence\"`\n}",
+	"Expectation":  "struct {\n\tCoveredToken string                      `json:\"covered_token\"`\n\tHadRequest   bool                        `json:\"had_request\"`\n\tRegistration archive.SessionRegistration `json:\"registration\"`\n\tStageSHA256  string                      `json:\"stage_sha256\"`\n\tMetadata     archive.Metadata            `json:\"metadata\"`\n\tOldPolicy    Policy                      `json:\"old_policy\"`\n\tTarget       Policy                      `json:\"target\"`\n}",
+	"Request":      "struct{ state *requestState }",
+	"requestState": "struct {\n\tmu               sync.Mutex\n\tctx              context.Context\n\tcancel           context.CancelCauseFunc\n\tbudget           *agentapi.NativeReadBudget\n\tcaptured         *agentapi.NativeReadBudget\n\towner            *agentapi.NativeReadReservation\n\traw, source      []byte\n\tcharged          int64\n\tclosed, borrowed bool\n}",
+	"Lease":        "struct {\n\trequest *Request\n\tWire    Expectation\n\tSource  []byte\n\towner   *agentapi.NativeReadReservation\n\tcharged int64\n\tclosed  bool\n}",
+	"Facts":        "struct {\n\tOwnerSHA256    string                  `json:\"owner_sha256\"`\n\tCoveredToken   string                  `json:\"covered_token\"`\n\tHadRequest     bool                    `json:\"had_request\"`\n\tStageSHA256    string                  `json:\"stage_sha256\"`\n\tInput          archive.SourceReference `json:\"input\"`\n\tOutput         archive.SourceReference `json:\"output\"`\n\tOriginalPolicy Policy                  `json:\"original_policy\"`\n\tTargetPolicy   Policy                  `json:\"target_policy\"`\n}",
+	"Proof":        "struct{ transform *transform }",
+	"transform":    "struct {\n\tmu        sync.Mutex\n\tlease     *Lease\n\tbundle    archive.SourceBundle\n\tsource    archive.CompressedSource\n\tfacts     Facts\n\tbundleSHA string\n\trelease   func()\n\tclosed    bool\n}",
+	"loanContext":  "struct {\n\tcontext.Context\n\toriginal context.Context\n}",
+}
+
+func retainedStructShape(node ast.Expr) string {
+	shape, ok := node.(*ast.StructType)
+	if !ok {
+		return "not a struct"
+	}
+	var fields []string
+	for _, field := range shape.Fields.List {
+		tag := ""
+		if field.Tag != nil {
+			tag = field.Tag.Value
+		}
+		typ := retainedTypeText(field.Type)
+		if len(field.Names) == 0 {
+			fields = append(fields, ":"+typ+":"+tag)
+		}
+		for _, name := range field.Names {
+			fields = append(fields, name.Name+":"+typ+":"+tag)
+		}
+	}
+	return strings.Join(fields, "|")
 }
 
 func retainedTypeText(node ast.Node) string {
@@ -415,6 +492,32 @@ func TestRetainedPrivacyBoundaryRejectsHiddenMintAndProducerSubstitution(t *test
 	forged := append(append([]byte(nil), requestSource...), []byte("\nfunc(r *Request) Context(bundle archive.SourceBundle,source archive.CompressedSource,facts Facts)*Proof{return &Proof{transform:&transform{bundle:bundle,source:source,facts:facts}}}\n")...)
 	if len(retainedBoundaryProblems("internal/agents/retainedprivacy/internal/sealed/request.go", forged)) == 0 {
 		t.Fatal("same-name method on another receiver minted private proof")
+	}
+	issuer := bytes.Replace(requestSource, []byte("type Lease struct {"), []byte("type Lease struct {\nIssuer func(*Lease, archive.SourceBundle, archive.CompressedSource, Facts, string, func()) *Proof"), 1)
+	issuer = bytes.Replace(issuer, []byte("&Lease{request: r,"), []byte("&Lease{Issuer: New, request: r,"), 1)
+	if len(retainedBoundaryProblems("internal/agents/retainedprivacy/internal/sealed/request.go", issuer)) == 0 {
+		t.Fatal("bare constructor escaped through a new lease field")
+	}
+	bare := bytes.Replace(requestSource, []byte("return l.request.state.ctx"), []byte("issuer := New; _ = issuer; return l.request.state.ctx"), 1)
+	if len(retainedBoundaryProblems("internal/agents/retainedprivacy/internal/sealed/request.go", bare)) == 0 {
+		t.Fatal("bare constructor escaped through an existing operation")
+	}
+	fieldsOnly := bytes.Replace(requestSource, []byte("type Lease struct {"), []byte("type Lease struct {\nIssuer any"), 1)
+	if len(retainedBoundaryProblems("internal/agents/retainedprivacy/internal/sealed/request.go", fieldsOnly)) == 0 {
+		t.Fatal("lease field surface changed without review")
+	}
+	public, err := os.ReadFile("../proof.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := bytes.Replace(public, []byte("type Proof = sealed.Proof"), []byte("type Proof = foreign.Proof"), 1)
+	foreign = bytes.Replace(foreign, []byte("import ("), []byte("import (\nforeign \"example.invalid/foreign\""), 1)
+	if len(retainedBoundaryProblems("internal/agents/retainedprivacy/proof.go", foreign)) == 0 {
+		t.Fatal("foreign public alias replaced sealed proof")
+	}
+	rebound := bytes.Replace(public, []byte(retainedDomain+"/internal/sealed"), []byte("example.invalid/sealed"), 1)
+	if len(retainedBoundaryProblems("internal/agents/retainedprivacy/proof.go", rebound)) == 0 {
+		t.Fatal("same-named foreign import replaced sealed alias identity")
 	}
 	actual, err := os.ReadFile("transform.go")
 	if err != nil {
