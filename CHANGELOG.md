@@ -10,6 +10,10 @@ follow [Semantic Versioning](https://semver.org/).
   avoiding whole-file hashes while browsing large histories. Selected sessions
   retain complete filtering and independent content verification.
 
+- Interrupted history privacy preparation now reads each retained revision's
+  original parent before applying a later resolved parent. Older pending
+  journals can resume without replacing the original provenance.
+
 - Pending-publication cleanup refuses malformed JSON inside records it scans
   without retaining, preserving damaged journals for recovery while keeping
   the bounded-memory checks used for large Codex histories.
