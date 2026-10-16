@@ -405,8 +405,9 @@ Example: agent-archive uninstall
 Find sessions using metadata; does not download conversation content.
 With WORDS (quote them: one argument), list only the sessions they match.
 Every word must appear, in any case, in some field of a session: its name,
-title, branch, project name, harness, or the start of its SESSION_ID (4
-characters or more). A word like #212 or 212 also matches a pull request
+title, branch, project name, harness, or the start of its SESSION_ID or of
+the agent's own identifier for it, such as a Codex thread's (4 characters or
+more). A word like #212 or 212 also matches a pull request
 number, and never the start of a SESSION_ID. Words may match different
 fields, so "linux 212" finds the session named for Linux that opened PR 212.
 Inside a project the search looks at that repository's top-level sessions
@@ -660,7 +661,8 @@ terminal.
 After setup, WORDS are matched as list matches them: every word must appear,
 in any case,
 in some field of a session (its name, title, branch, project name, harness, or
-the start of its SESSION_ID, from 4 characters), and a word like #212 or 212
+the start of its SESSION_ID or the agent's own identifier for it, from 4
+characters), and a word like #212 or 212
 also matches a pull request number, never a SESSION_ID. Quote them as one
 argument, and use one or two distinctive words: a topic, a PR number, a
 branch, or a project name. They look in this machine's sessions first (no

@@ -325,7 +325,9 @@ func (r *handoffQueryResolver) exactID(local []handoffPickerRow) []handoffPicker
 		rows = slices.DeleteFunc(slices.Clone(rows), func(row handoffPickerRow) bool {
 			return r.skip[handoffSessionKey(row.metadata.Harness.Name, row.metadata.NativeSessionID)]
 		})
-		return exactIDWins(rows, r.q, func(row handoffPickerRow) sessionFields { return sessionFields{SessionID: row.metadata.SessionID} })
+		return exactIDWins(rows, r.q, func(row handoffPickerRow) sessionFields {
+			return sessionFields{SessionID: row.metadata.SessionID, NativeSessionID: row.metadata.NativeSessionID}
+		})
 	}
 	if found := exact(local); len(found) > 0 {
 		return found
