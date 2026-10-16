@@ -141,8 +141,10 @@ list in step with `state.OwnedEntries()`.
 ## Discovery state
 
 Discovery keeps a bounded source catalog and enumeration cursor, plus a
-content-free health snapshot. Codex cursor/cache fields are scheduling hints,
-not identity or consent authority. The optional Muse `native_inventory` member
+content-free health snapshot. The private `discovery-catalog.lock` serializes
+cooperating catalog replacements. It persists after a pass and is removed with
+the other owned discovery state by `uninstall --delete-local-data`. Codex
+cursor/cache fields are scheduling hints, not identity or consent authority. The optional Muse `native_inventory` member
 has a separate versioned contract described below. Namespaced native identities and their registration journal prevent
 duplicate logical archives across hooks, discovery and deliberate imports.
 Deleting a scan cache may cause another bounded scan; it does not grant permission
