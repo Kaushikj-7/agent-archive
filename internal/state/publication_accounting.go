@@ -452,6 +452,7 @@ func (s *Store) readPublishedOwned(path string, p *publishedState) (found bool, 
 	return false, s.moveAside(path, err)
 }
 
+//nolint:contextcheck // publication reads inherit the original scoped Store context through durableContext.
 func (s *Store) readCurrentPublished(path string, p *publishedState, a *publicationAccounting, binding publicationAccountingContext) (err error) {
 	if !a.reservation.Reserve(accountingFactBytes) {
 		return errStateBudget
@@ -512,6 +513,8 @@ func (s *Store) readCurrentPublished(path string, p *publishedState, a *publicat
 
 // A peer that cannot be fully classified receives no accounting fact; normal
 // quota classification remains the authoritative fallback for that file.
+//
+//nolint:contextcheck // readPublishedClassification uses the context captured on this scoped Store, not a new background scope.
 func (s *Store) seedPublishedAccountingPeer(a *publicationAccounting, home *local.RootedHome, binding publicationAccountingContext, name, id string) {
 	if name == id+".json" {
 		return

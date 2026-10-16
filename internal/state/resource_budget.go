@@ -53,6 +53,10 @@ var errStateBudget = agentapi.ReadBudgetLimit(errors.New("local state exceeds sh
 // so a pending publication that meets it still requires recovery.
 var errStateFileUnstable = errors.New("local state file is not a stable regular file")
 
+// readBudgeted uses the context captured by WithReadBudget for this Store.
+// Explicit-context callers keep using readBudgetedContext without this boundary.
+//
+//nolint:contextcheck // durableContext supplies the original receiver-owned read scope; the analyzer cannot follow Store fields.
 func (s *Store) readBudgeted(path string, value any, retain bool) error {
 	return s.readBudgetedContext(s.durableContext(), path, value, retain)
 }
@@ -162,6 +166,9 @@ func (s *Store) writeCompact(path string, value any) error {
 
 // unmarshalOwned charges an additional decoded view of bytes already owned by
 // this scope. Returned metadata has an independent lifetime from its wire input.
+// Its context and ledger come from WithReadBudget.
+//
+//nolint:contextcheck // durableContext supplies the original receiver-owned read scope; the analyzer cannot follow Store fields.
 func (s *Store) unmarshalOwned(data []byte, value any) error {
 	reservation := s.readReservation()
 	if s.resourceBudget == nil {
@@ -355,7 +362,8 @@ func (s *Store) decodePublicationOwned(ctx context.Context, data []byte, value a
 	case *PendingPublication:
 		err = decodePendingPublication(data, p, ctx, s.resourceBudget, s.readReservation())
 	default:
-		return decodeStateJSON(data, value)
+		// Protected state types took the explicit-context branches above.
+		return json.Unmarshal(data, value)
 	}
 	if err != nil && !json.Valid(data) {
 		return json.Unmarshal(data, value)

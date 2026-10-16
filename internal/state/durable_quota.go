@@ -482,7 +482,7 @@ func (s *Store) writeDurableGuardHeadroom(ctx context.Context, g config.DurableS
 	} else if streamed {
 		encode = func(w io.Writer) error { return streamJSON(ctx, w, p, reservation) }
 	}
-	return q.writeWithHeadroom(path, n, encode, commit, headroom)
+	return q.writeWithHeadroomContext(ctx, path, n, encode, commit, headroom)
 }
 
 func (s *Store) stagePendingSourceGuard(g config.DurableStorageGuard, id string, ref archive.SourceReference, data []byte) (err error) {
