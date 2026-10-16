@@ -115,7 +115,7 @@ func (s *Store) rewriteObservedPending(g config.DurableStorageGuard, id string, 
 	}
 	// Completing the same immutable preparation is monotonic. A ready
 	// publication can never roll back through this absence-only observation.
-	if p.Phase != w.phase && !(w.phase == PublicationPreparing && p.Phase == PublicationReady) {
+	if p.Phase != w.phase && (w.phase != PublicationPreparing || p.Phase != PublicationReady) {
 		return false, nil
 	}
 	home, err := g.RootedHome(s.home)

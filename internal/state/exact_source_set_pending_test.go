@@ -67,7 +67,7 @@ func TestExactSourceSetCleanupRefusesChangedWireAndAuthority(t *testing.T) {
 			if readErr != nil || !bytes.Equal(before, after) {
 				t.Fatalf("refused cleanup changed journal: %v", readErr)
 			}
-			if fault == "cancel" && !errors.Is(err, context.Canceled) {
+			if fault == cleanupCancel && !errors.Is(err, context.Canceled) {
 				t.Fatalf("wrong cancellation: %v", err)
 			}
 		})

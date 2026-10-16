@@ -34,7 +34,7 @@ func TestOrdinaryOwnedEvidenceUsesCompleteAdapterEvidence(t *testing.T) {
 					t.Fatal(err)
 				}
 				candidate.NativeRecords = nil
-				for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+				for line := range bytes.SplitSeq(bytes.TrimSpace(data), []byte("\n")) {
 					var record map[string]any
 					if err := json.Unmarshal(line, &record); err != nil {
 						t.Fatal(err)

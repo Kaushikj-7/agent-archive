@@ -9,8 +9,10 @@ import (
 
 func TestPreservedPrivacyUsesOwnAdapterVersion(t *testing.T) {
 	for _, tc := range []struct {
-		name                       string
-		older, forged, adapterOnly bool
+		name        string
+		older       bool
+		forged      bool
+		adapterOnly bool
 	}{
 		{name: "same-adapter-control"},
 		{name: "older-preserved-adapter", older: true},
@@ -20,7 +22,9 @@ func TestPreservedPrivacyUsesOwnAdapterVersion(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) { preservedAdapterPrivacy(t, tc.older, tc.forged, tc.adapterOnly) })
 	}
 }
+
 func preservedAdapterPrivacy(t *testing.T, older, forged, adapterOnly bool) {
+	t.Helper()
 	scan, p := privacyJournal(t)
 	defer scan.releaseRetained()
 	var m archive.Metadata
