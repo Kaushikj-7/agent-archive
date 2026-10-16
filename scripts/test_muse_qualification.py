@@ -1041,11 +1041,13 @@ class ToolScenarioTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             pidfile = root / "child.pid"
-            source = ("import os,pathlib,time\nchild=os.fork()\nif child:\n pathlib.Path(" +
+            # A fixed synthetic startup delay exceeds the old 300ms allowance.
+            source = ("import os,pathlib,time\ntime.sleep(.4)\nchild=os.fork()\nif child:\n pathlib.Path(" +
                 repr(str(pidfile)) + ").write_text(str(child))\n os._exit(0)\ntime.sleep(30)\n")
             result = probe.run_process([sys.executable, "-B", "-c", source], env=probe.isolated_env(root),
-                                       cwd=root, timeout=.3, group_limit=True)
+                                       cwd=root, timeout=3, group_limit=True)
             self.assertTrue(result["timeout"])
+            self.assertEqual(result["exit"], 0)
             self.assertTrue(pidfile.exists())
             child = int(pidfile.read_text())
             with self.assertRaises(ProcessLookupError):
