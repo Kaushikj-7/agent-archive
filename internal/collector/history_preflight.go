@@ -10,6 +10,9 @@ func (s *sessionScan) checkHistoryPublication(p state.PendingPublication) error 
 	if err := s.checkHistoryPublicationLocal(p); err != nil {
 		return err
 	}
+	if p.History == nil && s.reg.Harness.Name != "codex" {
+		return nil
+	}
 	mark := len(s.retainedReleases)
 	defer s.releaseRetainedAfter(mark)
 	raw, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
