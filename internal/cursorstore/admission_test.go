@@ -19,6 +19,14 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
+// prepareReservedLiveImage is the preparatory bounded SQLite copy backend.
+// It produces no native admission proof and has no production callers. A future
+// sealed producer must bind the image, source identity and reservation lifetime
+// before using its bytes for admission. A returned path alone confers no authority.
+func prepareReservedLiveImage(ctx context.Context, path string, workspace admissionWorkspaceBudget) (string, AdmissionCopyStats, error) {
+	return prepareAdmissionDatabase(ctx, path, workspace, admissionCopyOptions{})
+}
+
 // Synthetic test-only owner; no durable production quota claim is made.
 type syntheticAdmissionWorkspace struct {
 	root         string
