@@ -96,10 +96,13 @@ func selectedPublicationSources(p PendingPublication, destination, admission str
 			}
 			delete(prior, ref.Key)
 		}
+		// Existing frozen inline preparations retain their exact payload authority.
+		// New preparations can reuse the exact source already staged by history.
+		preferCurrentStage := p.Preparation == nil || payload.Kind == PublicationHistoryStage
 		if i == 0 && len(p.SourceBytes) > 0 {
 			payload = PublicationPayload{Kind: PublicationInline, Inline: p.SourceBytes}
 		}
-		if p.History != nil && (i != 0 || len(p.SourceBytes) == 0) {
+		if p.History != nil && (i != 0 || len(p.SourceBytes) == 0 || preferCurrentStage) {
 			for _, stage := range p.History.Sources {
 				if stage.Reference == ref {
 					payload = PublicationPayload{Kind: PublicationHistoryStage, Stage: &ImmutableStageHandle{Version: 1, Kind: PublicationHistoryStage, Namespace: "session-pending-sources", SessionID: m.SessionID, OwnerSHA256: publicationOwner(m, destination, admission), DestinationID: destination, AdmissionContext: admission, SourceSHA256: ref.SHA256, CompressedBytes: ref.CompressedBytes, Selection: selection}}

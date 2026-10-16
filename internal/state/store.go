@@ -59,6 +59,7 @@ type Store struct {
 	// selecting decode; production stores leave this test seam nil.
 	summaryDecodeBoundary func(after bool)
 	publicationAccounting *publicationAccounting
+	pendingWrite          *pendingWriteObservation
 	durableInspection     *durableInspectionCache
 	resourceBudget        *agentapi.NativeReadBudget
 	resourceReservation   func() stateReservation
@@ -949,13 +950,18 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 		if pending.Preparation != nil && pending.Preparation.Retention != nil {
 			return config.WithDeletionProtection(s.home, func(g config.DurableStorageGuard) error { return s.savePublicationPendingGuard(g, id, pending) })
 		}
-		return config.WithPublicationComposition(s.home, func(g config.PublicationCompositionGuard) error {
+		err := config.WithPublicationComposition(s.home, func(g config.PublicationCompositionGuard) error {
+
 			storage, err := g.Storage(s.home)
 			if err != nil {
 				return err
 			}
 			return s.savePublicationPendingGuard(storage, id, pending)
 		})
+		if err != nil {
+			s.clearPendingObservation()
+		}
+		return err
 	}
 	return config.WithDurableStorage(s.home, func(g config.DurableStorageGuard) error {
 		return s.savePendingGuard(s.durableContext(), g, id, pending)

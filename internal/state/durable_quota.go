@@ -433,7 +433,7 @@ func (s *Store) savePendingGuard(ctx context.Context, g config.DurableStorageGua
 	if len(p.SourceBytes) > maxPendingHistoryBytes {
 		return ErrDurableStorageCapacity
 	}
-	return s.writeDurableGuard(ctx, g, filepath.Join("pending", id+".json"), publicationWire(p))
+	return s.writeObservedPending(ctx, g, id, p)
 }
 
 func (s *Store) writeDurableGuard(ctx context.Context, g config.DurableStorageGuard, path string, p any) error {
@@ -491,7 +491,7 @@ func (s *Store) writeDurableGuardHeadroom(ctx context.Context, g config.DurableS
 	} else if streamed {
 		encode = func(w io.Writer) error { return streamJSON(ctx, w, p, reservation) }
 	}
-	return q.writeWithHeadroom(path, n, encode, commit, headroom)
+	return q.writeWithHeadroomContext(ctx, path, n, encode, commit, headroom)
 }
 
 func (s *Store) stagePendingSourceGuard(g config.DurableStorageGuard, id string, ref archive.SourceReference, data []byte) (err error) {

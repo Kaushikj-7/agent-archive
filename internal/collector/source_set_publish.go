@@ -37,8 +37,12 @@ func (s *sessionScan) sourceSetPublishPending(pending state.PendingPublication) 
 	if err := s.checkHistoryPublicationLocal(pending); err != nil {
 		return outcomeSkipped, err
 	}
-	if len(pending.SourceBytes) > 0 && !storage.VerifySHA256(pending.SourceBytes, pending.SourceSHA256) {
-		return outcomeSkipped, errors.New("pending source checksum does not match its persisted bytes")
+	if !pending.CarriesNoSource() {
+		staged := len(pending.Sources) > 0 && pending.Sources[0].Payload.Kind == state.PublicationHistoryStage
+		if (len(pending.SourceBytes) == 0 && !staged) || (len(pending.SourceBytes) > 0 && !storage.VerifySHA256(pending.SourceBytes, pending.SourceSHA256)) {
+			return outcomeSkipped, errors.New("pending source checksum does not match its persisted bytes")
+		}
+
 	}
 	// Marking it attempted rewrites the whole file, source bytes and bundle
 	// included, so it is done once: a retry of an attempted publication, or

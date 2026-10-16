@@ -380,6 +380,11 @@ func (s *Store) validateDurableReadPending(id string, history bool, owner *publi
 	}
 	missingHistory := history && pending.History == nil
 	closeScratch()
+	// A capacity refusal has not inspected the publication. Keep it owed and
+	// retryable; it proves neither missing history nor damaged authority.
+	if errors.Is(readErr, agentapi.ErrReadBudget) && !errors.Is(readErr, ErrDurableStorageRecovery) {
+		return readErr
+	}
 	if readErr != nil || !readable || missingHistory {
 		return errors.Join(ErrDurableStorageRecovery, readErr)
 	}
