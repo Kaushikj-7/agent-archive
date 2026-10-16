@@ -179,7 +179,8 @@ type NormalizedToolCall struct {
 	// object stays nil.
 	Input map[string]any `json:"input,omitempty"`
 	// ResultRecordIndex, IsError, and OutputBytes describe the tool result
-	// this call was linked to, and are nil when no result was observed.
+	// this call was linked to. Each is nil when its individual fact is unavailable;
+	// a known occurrence need not establish error status or retained output size.
 	// OutputBytes measures the retained output, which the filter may have
 	// redacted or capped.
 	ResultRecordIndex *int  `json:"result_record_index,omitempty"`

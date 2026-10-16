@@ -21,18 +21,29 @@ actively working on it. Code and user documentation remain the current contract.
 Historical-only ownership status reconciled 2026-10-12 after #433 merged as
 `18ca0c48`; fragment and combined acceptance work remain open.
 
+Performance and native-name source status reconciled 2026-10-14 against main
+`c8dcf2a88e0479eb63cf682d8d76e1428ff7609a`. The
+[performance record](cli-performance.md#current-reconciliation) preserves merged
+scoped-picker author qualification records and separates them from broader
+acceptance. Native names retain their existing
+[implemented design](implemented/native-session-names.md) and PARTIAL comparison
+record; this reconciliation adds no runtime or UI acceptance. Rechecked
+2026-10-16 against main `0966523baa7c0ea6cbce7704b85569519bb443dc`;
+historical measurement pins and unresolved acceptance gates remain unchanged.
+
 ## Remaining implementation
 
 | Proposal | Implemented | Remaining |
 | --- | --- | --- |
 | [Conversation search](content-search.md) | Delivery branches contain engine, worker state, reconciliation, CLI and terminal implementations; final integration/review pending. | Six dependency-ordered PRs cover those components and opt-in background hints/scheduling. Combined acceptance and supported-platform/provider evidence remain required; this is not a merged-release claim. |
 | [Historical backfill recovery](historical-backfill-recovery.md) | Diagnostics, portable recovery, rollout lookup, history lifecycle and native child capture; recovery hardening; historical-only ownership and bounded bulk mappings (#433). | [Fragment format foundation](../specs/codex-fragments.md) is proposed with schema checks; decoder/filter/consumer, lifecycle, opt-in import, repair journal and the combined acceptance matrix remain gated. |
-| [CLI performance](cli-performance.md) | Synthetic command and historical listing benchmark harnesses with output validation. | Matched repaired-harness measurements and proposed follow-ups. |
+| [CLI performance](cli-performance.md) | Concurrent reads, cache/query/stats work, opt-in catalog and bounded picker source; historical benchmark controls and allocation reductions. | Pinned scoped-interactive matched measurements recorded in #499; broader command performance, production provider/cutover qualification and acceptance remain open. |
 | [Backfill transcript performance](backfill-performance.md) | Source-path investigation; no optimization implemented. | Matched backfill measurements, early date exclusion, streaming inspection summaries and bounded verified reuse; read-pass consolidation conditional on profiles. |
-| [Archive listing at scale](listing-at-scale.md) | Parallel listing, tracing, bounded metadata-body reads; 10k benchmark and 10k/20k operation-count coverage. | Full 1k/10k/100k measurement matrix and an index that bounds LIST header cost. |
+| [Archive listing at scale](listing-at-scale.md) | Parallel listing, tracing, bounded metadata bodies and opt-in scoped catalog pages with remote Older; historical matrix and scoped matched 10k/100k records. | Default legacy LIST headers still scale with archive size; broader scale/full-load acceptance and provider activation remain open. |
 | [Cursor live-WAL admission](cursor-live-wal-admission.md) | Bounded SQLite backend, durable scratch owner and distinct sealed producer under review; no production caller. | Runtime wiring, independent integration review and supported-platform acceptance; current live-WAL admission remains pending. |
 | [Cloud capture](cloud-capture.md) | No cloud collector/push or vendor pull implementation. | Proposed, unscheduled; requires producer probes and runtime/authentication design. |
 | [Muse Code integration](muse-integration.md) | Native qualification probes (against `7d8aee13`); no production capture. | Single proposed plan covering design, implementation order and acceptance gates; the first release is root capture only. Q0 reconciles the probes with the current base; implementation needs separate authorization. |
+| [Segmented Codex history](codex-segmented-history.md) | Proposed 2026-10-16; nothing implemented. | Capture long Codex threads a segment at a time (sealed rollout spans and tip chunks uploaded once, only the open tail re-read). Eight PRs from spec and readers to enablement; owner decisions D1–D9 recorded 2026-10-16. |
 
 [Setup recent import](implemented/setup-recent-import.md) now includes both automatic
 seven-day import and the status prompt for existing installations. See the
@@ -47,14 +58,14 @@ seven-day import and the status prompt for existing installations. See the
 | [Release remediation](release-remediation.md) | Implementation record; disposable provider/per-app acceptance and release sign-off remain open. |
 | [Native name comparisons](../maintainers/native-session-name-comparisons.md) | Partial sandbox evidence; native UI acceptance blocked. |
 | [Published-release acceptance](../maintainers/open-source-acceptance.md) | Maintainer runbook for candidate/provider/app checks; implementation does not imply a passing release gate. |
-| [Archive catalog performance](cli-performance.md) | Catalog implementation source composed in ROOT407; final source/runtime/combined stack and native/provider/operator acceptance remain pending. |
+| [Archive catalog performance](cli-performance.md) | Catalog and bounded picker source integrated; #499 contains pinned synthetic scoped-picker author qualification records. Broader runtime/combined stack and native/provider/operator acceptance remain pending. |
 
 ## Implemented designs
 
 | Proposal | Scope and follow-ups |
 | --- | --- |
 | [Setup and CLI experience](implemented/setup-and-cli-ux.md) | Shared prompts, setup and guided commands (#354, #357, #358); platform acceptance remains separate. |
-| [Native session names](implemented/native-session-names.md) | Claude titles, Codex file providers and optional native API, retained evidence and refresh (#346, #350, #353); producer restrictions, history-source name refresh and UI acceptance remain. |
+| [Native session names](implemented/native-session-names.md) | Claude titles and injected-context cleanup; Codex index names including imported/continued threads and Cursor chat names including imports (#346, #350, #353, #611, #614). Native UI and desktop coexistence acceptance remain separate. |
 | [Local session discovery](implemented/local-session-discovery.md) | Codex consent, admission, collector scans and explicit scope (#305, #306, #309–#311, #316, #327); other agents and cloud deferred. |
 | [First local handoff before bucket setup](implemented/local-handoff-before-setup.md) | Read-only native selection, filtering and launch (#277, #280, #288); actual-platform acceptance limits remain. |
 | [Coding-agent integration abstraction](implemented/agent-integration-abstraction.md) | Phases 0–6 merged; [contracts](implemented/agent-integration-contracts.md), [historical performance evidence](implemented/agent-integration-baseline.md) and raw data stay together. Historical relative timing gate remains unresolved. |

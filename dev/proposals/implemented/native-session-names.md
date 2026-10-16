@@ -1,6 +1,24 @@
 # Native session names in Agent Archive
 
-Status: Implemented for supported ordinary-session publication; history-source name refresh and broader native acceptance remain incomplete. Prepared October 6, 2026; status reconciled October 11, 2026. Claude generated/custom titles, Codex external label evidence and collector refresh, and injected-context cleanup are implemented. Codex defaults to verified settled file lookup; bounded native metadata lookup requires explicit `codex_name_lookup: "native"` opt-in because startup can write native state and desktop coexistence remains unverified. Real sidebar/picker comparisons remain pending in the linked acceptance record. The design below preserves the original plan; current code and user documentation own the shipped contract.
+Status: Implemented for admitted Claude, Codex and Cursor sessions; broader native UI acceptance remains incomplete. Prepared October 6, 2026; source status reconciled October 16, 2026. Claude generated/custom titles and injected-context cleanup are implemented. Codex reads `$CODEX_HOME/session_index.jsonl` for admitted top-level threads, including imported sessions and threads continued into later rollouts, without starting Codex or opening its databases. Cursor reads each admitted chat's `composerData` name read-only from its database, imported sessions included. Codex history-source labels are retained and refreshed through the history publication path; continued threads publish a rename with a fresh capture. Real sidebar/picker comparisons remain pending in the linked acceptance record. The design below preserves the original plan, including its superseded settled-file/native-process lookup and history deferrals; current code and user documentation own the shipped contract.
+
+Source status checked against main
+`c8dcf2a88e0479eb63cf682d8d76e1428ff7609a` on 2026-10-14. Implementations
+[#346](https://github.com/wangjohn/agent-archive/pull/346),
+[#350](https://github.com/wangjohn/agent-archive/pull/350), and
+[#353](https://github.com/wangjohn/agent-archive/pull/353) supply the ordinary
+publication path. The [comparison record](../../maintainers/native-session-name-comparisons.md)
+remains PARTIAL: it records historical sandbox synthetic checks; native UI
+acceptance is blocked. Narrow disposable metadata lookup probes do not establish
+sidebar parity, desktop coexistence, authentication or a latency distribution.
+Desktop coexistence and native UI comparisons remain separate acceptance gaps;
+the historical history-name deferral below has been superseded by #614.
+The producer versions and implementation descriptions below are historical
+observations from preparation, not new runtime probes. Source rechecked
+2026-10-16 at main `0966523baa7c0ea6cbce7704b85569519bb443dc`: #611 adds
+injected AGENTS.md cleanup and #614 integrates Codex transcript-name and Cursor
+chat-name handling. Those merged source changes do not establish native UI
+acceptance.
 
 Agent Archive should display the name a person recognizes from Codex or Claude Code, using a cleaned prompt preview only when a native name is unavailable. Capture names during collection, retain the filtered evidence, refresh them after renames, and publish them through the existing archive pipeline. Ordinary `list` must continue to work from archived metadata without launching an agent or reading local conversations.
 
@@ -24,7 +42,7 @@ Codex 0.159.2 also has `$CODEX_HOME/session_index.jsonl`, containing `id`, `thre
 
 Recent Codex storage distinguishes database `name`, `title`, and `preview`, and legacy and paginated histories have different display rules. Thus a name index alone is not a universal implementation of `thread.name`. Let the native API resolve that distinction; restrict a file-index fallback to explicitly verified producer/history combinations. [Codex storage implementation](https://github.com/openai/codex/blob/main/codex-rs/state/src/runtime/threads.rs)
 
-The repository currently has no Codex name capture. `internal/discovery/index.go` reads a bounded number of SQLite rollout-path hints, deliberately skips live WAL databases, and never selects names. `CodexRolloutLookup` supplies history locators, not labels. Neither should be overloaded to become a name or identity authority.
+At proposal preparation, the repository had no Codex name capture. `internal/discovery/index.go` reads a bounded number of SQLite rollout-path hints, deliberately skips live WAL databases, and never selects names. `CodexRolloutLookup` supplies history locators, not labels. Neither should be overloaded to become a name or identity authority.
 
 ### Claude Code
 
@@ -34,7 +52,7 @@ Anthropic's official SDK session reader recognizes `customTitle` and `aiTitle`, 
 
 The generated title is carried by an `ai-title` record with `aiTitle`, while explicit renames use `custom-title` with `customTitle`. Reported native head/tail blind spots can miss an old rename in a long transcript. Retained full-source parsing should preserve explicit-name precedence rather than reproduce that sampling defect. Verify the installed producer during acceptance. [Producer record examples and resolution behavior](https://github.com/anthropics/claude-code/issues/93115)
 
-Current code already filters `custom-title` records in `internal/agents/nativecodec/filter_session_labels.go`, derives their latest value in `parse.go`, and prefers `Metadata.Name` in `internal/archive/session_labels.go`. `ai-title` is not handled by that label filter. The documentation explicitly leaves automatic CLI naming unverified. The existing `TestSessionLabelsLastCustomTitleWins` passes.
+At proposal preparation, code filtered `custom-title` records in `internal/agents/nativecodec/filter_session_labels.go`, derived their latest value in `parse.go`, and preferred `Metadata.Name` in `internal/archive/session_labels.go`. `ai-title` was not yet handled by that label filter; it is now retained by the implemented typed filter. The documentation explicitly leaves automatic CLI naming unverified. The retained preparation record reported `TestSessionLabelsLastCustomTitleWins` passing; this source reconciliation did not rerun it or renew that historical result.
 
 ## Shared design
 
