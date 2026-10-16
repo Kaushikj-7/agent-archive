@@ -104,7 +104,7 @@ func TestListRangesEqualsListForAnyKeysAndBoundaries(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := listRanges(ctx, store, "sessions", bounds, nil)
+		got, err := listRangesWithSlots(ctx, store, "sessions", bounds, nil, make(chan struct{}, rangeConcurrency))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -182,7 +182,7 @@ func TestListRangesBoundsConcurrency(t *testing.T) {
 	store := &rangeRecorder{MemoryStore: storagetest.NewMemoryStore(), hold: make(chan struct{})}
 	done := make(chan error, 1)
 	go func() {
-		_, err := listRanges(context.Background(), store, "sessions", boundsN(3*rangeConcurrency), nil)
+		_, err := listRangesWithSlots(context.Background(), store, "sessions", boundsN(3*rangeConcurrency), nil, make(chan struct{}, rangeConcurrency))
 		done <- err
 	}()
 	// Wait for the first wave to fill every slot, then release them all.
@@ -202,7 +202,7 @@ func TestListRangesReturnsTheFailureNotTheCancellationItCaused(t *testing.T) {
 	failure := errors.New("403 forbidden")
 	bounds := boundsN(5)
 	store := &rangeRecorder{MemoryStore: storagetest.NewMemoryStore(), hold: make(chan struct{}), failAt: bounds[3], failErr: failure}
-	_, err := listRanges(context.Background(), store, "sessions", bounds, nil)
+	_, err := listRangesWithSlots(context.Background(), store, "sessions", bounds, nil, make(chan struct{}, rangeConcurrency))
 	if !errors.Is(err, failure) {
 		t.Fatalf("listRanges error = %v, want the range's own failure", err)
 	}
@@ -221,7 +221,7 @@ func TestListRangesReturnsTheFirstFailureNotALaterEcho(t *testing.T) {
 	bounds := boundsN(5)
 	store := &rangeRecorder{MemoryStore: storagetest.NewMemoryStore(), hold: make(chan struct{}),
 		echoErr: errors.New("connection reset"), failAt: bounds[4], failErr: failure}
-	if _, err := listRanges(context.Background(), store, "sessions", bounds, nil); !errors.Is(err, failure) {
+	if _, err := listRangesWithSlots(context.Background(), store, "sessions", bounds, nil, make(chan struct{}, rangeConcurrency)); !errors.Is(err, failure) {
 		t.Fatalf("listRanges error = %v, want the first failure", err)
 	}
 }
@@ -253,7 +253,7 @@ func TestListRangesFailsWhenCancelledBeforeEveryRangeStarted(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := listRanges(ctx, store, "sessions", boundsN(3*rangeConcurrency), nil)
+		_, err := listRangesWithSlots(ctx, store, "sessions", boundsN(3*rangeConcurrency), nil, make(chan struct{}, rangeConcurrency))
 		done <- err
 	}()
 	waitInFlight(t, store, rangeConcurrency)
@@ -269,7 +269,7 @@ func TestListRangesReportsTheCallersCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := listRanges(ctx, store, "sessions", boundsN(3*rangeConcurrency), nil)
+		_, err := listRangesWithSlots(ctx, store, "sessions", boundsN(3*rangeConcurrency), nil, make(chan struct{}, rangeConcurrency))
 		done <- err
 	}()
 	time.Sleep(10 * time.Millisecond)

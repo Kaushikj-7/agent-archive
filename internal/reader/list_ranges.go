@@ -76,16 +76,12 @@ func planRanges(known []string) []string {
 	return bounds
 }
 
-// listRanges lists the ranges bounds make, each a trace child of span, with
-// at most rangeConcurrency in flight, and joins them in range order, so the
+// listRangesWithSlots lists the ranges bounds make under the shared slot
+// budget, each a trace child of span, and joins them in range order, so the
 // result is in key order like a single listing. The first range to fail
 // cancels the rest, and its error is the one returned: errors that arrive
 // after it, whatever they wrap, may be only the echo of that cancellation.
 // It returns only after every range it started has finished.
-func listRanges(ctx context.Context, store storage.RangeLister, prefix string, bounds []string, span *trace.Span) ([]storage.Object, error) {
-	return listRangesWithSlots(ctx, store, prefix, bounds, span, make(chan struct{}, rangeConcurrency))
-}
-
 func listRangesWithSlots(ctx context.Context, store storage.RangeLister, prefix string, bounds []string, span *trace.Span, slots chan struct{}) ([]storage.Object, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
