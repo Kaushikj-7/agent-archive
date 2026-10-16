@@ -1,5 +1,7 @@
 # Testing
 
+For local cache and resource cleanup, follow [worktree storage](worktree-storage.md).
+
 What CI checks, run locally from the repository root (the
 [Levenshtein checks](#levenshtein-checks) below run too):
 
@@ -26,7 +28,7 @@ python3 -B scripts/test_generate_go_shard_hints.py         # matched artifact me
 python3 -B scripts/test_go_cache_context.py               # cache identity and tracked source proof
 python3 -B scripts/test_go_cache_steps.py                 # cache failure paths and PR-only wiring
 python3 scripts/test_measure_hook.py                     # synthetic hook benchmark effect/cleanup checks
-python3 -B scripts/test_muse_qualification.py             # offline Muse qualification isolation/corpus controls
+python3 -B scripts/test_muse_qualification.py             # offline Muse isolation/corpus and bounded synthetic loopback controls
 ./scripts/test_macos_smoke.sh                             # native macOS with cgo; the PR gate
 VERSION=dev ./scripts/build-release.sh                   # the release build (CI runs it on a release tag)
 ```
@@ -110,7 +112,7 @@ short shards. A split is scheduling evidence, not permission to omit coverage.
 The PR short runner's shared 25-minute deadline includes discovery and tests; cancellation
 and failure stop and reap both test process groups. CLI listing invokes TestMain
 before execution, and both shards have independent TestMain initialization and
-temporary state. PR workers keep separate PR/worker-scoped build/module caches; sharding
+temporary state. Hosted PR workers keep separate PR/worker-scoped build/module caches; sharding
 improves latency only if measured scheduling benefits outweigh that extra work.
 For local coverage validation on Linux, run one worker at a time:
 

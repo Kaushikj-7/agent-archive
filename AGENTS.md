@@ -88,3 +88,14 @@ integration defects.
 
 Do not enable GitHub's "Require branches to be up to date before merging",
 change bypass settings, or change any repository protection settings.
+
+## Worktree storage
+
+- Share configured Go build/module caches; do not create per-task `GOCACHE`
+  or `GOMODCACHE` paths.
+- Preserve explicitly required isolation; clean temporary caches on success,
+  failure, and cancellation.
+- Remove only idle task-owned resources. Preserve shared resources, other tasks'
+  work, and unmerged/untracked files.
+
+Follow [storage and cleanup](dev/contributing/worktree-storage.md) for evidence retention and worktree cleanup.
