@@ -5,6 +5,45 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 27
+
+Adapter 0.27.0 and Cursor parser 0.23.0 accompany this change.
+
+- **Cursor's chat name on every Cursor session.** A session captured from
+  Cursor's agent transcripts (`cursor-jsonl`), which record no name, now
+  retains a `session_labels` item with the chat's `name` from its
+  `composerData:<id>` row in Cursor's global `state.vscdb` (provenance
+  `native:cursor:session_labels`, source `database`, contract
+  `cursor-composer-name-v1`), read in place and read-only. Only that row's
+  `name` is read; message rows are not. A string name, trimmed, is present;
+  a missing, null or blank one is confirmed absence; anything else, a missing
+  row or an unreadable database is unavailable and keeps an earlier name.
+- What is newly uploaded: the filtered chat name on Cursor sessions that came
+  from agent transcripts (a database-only chat already carried it).
+
+This lands after filter 26; main reserved it as filter 22.
+
+## Source filter version 26
+
+Adapter 0.26.0 accompanies this change.
+
+- **Codex names on every Codex thread.** A Codex name is the last nonempty
+  `thread_name` in Codex's `session_index.jsonl` for the thread (contract
+  `codex-session-index-v3`), read for any Codex release and while Codex runs.
+  Filter 18's resolver read only Codex 0.159.2 threads from a settled
+  `state_5.sqlite`, which Codex keeps in WAL mode while it runs, so it named
+  no current thread. The retained `session_labels` shape is unchanged.
+- **History source sets carry the name.** A thread that continues into a later
+  rollout (a history source, schema 3) now retains the same `session_labels`
+  item an ordinary source does; earlier filters refused it there, so a thread lost
+  its name once it continued. A reader older than this filter refuses such a
+  history source.
+- What is newly uploaded: the filtered thread name (already uploaded for
+  ordinary sources) on history sources, and names of threads from Codex
+  releases after 0.159.2. Subagent threads are not looked up.
+
+This lands after filter 25; main reserved it as filter 21.
+
 ## Source filter version 25
 
 Adapter 0.25.0 accompanies this change.

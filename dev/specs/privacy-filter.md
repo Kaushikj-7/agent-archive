@@ -415,15 +415,25 @@ examples are preserved, as is human text following a context wrapper.
 
 Verified Codex external names are typed `session_labels` supplemental evidence:
 `native_session_id`, `state`, optional `name`, `source`, and `contract` only.
-The UUID must match the owning ordinary Codex source. `present` requires a
-nonempty filtered name; `confirmed_absent` carries no name. Unknown fields,
-malformed IDs and history bundles are refused. Raw names are bounded to 16 KiB,
+The UUID must match the owning Codex source, ordinary or (filter 26) a
+self-contained history source. `present` requires a
+nonempty filtered name; `confirmed_absent` carries no name. Unknown fields
+and malformed IDs are refused. Raw names are bounded to 16 KiB,
 receive normal credential redaction, normalize whitespace/control characters,
 and truncate to 512 bytes on a UTF-8 boundary before hashing or caching.
 An unavailable observation is not absence and preserves previously verified
 evidence. Native paths, raw database rows and index contents are not retained.
 Codex `session_meta` additionally retains only the `legacy` or `paginated`
 `history_mode` enum to establish index interpretation. Other values are omitted.
+
+Filter 27 admits the same shape for Cursor (`native:cursor:session_labels`,
+`database`/`cursor-composer-name-v1`): the chat's `name` from its
+`composerData` row, on any Cursor source format.
+
+Filter 26 adds the `index`/`codex-session-index-v3` contract: the name is
+the last nonempty `thread_name` Codex's `session_index.jsonl` holds for the
+thread, read for any Codex release; earlier `codex-files-159.2-*` evidence
+stays readable.
 
 Filter 18 accepts the fixed `api`/`codex-api-159.2-v1` session-label pair in
 addition to the file contract. It retains only the same owning ID, filtered

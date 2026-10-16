@@ -18,6 +18,23 @@ follow [Semantic Versioning](https://semver.org/).
   decoded again. Capturing such a thread's growth needs about 5 times its
   filtered size in read memory instead of about 12.
 
+- Archived Cursor sessions now carry the chat's name. Sessions captured from
+  Cursor's agent transcripts, which record no name, read it from the chat's
+  `composerData` row in Cursor's database (read-only, in place), imported
+  sessions included, so `list`, `show` and the handoff picker show the name
+  Cursor gave the chat rather than a prompt preview. Cursor parser 0.23.0
+  re-derives existing sessions' metadata (filter 27).
+
+- Codex sessions are titled with their Codex thread name, so `list`, search
+  and `handoff "words"` find them by it. Names come from Codex's own name index
+  (`~/.codex/session_index.jsonl`) for every Codex release, while Codex is
+  running, for imported sessions too, and stay with a thread that continues
+  into a later rollout. Before, only threads from Codex 0.159.2 with Codex
+  closed could be named, so in practice none were. Existing sessions are named
+  on the next collection (filter 26). A build older than this one cannot read
+  a named Codex thread that continued into a later rollout; update every
+  machine that reads the archive.
+
 - Codex sessions are no longer titled with their injected AGENTS.md
   instructions. Codex 0.160 sends a project's AGENTS.md as the first user
   message (`# AGENTS.md instructions for …`); it is now dropped like other

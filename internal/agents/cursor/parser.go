@@ -10,9 +10,18 @@ import (
 type Parser struct{}
 
 // Version identifies the native derivation policy.
-func (Parser) Version() string { return "0.22.0" }
+func (Parser) Version() string { return "0.23.0" }
 
-// Parse derives facts once from retained safe evidence.
+// Parse derives facts once from retained safe evidence. A chat name retained
+// as session label evidence names a session whose own source carries none
+// (Cursor's agent transcripts); a name in a cursor-composer session record
+// still wins.
 func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.Analysis, error) {
-	return nativecodec.ParseCursor(ctx, bundle)
+	analysis, err := nativecodec.ParseCursor(ctx, bundle)
+	if analysis.Facts.Name == "" {
+		if label, _, ok := archive.CurrentSessionLabel(bundle); ok && label.State == archive.SessionLabelPresent && supportedSessionLabel(label) {
+			analysis.Facts.Name = archive.CollapseSessionTitle(label.Name)
+		}
+	}
+	return analysis, err
 }

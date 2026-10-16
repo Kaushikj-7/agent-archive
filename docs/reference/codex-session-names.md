@@ -1,50 +1,47 @@
 # Codex session names
 
-Collection can refresh `name` for already admitted ordinary Codex sessions.
+Collection sets and refreshes `name` for already admitted Codex sessions.
 `title` remains the first human prompt fallback. Listing reads archived metadata
 and does not probe native storage or launch Codex.
 
-The file resolver is pinned to Codex 0.159.2 default storage. It uses a pure
-read-only SQLite VFS for settled `state_5.sqlite`, refusing any WAL, SHM or
-journal. A matching row must carry the admitted rollout path and producer.
-Paginated history uses `threads.name`; legacy history uses a distinct native
-title or the last usable physical `session_index.jsonl` record, suppressing
-the native preview fallback. Index-only resolution additionally requires positive per-home proof of the
-producing session’s default SQLite placement and an absent default database.
-Production supplies no such historical placement proof, so index-only homes
-remain unavailable; a settled matching legacy database may use the index fallback. Unknown producers, known relocated
-SQLite storage, ambiguous homes, incomplete files and related histories are
-unavailable. This support does not promise parity with a running desktop
-sidebar. The default `files` mode launches no native process.
+Names come from Codex's own name index, `$CODEX_HOME/session_index.jsonl`
+(`~/.codex/session_index.jsonl` by default). Codex appends a record
+`{id, thread_name, updated_at}` whenever a thread is named or renamed, and the
+last nonempty name for a thread is current; this is how Codex resolves names
+itself. The index is a plain append-only file, so it is read while Codex runs,
+and its format is the same across Codex releases, so no release is pinned.
+Codex's `state_5.sqlite` is not opened: Codex keeps it in WAL mode while it
+runs, which made the earlier 0.159.2-only database resolver name no current
+thread.
 
-Storage guards observe the collector's current `CODEX_SQLITE_HOME` and the
-native home's local configuration, but cannot prove historical, system or
-runtime placement. Missing local SQLite and configuration files therefore do
-not authorize an index-only canonical name. The optional provider port accepts
-positive per-home producing-storage proof from a verified host; ordinary
-collection leaves that proof empty. Settled matching database rows remain
-available only with supported retained producer and exact projected SQLite
-column/value types. Unknown producer, schema or value shape preserves prior
-verified evidence.
+Only an admitted top-level thread (discovered or imported) whose rollout lies
+in exactly one approved Codex home is looked up; subagent threads keep the
+name their parent gave the task, and frozen captures are not looked up. A
+complete read of the index without the thread is confirmed absence, and the
+title falls back to the first prompt. An index that cannot be read whole (an
+unfinished last record, more than 16 MiB or 262,144 lines) proves nothing, and
+the last verified name stays; a single record over 16 KiB is skipped.
 
-External naming requires acknowledged ordinary source-schema-2 and
-metadata-schema-1 authority. A history source set remains outside this lookup
-even when its active source is ordinary; cached name debt cannot replace its
-revision journal. A transition to supported history capture proceeds without
-attaching an ordinary external name observation.
+A thread that continues into a later rollout (a history source set) keeps its
+name: the history source retains the same name evidence an ordinary source
+does. A rename of a history source set is published with its next capture,
+which reads the thread again and counts as activity: its capture time, and so
+its retention, moves forward. While its transcript is missing the rename waits.
+An ordinary source's rename is published from its retained source without
+reading the transcript, keeping its activity, capture time and retention.
 
 Unavailable observations preserve the last verified name. Confirmed absence
 clears it; an index-only miss cannot clear a previous canonical database name.
 Names whose normalized text cannot remain stable through privacy filtering
 are also unavailable and preserve the last verified name.
 Rename publication uses retained source evidence when the native transcript is
-unchanged or missing, preserving original activity, capture time and retention.
+unchanged or missing, or when the session stopped at a size limit (its last
+snapshot is named and the size-limit gap stays recorded), preserving original activity, capture time and retention.
 Attempted publication retries keep their frozen bytes; a newer rename is owed
 after the retry succeeds.
 
 Each pass budgets 64 admitted targets, 16 configured homes and two seconds.
-Index scans are limited to 4 MiB and 32,768 lines; a database read is limited
-to 100 ms and 8 MiB of reads per home. Homes are visited in persistent target order. A separate durable priority
+Index scans are limited to 16 MiB and 262,144 lines, one read per home. Homes are visited in persistent target order. A separate durable priority
 cursor skips the previous first work group across ID-order wraparound, so
 interleaved IDs in a slow home cannot monopolize later homes’ priority. A bounded
 per-group archive-ID cursor also rotates the first target within each prioritized
@@ -52,10 +49,9 @@ group, preserving deferred-ID opportunity after lookup backoff expires. Group
 identities are hashed by the collector before persistence; removed targets
 retire their cursor, while temporary backoff preserves progress. The target cursor advances
 over deferred targets, with bounded backoff for unavailable observations.
-Lookup context is content-free and keyed to retained source checksum and codec
-contract. Migration reads at most 8 MiB per retained JSON publication and
-16 MiB per pass; subsequent unchanged lookup reads only a bounded leading
-checksum and stat. These limits defer work without delaying normal capture.
+Lookup context is content-free: the thread ID from the registration, keyed to
+the retained source checksum and codec contract, so no retained publication is
+decoded to ask. Unchanged lookup reads only a bounded leading checksum and stat. These limits defer work without delaying normal capture.
 Serialized and decoded context also share the pass's data budget; a borrowed
 publication remains charged until its pass scope ends.
 Rename integrity verification and candidate encoding reserve compression scratch
@@ -63,14 +59,15 @@ and output against the same ledger; verification output is released before the
 renamed candidate is rendered. Shared pressure preserves the last acknowledged
 source and deferred name evidence for a later pass.
 Aggregate exhaustion is deferred to another pass. A retained publication over
-the per-session 8 MiB ceiling remains unavailable for this rename-only path;
-cursor rotation cannot make it fit. Its prior name and pending transaction
+the 8 MiB rename-only decode is published by the session's own scan instead,
+within its read ceiling. Its prior name and pending transaction
 remain intact. Real native content changes still use normal capture limits
 and may publish the latest resolved label alongside the new conversation.
 
-Lookup requires retained source and metadata to agree on the admitted session,
-native identity and current machine. Missing or malformed metadata keeps labels
-unavailable until ordinary capture or metadata refresh supplies ownership proof.
+A name is published only by a capture or a rename refresh, each of which
+checks that retained source and metadata agree on the admitted session, native
+identity and current machine; a name-only refresh from retained source applies
+to ordinary sources only.
 The private cache is machine-scoped and rechecks a content-free state token even
 during lookup backoff; stale proof cannot trigger a name publication.
 

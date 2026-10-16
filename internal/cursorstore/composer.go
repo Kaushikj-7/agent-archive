@@ -256,6 +256,53 @@ func ReadLastUpdated(ctx context.Context, dbPath string, composerIDs []string) (
 	return out, nil
 }
 
+// ComposerRow is one chat's composerData value as ReadComposerRows found
+// it. Value is nil when the row is larger than the caller's limit, which
+// Oversized then reports.
+type ComposerRow struct {
+	Value     []byte
+	Oversized bool
+}
+
+// ReadComposerRows reads each chat's composerData row, and no message row,
+// in one read transaction in place, as Read does, so every row comes from
+// the same state of the database. A chat with no row is left out; a row
+// larger than limit bytes is reported Oversized without being loaded.
+func ReadComposerRows(ctx context.Context, dbPath string, composerIDs []string, limit int64) (map[string]ComposerRow, error) {
+	out := map[string]ComposerRow{}
+	if len(composerIDs) == 0 {
+		return out, nil
+	}
+	err := Read(ctx, dbPath, Options{}, func(ctx context.Context, db *sql.DB) error {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }() // a read-only transaction; nothing to undo
+		for _, id := range composerIDs {
+			if id == "" {
+				continue
+			}
+			value, oversized, err := signatureComposerRow(ctx, tx, id, limit)
+			if errors.Is(err, ErrComposerNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if oversized {
+				value = nil
+			}
+			out[id] = ComposerRow{Value: value, Oversized: oversized}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // signatureComposerRow keeps oversized inline content in SQLite. The ordinary
 // branch returns the original value and preserves the legacy decoder semantics.
 func signatureComposerRow(ctx context.Context, q querier, id string, limit int64) ([]byte, bool, error) {

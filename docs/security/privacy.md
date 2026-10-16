@@ -5,10 +5,11 @@ page says what that copy contains, what is kept out of it, what the tool
 changes on your machine, and where its protections stop. The per-version history
 of the filter is in the [filter changelog](../../dev/specs/privacy-filter-changelog.md).
 
-Native Codex name lookup is optional and defaults to files. Explicit `native`
-mode can write Codex startup databases and system skills; desktop coexistence
-and native credential behavior remain unverified. Only the filtered owning name
-or confirmed absence is archived. See [Codex session names](../reference/codex-session-names.md).
+Codex thread names are read from Codex's own name index,
+`~/.codex/session_index.jsonl`; no Codex process is started and no database is
+opened. Explicit `native` mode can write Codex startup databases and system
+skills; desktop coexistence and native credential behavior remain unverified.
+Only the filtered owning name or confirmed absence is archived. See [Codex session names](../reference/codex-session-names.md).
 
 Before enabling capture, review these choices:
 
@@ -635,13 +636,22 @@ activity/retention. Injected Codex `external_codex_apps_open_page` context
 wrappers at the start of a message are omitted; quoted markup and examples in
 human prose/code remain intact. Text outside context remains prompt text.
 
-Codex name refresh reads bounded metadata only for already admitted ordinary
-sessions in approved homes. It retains the filtered current name and typed
+Codex name refresh reads the name index only for already admitted top-level
+threads in approved homes, ordinary or continued into later rollouts. It retains the filtered current name and typed
 owning-ID evidence, with the same credential redaction as prompt text. Native
 paths, raw index/database rows and unrelated session names are not uploaded.
 Name changes publish new source evidence but preserve conversation activity,
-capture time and retention. Collection never starts a native Codex process to
-retrieve a name; live WAL storage is unavailable to the safe file reader.
+capture time and retention, except for a thread continued into later rollouts,
+whose rename is published with a fresh capture. Collection never starts a native Codex process to
+retrieve a name and never opens Codex's databases.
+
+Cursor name refresh does the same for already admitted Cursor sessions,
+including imported ones, whose agent transcripts record no chat name. It reads
+only the `composerData` row of each admitted chat from Cursor's `state.vscdb`,
+read-only and in place, and retains the same typed evidence: the chat's
+filtered `name`, or that Cursor has not named it. Nothing else in the row
+(messages, workspace, model, timestamps) is uploaded, and a chat missing from
+the database leaves any earlier name in place.
 
 ## Local conversation search
 
