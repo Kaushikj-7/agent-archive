@@ -31,11 +31,13 @@ type unit struct {
 
 	// perModel is the unit's tokens by normalized model id, sorted by id,
 	// each priced; tokens and cost are their sums. Subagents are included.
-	perModel    []modelUse
-	tokens      tokenSet
-	hasData     bool
-	approximate bool
-	cost        costAcc
+	perModel            []modelUse
+	tokens              tokenSet
+	hasData             bool
+	approximate         bool
+	cost                costAcc
+	observations        archive.ObservationAccumulator
+	observationSessions int
 
 	// rootTokens is the root's own tokens, without its subagents.
 	rootTokens  tokenSet
@@ -245,7 +247,14 @@ func (u *unit) finish(loc *time.Location, lookup *modelLookup, scratch *unitScra
 		if i > 0 {
 			m = u.children[i-1]
 		}
+		u.observations.AddSummary(m.TokenObservations)
+		if m.TokenObservations.HasObservations() {
+			u.observationSessions++
+		}
 		has, approximate := memberUsage(m, lookup.normalize, scratch.member)
+		if !has && m.TokenObservations.HasObservations() {
+			u.cost.excluded++
+		}
 		byModel := scratch.member
 		var memberTotal tokenSet
 		for id, set := range byModel {

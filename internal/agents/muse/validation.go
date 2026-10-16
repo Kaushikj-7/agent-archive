@@ -242,9 +242,13 @@ func validFields(r retained) bool {
 			if _, ok := v.(json.Number); !ok {
 				return false
 			}
+		case fieldObservedInput, fieldObservedOutput:
+			if !integer(v, 0) {
+				return false
+			}
 		case fieldResume:
 		case fieldPreviousName:
-		case fieldPrompt, fieldText, fieldNewName, fieldKind, fieldEventKind, fieldSourceRunRecordID:
+		case fieldPrompt, fieldText, fieldNewName, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldObservedModel:
 			fallthrough
 		default:
 			if _, ok := v.(string); !ok {
@@ -461,6 +465,9 @@ func fieldsRuntimeSession(r retained) (int64, []string, bool) {
 	}
 	ek := runtimeEvent(str(f["event_kind"]))
 	names = []string{"kind", "event_kind"}
+	if kind == roleRun && ek == eventModelCompleted && completionEnriched(f) {
+		return schema, []string{"kind", "event_kind", "run_id", "source_run_record_id", "source_run_record_sequence", "model", "input_tokens", "output_tokens"}, completionFields(r)
+	}
 	if kind == roleRun && (ek == eventStarted || ek == eventAssistantMessageCommitted) {
 		names = append(names, "run_id", "source_run_record_id", "source_run_record_sequence")
 		if num(f["source_run_record_sequence"]) < 1 {

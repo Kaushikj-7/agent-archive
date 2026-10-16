@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Muse local handoff now shows recorded own input/output observations from
+  qualified completions. Full usage, cache/reasoning composition and cost remain
+  unavailable. Metadata, eval export and stats use a separate optional observation
+  summary; mixed stats disclose sessions excluded from the priced subset. Model
+  filters also select available recorded observation labels without enabling cost.
+
 - Codex capture and backfill revalidate unchanged sessions after unrelated
   database checkpoints instead of repeatedly reporting that their source changed.
   Fresh private snapshots retain the existing time, memory, and source checks.

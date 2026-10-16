@@ -570,3 +570,21 @@ Missing timestamps and unknown matching totals are null; results and gaps are
 arrays. Coverage is namespace-wide and describes observed local state, never
 immediate remote freshness. stdout has one bounded document; stderr carries
 diagnostics. Usage failures can return exit 2 without a JSON document.
+
+Own input/output observations use an optional `token_observations` object with
+`input`, `output`, bounded `models`, and explicit `observed`, `coverage`,
+`composition`, `pricing` availability (`state`, optional fixed `reason`). They are
+recorded observations, not complete usage or billed tokens. A known model or
+`--prices` file cannot turn them into cost. Legacy normalized token fields remain
+absent for observation-only sessions. Stats JSON also reports
+`observation_sessions` and `coverage.observation_only_sessions`; each cost has an
+optional `observation_only_sessions` count. Mixed spend is the qualified priced
+subset and is partial even when an excluded session recorded zero input/output.
+No unpriced token total is inferred from observations. Terminal and HTML show a
+compact observation and coverage note; handoff JSON includes the same summary in
+its session and Markdown keeps values with their unavailable-accounting context.
+
+Model filters match available recorded observation labels as well as existing
+request/response model summaries. The bounded `other` observation fold is not a
+model identity and cannot be selected; unavailable or overflowing observations
+never establish a model match.

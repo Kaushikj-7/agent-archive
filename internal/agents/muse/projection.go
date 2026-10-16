@@ -331,6 +331,9 @@ func projectRuntimeSession(r retained, p map[string]any) (map[string]any, error)
 	event := object(p["event"])
 	ek := runtimeEvent(str(event["kind"]))
 	f["event_kind"] = string(ek)
+	if kind == roleRun && ek == eventModelCompleted {
+		return projectCompletion(r, p, event)
+	}
 	if kind == roleRun && (ek == eventStarted || ek == eventAssistantMessageCommitted) {
 		if !stringFields(p, "run_id", "source_run_record_id") || num(p["source_run_record_sequence"]) < 1 {
 			return nil, errFormat
