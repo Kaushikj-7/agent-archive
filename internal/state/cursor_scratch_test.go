@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -280,4 +281,55 @@ func TestCursorScratchReleasesCapturedScopeAcrossLaterSession(t *testing.T) {
 		t.Fatal("earlier cleanup released a later session charge")
 	}
 	later.Release(cursorScratchControl)
+}
+
+func TestCursorScratchRecoveryPreservesNoncanonicalToken(t *testing.T) {
+	t.Parallel()
+	s, _ := scratchStore(t)
+	token := "foreign-workspace"
+	scratch := filepath.Join(s.home, string(scratchDurableRoot), token)
+	if err := os.MkdirAll(scratch, 0700); err != nil {
+		t.Fatal(err)
+	}
+	native := filepath.Join(scratch, "native.db")
+	if err := os.WriteFile(native, []byte("foreign data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	receipt := cursorScratchReceipt{Version: 1, Owner: "cursor-live-wal", Key: "synthetic", Token: token, Bytes: 4096}
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.home, string(reservationDurableRoot), token+".json")
+	if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.RecoverCursorScratch(t.Context()); !errors.Is(err, ErrDurableStorageRecovery) {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(native); err != nil || string(got) != "foreign data" {
+		t.Fatal("unrelated workspace removed", string(got), err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != string(raw) {
+		t.Fatal("unknown receipt changed", string(got), err)
+	}
+}
+
+func TestCursorScratchReceiptUsesExactMintedTokenLanguage(t *testing.T) {
+	t.Parallel()
+	good := "0123456789abcdef0123456789abcdef"
+	if !canonicalCursorScratchToken(good) {
+		t.Fatal("minted token refused")
+	}
+	for _, bad := range []string{"", good[:31], good + "0", "0123456789ABCDEF0123456789ABCDEF", "../" + good, good[:31] + "g"} {
+		if canonicalCursorScratchToken(bad) {
+			t.Fatal("noncanonical token", bad)
+		}
+	}
+	if _, ok := decodeCursorScratchReceipt(make([]byte, 4097)); ok {
+		t.Fatal("overcap control accepted")
+	}
 }

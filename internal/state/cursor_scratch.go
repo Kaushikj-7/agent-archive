@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -49,7 +50,7 @@ type CursorScratch struct {
 // The store must have a live captured read budget. Only Reserve allocates its
 // durable receipt, before any caller may create the actual image.
 func (s *Store) NewCursorScratch(ctx context.Context, key string) (*CursorScratch, error) {
-	if ctx == nil || s.resourceBudget == nil || !safeFileComponent(key) {
+	if ctx == nil || s.resourceBudget == nil || !safeFileComponent(key) || len(key) > 255 {
 		return nil, ErrDurableStorageRecovery
 	}
 	if err := ctx.Err(); err != nil {
@@ -321,10 +322,13 @@ func (s *Store) RecoverCursorScratch(ctx context.Context) (err error) {
 }
 
 func validCursorScratchReceipt(name string, r cursorScratchReceipt) bool {
-	return r.Version == 1 && r.Owner == "cursor-live-wal" && safeFileComponent(r.Key) && safeFileComponent(r.Token) && name == r.Token+".json" && r.Bytes > 0 && r.Bytes <= cursorScratchLimit
+	return r.Version == 1 && r.Owner == "cursor-live-wal" && safeFileComponent(r.Key) && len(r.Key) <= 255 && canonicalCursorScratchToken(r.Token) && name == r.Token+".json" && r.Bytes > 0 && r.Bytes <= cursorScratchLimit
 }
 
 func decodeCursorScratchReceipt(raw []byte) (receipt cursorScratchReceipt, ok bool) {
+	if len(raw) > 4096 || !utf8.Valid(raw) {
+		return receipt, false
+	}
 	d := json.NewDecoder(bytes.NewReader(raw))
 	token, err := d.Token()
 	if err != nil || token != json.Delim('{') {
@@ -454,4 +458,16 @@ func (s *Store) NewLiveCaptureRequest(original *nativefacts.CaptureRequest) (_ *
 	}
 	keep = true
 	return bound, nil
+}
+
+func canonicalCursorScratchToken(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	for _, b := range []byte(value) {
+		if !(b >= '0' && b <= '9' || b >= 'a' && b <= 'f') {
+			return false
+		}
+	}
+	return true
 }
