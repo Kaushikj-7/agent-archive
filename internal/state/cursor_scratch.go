@@ -18,6 +18,7 @@ import (
 )
 
 const cursorScratchLimit int64 = 128 << 20
+
 const cursorScratchControl int64 = 64 << 10
 
 // cursorScratchReceipt is private control, never a capture or selection proof.
@@ -75,9 +76,11 @@ func (s *Store) NewCursorScratch(ctx context.Context, key string) (*CursorScratc
 
 // Root names this owner's private scratch directory; the name grants no proof.
 func (r *CursorScratch) Root() string { return filepath.Join(r.store.home, r.scratchPath()) }
+
 func (r *CursorScratch) scratchPath() string {
 	return filepath.Join(string(scratchDurableRoot), r.receipt.Token)
 }
+
 func (r *CursorScratch) receiptPath() string {
 	return filepath.Join(string(reservationDurableRoot), r.receipt.Token+".json")
 }
@@ -291,7 +294,7 @@ func (s *Store) RecoverCursorScratch(ctx context.Context) (err error) {
 			return err
 		}
 		defer func() { err = errors.Join(err, entries.Close()) }()
-		for count := 0; count < 64; count++ {
+		for range 64 {
 			if err = ctx.Err(); err != nil {
 				return err
 			}
@@ -325,6 +328,16 @@ func validCursorScratchReceipt(name string, r cursorScratchReceipt) bool {
 	return r.Version == 1 && r.Owner == "cursor-live-wal" && safeFileComponent(r.Key) && len(r.Key) <= 255 && canonicalCursorScratchToken(r.Token) && name == r.Token+".json" && r.Bytes > 0 && r.Bytes <= cursorScratchLimit
 }
 
+type cursorScratchReceiptField string
+
+const (
+	cursorScratchFieldVersion cursorScratchReceiptField = "version"
+	cursorScratchFieldOwner   cursorScratchReceiptField = "owner"
+	cursorScratchFieldKey     cursorScratchReceiptField = "key"
+	cursorScratchFieldToken   cursorScratchReceiptField = "token"
+	cursorScratchFieldBytes   cursorScratchReceiptField = "bytes"
+)
+
 func decodeCursorScratchReceipt(raw []byte) (receipt cursorScratchReceipt, ok bool) {
 	if len(raw) > 4096 || !utf8.Valid(raw) {
 		return receipt, false
@@ -346,16 +359,16 @@ func decodeCursorScratchReceipt(raw []byte) (receipt cursorScratchReceipt, ok bo
 		}
 		seen[key] = true
 		var target any
-		switch key {
-		case "version":
+		switch cursorScratchReceiptField(key) {
+		case cursorScratchFieldVersion:
 			target = &receipt.Version
-		case "owner":
+		case cursorScratchFieldOwner:
 			target = &receipt.Owner
-		case "key":
+		case cursorScratchFieldKey:
 			target = &receipt.Key
-		case "token":
+		case cursorScratchFieldToken:
 			target = &receipt.Token
-		case "bytes":
+		case cursorScratchFieldBytes:
 			target = &receipt.Bytes
 		default:
 			return receipt, false
@@ -465,7 +478,7 @@ func canonicalCursorScratchToken(value string) bool {
 		return false
 	}
 	for _, b := range []byte(value) {
-		if !(b >= '0' && b <= '9' || b >= 'a' && b <= 'f') {
+		if (b < '0' || b > '9') && (b < 'a' || b > 'f') {
 			return false
 		}
 	}

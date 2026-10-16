@@ -574,14 +574,14 @@ func captureOriginalAuthorityError(root string, selectedDirs, selectedSources ma
 			return err
 		}
 		pkg := "github.com/wangjohn/agent-archive/" + filepath.ToSlash(rel)
-		if (pkg == captureFactsPath || pkg == captureDomainPath || strings.HasPrefix(pkg, captureDomainPath+"/") || pkg == captureCodecPath || strings.HasPrefix(pkg, captureCodecPath+"/")) && !selectedSources[path] {
+		if (pkg == captureFactsPath || capturePackagePath(pkg) == capturePackageDomain || strings.HasPrefix(pkg, captureDomainPath+"/") || capturePackagePath(pkg) == capturePackageCodec || strings.HasPrefix(pkg, captureCodecPath+"/")) && !selectedSources[path] {
 			return fmt.Errorf("unqualified closed-domain profile source %s", path)
 		}
 		f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 		if err != nil {
 			return err
 		}
-		if pkg == captureDomainPath {
+		if capturePackagePath(pkg) == capturePackageDomain {
 			if (captureAuthorityFile(entry.Name()) != captureAuthorityProof && captureAuthorityFile(entry.Name()) != captureAuthorityLiveProof) || len(f.Decls) != 2 || len(f.Imports) != 1 {
 				return fmt.Errorf("neutral facade shape changed in %s", path)
 			}
@@ -598,14 +598,14 @@ func captureOriginalAuthorityError(root string, selectedDirs, selectedSources ma
 				return fmt.Errorf("neutral facade must only alias Proof in %s", path)
 			}
 		}
-		if pkg == captureCodecPath || strings.HasPrefix(pkg, captureCodecPath+"/") {
+		if capturePackagePath(pkg) == capturePackageCodec || strings.HasPrefix(pkg, captureCodecPath+"/") {
 			if pkg != captureCodecPath || captureAuthorityFile(entry.Name()) != captureAuthorityCodec {
 				return fmt.Errorf("unlisted codec bridge source %s", path)
 			}
 		}
 		for _, spec := range f.Imports {
 			imported := strings.Trim(spec.Path.Value, "\"")
-			if pkg == captureCodecPath && !captureCodecDependencyAllowed(imported) {
+			if capturePackagePath(pkg) == capturePackageCodec && !captureCodecDependencyAllowed(imported) {
 				return fmt.Errorf("forbidden codec bridge dependency %s in %s", imported, path)
 			}
 			if captureBoundaryImport(imported) && !selectedDirs[filepath.Dir(path)] {
@@ -664,7 +664,7 @@ func captureAuthorityObjectAllowed(pkg, file string, obj types.Object, calls map
 				}
 			}
 			return false
-		case captureSymbolCursor, captureSymbolLoan, captureSymbolClose:
+		case captureSymbolCursor, captureSymbolLiveCursor, captureSymbolLoan, captureSymbolLiveLoan, captureSymbolClose:
 			break
 		case captureSymbolNew, captureSymbolNewLive, captureSymbolNewReservation, captureSymbolDigest:
 			fn, ok := obj.(*types.Func)
@@ -1303,6 +1303,21 @@ func captureCheckLiveProducerSignature(t *testing.T, pkg *types.Package) {
 		t.Error("live producer accepts arbitrary structural scratch authority")
 	}
 }
+
+type captureLiveBindingName string
+
+const (
+	captureLiveBindingCapturePolicy      captureLiveBindingName = "CapturePolicy"
+	captureLiveBindingCaptureSkillMode   captureLiveBindingName = "CaptureSkillMode"
+	captureLiveBindingSettledImportFacts captureLiveBindingName = "SettledImportFacts"
+	captureLiveBindingCaptureRequest     captureLiveBindingName = "CaptureRequest"
+	captureLiveBindingRequestLease       captureLiveBindingName = "RequestLease"
+	captureLiveBindingCapturedScope      captureLiveBindingName = "CapturedScope"
+	captureLiveBindingLiveCaptureRequest captureLiveBindingName = "LiveCaptureRequest"
+	captureLiveBindingLiveCaptureLease   captureLiveBindingName = "LiveCaptureLease"
+	captureLiveBindingCleanupError       captureLiveBindingName = "LiveCaptureCleanupError"
+)
+
 func captureCheckLiveFactsShape(t *testing.T, pkg *types.Package, fset *token.FileSet) {
 	t.Helper()
 	for _, name := range pkg.Scope().Names() {
@@ -1312,8 +1327,8 @@ func captureCheckLiveFactsShape(t *testing.T, pkg *types.Package, fset *token.Fi
 		}
 	}
 	captureCheckLiveIssuerSignature(t, pkg)
-	for name, methods := range map[string]map[string]bool{"CapturePolicy": {}, "CaptureSkillMode": {}, "SettledImportFacts": {"UnmarshalJSON": true}, "CaptureRequest": {"Borrow": true, "Close": true, "MatchesBudget": true, "MatchesPolicy": true}, "RequestLease": {"Context": true, "Budget": true, "Reservation": true, "Registration": true, "Reviewed": true, "Locator": true, "At": true, "Policy": true, "Check": true, "Close": true}, "CapturedScope": {"Reserve": true, "Release": true, "Available": true, "Refuse": true}, "LiveCaptureRequest": {"Borrow": true, "Close": true}, "LiveCaptureCleanupError": {"Error": true, "Unwrap": true, "Close": true}, "LiveCaptureLease": {"Original": true, "Context": true, "Err": true, "Reserve": true, "OpenWorkspace": true, "Close": true}} {
-		obj, ok := pkg.Scope().Lookup(name).(*types.TypeName)
+	for name, methods := range map[captureLiveBindingName]map[string]bool{captureLiveBindingCapturePolicy: {}, captureLiveBindingCaptureSkillMode: {}, captureLiveBindingSettledImportFacts: {"UnmarshalJSON": true}, captureLiveBindingCaptureRequest: {"Borrow": true, "Close": true, "MatchesBudget": true, "MatchesPolicy": true}, captureLiveBindingRequestLease: {"Context": true, "Budget": true, "Reservation": true, "Registration": true, "Reviewed": true, "Locator": true, "At": true, "Policy": true, "Check": true, "Close": true}, captureLiveBindingCapturedScope: {"Reserve": true, "Release": true, "Available": true, "Refuse": true}, captureLiveBindingLiveCaptureRequest: {"Borrow": true, "Close": true}, captureLiveBindingCleanupError: {"Error": true, "Unwrap": true, "Close": true}, captureLiveBindingLiveCaptureLease: {"Original": true, "Context": true, "Err": true, "Reserve": true, "OpenWorkspace": true, "Close": true}} {
+		obj, ok := pkg.Scope().Lookup(string(name)).(*types.TypeName)
 		if !ok || obj.IsAlias() {
 			t.Errorf("live binding %s must be concrete", name)
 			continue
@@ -1323,7 +1338,7 @@ func captureCheckLiveFactsShape(t *testing.T, pkg *types.Package, fset *token.Fi
 			t.Error("live binding not named")
 			continue
 		}
-		if name == "CaptureRequest" || name == "RequestLease" || name == "CapturedScope" || name == "LiveCaptureRequest" || name == "LiveCaptureLease" || name == "LiveCaptureCleanupError" {
+		if name == captureLiveBindingCaptureRequest || name == captureLiveBindingRequestLease || name == captureLiveBindingCapturedScope || name == captureLiveBindingLiveCaptureRequest || name == captureLiveBindingLiveCaptureLease || name == captureLiveBindingCleanupError {
 			structure, ok := named.Underlying().(*types.Struct)
 			if !ok || structure.NumFields() != 1 || structure.Field(0).Exported() {
 				t.Errorf("live binding %s exposes owner mutation", name)
@@ -1343,8 +1358,10 @@ func TestLiveCaptureIssuerTypedReferenceControls(t *testing.T) {
 	facts.MarkComplete()
 	prefix := `package state; import facts "` + captureFactsPath + `";type Store struct{};type CursorScratch struct{};func(*CursorScratch)Reserve(){};func(*CursorScratch)OpenWorkspace(){};func(*CursorScratch)Close(){};func(*CursorScratch)Err(){};`
 	for _, test := range []struct {
-		name, body, file string
-		allowed          bool
+		name    string
+		body    string
+		file    string
+		allowed bool
 	}{
 		{"exact-owner", `func(*Store)NewLiveCaptureRequest(){scratch:=new(CursorScratch);facts.BindLiveCaptureRequest(nil,nil,scratch.Reserve,scratch.OpenWorkspace,scratch.Close,scratch.Err)}`, "cursor_scratch.go", true},
 		{"different-owner", `func(*Store)NewLiveCaptureRequest(){scratch:=new(CursorScratch);other:=new(CursorScratch);facts.BindLiveCaptureRequest(nil,nil,scratch.Reserve,other.OpenWorkspace,scratch.Close,scratch.Err)}`, "cursor_scratch.go", false},
