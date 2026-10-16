@@ -166,12 +166,16 @@ func SeedReadPathArchive(tb testing.TB, store *MemoryStore, count, generation in
 		if generation > 0 && i < max(1, count/100) {
 			version = 1
 		}
+		outcome := archive.TurnOutcomeCompleted
+		if version == 1 {
+			outcome = archive.TurnOutcomeInterrupted
+		}
 		projectName := ""
 		if i%10 == 0 {
 			projectName = "synthetic project"
 		}
 		source := archive.SourceReference{Key: sourceKey, SHA256: sourceHash, CompressedBytes: sourceBytes}
-		m := archive.Metadata{ProjectName: projectName, SchemaVersion: archive.MetadataSchemaVersion, FilterVersion: archive.FilterVersion, SessionID: id, NativeSessionID: native, MachineID: "bench", ProjectID: fmt.Sprintf("project-%d", i%100), Harness: archive.Harness{Name: harness}, CapturedAt: BenchmarkTime.Add(time.Duration(i) * time.Second), Title: fmt.Sprintf("synthetic-%d", version), SourceBundle: source}
+		m := archive.Metadata{TurnOutcome: outcome, ProjectName: projectName, SchemaVersion: archive.MetadataSchemaVersion, FilterVersion: archive.FilterVersion, SessionID: id, NativeSessionID: native, MachineID: "bench", ProjectID: fmt.Sprintf("project-%d", i%100), Harness: archive.Harness{Name: harness}, CapturedAt: BenchmarkTime.Add(time.Duration(i) * time.Second), Title: fmt.Sprintf("synthetic-%08x-v%d", i+1, version), SourceBundle: source}
 		raw, err := json.Marshal(m)
 		if err != nil {
 			tb.Fatal(err)
