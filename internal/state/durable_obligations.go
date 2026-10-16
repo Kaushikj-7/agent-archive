@@ -197,10 +197,14 @@ func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err
 			return out, errors.Join(err, ErrDurableStorageRecovery)
 		}
 	}
+	return s.finishDurableStorageObligations(home, &remaining, out, err)
+}
+
+func (s *Store) finishDurableStorageObligations(home *local.RootedHome, remaining *int, out []DurableStorageObligation, err error) ([]DurableStorageObligation, error) {
 	if e := s.durableContext().Err(); e != nil {
 		return out, errors.Join(ErrDurableStorageRecovery, err, e)
 	}
-	unavailable, e := unavailableStorageObligations(home.Root, &remaining)
+	unavailable, e := unavailableStorageObligations(home.Root, remaining)
 	out = append(out, unavailable...)
 	err = errors.Join(err, e)
 	if err != nil {
