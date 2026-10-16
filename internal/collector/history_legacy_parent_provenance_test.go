@@ -95,3 +95,82 @@ func TestLegacyPreservedProvenanceUsesOriginalParent(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyPreparationDecodesOriginalParentBeforeApplyingResolvedParent(t *testing.T) {
+	for _, originalParent := range []string{"", "conflicting-known-parent"} {
+		t.Run("original="+originalParent, func(t *testing.T) {
+			scan, p := privacyJournal(t)
+			input := p.History.Inputs[1]
+			raw, err := scan.readRetainedInputBytes(input.Reference)
+			if err != nil {
+				t.Fatal(err)
+			}
+			original, err := archive.ReadSourceBundle(bytes.NewReader(raw), archive.DecodeOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			original.NativeChild, original.ParentSessionID = true, originalParent
+			packed, err := archive.BuildCompressedSource(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key, err := archive.SourceObjectKey(original, packed.SHA256)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref := archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}
+			stage, err := scan.local.StagePendingSource(scan.id(), ref, packed.Bytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var final archive.Metadata
+			if err := json.Unmarshal(p.MetadataBytes, &final); err != nil {
+				t.Fatal(err)
+			}
+			final.ParentSessionID, final.NativeChild = "qualified-late-parent", true
+			final.History.Preserved = []archive.RevisionReference{{RevisionID: input.RevisionID, CapturedAt: input.CapturedAt, Source: ref, FilterVersion: input.FilterVersion, SourceSchemaVersion: input.SourceSchemaVersion}}
+			scan.reg.ParentSessionID, scan.reg.NativeChild = final.ParentSessionID, true
+			p.Bundle.ParentSessionID, p.Bundle.NativeChild = final.ParentSessionID, true
+			current, err := archive.BuildCompressedSource(p.Bundle)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.SourceKey, err = archive.SourceObjectKey(p.Bundle, current.SHA256)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.SourceSHA256, p.SourceBytes = current.SHA256, current.Bytes
+			final.SourceBundle = p.SourceReference()
+			currentStage, err := scan.local.StagePendingSource(scan.id(), p.SourceReference(), current.Bytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.MetadataBytes, err = json.Marshal(final)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A pre-provenance journal has no per-input parent. Its immutable
+			// source remains authoritative even after the output parent resolves.
+			input.Reference, input.ParentSessionID = ref, nil
+			p.History.Inputs = []state.HistoryInput{input}
+			p.History.Sources = []state.PendingSource{currentStage, stage}
+			p.History.Preparing, p.History.PrivacyCursor = true, 0
+			err = scan.advanceHistoryPreparation(&p)
+			if originalParent != "" {
+				if err == nil {
+					t.Fatal("different known original parent was accepted")
+				}
+				if p.History.PrivacyCursor != 0 {
+					t.Fatal("conflicting input advanced preparation")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal("unresolved original child could not be prepared", err)
+			}
+			if p.History.Preparing || p.History.PrivacyCursor != 1 {
+				t.Fatal("original input did not complete preparation")
+			}
+		})
+	}
+}

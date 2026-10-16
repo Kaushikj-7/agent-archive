@@ -246,6 +246,10 @@ func validFields(r retained) bool {
 			if !integer(v, 0) {
 				return false
 			}
+		case fieldToolCalls, fieldToolResults:
+			if !toolFields(r) {
+				return false
+			}
 		case fieldResume:
 		case fieldPreviousName:
 		case fieldPrompt, fieldText, fieldNewName, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldObservedModel:
@@ -465,6 +469,12 @@ func fieldsRuntimeSession(r retained) (int64, []string, bool) {
 	}
 	ek := runtimeEvent(str(f["event_kind"]))
 	names = []string{"kind", "event_kind"}
+	if kind == roleRun && enrichedTools(f) {
+		if ek == eventAssistantToolCallsCommitted {
+			return schema, []string{"kind", "event_kind", "run_id", "source_run_record_id", "source_run_record_sequence", "message_id", "tool_calls"}, toolFields(r)
+		}
+		return schema, []string{"kind", "event_kind", "run_id", "source_run_record_id", "source_run_record_sequence", "batch_id", "results"}, toolFields(r)
+	}
 	if kind == roleRun && ek == eventModelCompleted && completionEnriched(f) {
 		return schema, []string{"kind", "event_kind", "run_id", "source_run_record_id", "source_run_record_sequence", "model", "input_tokens", "output_tokens"}, completionFields(r)
 	}

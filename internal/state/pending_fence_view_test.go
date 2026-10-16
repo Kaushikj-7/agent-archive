@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -115,6 +116,88 @@ func TestPendingFenceViewMatchesTheWholeDecode(t *testing.T) {
 		}
 		if _, _, err := s.pendingFenceView("owned"); err == nil {
 			t.Fatalf("read a fence view of %q", broken)
+		}
+	}
+}
+
+// Corrupt retained records must not disappear merely because a fence projects
+// past their values. Validate their syntax without retaining their contents.
+func TestPendingFencesRefuseMalformedSkippedJSON(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{
+		`tru`, `truth`, `falsehood`, `nil`, `nul`, `-`, `01`, `1.`, `1e`, `1e+`,
+		`-.1`, `1.e2`, `1e2.3`, `1e++2`, `"\q"`, `"\u12xz"`, `"\u123"`,
+		`[true,]`, `{"x":false,}`, `{"` + strings.Repeat("x", 300) + `\q":0}`,
+	} {
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+			raw := []byte(`{"bundle":{"archive_session_id":"owned","native_records":[` + value + `]}}`)
+			if json.Valid(raw) {
+				t.Fatal("fixture should be invalid JSON")
+			}
+			s := newTestStore(t)
+			if err := local.WriteBytes(s.pendingPath("owned"), raw); err != nil {
+				t.Fatal(err)
+			}
+			for _, check := range []catalogFenceCheck{catalogFenceSave, catalogFenceRemoval} {
+				if err := checkCatalogFence(t, s, check, PendingPublication{}); !errors.Is(err, ErrDurableStorageRecovery) {
+					t.Fatalf("%s accepted malformed skipped value %s: %v", check, value, err)
+				}
+			}
+		})
+	}
+}
+
+func TestPendingFenceAcceptsValidSkippedScalars(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{
+		`null`, `true`, `false`, `0`, `-0`, `-123`, `3.14`, `0.01`, `1e2`, `1e+2`, `-1.2E-3`,
+		`"\"\\\/\b\f\n\r\t\u1234\uD800"`, `{"a":[0,1,true,false,null]}`,
+		`1` + strings.Repeat("0", 10000),
+	} {
+		t.Run(value[:min(len(value), 80)], func(t *testing.T) {
+			t.Parallel()
+			raw := []byte(`{"bundle":{"archive_session_id":"owned","native_records":[` + value + `]}}`)
+			if !json.Valid(raw) {
+				t.Fatal("fixture should be valid JSON")
+			}
+			s := newTestStore(t)
+			if err := local.WriteBytes(s.pendingPath("owned"), raw); err != nil {
+				t.Fatal(err)
+			}
+			if _, found, err := s.pendingFenceView("owned"); err != nil || !found {
+				t.Fatalf("valid skipped scalar refused: found=%v, err=%v", found, err)
+			}
+		})
+	}
+}
+
+// The projected reader must validate syntax even for values it discards.
+func FuzzPendingFenceJSONSyntax(f *testing.F) {
+	for _, seed := range []string{`null`, `true`, `01`, `1e+2`, `"\q"`, `{"a":[1,false,null]}`, `"\u1234"`} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		raw := `{"discard":` + value + `}`
+		p := projector{in: bufio.NewReader(strings.NewReader(raw)), limit: pendingFenceViewLimit, reserve: func(int64) bool { return true }, ctx: func() error { return nil }}
+		err := p.object(jsonProjection{}, true)
+		if err == nil {
+			err = p.trailing()
+		}
+		if (err == nil) != json.Valid([]byte(raw)) {
+			t.Fatalf("projection syntax differs from encoding/json for %q: %v", value, err)
+		}
+	})
+}
+
+func TestPendingFenceCountsProjectedObjectsInNestingLimit(t *testing.T) {
+	t.Parallel()
+	for _, depth := range []int{9999, 10000} {
+		raw := `{"discard":` + strings.Repeat("[", depth) + `0` + strings.Repeat("]", depth) + `}`
+		p := projector{in: bufio.NewReader(strings.NewReader(raw)), limit: pendingFenceViewLimit, reserve: func(int64) bool { return true }, ctx: func() error { return nil }}
+		err := p.object(jsonProjection{}, true)
+		if (err == nil) != json.Valid([]byte(raw)) {
+			t.Fatalf("nesting %d: projection disagrees with encoding/json: %v", depth, err)
 		}
 	}
 }
