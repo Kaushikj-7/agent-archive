@@ -16,6 +16,13 @@ follow [Semantic Versioning](https://semver.org/).
   footer line instead of under the prompt, and names `PgUp/PgDn page`.
   Reading lines is unchanged.
 
+- Read complete supported Muse exec/MSP roots with `handoff --file PATH
+  --harness muse`, including safe own prompts and committed assistant text,
+  JSON/Markdown output and handoff into an existing supported agent. Creation
+  time uses the validated reserved start. Accounting, tools, model switches,
+  children, automatic browse, backfill, capture and Muse destination launch
+  remain unavailable. Handoff also now respects Codex's recorded native start.
+
 - Commands run inside Muse detect its session environment to avoid interactive
   prompts and pagers. Handoff into supported agents removes inherited Muse
   session variables. This adds presence detection only; Muse capture, current

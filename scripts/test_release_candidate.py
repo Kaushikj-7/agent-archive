@@ -264,7 +264,7 @@ class CandidateTest(unittest.TestCase):
 
     def test_acceptance_requires_every_supported_app_and_no_unsupported_app(self):
         # Acceptance rows prove capture/publication, not identity recognition.
-        # A runtime-only binding must not require unsupported capture evidence.
+        # Runtime/local-read bindings must not require unsupported capture evidence.
         root = Path(__file__).resolve().parent.parent
         catalog = (root / 'internal/agentmeta/catalog.go').read_text()
         identities = dict(re.findall(r'(?m)^\s*(\w+)\s+ID\s*=\s*"([a-z-]+)"$', catalog))
@@ -282,14 +282,23 @@ class CandidateTest(unittest.TestCase):
             bindings[name] = ports
         self.assertEqual(set(bindings), set(identities))
         capture_ports = ('Sources:', 'Filter:', 'Parser:', 'Decoder:', 'Hooks:')
+        muse_local = ('Runtime: muse.RuntimeDetector{}, Sources: muse.SourceProvider{}, '
+                      'Filter: muse.Filter{}, Parser: muse.Parser{}')
         for name, ports in bindings.items():
             implemented = [port in ports for port in capture_ports]
-            self.assertTrue(not any(implemented) or all(implemented),
-                            f'partial capture binding needs explicit acceptance policy: {name}')
+            if name == 'Muse':
+                # The guarded local source is not capture admission. Keep this
+                # exception exact: Decoder/Hooks or any replacement need review.
+                self.assertEqual(ports, muse_local)
+                self.assertNotIn('Decoder:', ports)
+                self.assertNotIn('Hooks:', ports)
+            else:
+                self.assertTrue(not any(implemented) or all(implemented),
+                                f'partial capture binding needs explicit acceptance policy: {name}')
         capture_apps = {identities[name] for name, ports in bindings.items()
                         if all(port in ports for port in capture_ports)}
         self.assertEqual(capture_apps, {'claude', 'codex', 'cursor'})
-        self.assertEqual(bindings['Muse'], 'Runtime: muse.RuntimeDetector{}')
+        self.assertEqual(bindings['Muse'], muse_local)
         app_rows = {'claude-code' if name == 'claude' else name for name in capture_apps}
         self.assertTrue((set(identities.values()) - capture_apps).isdisjoint(rc.ROWS))
         template = json.loads((root / 'dev/maintainers/release-evidence/example.json').read_text())

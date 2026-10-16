@@ -988,6 +988,136 @@ gate owns approval and trusted-main promotion. Queue eligibility remains unknown
 without independent telemetry, and runner allocation remains accounted by the
 existing full-pipeline reporter rather than by summing test durations.
 
+## Repeated compiled listing: measured no-go for production sharing
+
+The existing combined CLI/catalog/collector/state/statshtml command already shares
+one Go invocation within each worker. It still runs independently on all eight
+workers. Do not count that earlier consolidation as a new optimization.
+
+For one existing ordinary run, append `--listing-repetition` to the timing reporter
+and supply exactly eight `--evidence /path/to/go-shard-N` arguments. It rejects
+missing/duplicate/failed workers and mixed source, compiler, package, run/attempt,
+cache or runner-image cohorts. This diagnostic reads existing manifests and is
+not an artifact authenticator or a replacement for source/coverage reconciliation.
+Obtain artifacts through the existing collector/provenance procedure first.
+It leaves all existing report qualification rules unchanged.
+
+Test [38816393618](https://github.com/wangjohn/agent-archive/actions/runs/38816393618),
+paired with Levenshtein
+[38816394218](https://github.com/wangjohn/agent-archive/actions/runs/38816394218),
+attempt 1, source `39c550ebd40bf68e62e8a2cf4e58fd69b3c954dc`, supplies
+one successful eight-worker observation. Linux/amd64 Go 1.27.2, cgo 1,
+`GOFLAGS=-mod=readonly`, race/short/count=1/JSON/package-p1 listing,
+Ubuntu 24 image 20261012.334.1 and prefix cache restores match across workers.
+Prefix restores establish neither exact-cache warm nor empty-cache cold controls.
+
+| Worker | Combined listing wall seconds |
+| --- | ---: |
+| 0 | 32.325 |
+| 1 | 32.779 |
+| 2 | 37.890 |
+| 3 | 27.705 |
+| 4 | 38.917 |
+| 5 | 37.599 |
+| 6 | 38.116 |
+| 7 | 35.040 |
+
+The sum is 280.372 invocation wall seconds; median 36.320s. This phase includes
+Go graph loading, default vet, compilation/linking, race runtime startup and each
+package's TestMain. It is not measured pure compiler CPU, total runner allocation,
+or removable elapsed time. CLI TestMain isolates HOME/process state and allocates
+a temporary snapshot directory; it does not build the CLI's large test fixtures.
+Ordinary package bodies and separate selected-parent invocations can compile/link
+again outside this phase. The table does not attribute that unmeasured work.
+
+### Reproduce a bounded local binary-size diagnostic
+
+From a clean checkout with exact Go 1.27.2 and dependencies already present
+in the module cache (set `GOMODCACHE` or `GOPATH` explicitly when needed):
+
+```sh
+python3 -B scripts/measure_go_listing.py --go /path/to/go1.27.2/bin/go \
+  --output /tmp/listing-diagnostic-unique
+```
+
+This opt-in tool is absent from workflow commands. It runs two serial versions
+of the current five-package combined listing (empty private build cache, then the
+same cache), then independently compiles those five race test binaries and lists
+their parents. It retains commands/times, raw listing logs, binary sizes/hashes,
+compressed bundle size and local compression time. Gzip here is a payload diagnostic; hosted artifact
+transport and compression can differ. A single shared ten-minute
+supervisor deadline bounds all Go/binary invocations, including the initial
+configuration probe, and owns their process groups. The probe and later commands
+use the same private HOME, disabled user Go environment/workspace/cache helper,
+local toolchain selection and offline module policy. Cross-target configurations
+are rejected before compilation. Output inside the checkout is rejected before
+creation. Local Python compression and binary hashing are outside that subprocess
+budget; compression is separately measured. Temporary
+HOME, app state, cache and binary files are removed. Existing module content is
+read with network access disabled. It never executes test bodies or produces an
+admissible coverage/verdict/cache artifact. The clean tracked source proof must
+match before and after; place output outside the checkout. Its local OS/arch/cgo
+and empty-cache state must not be mixed with hosted Linux prefix-cache timings.
+
+The retained [2026-10-15 investigation receipt](../../dev/qualification/ci-compiled-listing-20261015.json)
+pins hosted artifact IDs/archive digests and manifest hashes, plus the local
+source/configuration, commands, raw-log hashes and binary hashes. The local run
+used commit `c40701be` (Go sources unchanged from this PR's base), Darwin/amd64,
+cgo 1, empty GOFLAGS and an existing module cache. These are one serial local
+observation, separate from the Linux prefix-cache cohort:
+
+| Local phase | Wall seconds |
+| --- | ---: |
+| Combined listing, empty private cache | 306.500 |
+| Combined listing, same private cache | 45.280 |
+| Five independent compile commands, same cache, summed serial wall | 74.820 |
+| Five binary listings, summed serial wall | 13.272 |
+| Local gzip compression | 79.366 |
+
+The five binaries contain 203,762,752 bytes total (CLI 99,015,680; catalog
+18,417,536; collector 41,717,856; state 31,772,496; statshtml 12,839,184).
+The gzip bundle contains 93,873,715 bytes. Both combined listings and each
+independent binary listing produced the identical 3,259 parent inventory;
+this establishes local listing parity, not execution/body coverage or portable
+binary compatibility. This historical receipt predates the hardened initial probe:
+its probe was not supervised and read the original user Go environment before
+the private HOME transition. It records the observed command/configuration and
+sizes, but does not establish the current tool's configuration-isolation or probe
+timeout guarantees. Its bytes and source context are retained unchanged. Local
+gzip cost and payload size are measured; actual hosted transfer and producer dependency costs remain unknown. The retained raw logs were independently reconciled for listing parity.
+
+### What would justify sharing
+
+Current decision: **do not enable production binary sharing**. Hosted binary
+upload/download time, producer allocation, dependency wait, cache effects and
+whole-pipeline latency are unmeasured. Local compression or filesystem copying
+cannot fill those fields. No new runner, recurring job, schedule or benchmark
+campaign is introduced to fill them.
+
+A future proposal must use ordinary-run evidence and the existing full-pipeline
+reporter, with the same actual source/tree, package inventory, exact compiler,
+flags, native environment, runner image and cache cohort. Record producer build,
+vet, compression/upload, per-consumer download/verification/unpack, dependency
+wait (including source-audit wait), body execution, all job allocations and actual
+artifact bytes. Count producer allocation and every consumer's transfer against
+any removed repeated work. A candidate must reduce both measured complete
+required-check elapsed time and total runner allocation after these costs; a
+negative or unknown result is a no-go. Ten unique comparable successful runs may
+support a directional claim; the existing 20-run rule still governs provisional
+p95. Do not add phase sums to overlapping body times or extrapolate this local
+experiment to hosted hardware.
+
+Any candidate must preserve dynamic discovery of every current package/new
+parent/fuzz seed/example, complete assignments/subtest trees, default vet, race,
+count=1, all native/plain-audit obligations, fresh bodies and current cancellation
+budgets. A listing-only artifact cannot authorize skipping compilation for bodies
+without an exact-source/flags/toolchain proof and fresh coverage evidence.
+Untrusted PR artifacts must never populate trusted caches or cross PR/worker trust
+boundaries. Binary identity also includes cgo/native ABI and package-lifetime
+semantics; one producer introduces a dependency barrier and a failure bottleneck.
+These are implementation acceptance requirements, not a claim this diagnostic
+has implemented or qualified a production producer/consumer path.
+
 ## Required test-cost gate
 
 The existing required `linux-race` aggregate runs the performance gate after

@@ -208,7 +208,9 @@ func FilterSource(ctx context.Context, harness string, ref agentapi.SourceRef, s
 	}
 	reg := archive.SessionRegistration{Harness: archive.Harness{Name: adapter.Name()}, TranscriptPath: ref.Path, SourceKind: ref.Kind, SourceKey: ref.Key, SessionStartedAt: startedAt}
 	source, _ := newSourceReader(reg, Options{Sources: sources})
-	out, _, err := source.Filter(ctx, adapter, DefaultMaxTranscriptBytes)
+	reader := source.(providerReader)
+	reader.localRead = true
+	out, _, err := reader.Filter(ctx, adapter, DefaultMaxTranscriptBytes)
 	if errors.Is(err, errRecordTooLarge) || errors.Is(err, errTranscriptTooLarge) {
 		return archive.FilteredTranscript{}, nil, errors.Join(archive.ErrRecordTooLarge, err)
 	}
