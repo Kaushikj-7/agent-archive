@@ -1,10 +1,9 @@
 # Bounded Cursor live-WAL admission
 
-Status: backend, durable owner and distinct sealed producer under review against
-`d338beef`; the guarded production caller is included in this review candidate. Live admission
-requires the existing protected staged-selection configuration and an actual builtin
-provider. This candidate is not a merged or platform-qualified release. The current [backfill contract](../specs/backfill.md)
-continues to require settled evidence; live WAL frames remain pending.
+Status: runtime review candidate composed with foundation `3ff31e35`. Protected
+selected root-chat admission includes the bounded live operation below. Ordinary
+[backfill recovery](../specs/backfill.md) still requires settled evidence. This is
+not a merged or platform-qualified release.
 
 ## Remaining capture gap
 
@@ -29,9 +28,9 @@ held rooted descriptor even if an ancestor path changes.
 
 Native reads refuse unknown Unix VFS ABIs and root execution, enforce read-only
 native opens, retain checked database/WAL/SHM identities and reject a writable
-process-wide shared-memory node before mapping. Failed copies leave partial
-scratch with their owner, rather than claiming successful cleanup or releasing
-its quota. These are synthetic implementation checks, not actual Cursor or
+process-wide shared-memory node before mapping. Failed copies retain partial
+scratch with their owner until verified cleanup succeeds; failed cleanup never
+releases its durable quota. These are synthetic implementation checks, not actual Cursor or
 macOS acceptance evidence.
 
 ## Integration gates
