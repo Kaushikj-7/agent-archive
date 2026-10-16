@@ -268,3 +268,51 @@ func TestLegacyPublishedViewsKeepIndependentObservedDigests(t *testing.T) {
 		t.Fatal("original view lost its own wire identity", err)
 	}
 }
+
+func TestLegacyPublishedPrivateOpenCannotAdoptReplacementRoot(t *testing.T) {
+	t.Parallel()
+	s, reg, _ := generationFixture(t)
+	published, err := s.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := os.ReadFile(s.publishedPath(reg.ArchiveSessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var opened *local.RootedHome
+	directory, err := published.openLegacyPublishedDirectoryUsing(func(home string) (*local.RootedHome, error) {
+		if err := os.Rename(home, filepath.Join(t.TempDir(), "original-home")); err != nil {
+			return nil, err
+		}
+		if err := os.Mkdir(home, 0700); err != nil {
+			return nil, err
+		}
+		if err := os.Mkdir(filepath.Join(home, "published"), 0700); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(s.publishedPath(reg.ArchiveSessionID), wire, 0600); err != nil {
+			return nil, err
+		}
+		held, e := local.OpenRootedHome(home)
+		opened = held
+		return held, e
+	})
+	if err == nil {
+		if directory.close != nil {
+			if e := directory.close(); e != nil {
+				t.Error(e)
+			}
+		}
+		t.Fatal("old observed bytes adopted an identically populated replacement root")
+	}
+	if !errors.Is(err, ErrDurableStorageRecovery) {
+		t.Fatal(err)
+	}
+	if opened == nil {
+		t.Fatal("actual private open did not run")
+	}
+	if _, err := opened.Root.Stat("."); err == nil {
+		t.Fatal("refused foreign root handle remained open")
+	}
+}

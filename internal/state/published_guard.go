@@ -69,7 +69,11 @@ func (p *Published) writeLegacyPublished(next publishedState) (sum [32]byte, err
 	return p.store.hashPublishedFile(home.root, path, after, home.check)
 }
 
-func (p *Published) openLegacyPublishedDirectory() (out legacyPublishedDirectory, err error) {
+func (p *Published) openLegacyPublishedDirectory() (legacyPublishedDirectory, error) {
+	return p.openLegacyPublishedDirectoryUsing(local.OpenRootedHome)
+}
+
+func (p *Published) openLegacyPublishedDirectoryUsing(openPrivate func(string) (*local.RootedHome, error)) (out legacyPublishedDirectory, err error) {
 	identity, err := os.Stat(p.store.home)
 	if err != nil || p.observedHome == nil || !os.SameFile(p.observedHome, identity) {
 		return out, errors.Join(ErrDurableStorageRecovery, err)
@@ -79,9 +83,13 @@ func (p *Published) openLegacyPublishedDirectory() (out legacyPublishedDirectory
 		return out, namedErr
 	}
 	if identity.Mode().Perm()&0077 == 0 && named.Mode()&os.ModeSymlink == 0 {
-		home, err := local.OpenRootedHome(p.store.home)
+		home, err := openPrivate(p.store.home)
 		if err != nil {
 			return out, err
+		}
+		opened, e := home.Root.Stat(".")
+		if e != nil || !os.SameFile(p.observedHome, opened) {
+			return out, errors.Join(ErrDurableStorageRecovery, e, home.Close())
 		}
 		return legacyPublishedDirectory{root: home.Root, check: home.Check, close: home.Close, private: true, lock: func() (func(), error) { return local.RootedLockWait(home, "hooks.lock", 0) }}, nil
 	}
