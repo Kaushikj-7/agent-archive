@@ -238,7 +238,12 @@ within 250 ms per check; unreadable or incomplete monitoring refuses. No argv,
 environment, user-wide limits or unrelated process signals are used. Cleanup
 sends TERM and, if still needed, KILL only to the present recorded owned group,
 retains signal failures, reaps its leader and checks group absence within three
-seconds. A signal failure requires an independent complete absence proof. Endpoint refusal stops the command;
+seconds, within one eight-second cleanup budget. When catalog monitoring is
+unavailable, an exact owned-group signal-zero query can prove positive presence
+for cleanup signals; it never supplies the final complete absence proof, and
+monitor failure keeps the case unsuccessful. A failed TERM does not skip KILL.
+Signal failures stay in the private receipt and require an independent complete
+absence proof. Endpoint refusal stops the command;
 cleanup closes every tracked socket and joins the server and all handler
 threads, including interrupted and stalled reads. Rejected excess connections
 acquire no handler or body. These bounds do not prevent a producer writing

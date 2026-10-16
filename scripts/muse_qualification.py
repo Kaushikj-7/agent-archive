@@ -271,9 +271,9 @@ def owned_group_members(group):
     raise RuntimeError("owned process-group inspection unavailable on this platform")
 
 
-def wait_owned_group(process):
+def wait_owned_group(process, deadline=None):
     """Verify bounded group cleanup after leader reaping; no foreign PID signals."""
-    deadline = time.monotonic() + 3
+    deadline = min(deadline, time.monotonic() + 3) if deadline is not None else time.monotonic() + 3
     while True:
         try:
             if not owned_group_members(process.pid):
@@ -286,15 +286,32 @@ def wait_owned_group(process):
 
 
 def stop_scenario_process(process, receipt):
-    """Signal only this still-present owned group; verify absence after reaping."""
-    def present():
+    """Finish every cleanup phase, even when inspection or an earlier signal fails."""
+    deadline = time.monotonic() + 8
+    inspection_errors = receipt.setdefault("inspection_errors", [])
+
+    def present(label):
         try:
             return bool(owned_group_members(process.pid))
         except OwnedGroupOverflow:
             return True  # Truncation proves nonempty, never absence.
+        except RuntimeError:
+            inspection_errors.append(label)
+            # A positive signal-zero query proves this recorded group exists.
+            # It cannot certify complete catalog inspection or final cleanup.
+            try:
+                os.killpg(process.pid, 0)
+                return True
+            except ProcessLookupError:
+                return False
+            except OSError as error:
+                receipt[label + "_query_errno"] = error.errno
+                return None
+
     def send(signum, label):
-        if not present():
-            receipt[label] = "not_needed"
+        exists = present(label)
+        if exists is not True:
+            receipt[label] = "not_needed" if exists is False else "presence_unknown"
             return
         try:
             os.killpg(process.pid, signum)
@@ -302,27 +319,29 @@ def stop_scenario_process(process, receipt):
         except OSError as error:
             receipt[label] = "signal_failed"
             receipt[label + "_errno"] = error.errno
-            # A racing exit can remove the group. Only a complete fresh query
-            # can establish that no further signal is necessary.
-            receipt[label + "_post_signal_present"] = present()
-            try:
-                wait_owned_group(process)
-            except RuntimeError as error:
-                raise RuntimeError("owned process-group signal failed") from error
+            # Do not let a failed TERM skip the independently checked KILL.
+
     try:
         send(signal.SIGTERM, "term")
         try:
-            process.wait(timeout=2)
+            process.wait(timeout=min(2, max(.001, deadline - time.monotonic())))
         except subprocess.TimeoutExpired:
             pass
-        send(signal.SIGKILL, "kill")
     finally:
         try:
-            process.wait(timeout=5)
-            receipt["leader_reaped"] = True
+            send(signal.SIGKILL, "kill")
         finally:
-            wait_owned_group(process)
-            receipt["group_absent"] = True
+            try:
+                process.wait(timeout=max(.001, deadline - time.monotonic()))
+                receipt["leader_reaped"] = True
+            except subprocess.TimeoutExpired:
+                receipt["leader_wait_failed"] = True
+                raise
+            finally:
+                wait_owned_group(process, deadline)
+                receipt["group_absent"] = True
+    if inspection_errors:
+        raise RuntimeError("owned process-group inspection unavailable during cleanup")
 
 
 def run_process(argv, *, env, cwd, timeout=40, group_limit=False, abort=None, evidence=None):
@@ -369,17 +388,13 @@ def run_process(argv, *, env, cwd, timeout=40, group_limit=False, abort=None, ev
         finally:
             process.stdout.close()
             process.stderr.close()
-            try:
-                if group_limit:
-                    wait_owned_group(process)
-            finally:
-                if evidence is not None:
-                    for label, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
-                        (evidence / (label + ".bin")).write_bytes(captured[stream])
-                    write_json(evidence / "process.json", {"argv": argv, "pid": process.pid,
-                        "exit": process.returncode, "timeout": timed_out, "finished": finished, "cleanup": cleanup,
-                        "duration_seconds": time.monotonic() - started,
-                        "stdout_sha256": digest(captured[process.stdout]), "stderr_sha256": digest(captured[process.stderr])})
+            if evidence is not None:
+                for label, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+                    (evidence / (label + ".bin")).write_bytes(captured[stream])
+                write_json(evidence / "process.json", {"argv": argv, "pid": process.pid,
+                    "exit": process.returncode, "timeout": timed_out, "finished": finished, "cleanup": cleanup,
+                    "duration_seconds": time.monotonic() - started,
+                    "stdout_sha256": digest(captured[process.stdout]), "stderr_sha256": digest(captured[process.stderr])})
     return {"argv": argv, "exit": process.returncode,
             "stdout": captured[process.stdout].decode(errors="replace"),
             "stderr": captured[process.stderr].decode(errors="replace"), "timeout": timed_out}

@@ -648,12 +648,63 @@ class ToolScenarioTests(unittest.TestCase):
     def test_unknown_owned_group_monitor_never_certifies_cleanup(self):
         process = mock.Mock(pid=12345)
         receipt = {"group_absent": False}
-        with mock.patch.object(probe, "owned_group_members", side_effect=RuntimeError("unavailable")), mock.patch.object(probe, "wait_owned_group", side_effect=RuntimeError("cleanup incomplete")), mock.patch.object(probe.os, "killpg") as kill:
+        with mock.patch.object(probe, "owned_group_members", side_effect=RuntimeError("unavailable")), mock.patch.object(probe, "wait_owned_group", side_effect=RuntimeError("cleanup incomplete")), mock.patch.object(probe.os, "killpg", side_effect=PermissionError(1, "synthetic query denied")) as kill:
             with self.assertRaisesRegex(RuntimeError, "cleanup incomplete"):
                 probe.stop_scenario_process(process, receipt)
         process.wait.assert_called()
-        kill.assert_not_called()
+        self.assertEqual(kill.call_args_list, [mock.call(12345, 0), mock.call(12345, 0)])
         self.assertFalse(receipt["group_absent"])
+
+    def test_unavailable_monitor_terminates_and_reaps_owned_python_leader(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            real_popen = subprocess.Popen
+            children = []
+            def spawn(*args, **kwargs):
+                child = real_popen(*args, **kwargs)
+                children.append(child)
+                return child
+            try:
+                with mock.patch.object(probe.subprocess, "Popen", side_effect=spawn), mock.patch.object(
+                        probe, "owned_group_members", side_effect=RuntimeError("synthetic unavailable")):
+                    with self.assertRaisesRegex(RuntimeError, "cleanup incomplete"):
+                        probe.run_process([sys.executable, "-B", "-c", "import time; time.sleep(30)"],
+                            env=probe.isolated_env(root), cwd=root, timeout=1, group_limit=True, evidence=root)
+                self.assertEqual(len(children), 1)
+                child = children[0]
+                self.assertIsNotNone(child.returncode)
+                self.assertTrue(child.stdout.closed and child.stderr.closed)
+                self.assertEqual(probe.owned_group_members(child.pid), set())
+                receipt = json.loads((root / "process.json").read_text())
+                self.assertTrue(receipt["cleanup"]["leader_reaped"])
+                self.assertFalse(receipt["cleanup"]["group_absent"])
+                self.assertTrue(receipt["cleanup"]["inspection_errors"])
+                self.assertFalse(receipt["finished"])
+            finally:
+                for child in children:
+                    if child.poll() is None:
+                        probe.stop_process(child)
+                    probe.wait_owned_group(child)
+
+    def test_failed_term_still_attempts_kill_and_reaps_owned_python_leader(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            killpg = os.killpg
+            def signal_group(group, signum):
+                if signum == signal.SIGTERM:
+                    raise PermissionError(1, "synthetic TERM denied")
+                return killpg(group, signum)
+            with mock.patch.object(probe.os, "killpg", side_effect=signal_group):
+                result = probe.run_process([sys.executable, "-B", "-c", "import time; time.sleep(30)"],
+                    env=probe.isolated_env(root), cwd=root, timeout=.1, group_limit=True, evidence=root)
+            receipt = json.loads((root / "process.json").read_text())
+            self.assertTrue(result["timeout"])
+            self.assertEqual(receipt["cleanup"]["term"], "signal_failed")
+            self.assertEqual(receipt["cleanup"]["term_errno"], 1)
+            self.assertEqual(receipt["cleanup"]["kill"], "sent")
+            self.assertTrue(receipt["cleanup"]["leader_reaped"])
+            self.assertTrue(receipt["cleanup"]["group_absent"])
+            self.assertEqual(probe.owned_group_members(receipt["pid"]), set())
 
     def test_cancel_closes_active_sockets_and_joins_handlers(self):
         connection = None
