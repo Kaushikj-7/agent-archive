@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -393,5 +394,282 @@ func TestBenchmarkListRejectsIncorrectSuccessfulDocuments(t *testing.T) {
 				t.Fatal("benchmark accepted incorrect successful document")
 			}
 		})
+	}
+}
+
+// BenchmarkCommandReadPaths extends the command harness with the observed-size
+// read paths. Timing includes local startup, inventory, refresh and rendering;
+// remote provider-page metrics remain separate from those local costs.
+func BenchmarkCommandReadPaths(b *testing.B) {
+	for _, size := range storagetest.ReadPathSizes() {
+		for _, state := range []string{"cold", "warm", "changed", "no-cache"} {
+			for _, command := range []string{"list-picker", "show-picker", "handoff-picker", "show-short", "handoff-query", "list-piped"} {
+				if state == "no-cache" && command != "list-piped" && command != "list-picker" {
+					continue
+				}
+				b.Run(fmt.Sprintf("sessions=%d/%s/%s", size, state, command), func(b *testing.B) {
+					b.StopTimer()
+					mem := storagetest.NewMemoryStore()
+					storagetest.SeedReadPathArchive(b, mem, size, 0)
+					baseline, err := storagetest.SnapshotMemoryStore(context.Background(), mem)
+					if err != nil {
+						b.Fatal(err)
+					}
+					home := b.TempDir()
+					store := storagetest.NewMeasuredStore(mem, 0)
+					store.ListingModel = &storagetest.ListingLatencyModel{}
+					if os.Getenv("AGENT_ARCHIVE_READ_LATENCY") == "1" {
+						// One sensitivity decomposition inside the observed full-page/GET ranges;
+						// separate calibration of overhead and per-key costs remains outstanding.
+						store.ListingModel.ListPageDelay = 200 * time.Millisecond
+						store.ListingModel.ListKeyDelay = 400 * time.Microsecond
+						store.GetDelay = 160 * time.Millisecond
+						b.Log("synthetic latency: LIST page overhead200ms +400us/transferred key; GET160ms; assumed decomposition, not provider calibration")
+					}
+					env := benchmarkEnv(b, home, store)
+					opens := 0
+					env.OpenStore = func(config.Config) (storage.ObjectStore, error) { opens++; return store, nil }
+					args := readPathBenchmarkArgs(command, state == "no-cache")
+					b.ReportAllocs()
+					for range b.N {
+						mem, err = baseline.Clone(context.Background())
+						if err != nil {
+							b.Fatal(err)
+						}
+						store.MemoryStore = mem
+						if err := os.RemoveAll(filepath.Join(home, "cache")); err != nil {
+							b.Fatal(err)
+						}
+						if state == "warm" || state == "changed" {
+							// Restore baseline before warming, so every measured changed invocation
+							// hydrates the same one percent rather than only the first iteration.
+							warm := env
+							warm.OpenStore = func(config.Config) (storage.ObjectStore, error) { return mem, nil }
+							if code, _, diagnostic := runReadPathBenchmark(args, command, warm); code != 0 {
+								b.Fatalf("warmup exit=%d: %s", code, diagnostic)
+							}
+							if state == "changed" {
+								storagetest.SeedReadPathArchive(b, mem, size, 1)
+							}
+						}
+						headers, err := mem.List(context.Background(), "")
+						if err != nil {
+							b.Fatal(err)
+						}
+						store.ListingModel.Headers = headers
+						b.StartTimer()
+						code, out, diagnostic := runReadPathBenchmark(args, command, env)
+						b.StopTimer()
+						if err := validateReadPathOutput(command, size, code, out); err != nil {
+							b.Fatalf("%v: %s", err, diagnostic)
+						}
+					}
+
+					// Observe local counts in a separate command/home after timing. Trace
+					// span allocation and tree rendering must not distort ns/op or allocs/op.
+					observed, err := baseline.Clone(context.Background())
+					if err != nil {
+						b.Fatal(err)
+					}
+					observedEnv := benchmarkEnv(b, b.TempDir(), observed)
+					if state == "warm" || state == "changed" {
+						if code, _, diagnostic := runReadPathBenchmark(args, command, observedEnv); code != 0 {
+							b.Fatalf("observation warmup: %d %s", code, diagnostic)
+						}
+						if state == "changed" {
+							storagetest.SeedReadPathArchive(b, observed, size, 1)
+						}
+					}
+					observedEnv.LookupEnv = func(key string) (string, bool) {
+						if key == envTrace {
+							return "1", true
+						}
+						return "", false
+					}
+					code, output, diagnostic := runReadPathBenchmark(args, command, observedEnv)
+					if err := validateReadPathOutput(command, size, code, output); err != nil {
+						b.Fatal(err)
+					}
+					for name, count := range readPathLocalCounts(diagnostic) {
+						b.ReportMetric(float64(count), name+"/op")
+					}
+
+					b.ReportMetric(float64(opens)/float64(b.N), "store-opens/op")
+					storagetest.ReportReadMetrics(b, store.Metrics())
+				})
+			}
+		}
+	}
+}
+
+func readPathBenchmarkArgs(command string, noCache bool) []string {
+	var args []string
+	switch command {
+	case "list-picker":
+		args = []string{"list", "--all-projects"}
+	case "show-picker":
+		args = []string{"show"}
+	case "handoff-picker":
+		args = []string{"handoff", "--all-projects", "--source", "archive"}
+	case "show-short":
+		args = []string{"show", "00000001", "--json"}
+	case "handoff-query":
+		args = []string{"handoff", "00000001", "--source", "archive", "--format", "json"}
+	case "list-piped":
+		args = []string{"list", "--all-projects", "--limit", "50", "--json"}
+	default:
+		panic("unknown read path benchmark command")
+	}
+	if noCache {
+		args = append(args, "--no-cache")
+	}
+	return args
+}
+
+func runReadPathBenchmark(args []string, command string, env Env) (int, []byte, string) {
+	var out, diagnostic bytes.Buffer
+	var in io.Reader
+	if strings.HasSuffix(command, "picker") {
+		input := strings.NewReader("q\n")
+		in = input
+		env.IsTerminal = func(stream any) bool { return stream == any(input) || stream == any(&out) }
+		env.TerminalSize = func(io.Writer) (int, int, bool) { return 80, 24, true }
+		env.openKeys = func(io.Reader) (keyTerminal, bool) { return newFakeKeys("q"), true }
+	}
+	code := Run(args, in, &out, &diagnostic, env)
+	return code, out.Bytes(), diagnostic.String()
+}
+
+var readPathTraceCounter = regexp.MustCompile(`(rows-scanned|summary-B-hashed|summaries-decoded|entries-visited|key-dirs-evicted|evictions|registration reads|from cache|downloaded) ([0-9]+)`)
+
+func readPathLocalCounts(diagnostic string) map[string]int64 {
+	counts := map[string]int64{}
+	for line := range strings.SplitSeq(diagnostic, "\n") {
+		prefix := ""
+		switch {
+		case strings.Contains(line, "read sidecars"):
+			prefix = "body-"
+		case strings.Contains(line, "catalog refresh validation"):
+			prefix = "refresh-"
+		case strings.Contains(line, "catalog remote validation"):
+			prefix = "remote-validation-"
+		case strings.Contains(line, "catalog candidate decoding"):
+			prefix = "query-"
+		case strings.Contains(line, "cache directory inventory"), strings.Contains(line, "cache key inventory"):
+			prefix = "cache-"
+		case strings.Contains(line, "cache eviction"), strings.Contains(line, "cache key eviction"):
+			prefix = "cache-"
+		case strings.Contains(line, "load registrations"):
+			prefix = "local-"
+		default:
+			continue
+		}
+		for _, match := range readPathTraceCounter.FindAllStringSubmatch(line, -1) {
+			count, _ := strconv.ParseInt(match[2], 10, 64)
+			counts[prefix+strings.ReplaceAll(match[1], " ", "-")] += count
+		}
+	}
+	return counts
+}
+
+// The observed-size gate runs in ordinary CI. Timings are advisory; stable
+// request ceilings detect duplicated discovery/body reads without wall clocks.
+func TestCommandReadPathOperationBudgets(t *testing.T) {
+	t.Parallel()
+	const size = 1800
+	for _, command := range []string{"list-picker", "show-picker", "handoff-picker", "show-short", "handoff-query", "list-piped"} {
+		t.Run(command, func(t *testing.T) {
+			t.Parallel()
+			mem := storagetest.NewMemoryStore()
+			storagetest.SeedReadPathArchive(t, mem, size, 0)
+			home := t.TempDir()
+			store := storagetest.NewMeasuredStore(mem, 0)
+			store.ListingModel = &storagetest.ListingLatencyModel{}
+			env := benchmarkEnv(t, home, store)
+			args := readPathBenchmarkArgs(command, false)
+			if code, _, diag := runReadPathBenchmark(args, command, env); code != 0 {
+				t.Fatalf("warmup: %d %s", code, diag)
+			}
+			for _, changed := range []bool{false, true} {
+				if changed {
+					storagetest.SeedReadPathArchive(t, mem, size, 1)
+				}
+				headers, err := mem.List(t.Context(), "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				store.ListingModel.Headers = headers
+				store.Reset()
+				code, out, diag := runReadPathBenchmark(args, command, env)
+				if err := validateReadPathOutput(command, size, code, out); err != nil {
+					t.Fatalf("changed=%v: %v %s", changed, err, diag)
+				}
+				m := store.Metrics()
+				maxGets := int64(2)
+				if changed {
+					maxGets += size / 100
+				}
+				if m.Gets > maxGets || m.Lists > 20 || m.ListPages > 40 || m.ListKeys > 20000 || m.ListBytes > 8<<20 {
+					t.Fatalf("changed=%v exceeded operation budget: %+v", changed, m)
+				}
+				if m.Lists == 0 || m.ListPages == 0 {
+					t.Fatal("legacy discovery missing", m)
+				}
+			}
+		})
+	}
+}
+
+func validateReadPathOutput(command string, size, code int, out []byte) error {
+	if code != 0 {
+		return fmt.Errorf("command exit %d", code)
+	}
+	switch command {
+	case "list-piped":
+		var doc listDocument
+		if err := json.Unmarshal(out, &doc); err != nil {
+			return err
+		}
+		if len(doc.Sessions) != 50 || doc.TotalMatched == nil || *doc.TotalMatched != size {
+			return errors.New("incomplete list")
+		}
+		for i, m := range doc.Sessions {
+			identity := size - i
+			if m.SessionID != fmt.Sprintf("%08x%024x", identity, identity) || m.NativeSessionID != fmt.Sprintf("native-%08x", identity) {
+				return errors.New("incorrect list order or identity")
+			}
+		}
+	case "show-short", "handoff-query":
+		if !bytes.Contains(out, []byte("00000001000000000000000000000001")) || !bytes.Contains(out, []byte("native-00000001")) {
+			return errors.New("incorrect selected identity")
+		}
+	default:
+		if !bytes.Contains(out, []byte("synthetic")) {
+			return errors.New("picker omitted synthetic sessions")
+		}
+	}
+	return nil
+}
+
+func TestReadPathOutputRejectsIncorrectSuccessfulCommands(t *testing.T) {
+	t.Parallel()
+	for _, command := range []string{"list-picker", "show-picker", "handoff-picker", "show-short", "handoff-query", "list-piped"} {
+		if err := validateReadPathOutput(command, 1800, 0, []byte(`{"sessions":[]}`)); err == nil {
+			t.Fatal("accepted incorrect successful output", command)
+		}
+	}
+}
+
+func TestReadPathLocalCountsSeparateRefreshQueryAndInventory(t *testing.T) {
+	t.Parallel()
+	diagnostic := "catalog refresh validation 1ms (rows-scanned 1800, summary-B-hashed 400000)\n" +
+		"catalog candidate decoding 1ms (rows-scanned 50, summary-B-hashed 9000, summaries-decoded 50)\n" +
+		"cache key inventory 1ms (entries-visited 1800)\n" +
+		"cache directory inventory 1ms (entries-visited 64)\n" +
+		"cache key eviction 1ms (key-dirs-evicted 1)\n" +
+		"read sidecars 1ms (from cache 1800, downloaded 18)\n"
+	got := readPathLocalCounts(diagnostic)
+	if got["refresh-rows-scanned"] != 1800 || got["query-rows-scanned"] != 50 || got["query-summaries-decoded"] != 50 || got["cache-entries-visited"] != 1864 || got["cache-key-dirs-evicted"] != 1 || got["body-from-cache"] != 1800 || got["body-downloaded"] != 18 {
+		t.Fatal(got)
 	}
 }
