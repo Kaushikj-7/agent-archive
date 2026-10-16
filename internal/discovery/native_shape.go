@@ -9,20 +9,28 @@ import (
 	"strings"
 )
 
+type nativeShapeKey string
+
+const (
+	nativeDirectoriesKey nativeShapeKey = "directories"
+	nativeChildrenKey    nativeShapeKey = "children"
+)
+
 // Preflight bounds collection counts BEFORE encoding/json allocates typed
 // backing arrays. Every field is mandatory, including zero-valued EOF fields;
 // duplicate/unknown/missing fields cannot become default complete observations.
 func nativeShape(raw []byte) bool {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
-	counts := map[string]int{}
+	counts := map[nativeShapeKey]int{}
 	if nativeShapeValue(decoder, reflect.TypeFor[nativeProgress](), "", counts) != nil {
 		return false
 	}
 	_, err := decoder.Token()
 	return errors.Is(err, io.EOF)
 }
-func nativeShapeValue(d *json.Decoder, t reflect.Type, key string, counts map[string]int) error {
+
+func nativeShapeValue(d *json.Decoder, t reflect.Type, key nativeShapeKey, counts map[nativeShapeKey]int) error {
 	bad := errors.New("unsupported native observation shape")
 	token, err := d.Token()
 	if err != nil {
@@ -34,7 +42,7 @@ func nativeShapeValue(d *json.Decoder, t reflect.Type, key string, counts map[st
 			return bad
 		}
 		fields := map[string]reflect.Type{}
-		for i := 0; i < t.NumField(); i++ {
+		for i := range t.NumField() {
 			f := t.Field(i)
 			fields[strings.Split(f.Tag.Get("json"), ",")[0]] = f.Type
 		}
@@ -49,7 +57,7 @@ func nativeShapeValue(d *json.Decoder, t reflect.Type, key string, counts map[st
 				return bad
 			}
 			seen[nameString] = true
-			if e = nativeShapeValue(d, fields[nameString], nameString, counts); e != nil {
+			if e = nativeShapeValue(d, fields[nameString], nativeShapeKey(nameString), counts); e != nil {
 				return e
 			}
 		}
@@ -70,7 +78,7 @@ func nativeShapeValue(d *json.Decoder, t reflect.Type, key string, counts map[st
 		for d.More() {
 			counts[key]++
 			limit := maxCatalog
-			if key == "directories" || key == "children" {
+			if key == nativeDirectoriesKey || key == nativeChildrenKey {
 				limit = maxDirectories
 			}
 			if counts[key] > limit {
@@ -89,10 +97,18 @@ func nativeShapeValue(d *json.Decoder, t reflect.Type, key string, counts map[st
 		if !ok || len(value) > 4096 {
 			return bad
 		}
-	default:
+	case reflect.Int, reflect.Int64, reflect.Uint32, reflect.Uint64:
 		if _, ok := token.(json.Number); !ok {
 			return bad
 		}
+	case reflect.Invalid, reflect.Bool, reflect.Int8, reflect.Int16, reflect.Int32,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uintptr, reflect.Float32,
+		reflect.Float64, reflect.Complex64, reflect.Complex128, reflect.Array,
+		reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer,
+		reflect.UnsafePointer:
+		return bad
+	default:
+		return bad
 	}
 	return nil
 }

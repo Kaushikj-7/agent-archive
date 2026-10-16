@@ -27,13 +27,16 @@ type pendingOrderLookup struct {
 }
 
 func (l *pendingOrderLookup) PendingOrder() []string { return l.order }
+
 func (l *pendingOrderLookup) Locate(context.Context, agentapi.LocatorRequest) (agentapi.LocatorResult, error) {
 	l.locates++
 	return agentapi.LocatorResult{Status: agentapi.LocatorPending}, nil
 }
+
 func (*pendingOrderLookup) Check(context.Context, string, string) error {
 	return errors.New("no selection")
 }
+
 func nativePendingRegistration(i int) archive.SessionRegistration {
 	return archive.SessionRegistration{ArchiveSessionID: fmt.Sprintf("pending-%03d", i), NativeSessionID: fmt.Sprintf("00000000-0000-7000-8000-%012x", i+1), Harness: archive.Harness{Name: "muse"}}
 }
@@ -50,7 +53,7 @@ func TestNativePendingOrderPreservesOtherSlotsAndBorrowsNoAuthority(t *testing.T
 	}}
 	p := pass{opts: opts}
 	registrations := []archive.SessionRegistration{}
-	for i := 0; i < 257; i++ {
+	for i := range 257 {
 		registrations = append(registrations, nativePendingRegistration(i))
 	}
 	bound := nativePendingRegistration(500)
@@ -177,10 +180,18 @@ type failedInventoryPass struct {
 
 func (p failedInventoryPass) Close() error { *p.closed++; return p.SourcePass.Close() }
 
+type inventoryFailureMode string
+
+const (
+	inventoryUnreadable inventoryFailureMode = "unreadable"
+	inventoryOversized  inventoryFailureMode = "oversized"
+	inventoryPressure   inventoryFailureMode = "pressure"
+)
+
 func TestFailedNativeInventoryKeepsPendingAndBoundWorkAndClosesInOrder(t *testing.T) {
 	t.Parallel()
-	for _, failure := range []string{"unreadable", "oversized", "pressure"} {
-		t.Run(failure, func(t *testing.T) {
+	for _, failure := range []inventoryFailureMode{inventoryUnreadable, inventoryOversized, inventoryPressure} {
+		t.Run(string(failure), func(t *testing.T) {
 			t.Parallel()
 			store := newTestStore(t)
 			path := writeTranscript(t, t.TempDir(), "bound.jsonl", codexTranscript)
@@ -206,11 +217,14 @@ func TestFailedNativeInventoryKeepsPendingAndBoundWorkAndClosesInOrder(t *testin
 				t.Fatal(err)
 			}
 			catalogPath := filepath.Join(store.Home(), "discovery-catalog.json")
-			if failure == "unreadable" {
+			switch failure {
+			case inventoryUnreadable:
 				if err = os.Mkdir(catalogPath, 0700); err != nil {
 					t.Fatal(err)
 				}
-			} else if failure == "oversized" {
+			case inventoryPressure:
+				// The factory installs transient shared-ledger pressure below.
+			case inventoryOversized:
 				raw := append([]byte(`{"version":6,"native_inventory":"`), bytes.Repeat([]byte("x"), (1<<20)+1)...)
 				raw = append(raw, []byte(`","unrelated":true}`)...)
 				if err = os.WriteFile(catalogPath, raw, 0600); err != nil {
@@ -220,7 +234,7 @@ func TestFailedNativeInventoryKeepsPendingAndBoundWorkAndClosesInOrder(t *testin
 			closed, finalized, calls := 0, 0, 0
 			opts := Options{Sources: failedInventorySources{closed: &closed}, Parsers: testParsers, MachineID: "synthetic", NativeRoots: cfg.NativeRoots, RepoKey: func(string) string { return "" }, Now: func() time.Time { return time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC) }, NativeLocatorFactory: func(ctx context.Context, pass NativeLocatorPass) (agentapi.NativeLocatorLookup, func() error, error) {
 				calls++
-				if failure == "pressure" {
+				if failure == inventoryPressure {
 					charge := agentapi.PassReadBudget - (8 << 20) + 1
 					if !pass.ReadBudget.ReserveUnscoped(charge) {
 						t.Fatal("pressure setup")
@@ -237,7 +251,7 @@ func TestFailedNativeInventoryKeepsPendingAndBoundWorkAndClosesInOrder(t *testin
 						t.Error("inventory closed before bound source pass")
 					}
 					return nil
-				}, errors.Join(failureErr, errors.New("private/native/path must not reach diagnostics: "+failure))
+				}, errors.Join(failureErr, errors.New("private/native/path must not reach diagnostics: "+string(failure)))
 			}}
 			remote := storagetest.NewMemoryStore()
 			result, err := Run(t.Context(), store, remote, opts)

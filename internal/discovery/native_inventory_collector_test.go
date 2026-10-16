@@ -48,7 +48,7 @@ func TestNativeInventoryActualCollectorFairnessAcrossRequestsTimeAndStop(t *test
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	// Direct JSON is fixture construction only. The actual collector loads the
 	// immutable already-admitted owners; this test never creates consent via lookup.
-	for i := 0; i < 257; i++ {
+	for i := range 257 {
 		id := inventoryMeasurementID(i)
 		inventoryFile(t, root, "2026/10/15", id, inventoryMeasurementRaw(t, raw, id))
 		reg := archive.SessionRegistration{ArchiveSessionID: fmt.Sprintf("owner-%03d", i), NativeSessionID: id, Harness: archive.Harness{Name: "muse"}, ProjectID: "synthetic-project", ProjectRoot: "/work/synthetic-muse", SessionStartedAt: start, RegisteredAt: start}
@@ -63,7 +63,7 @@ func TestNativeInventoryActualCollectorFairnessAcrossRequestsTimeAndStop(t *test
 		}
 	}
 	sum := sha256.Sum256(raw)
-	bound := archive.SessionRegistration{ArchiveSessionID: "owner-100-bound", NativeSessionID: inventoryOwner, Harness: archive.Harness{Name: "muse"}, ProjectID: "synthetic-project", ProjectRoot: "/work/synthetic-muse", SessionStartedAt: start, RegisteredAt: start, TranscriptPath: filepath.Join(root.Canonical, "2026/10/15", inventoryOwner, "session.jsonl")}
+	bound := archive.SessionRegistration{ArchiveSessionID: "owner-100-bound", NativeSessionID: inventoryOwner, Harness: archive.Harness{Name: "muse"}, ProjectID: "synthetic-project", ProjectRoot: "/work/synthetic-muse", SessionStartedAt: start, RegisteredAt: start, TranscriptPath: filepath.Join(root.Canonical, "2026", "10", "15", inventoryOwner, "session.jsonl")}
 	bound.NativeBinding = &archive.NativeSourceBinding{Agent: "muse", Version: 2, NativeID: inventoryOwner, StreamID: inventoryOwner, Cwd: "/work/synthetic-muse", NativeCreatedAt: time.UnixMicro(1792083855882704).UTC(), Path: bound.TranscriptPath, RootRevision: root.Revision, Checkpoint: &archive.NativeCheckpoint{Version: 1, Domain: "muse-ordinary", Algorithm: "sha256", Boundary: int64(len(raw)), SHA256: hex.EncodeToString(sum[:])}}
 	encoded, _ := json.Marshal(bound)
 	if err = os.WriteFile(filepath.Join(home, "registrations", bound.ArchiveSessionID+".json"), encoded, 0600); err != nil {
@@ -148,8 +148,8 @@ func TestNativeInventoryCollectorQueryArrivalProcessStep(t *testing.T) {
 		t.Fatal("invalid fenced collector run")
 	}
 	encoded, err := json.Marshal(struct {
-		Selected map[string]bool
-		Counts   NativeInventoryCounts
+		Selected map[string]bool       `json:"Selected"`
+		Counts   NativeInventoryCounts `json:"Counts"`
 	}{selected, current.Counts()})
 	if err != nil {
 		t.Fatal(err)
@@ -167,12 +167,12 @@ func TestNativeInventoryCollectorQueryArrivalsAndShrinkProgress(t *testing.T) {
 	if _, err := state.Open(home); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		id := inventoryMeasurementID(i)
 		inventoryFile(t, root, "2026/10/15", id, inventoryMeasurementRaw(t, raw, id))
 	}
-	for i := 0; i < 6000; i++ {
-		if err := os.WriteFile(filepath.Join(root.Canonical, "2026/10/15", fmt.Sprintf("unrelated-%05d", i)), nil, 0600); err != nil {
+	for i := range 6000 {
+		if err := os.WriteFile(filepath.Join(root.Canonical, "2026", "10", "15", fmt.Sprintf("unrelated-%05d", i)), nil, 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -181,7 +181,7 @@ func TestNativeInventoryCollectorQueryArrivalsAndShrinkProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen := map[string]bool{}
-	for tick := 0; tick < 36; tick++ {
+	for tick := range 36 {
 		at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		reg := archive.SessionRegistration{ArchiveSessionID: fmt.Sprintf("arrival-%03d", tick), NativeSessionID: inventoryMeasurementID(tick), Harness: archive.Harness{Name: "muse"}, ProjectID: "synthetic-project", ProjectRoot: "/work/synthetic-muse", SessionStartedAt: at, RegisteredAt: at}
 		encoded, _ := json.Marshal(reg)
@@ -198,7 +198,7 @@ func TestNativeInventoryCollectorQueryArrivalsAndShrinkProgress(t *testing.T) {
 			bound := reg
 			bound.ArchiveSessionID = "arrival-005"
 			bound.NativeSessionID = boundID
-			bound.TranscriptPath = filepath.Join(root.Canonical, "2026/10/15", boundID, "session.jsonl")
+			bound.TranscriptPath = filepath.Join(root.Canonical, "2026", "10", "15", boundID, "session.jsonl")
 			sum := sha256.Sum256(inventoryMeasurementRaw(t, raw, boundID))
 			bound.NativeBinding = &archive.NativeSourceBinding{Agent: "muse", Version: 2, NativeID: boundID, StreamID: boundID, Cwd: "/work/synthetic-muse", NativeCreatedAt: time.UnixMicro(1792083855882704).UTC(), Path: bound.TranscriptPath, RootRevision: root.Revision, Checkpoint: &archive.NativeCheckpoint{Version: 1, Domain: "muse-ordinary", Algorithm: "sha256", Boundary: int64(len(raw)), SHA256: hex.EncodeToString(sum[:])}}
 			encoded, _ = json.Marshal(bound)
@@ -219,8 +219,8 @@ func TestNativeInventoryCollectorQueryArrivalsAndShrinkProgress(t *testing.T) {
 			t.Fatal(err)
 		}
 		var result struct {
-			Selected map[string]bool
-			Counts   NativeInventoryCounts
+			Selected map[string]bool       `json:"Selected"`
+			Counts   NativeInventoryCounts `json:"Counts"`
 		}
 		if err = json.Unmarshal(encoded, &result); err != nil {
 			t.Fatal(err)
@@ -239,7 +239,7 @@ func TestNativeInventoryCollectorQueryArrivalsAndShrinkProgress(t *testing.T) {
 			t.Fatal("removed/bound historical owner selected")
 		}
 	}
-	for i := 0; i < 24; i++ {
+	for i := range 24 {
 		if i != 4 && i != 5 && !seen[inventoryMeasurementID(i)] {
 			t.Fatalf("arrival %d never progressed", i)
 		}

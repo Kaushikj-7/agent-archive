@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ func inventoryFixture(t *testing.T) (string, archive.NativeRoot, []byte) {
 	}
 	return home, archive.NativeRoot{Agent: "muse", Configured: root, Canonical: root, Revision: "one"}, raw
 }
+
 func inventoryFile(t *testing.T, root archive.NativeRoot, day, id string, raw []byte) string {
 	t.Helper()
 	path := filepath.Join(root.Canonical, day, id, "session.jsonl")
@@ -46,6 +48,7 @@ func inventoryFile(t *testing.T, root archive.NativeRoot, day, id string, raw []
 	}
 	return path
 }
+
 func inventoryOpen(t *testing.T, home string, root archive.NativeRoot, ids ...string) *NativeInventory {
 	t.Helper()
 	queries := []agentapi.LocatorRequest{}
@@ -67,6 +70,7 @@ func inventoryOpen(t *testing.T, home string, root archive.NativeRoot, ids ...st
 	})
 	return l
 }
+
 func inventoryLocate(t *testing.T, l *NativeInventory, id string) agentapi.LocatorResult {
 	t.Helper()
 	r, e := l.Locate(t.Context(), agentapi.LocatorRequest{NativeID: id, Root: l.root})
@@ -107,12 +111,12 @@ func TestNativeInventoryUniqueCurrentnessAndHistoricalPages(t *testing.T) {
 	}
 	// Deep duplicate with restored day mtime leaves ancestors unchanged. Ctime
 	// plus all-directory currentness invalidates prior pages and live tokens.
-	day := filepath.Join(root.Canonical, "2026/10/15")
+	day := filepath.Join(root.Canonical, "2026", "10", "15")
 	info, err := os.Stat(day)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondDay := filepath.Join(root.Canonical, "2026/10/14")
+	secondDay := filepath.Join(root.Canonical, "2026", "10", "14")
 	if err = os.MkdirAll(secondDay, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -126,11 +130,11 @@ func TestNativeInventoryUniqueCurrentnessAndHistoricalPages(t *testing.T) {
 func TestNativeInventoryDuplicateUnderCompletedDayAndEmptyParent(t *testing.T) {
 	t.Parallel()
 	for _, empty := range []bool{false, true} {
-		t.Run(fmt.Sprint(empty), func(t *testing.T) {
+		t.Run(strconv.FormatBool(empty), func(t *testing.T) {
 			t.Parallel()
 			home, root, raw := inventoryFixture(t)
 			inventoryFile(t, root, "2026/10/15", inventoryOwner, raw)
-			other := filepath.Join(root.Canonical, "2026/10/14")
+			other := filepath.Join(root.Canonical, "2026", "10", "14")
 			if empty {
 				other = filepath.Join(other, inventoryOwner)
 			}
@@ -157,35 +161,47 @@ func TestNativeInventoryDuplicateUnderCompletedDayAndEmptyParent(t *testing.T) {
 	}
 }
 
+type inventoryAdversary string
+
+const (
+	inventoryDuplicate inventoryAdversary = "duplicate"
+	inventoryMalformed inventoryAdversary = "malformed"
+	inventorySymlink   inventoryAdversary = "symlink"
+	inventoryEmpty     inventoryAdversary = "empty"
+	inventoryNewOwner  inventoryAdversary = "new-owner"
+)
+
 func TestNativeInventoryAmbiguousMalformedSymlinkAndOwnerEpoch(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"duplicate", "malformed", "symlink", "empty", "new-owner"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []inventoryAdversary{inventoryDuplicate, inventoryMalformed, inventorySymlink, inventoryEmpty, inventoryNewOwner} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			home, root, raw := inventoryFixture(t)
 			path := inventoryFile(t, root, "2026/10/15", inventoryOwner, raw)
 			switch mode {
-			case "duplicate":
+			case inventoryDuplicate:
 				inventoryFile(t, root, "2026/10/14", inventoryOwner, raw)
-			case "malformed":
+			case inventoryMalformed:
 				if err := os.WriteFile(path, []byte("bad\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "symlink":
+			case inventorySymlink:
 				if err := os.Rename(filepath.Dir(path), filepath.Dir(path)+".moved"); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Symlink(filepath.Dir(path)+".moved", filepath.Dir(path)); err != nil {
 					t.Fatal(err)
 				}
-			case "empty":
+			case inventoryNewOwner:
+				// Keep the valid baseline for a later out-of-snapshot request.
+			case inventoryEmpty:
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
 				}
 			}
 			l := inventoryOpen(t, home, root, inventoryOwner)
 			result, err := l.Locate(t.Context(), agentapi.LocatorRequest{NativeID: inventoryOwner, Root: root})
-			if mode == "new-owner" {
+			if mode == inventoryNewOwner {
 				if result.Status != agentapi.LocatorFound || err != nil {
 					t.Fatal(result, err)
 				}
@@ -198,7 +214,7 @@ func TestNativeInventoryAmbiguousMalformedSymlinkAndOwnerEpoch(t *testing.T) {
 			if result.Status == agentapi.LocatorFound {
 				t.Fatal(mode, result, err)
 			}
-			if mode == "duplicate" && result.Status != agentapi.LocatorAmbiguous {
+			if mode == inventoryDuplicate && result.Status != agentapi.LocatorAmbiguous {
 				t.Fatal(result, err)
 			}
 		})
@@ -268,10 +284,10 @@ func FuzzNativeInventoryName(f *testing.F) {
 		}
 	})
 }
+
 func FuzzNativeInventoryProgress(f *testing.F) {
-	seed := nativeProgress{Version: 1, Layout: "muse-root-v1", Classifier: 1, Root: archive.NativeRoot{Agent: "muse", Configured: "/synthetic", Canonical: "/synthetic", Revision: "one"}, Owners: []string{inventoryOwner}, Directories: []nativeDirectory{{Path: ".", Generation: nativeGeneration{Device: 1, Inode: 1, Mode: uint32(os.ModeDir | 0700), Size: 1, Mtime: 1, CtimeSec: 1}, Pages: []nativePage{{Kind: "EOF"}}}}}
 	sum := sha256.Sum256([]byte(inventoryOwner))
-	seed.Query = hex.EncodeToString(sum[:])
+	seed := nativeProgress{Query: hex.EncodeToString(sum[:]), Version: 1, Layout: "muse-root-v1", Classifier: 1, Root: archive.NativeRoot{Agent: "muse", Configured: "/synthetic", Canonical: "/synthetic", Revision: "one"}, Owners: []string{inventoryOwner}, Directories: []nativeDirectory{{Path: ".", Generation: nativeGeneration{Device: 1, Inode: 1, Mode: uint32(os.ModeDir | 0700), Size: 1, Mtime: 1, CtimeSec: 1}, Pages: []nativePage{{Kind: nativeEOF}}}}}
 	encoded, _ := json.Marshal(seed)
 	f.Add(encoded)
 	f.Add([]byte(`{}`))
@@ -311,21 +327,22 @@ func TestNativeInventoryFreshProcessStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := json.Marshal(struct {
-		Status agentapi.LocatorStatus
-		Counts NativeInventoryCounts
+		Status agentapi.LocatorStatus `json:"Status"`
+		Counts NativeInventoryCounts  `json:"Counts"`
 	}{result.Status, l.Counts()})
 	if err := os.WriteFile(filepath.Join(home, "step-result.json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
 }
+
 func TestNativeInventoryFreshProcessesResumeBeyondPassAndTimeStops(t *testing.T) {
 	// Sequential: the child binary owns each bounded acquisition pass.
 	for _, timeStop := range []bool{false, true} {
-		t.Run(fmt.Sprint(timeStop), func(t *testing.T) {
+		t.Run(strconv.FormatBool(timeStop), func(t *testing.T) {
 			home, root, raw := inventoryFixture(t)
 			inventoryFile(t, root, "2026/10/15", inventoryOwner, raw)
-			day := filepath.Join(root.Canonical, "2026/10/15")
-			for i := 0; i < 10004; i++ {
+			day := filepath.Join(root.Canonical, "2026", "10", "15")
+			for i := range 10004 {
 				if err := os.WriteFile(filepath.Join(day, fmt.Sprintf("invalid-%05d", i)), nil, 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -336,7 +353,7 @@ func TestNativeInventoryFreshProcessesResumeBeyondPassAndTimeStops(t *testing.T)
 			}
 			total, uncommitted := int64(0), int64(0)
 			found := false
-			for tick := 0; tick < 32; tick++ {
+			for tick := range 32 {
 				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 				cmd := exec.CommandContext(ctx, exe, "-test.run=^TestNativeInventoryFreshProcessStep$", "-test.count=1")
 				cmd.Env = append(os.Environ(), "AA_NATIVE_INVENTORY_STEP_HOME="+home, "AA_NATIVE_INVENTORY_STEP_ROOT="+root.Canonical)
@@ -353,8 +370,8 @@ func TestNativeInventoryFreshProcessesResumeBeyondPassAndTimeStops(t *testing.T)
 					t.Fatal(err)
 				}
 				var result struct {
-					Status agentapi.LocatorStatus
-					Counts NativeInventoryCounts
+					Status agentapi.LocatorStatus `json:"Status"`
+					Counts NativeInventoryCounts  `json:"Counts"`
 				}
 				if err = json.Unmarshal(raw, &result); err != nil {
 					t.Fatal(err)
@@ -410,6 +427,7 @@ func TestNativeInventoryDateClassificationMatchesOrdinarySource(t *testing.T) {
 		})
 	}
 }
+
 func TestNativeInventoryInvalidOwnerDoesNotBlockValidFrozenQueries(t *testing.T) {
 	t.Parallel()
 	home, root, raw := inventoryFixture(t)

@@ -132,7 +132,7 @@ func TestNativeInventoryTypedVectorBound(t *testing.T) {
 	// Couple each directory cell with its parent's short child-edge cell. Short
 	// edge strings alone have more typed overhead than wire bytes. UUID owner/
 	// match strings and page cells have their own independent wire lower bounds.
-	for _, sample := range []any{nativeDirectory{Path: ".", Pages: []nativePage{}, Children: []string{}, Matches: []string{}}, nativePage{Kind: "EOF"}, inventoryOwner} {
+	for _, sample := range []any{nativeDirectory{Path: ".", Pages: []nativePage{}, Children: []string{}, Matches: []string{}}, nativePage{Kind: nativeEOF}, inventoryOwner} {
 		typ := reflect.TypeOf(sample)
 		wire, err := json.Marshal(sample)
 		if err != nil {
@@ -175,10 +175,12 @@ func (f *inventoryCanceledFile) Stat() (os.FileInfo, error) {
 	f.calls++
 	return nil, errors.New("unexpected stat")
 }
+
 func (f *inventoryCanceledFile) ReadAt([]byte, int64) (int, error) {
 	f.calls++
 	return 0, errors.New("unexpected read")
 }
+
 func TestNativeInventoryCanceledDescriptorDoesNoLaterIO(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())

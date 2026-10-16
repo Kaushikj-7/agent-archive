@@ -33,11 +33,26 @@ type NativeLocatorValidator func(context.Context, agentapi.SourceEnvironment, ag
 // NativeInventoryCounts accounts application operations, not physical disk I/O.
 // Currentness deliberately costs O(selected owners * completed directories).
 type NativeInventoryCounts struct {
-	Names, DirentBytes, Stats, Opens, HeaderBytes, HeaderReads, Probes                 int64
-	UncommittedNames                                                                   int64
-	PageReads, GenerationChecks, Sweeps, Selections, Checks                            int64
-	AcquireStats, AcquireOpens, SweepStats, SweepOpens, CandidateStats, CandidateOpens int64
-	Active                                                                             time.Duration
+	Names            int64         `json:"Names"`
+	DirentBytes      int64         `json:"DirentBytes"`
+	Stats            int64         `json:"Stats"`
+	Opens            int64         `json:"Opens"`
+	HeaderBytes      int64         `json:"HeaderBytes"`
+	HeaderReads      int64         `json:"HeaderReads"`
+	Probes           int64         `json:"Probes"`
+	UncommittedNames int64         `json:"UncommittedNames"`
+	PageReads        int64         `json:"PageReads"`
+	GenerationChecks int64         `json:"GenerationChecks"`
+	Sweeps           int64         `json:"Sweeps"`
+	Selections       int64         `json:"Selections"`
+	Checks           int64         `json:"Checks"`
+	AcquireStats     int64         `json:"AcquireStats"`
+	AcquireOpens     int64         `json:"AcquireOpens"`
+	SweepStats       int64         `json:"SweepStats"`
+	SweepOpens       int64         `json:"SweepOpens"`
+	CandidateStats   int64         `json:"CandidateStats"`
+	CandidateOpens   int64         `json:"CandidateOpens"`
+	Active           time.Duration `json:"Active"`
 }
 
 type nativeGeneration struct {
@@ -49,13 +64,22 @@ type nativeGeneration struct {
 	CtimeSec  int64  `json:"ctime_sec"`
 	CtimeNano int64  `json:"ctime_nano"`
 }
+
+type nativePageKind string
+
+const (
+	nativeCompletePage nativePageKind = "COMPLETEPAGE"
+	nativeEOF          nativePageKind = "EOF"
+)
+
 type nativePage struct {
-	Kind  string `json:"kind"`
-	Start int64  `json:"start"`
-	End   int64  `json:"end"`
-	Names int    `json:"names"`
-	Bytes int    `json:"bytes"`
+	Kind  nativePageKind `json:"kind"`
+	Start int64          `json:"start"`
+	End   int64          `json:"end"`
+	Names int            `json:"names"`
+	Bytes int            `json:"bytes"`
 }
+
 type nativeDirectory struct {
 	Path       string           `json:"path"`
 	Generation nativeGeneration `json:"generation"`
@@ -63,6 +87,7 @@ type nativeDirectory struct {
 	Children   []string         `json:"children"`
 	Matches    []string         `json:"matches"`
 }
+
 type nativeProgress struct {
 	Version     int                `json:"version"`
 	Layout      string             `json:"layout"`
@@ -96,6 +121,7 @@ type NativeInventory struct {
 	closed    bool
 	err       error
 }
+
 type nativeSelection struct {
 	token    string
 	relative string
@@ -159,20 +185,20 @@ func NewNativeInventory(ctx context.Context, home string, roots []archive.Native
 	owners = slices.Compact(owners)
 	release, err := nativeCatalogScratch(l.path, 0, budget)
 	if err != nil {
-		return nil, errors.Join(err, l.Close())
+		return nil, l.failConstruction(err)
 	}
 	raw, err := boundedCatalogBytes(l.path)
 	defer release()
 	if ctx.Err() != nil {
-		return nil, errors.Join(ctx.Err(), l.Close())
+		return nil, l.failConstruction(ctx.Err())
 	}
 	if err != nil && !errors.Is(err, errCatalogTooLarge) {
-		return nil, errors.Join(err, l.Close())
+		return nil, l.failConstruction(err)
 	}
 	var object map[string]json.RawMessage
 	if json.Unmarshal(raw, &object) == nil {
 		if len(object["native_inventory"]) > maxCatalogBytes/32 {
-			return nil, errors.Join(errCatalogTooLarge, l.Close())
+			return nil, l.failConstruction(errCatalogTooLarge)
 		}
 		l.expected = object["native_inventory"]
 	}
@@ -195,7 +221,7 @@ func NewNativeInventory(ctx context.Context, home string, roots []archive.Native
 	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return nil, errors.Join(err, l.Close())
+		return nil, l.failConstruction(err)
 	}
 	l.nonce = hex.EncodeToString(nonce[:])
 	return l, nil
@@ -208,10 +234,12 @@ func (l *NativeInventory) reserve(n int64) bool {
 	}
 	return false
 }
+
 func (l *NativeInventory) reset(owners []string, query string) {
 	l.progress = nativeProgress{Version: 1, Layout: "muse-root-v1", Classifier: 1, Root: l.root, Query: query, Owners: owners, Directories: []nativeDirectory{{Path: "."}}}
 	clear(l.tokens)
 }
+
 func (l *NativeInventory) resetCoverage() {
 	next := l.progress.Next
 	l.reset(l.progress.Owners, l.progress.Query)
@@ -230,12 +258,13 @@ func nativeOwner(s string) bool {
 			if c != '-' {
 				return false
 			}
-		} else if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+		} else if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return false
 		}
 	}
 	return true
 }
+
 func nativeChild(parent, name string) bool {
 	if strings.ContainsAny(name, "/\\\x00") || name == "." || name == ".." {
 		return false
@@ -255,6 +284,7 @@ func nativeChild(parent, name string) bool {
 	}
 	return false
 }
+
 func digits(s string) bool {
 	for _, c := range s {
 		if c < '0' || c > '9' {
@@ -263,12 +293,14 @@ func digits(s string) bool {
 	}
 	return true
 }
+
 func nativeDepth(path string) int {
 	if path == "." {
 		return 0
 	}
 	return len(strings.Split(path, "/"))
 }
+
 func nativeDirPath(path string) bool {
 	if path == "." {
 		return true
@@ -290,8 +322,9 @@ func nativeDirPath(path string) bool {
 	}
 	return true
 }
+
 func completeNative(d nativeDirectory) bool {
-	return len(d.Pages) > 0 && d.Pages[len(d.Pages)-1].Kind == "EOF"
+	return len(d.Pages) > 0 && d.Pages[len(d.Pages)-1].Kind == nativeEOF
 }
 
 func decodeNativeProgress(raw []byte) (nativeProgress, bool) {
@@ -328,6 +361,7 @@ func validNativeProgress(p nativeProgress) bool {
 	}
 	return len(seen) == len(edges)+1
 }
+
 func validNativeScope(p nativeProgress) bool {
 	for i, id := range p.Owners {
 		if !nativeOwner(id) || i > 0 && p.Owners[i-1] >= id {
@@ -337,15 +371,17 @@ func validNativeScope(p nativeProgress) bool {
 	sum := sha256.Sum256([]byte(strings.Join(p.Owners, "\x00")))
 	return hex.EncodeToString(sum[:]) == p.Query
 }
+
 func validNativePage(page nativePage, index, last int, offset int64) bool {
-	if page.Start != offset || page.Start < 0 || page.End < 0 || index < last && page.Kind == "EOF" {
+	if page.Start != offset || page.Start < 0 || page.End < 0 || index < last && page.Kind == nativeEOF {
 		return false
 	}
-	if page.Kind == "EOF" {
+	if page.Kind == nativeEOF {
 		return page.Bytes == 0 && page.Names == 0 && page.End == page.Start
 	}
-	return page.Kind == "COMPLETEPAGE" && page.Bytes > 0 && page.Bytes <= 4096 && page.Names >= 0 && page.Names <= 256 && page.Names <= page.Bytes/16 && page.End != page.Start
+	return page.Kind == nativeCompletePage && page.Bytes > 0 && page.Bytes <= 4096 && page.Names >= 0 && page.Names <= 256 && page.Names <= page.Bytes/16 && page.End != page.Start
 }
+
 func validNativePages(d nativeDirectory, pages *int) (int, bool) {
 	if len(d.Pages) > 0 && (d.Generation.Inode == 0 || !os.FileMode(d.Generation.Mode).IsDir() || d.Generation.Mode&uint32(os.ModeSymlink) != 0 || d.Generation.CtimeSec == 0 || d.Generation.CtimeNano < 0 || d.Generation.CtimeNano >= 1_000_000_000) {
 		return 0, false
@@ -362,6 +398,7 @@ func validNativePages(d nativeDirectory, pages *int) (int, bool) {
 	}
 	return names, true
 }
+
 func validNativeDirectory(d nativeDirectory, index int, seen, edges map[string]bool, pages *int, owners []string) bool {
 	if !nativeDirPath(d.Path) || seen[d.Path] || index == 0 && d.Path != "." || index > 0 && !edges[d.Path] || len(d.Children) > maxDirectories || len(d.Matches) > maxCatalog {
 		return false
@@ -402,12 +439,14 @@ func (l *NativeInventory) allowed(ctx context.Context) error {
 	}
 	return nil
 }
+
 func (l *NativeInventory) timed(start time.Time) {
 	elapsed := time.Since(start)
 	l.remaining -= elapsed
 	l.counts.Active += elapsed
 	l.deadline = time.Time{}
 }
+
 func (l *NativeInventory) metadata() error {
 	if err := l.allowed(l.ctx); err != nil {
 		return err
@@ -418,6 +457,7 @@ func (l *NativeInventory) metadata() error {
 	}
 	return nil
 }
+
 func generation(info os.FileInfo) (nativeGeneration, error) {
 	s, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || s.Ino == 0 {
@@ -584,16 +624,8 @@ func (l *NativeInventory) acquire(ctx context.Context) error {
 			}
 			return nil
 		}
-		// A completed checked page is historical progress only. Recording it
-		// needs no further native I/O, even when the work-phase deadline just
-		// expired; original cancellation and the total allowance still apply.
-		if err := l.ctx.Err(); err != nil {
-			l.counts.UncommittedNames += int64(len(names))
+		if err := l.recordablePage(len(names)); err != nil {
 			return err
-		}
-		if time.Now().After(l.deadline.Add(Budget / 4)) {
-			l.counts.UncommittedNames += int64(len(names))
-			return agentapi.Wrap(agentapi.Unavailable, errors.New("native inventory allowance spent"))
 		}
 		if len(d.Pages) >= maxCatalog {
 			l.counts.UncommittedNames += int64(len(names))
@@ -604,9 +636,9 @@ func (l *NativeInventory) acquire(ctx context.Context) error {
 		priorPages, priorChildren, priorMatches := len(d.Pages), len(d.Children), len(d.Matches)
 		priorDirectories := len(l.progress.Directories)
 		d.Generation = g
-		kind := "COMPLETEPAGE"
+		kind := nativeCompletePage
 		if n == 0 {
-			kind = "EOF"
+			kind = nativeEOF
 		}
 		d.Pages = append(d.Pages, nativePage{Kind: kind, Start: offset, End: next, Names: len(names), Bytes: n})
 		// Work on acquired complete batches only. Do not discard a tail/cookie.
@@ -634,6 +666,20 @@ func (l *NativeInventory) acquire(ctx context.Context) error {
 		if n > 0 {
 			index--
 		}
+	}
+	return nil
+}
+
+// A checked page may be recorded without further I/O after the work cutoff,
+// while original cancellation and the total allowance continue to apply.
+func (l *NativeInventory) recordablePage(names int) error {
+	if err := l.ctx.Err(); err != nil {
+		l.counts.UncommittedNames += int64(names)
+		return err
+	}
+	if time.Now().After(l.deadline.Add(Budget / 4)) {
+		l.counts.UncommittedNames += int64(names)
+		return agentapi.Wrap(agentapi.Unavailable, errors.New("native inventory allowance spent"))
 	}
 	return nil
 }
@@ -854,18 +900,7 @@ func (l *NativeInventory) Close() error {
 		return l.err
 	}
 	l.closed = true
-	defer func() {
-		l.tokens = nil
-		l.progress = nativeProgress{}
-		l.eligible = nil
-		l.expected = nil
-		l.validate = nil
-		l.nonce = ""
-		l.path = ""
-		l.root = archive.NativeRoot{}
-		l.budget.ReleaseUnscoped(l.charge)
-		l.charge = 0
-	}()
+	defer l.release()
 	if len(l.progress.Owners) == 0 || l.ctx.Err() != nil {
 		return nil
 	}
@@ -887,6 +922,26 @@ func (l *NativeInventory) Close() error {
 	return l.err
 }
 
+// Failed construction releases only memory; it never rewrites historical state.
+func (l *NativeInventory) failConstruction(err error) error {
+	l.closed = true
+	l.release()
+	return err
+}
+
+func (l *NativeInventory) release() {
+	l.tokens = nil
+	l.progress = nativeProgress{}
+	l.eligible = nil
+	l.expected = nil
+	l.validate = nil
+	l.nonce = ""
+	l.path = ""
+	l.root = archive.NativeRoot{}
+	l.budget.ReleaseUnscoped(l.charge)
+	l.charge = 0
+}
+
 type nativeCountedOpener struct{ owner *NativeInventory }
 
 func (o nativeCountedOpener) Lstat(path string) (os.FileInfo, error) {
@@ -906,6 +961,7 @@ func (o nativeCountedOpener) Lstat(path string) (os.FileInfo, error) {
 	o.owner.counts.Stats++
 	return root.Lstat(relative)
 }
+
 func (o nativeCountedOpener) EvalSymlinks(path string) (string, error) {
 	relative, err := filepath.Rel(o.owner.root.Canonical, path)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, "../") {
@@ -930,6 +986,7 @@ func (o nativeCountedOpener) EvalSymlinks(path string) (string, error) {
 	}
 	return path, nil
 }
+
 func (o nativeCountedOpener) OpenRegular(path string) (transcriptio.File, error) {
 	before, err := o.Lstat(path)
 	if err != nil {
@@ -977,6 +1034,7 @@ func (f *nativeCountedFile) Stat() (os.FileInfo, error) {
 	f.owner.counts.Stats++
 	return f.File.Stat()
 }
+
 func (f *nativeCountedFile) ReadAt(b []byte, offset int64) (int, error) {
 	if err := f.owner.metadata(); err != nil {
 		return 0, err

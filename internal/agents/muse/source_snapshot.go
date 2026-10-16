@@ -380,6 +380,7 @@ func nativePreviousAdmission(admission agentapi.SourceAdmission) (*archive.Nativ
 	}
 	return previous, nil
 }
+
 func (s *sourceSnapshot) firstBindingEvidence(ctx context.Context, admission agentapi.SourceAdmission, facts archive.NativeSourceBinding) (agentapi.AdmissionEvidence, error) {
 	var empty agentapi.AdmissionEvidence
 	if err := ctx.Err(); err != nil {

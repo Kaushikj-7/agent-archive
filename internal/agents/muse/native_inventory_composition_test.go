@@ -35,12 +35,15 @@ func (b inventoryBridge) LookupSources(name string) (agentapi.SourceProvider, ag
 	}
 	return b, Filter{}, true
 }
+
 func (inventoryBridge) LookupParser(name string) (agentapi.TranscriptParser, bool) {
 	return Parser{}, name == "muse"
 }
+
 func (inventoryBridge) Describe(ref agentapi.SourceRef) (agentapi.SourceSemantics, error) {
 	return (SourceProvider{}).Describe(ref)
 }
+
 func (b inventoryBridge) OpenPass(ctx context.Context, env agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -64,10 +67,20 @@ func (p *inventoryBridgePass) Read(ctx context.Context, ref agentapi.SourceRef, 
 	return p.sourcePass.Read(ctx, ref, limits)
 }
 
+type inventoryBridgeMode string
+
+const (
+	inventorySuccess        inventoryBridgeMode = "success"
+	inventoryObservations   inventoryBridgeMode = "observations"
+	inventorySuffixFailure  inventoryBridgeMode = "suffix-failure"
+	inventoryStaleSelection inventoryBridgeMode = "stale-selection"
+	inventoryPaused         inventoryBridgeMode = "paused"
+)
+
 func TestInventoryPendingNoRequestThroughActualMuseProofAndGuardedCommit(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"success", "observations", "suffix-failure", "stale-selection", "paused"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []inventoryBridgeMode{inventorySuccess, inventoryObservations, inventorySuffixFailure, inventoryStaleSelection, inventoryPaused} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			project, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
@@ -78,16 +91,16 @@ func TestInventoryPendingNoRequestThroughActualMuseProofAndGuardedCommit(t *test
 				t.Fatal(err)
 			}
 			fixture := "synthetic-exec-conversation.jsonl"
-			if mode == "observations" {
+			if mode == inventoryObservations {
 				fixture = "synthetic-own-observations.jsonl"
 			}
 			raw := bytes.ReplaceAll(readSynthetic(t, fixture), []byte("/work/synthetic-muse"), []byte(project))
 			id := "00000000-0000-7000-8000-000000000001"
-			path := filepath.Join(rootPath, "2026/10/15", id, "session.jsonl")
+			path := filepath.Join(rootPath, "2026", "10", "15", id, "session.jsonl")
 			if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 				t.Fatal(err)
 			}
-			if mode == "suffix-failure" {
+			if mode == inventorySuffixFailure {
 				raw = append(raw, []byte("invalid suffix\n")...)
 			}
 			if err = os.WriteFile(path, raw, 0600); err != nil {
@@ -114,9 +127,9 @@ func TestInventoryPendingNoRequestThroughActualMuseProofAndGuardedCommit(t *test
 			// There is deliberately no request, scan signature or journal: this exercises
 			// the real pre-read owesNothing skip that otherwise hid pending owners forever.
 			reads := 0
-			bridge := inventoryBridge{reads: &reads}
-			if mode == "paused" {
-				bridge.beforeOpen = func() {
+			var beforeOpen func()
+			if mode == inventoryPaused {
+				beforeOpen = func() {
 					changed := cfg
 					changed.Paused = true
 					if err := config.Save(local.Home(), changed); err != nil {
@@ -124,9 +137,9 @@ func TestInventoryPendingNoRequestThroughActualMuseProofAndGuardedCommit(t *test
 					}
 				}
 			}
-			if mode == "stale-selection" {
-				bridge.beforeOpen = func() {
-					duplicate := filepath.Join(rootPath, "2026/10/14", id, "session.jsonl")
+			if mode == inventoryStaleSelection {
+				beforeOpen = func() {
+					duplicate := filepath.Join(rootPath, "2026", "10", "14", id, "session.jsonl")
 					if err := os.MkdirAll(filepath.Dir(duplicate), 0700); err != nil {
 						t.Fatal(err)
 					}
@@ -135,6 +148,7 @@ func TestInventoryPendingNoRequestThroughActualMuseProofAndGuardedCommit(t *test
 					}
 				}
 			}
+			bridge := inventoryBridge{reads: &reads, beforeOpen: beforeOpen}
 			var inventories []*discovery.NativeInventory
 			var budget *agentapi.NativeReadBudget
 			opts := collector.Options{Sources: bridge, Parsers: bridge, MachineID: "synthetic", NativeRoots: cfg.NativeRoots, RequireSkillUse: true, RepoKey: func(string) string { return "" }, AcceptSession: cfg.AcceptSession, NativeLocatorFactory: func(ctx context.Context, pass collector.NativeLocatorPass) (agentapi.NativeLocatorLookup, func() error, error) {
@@ -156,7 +170,7 @@ func TestInventoryPendingNoRequestThroughActualMuseProofAndGuardedCommit(t *test
 			if reads != 1 {
 				t.Fatalf("no-request pending owner did not reach exactly one real source Filter read: %d, result=%+v, err=%v", reads, result, runErr)
 			}
-			if mode != "success" && mode != "observations" {
+			if mode != inventorySuccess && mode != inventoryObservations {
 				if saved.TranscriptPath != "" || saved.NativeBinding != nil {
 					t.Fatal("failed source/policy/selection committed authority")
 				}
@@ -168,7 +182,7 @@ func TestInventoryPendingNoRequestThroughActualMuseProofAndGuardedCommit(t *test
 			if saved.TranscriptPath != path || saved.NativeBinding == nil || saved.NativeBinding.Checkpoint == nil || saved.NativeBinding.Checkpoint.Boundary != int64(len(raw)) || !saved.SessionStartedAt.Equal(reg.SessionStartedAt) || !saved.RegisteredAt.Equal(reg.RegisteredAt) {
 				t.Fatalf("first bind not atomic/original owner lost: %+v", saved)
 			}
-			if mode == "observations" {
+			if mode == inventoryObservations {
 				bundle, _, _, found, err := local.LoadPublished(reg.ArchiveSessionID)
 				if err != nil || !found {
 					t.Fatal("missing observation-bearing publication", found, err)
@@ -228,7 +242,12 @@ func TestFirstBindingEvidenceNeedsIndependentRootAndExactOrdinaryOwner(t *testin
 	}
 }
 
-type bridgeRawCounts struct{ opens, calls, bytes int64 }
+type bridgeRawCounts struct {
+	opens int64
+	calls int64
+	bytes int64
+}
+
 type bridgeRawOpener struct {
 	transcriptio.Opener
 	counts *bridgeRawCounts

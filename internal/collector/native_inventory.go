@@ -204,6 +204,7 @@ func closeSourceAndNative(sources, native func() error) error {
 	}
 	return err
 }
+
 func (p *pass) configureNativeInventory() (func() error, error) {
 	finalize, err := p.openNativeInventory()
 	if err == nil {
@@ -217,6 +218,7 @@ func (p *pass) configureNativeInventory() (func() error, error) {
 	p.result.Errors["native-inventory"] = errors.New("native inventory unavailable; retry next pass")
 	return finalize, nil
 }
+
 func (p *pass) holdUnopenedScan(reg archive.SessionRegistration) bool {
 	id := reg.ArchiveSessionID
 	if pendingNativeEligible(reg, p.opts) && p.opts.NativeLocators == nil {

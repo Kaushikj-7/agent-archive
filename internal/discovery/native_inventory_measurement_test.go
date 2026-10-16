@@ -63,9 +63,9 @@ func inventoryMeasurementRaw(t *testing.T, raw []byte, id string) []byte {
 }
 
 type inventoryMeasurementResult struct {
-	Selected []string
-	Counts   NativeInventoryCounts
-	Peak     int64
+	Selected []string              `json:"Selected"`
+	Counts   NativeInventoryCounts `json:"Counts"`
+	Peak     int64                 `json:"Peak"`
 }
 
 func TestNativeInventoryMeasurementProcessStep(t *testing.T) {
@@ -80,7 +80,7 @@ func TestNativeInventoryMeasurementProcessStep(t *testing.T) {
 		t.Fatal("invalid synthetic owner count")
 	}
 	queries := []agentapi.LocatorRequest{}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		queries = append(queries, agentapi.LocatorRequest{NativeID: inventoryMeasurementID(i), Root: root})
 	}
 	budget := agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
@@ -112,13 +112,14 @@ func TestNativeInventoryMeasurementProcessStep(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
 func TestNativeInventoryFewAndManyDayFreshProcessMeasurements(t *testing.T) {
 	// Sequential: measurements own child process groups, fixtures and active budgets.
 	for _, count := range []int{1, 128, 512} {
 		for _, days := range []int{2, 32} {
 			t.Run(fmt.Sprintf("owners%d-days%d", count, days), func(t *testing.T) {
 				home, root, raw := inventoryFixture(t)
-				for i := 0; i < count; i++ {
+				for i := range count {
 					id := inventoryMeasurementID(i)
 					day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i%days).Format("2006/01/02")
 					inventoryFile(t, root, day, id, inventoryMeasurementRaw(t, raw, id))
@@ -217,8 +218,8 @@ func TestNativeInventoryActualOldWriterDropRequiresEnumeration(t *testing.T) {
 			t.Logf("actual pinned writer route=%s pid=%d: %s", route, cmd.Process.Pid, output)
 			// Grow unrelated names beyond a pass; missing observations cannot be rebuilt
 			// from hints or used to produce a certificate in this first new process.
-			for i := 0; i < 2300; i++ {
-				if err := os.WriteFile(filepath.Join(root.Canonical, "2026/10/15", fmt.Sprintf("invalid-%05d", i)), nil, 0600); err != nil {
+			for i := range 2300 {
+				if err := os.WriteFile(filepath.Join(root.Canonical, "2026", "10", "15", fmt.Sprintf("invalid-%05d", i)), nil, 0600); err != nil {
 					t.Fatal(err)
 				}
 			}

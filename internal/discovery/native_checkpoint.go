@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 
@@ -55,9 +56,7 @@ func mergeNativeCatalog(ctx context.Context, path string, expected, replacement 
 			return errNativeCatalogChanged
 		}
 		delete(object, "native_coverage")
-		for key, value := range next {
-			object[key] = value
-		}
+		maps.Copy(object, next)
 	}
 	raw, err := json.Marshal(object)
 	if err != nil {
@@ -125,6 +124,7 @@ func boundedCatalogBytes(path string) ([]byte, error) {
 // preserves the previous atomic bytes. The member's retained charge is separate.
 func nativeCatalogScratch(path string, replacement int64, budget *agentapi.NativeReadBudget) (func(), error) {
 	n := int64(0)
+	// #nosec G703 -- caller-owned local discovery-catalog.json; native locators never form this path.
 	if info, err := os.Stat(path); err == nil {
 		if !info.Mode().IsRegular() || info.Size() > maxCatalogBytes {
 			return nil, errCatalogTooLarge
