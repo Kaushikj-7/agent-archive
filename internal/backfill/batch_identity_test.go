@@ -76,7 +76,7 @@ func TestPlanUndoRefusesBatchWithoutID(t *testing.T) {
 	f.register("hook-session", "/p", "", fixedNow.UTC())
 	for _, id := range []string{"", "not-an-id"} {
 		b := Batch{ID: id, StartedAt: fixedNow.Add(-time.Hour)}
-		if _, err := PlanUndo(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home}, f.store, f.cfg, []Batch{b}, b, ""); err == nil {
+		if _, err := PlanUndo(Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home}, f.store, f.cfg, []Batch{b}, b, ""); err == nil {
 			t.Fatalf("ID %q: planned an undo", id)
 		}
 	}
@@ -121,7 +121,7 @@ func TestPlanUndoSelectsOnlyProvablyImportedRegistrations(t *testing.T) {
 			batches = append(batches, b)
 		}
 		for _, b := range batches {
-			plan, err := PlanUndo(Environment{Sources: testSources, Discovery: builtin.NewBuiltins(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home}, f.store, f.cfg, batches, b, "")
+			plan, err := PlanUndo(Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home}, f.store, f.cfg, batches, b, "")
 			if err != nil {
 				t.Fatal(err)
 			}

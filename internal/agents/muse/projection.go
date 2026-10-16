@@ -5,10 +5,15 @@ import "strings"
 // project is an exact type/schema/kind dispatch. Known optional content has an
 // explicit empty projection; unknown discriminators never become optional.
 func project(r retained, p map[string]any) (map[string]any, error) {
+	if nativeNewFamily(r, p) {
+		return projectNewFamily(r, p)
+	}
 	if p == nil || !authorityShape(r, p) {
 		return nil, errFormat
 	}
 	switch r.Type {
+	case payloadApprovalWaitStarted, payloadApprovalWaitTerminal, payloadToolBatchStarted, payloadToolBatchTerminal:
+		return nil, errFormat
 	case payloadRuntimeSessionPermissionFormatDeclared:
 		return projectRuntimeSessionPermissionFormatDeclared(r, p)
 	case payloadRuntimeSessionPermissionProfileCommitted:
@@ -326,6 +331,9 @@ func projectRuntimeSession(r retained, p map[string]any) (map[string]any, error)
 	event := object(p["event"])
 	ek := runtimeEvent(str(event["kind"]))
 	f["event_kind"] = string(ek)
+	if kind == roleRun && ek == eventModelCompleted {
+		return projectCompletion(r, p, event)
+	}
 	if kind == roleRun && (ek == eventStarted || ek == eventAssistantMessageCommitted) {
 		if !stringFields(p, "run_id", "source_run_record_id") || num(p["source_run_record_sequence"]) < 1 {
 			return nil, errFormat
@@ -408,6 +416,8 @@ func projectRuntimeCommandIntakeSettled(r retained, p map[string]any) (map[strin
 func optionalRuntime(kind runtimeRole, event runtimeEvent) bool {
 	if kind == roleTask {
 		switch event {
+		case eventReasoningCommitted:
+			return false
 		case eventProposed, eventAccepted, eventScheduled, eventSideEffectIntent, eventStarted, eventStatus, eventCompleted, eventFailed, eventCancelled:
 			return true
 		case eventAssistantMessageCommitted, eventAssistantToolCallsCommitted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
@@ -419,6 +429,8 @@ func optionalRuntime(kind runtimeRole, event runtimeEvent) bool {
 		return false
 	}
 	switch event {
+	case eventReasoningCommitted:
+		return false
 	case eventHookRunStarted, eventHookRunTerminal, eventContextBlockDiagnostic, eventModelRequestConfigured, eventContextBlockUpdated, eventProviderRequestOptionsConfigured, eventModelInputTraceRecorded, eventTaskStreamLinked, eventModelResponseCreated, eventGoalUsageAttribution, eventModelCompleted, eventResourceUsageSampled, eventTerminal, eventAssistantToolCallsCommitted, eventToolResultBatchCommitted, eventSideEffectIntent, eventCompleted, eventFailed:
 		return true
 	case eventAccepted, eventAssistantMessageCommitted, eventCancelled, eventProposed, eventScheduled, eventStarted, eventStatus:

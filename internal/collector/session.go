@@ -101,6 +101,7 @@ type sessionScan struct {
 	// gap it is, with this candidate cached as the state it was reached at.
 	retainedBudget   *agentapi.NativeReadBudget
 	retainedReleases []func()
+	nativeLeases     []*preparedNativeValidation
 	revisions        *revisionPlan
 	rewritten        *archive.SourceBundle
 	// offChainKept counts the off-chain (best-effort) revisions the last
@@ -167,7 +168,7 @@ func (s *sessionScan) id() string { return s.reg.ArchiveSessionID }
 // it is by the second. Whether an off-chain revision was left out is
 // recorded once, as the scan ends (noteRevisionLeftOut).
 func (s *sessionScan) run(ctx context.Context) (outcome sessionOutcome, err error) {
-	defer func() { s.noteRevisionLeftOut(err) }()
+	defer func() { err = errors.Join(err, s.closeNativeLeases()); s.noteRevisionLeftOut(err) }()
 	outcome, err = s.scanOnce(ctx)
 	if err == nil || s.offChainKept == 0 || s.withoutOffChain || !s.overSessionCeiling(err) {
 		return outcome, err
@@ -441,6 +442,9 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 		s.subagentRunning = true
 		return read, false, nil
 	} else if err != nil {
+		return read, false, err
+	}
+	if err := s.persistNativeValidation(read.observed.prepared); err != nil {
 		return read, false, err
 	}
 	if err := s.persistCodexBinding(read.observed.binding.CodexBinding()); err != nil {

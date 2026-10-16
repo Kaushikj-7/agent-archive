@@ -23,7 +23,8 @@ import (
 
 // sourceState carries a provider observation and legacy equality facts.
 type sourceState struct {
-	binding *agentapi.SourceBinding
+	binding  *agentapi.SourceBinding
+	prepared *preparedNativeValidation
 	// relocated is where an unbound Codex registration's rollout was read
 	// from when Codex had renamed it (see agentapi.SourceRelocation).
 	relocated   string
@@ -139,6 +140,7 @@ type providerReader struct {
 	inspectionObservation   **inspectioncache.Observation
 	nativeRoot              *archive.NativeRoot
 	nativeLocators          agentapi.NativeLocatorLookup
+	nativeSelection         string
 	historicalSourceAllowed func(string) bool
 	pendingRollouts         func() agentapi.CodexRolloutLookup
 	resourceOwner           *sessionScan
@@ -350,7 +352,12 @@ func (r providerReader) filter(ctx context.Context, adapter archive.Adapter, max
 	if err != nil {
 		return out, observed, err
 	}
-	defer func() { err = errors.Join(err, closePass()) }()
+	transferred := false
+	defer func() {
+		if !transferred {
+			err = errors.Join(err, closePass())
+		}
+	}()
 	limits := agentapi.ReadLimits{RawBytes: maxRawBytes(r.harness, maxBytes), RecordBytes: recordLimit, SubagentMetadata: r.subagentMetadata}
 	snap, err := p.Read(ctx, r.ref, limits)
 	if err != nil {
@@ -362,7 +369,11 @@ func (r providerReader) filter(ctx context.Context, adapter archive.Adapter, max
 		}
 		return out, observed, translateSourceError(r.observePendingHistory(ctx, err))
 	}
-	defer func() { err = errors.Join(err, snap.Close()) }()
+	defer func() {
+		if !transferred {
+			err = errors.Join(err, snap.Close())
+		}
+	}()
 	observed = observe(r.ref.Kind, snap.Observation())
 	if err = r.validateObservation(provider, observed.observation); err != nil {
 		return out, sourceState{}, err
@@ -404,7 +415,20 @@ func (r providerReader) filter(ctx context.Context, adapter archive.Adapter, max
 	if err != nil {
 		return out, observed, translateSourceError(r.observePendingHistory(ctx, err))
 	}
-	return out, observed, checkFilteredSize(out, maxBytes)
+	if err = checkFilteredSize(out, maxBytes); err != nil {
+		return out, observed, err
+	}
+	if observed.binding != nil && observed.binding.Native != nil && observed.binding.Native.Version == 2 {
+		observed.prepared, err = r.prepareNativeValidation(ctx, snap, f, in, observed.binding.Native, closePass)
+		if err != nil {
+			return out, observed, err
+		}
+		transferred = true
+		if r.resourceOwner != nil {
+			r.resourceOwner.nativeLeases = append(r.resourceOwner.nativeLeases, observed.prepared)
+		}
+	}
+	return out, observed, nil
 }
 
 // observePendingHistory is a diagnostic-only route behind the existing fence.
@@ -779,7 +803,7 @@ func sourceAdmission(reg archive.SessionRegistration) agentapi.SourceAdmission {
 		if reg.NativeBinding != nil {
 			return agentapi.SourceAdmission{NativeID: reg.NativeSessionID, Binding: &agentapi.SourceBinding{Native: reg.NativeBinding}}
 		}
-		return agentapi.SourceAdmission{}
+		return agentapi.SourceAdmission{NativeID: reg.NativeSessionID}
 	}
 	cwd := ""
 	if reg.Origin == archive.SessionOriginDiscovery {

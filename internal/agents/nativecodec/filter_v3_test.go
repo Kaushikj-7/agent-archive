@@ -352,7 +352,7 @@ func TestFilterV3DropsMessagesThatAreOnlyInjectedInstructions(t *testing.T) {
 // before; filter 15 and adapter 0.15.0 superseded filter 14.)
 func TestFilterVersionIsDeclaredInCaptureProvenance(t *testing.T) {
 	t.Parallel()
-	if FilterVersion != "19" || adapterVersion != "0.19.0" {
+	if FilterVersion != "24" || adapterVersion != "0.24.0" {
 		t.Fatalf("FilterVersion=%q adapterVersion=%q", FilterVersion, adapterVersion)
 	}
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(bytes.NewReader(fixture(t, "claude-tool-evidence.jsonl")))

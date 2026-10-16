@@ -1258,5 +1258,5 @@ func unsupportedSettledStageOwner(p ImportStage, reg archive.SessionRegistration
 }
 
 func sameNativeImportBinding(a, b *archive.NativeSourceBinding) bool {
-	return a.PreservesFacts(b) && b.PreservesFacts(a)
+	return a.PreservesFacts(b) && b.PreservesFacts(a) && a.SameCheckpoint(b)
 }

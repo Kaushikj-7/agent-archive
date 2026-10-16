@@ -6,9 +6,10 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
-// SourceProvider supports verified explicit local files only. Capture requires
+// SourceProvider supports verified local files only. Capture requires
 // qualified admission and a durable binding, which this operation does not grant.
 type SourceProvider struct{}
 
@@ -25,5 +26,8 @@ func (SourceProvider) OpenPass(ctx context.Context, env agentapi.SourceEnvironme
 	if env.RequireConfinedHistory || env.NativeRoot != nil || env.LegacyUnboundRegistration {
 		return nil, agentapi.Wrap(agentapi.Unsafe, errors.Join(agentapi.ErrInvalidSourceBinding, errors.New("muse capture unavailable: qualified native source binding required; use handoff --file for local reading")))
 	}
-	return (sourceio.FileProvider{}).OpenPass(ctx, env)
+	if env.Files == nil {
+		env.Files = transcriptio.OS{}
+	}
+	return &sourcePass{env: env, live: map[*sourceSnapshot]bool{}}, nil
 }

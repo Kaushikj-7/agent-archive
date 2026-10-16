@@ -206,7 +206,7 @@ func TestEvalExportReadsACursorTextTranscript(t *testing.T) {
 	if record.Prompts == nil || len(*record.Prompts) != 2 || (*record.Prompts)[0].Text != "edit a.go" || (*record.Prompts)[1].Text != "and b.go" {
 		t.Errorf("prompts = %+v", record.Prompts)
 	}
-	if record.FinalResponse == nil || record.FinalResponse.Text != "done" || record.FilesEdited == nil || len(*record.FilesEdited) != 0 {
+	if record.FinalResponse == nil || record.FinalResponse.Text != "done" || record.FilesEdited != nil {
 		t.Errorf("final response = %+v, files = %v", record.FinalResponse, record.FilesEdited)
 	}
 }
