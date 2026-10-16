@@ -11,14 +11,15 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 `agent-archive` solves these problems, and can perform the following:
 
 - Automatically upload Claude Code, Codex, and Cursor transcripts into a cloud object storage like S3 or R2.
-- Hand off a session from one coding agent to another. Type `/handoff codex` in Claude Code (or ask for `$handoff` in Codex) and Codex opens in a new terminal tab or window with the session as its context (on Linux, a new tmux window; outside tmux it prints the command to paste); from a terminal, run `agent-archive handoff`, pick a session (press `/` and type a few words, a PR number, or a branch to narrow the list), and press Enter. Or name it: `agent-archive handoff "flaky retention"`. No copying and pasting. Useful especially if you run into rate limits halfway through a session ([handoff guide](docs/guides/handoff.md)).
-- Pull a past session into the agent you are in, by asking. Setup gives Claude Code, Codex, and Cursor an `agent-archive` skill, so "pull in the auth session from Codex" or "continue where my other agent left off" finds the session by a word or two (its name, branch, project, or PR number) and hands it to the agent as context, without you typing a command ([agent skills](docs/guides/agent-skills.md)).
-- Hand off a session from one computer to another with the same `agent-archive handoff`. When working locally across multiple computers, agent-archive makes it very easy to continue sessions and to keep a single source of truth for all of your sessions.
-- View all of your past sessions across coding agents with `agent-archive list` (from inside a repository it shows that repository's sessions first; `agent-archive list "retention"` finds one by words). This allows you to set up automations to understand how you're using your agents, how different coding agents perform across different tasks, and can help you perform meta-improvements on your AGENTS.md and lint rules that span across Claude Code, Codex, and Cursor.
+- Hand off a session to another coding agent or computer without losing context. Run `agent-archive handoff`, pick a session, and continue where you left off. Useful when you hit rate limits or want to switch models ([handoff guide](docs/guides/handoff.md)).
 
-Continue a Claude Code session in Codex: browse, select, and hand off.
+  <img src="docs/assets/demos/handoff.gif" alt="Browse sessions, select a Claude Code session, and continue the work in Codex" width="800">
 
-![Browse sessions, select a Claude Code session, and continue the work in Codex](docs/assets/demos/handoff.gif)
+- View all of your past sessions across coding agents with `agent-archive list`. Find a session by topic, project, branch, or PR number, then open it to revisit the conversation ([browsing guide](docs/guides/list-and-show.md)).
+
+  <img src="docs/assets/demos/list.gif" alt="Browse 151 synthetic sessions across agents and filter the list by topic" width="800">
+
+- See how you're using your coding agents with `agent-archive stats`. Track session counts, tokens, and estimated spend, and compare usage across agents, models, and projects ([usage guide](docs/guides/stats.md)).
 
 *Demos use synthetic sessions, with loading waits trimmed.*
 
@@ -55,8 +56,6 @@ Run `agent-archive stats` to explore session counts, tokens, estimated spend, an
 ## Find and revisit sessions
 
 Run `agent-archive list` to browse archived sessions across agents. Press `/` to filter by topic, project, branch, or PR number, then select a session to view it ([browsing guide](docs/guides/list-and-show.md)).
-
-![Browse 151 synthetic sessions across agents and filter the list by topic](docs/assets/demos/list.gif)
 
 Use a session ID from `list` with `agent-archive show SESSION_ID` to open its summary, or add `--transcript` to read the conversation.
 
