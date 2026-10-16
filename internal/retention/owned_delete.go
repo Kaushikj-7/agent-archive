@@ -32,14 +32,8 @@ func DeleteOwnedSession(ctx context.Context, local *state.Store, store storage.O
 	scoped, closeScope := local.WithReadBudget(ctx, budget)
 	defer closeScope()
 	local = scoped
-	reservation := budget.Reservation()
-	const metadataLimit = 32 << 20
-	if !reservation.Reserve(metadataLimit) {
-		return agentapi.ReadBudgetLimit(errors.New("deletion metadata exceeds shared read budget"))
-	}
-	raw, err := storage.ReadPublicationMetadata(ctx, store, key)
-	reservation.Release(metadataLimit - int64(len(raw)))
-	defer reservation.Release(int64(len(raw)))
+	raw, release, err := readDeletionMetadata(ctx, store, key, budget)
+	defer release()
 	if err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return err
 	}
@@ -115,7 +109,9 @@ func deleteOwnedMetadata(ctx context.Context, local *state.Store, store storage.
 	if err = store.Delete(ctx, key); err != nil {
 		return j, fmt.Errorf("delete exact selecting metadata: %w", err)
 	}
-	if fresh, e := storage.ReadPublicationMetadata(ctx, store, key); !errors.Is(e, storage.ErrNotFound) {
+	fresh, release, e := readDeletionMetadata(ctx, store, key, budget)
+	defer release()
+	if !errors.Is(e, storage.ErrNotFound) {
 		if e == nil && len(fresh) > 0 {
 			return j, storage.ErrPublicationConflict
 		}
@@ -196,7 +192,8 @@ func verifyDeletionPosition(ctx context.Context, local *state.Store, store stora
 	if err := verifyRetainedDeletionSet(ctx, local, j, budget); err != nil {
 		return err
 	}
-	raw, err := storage.ReadPublicationMetadata(ctx, store, key)
+	raw, release, err := readDeletionMetadata(ctx, store, key, budget)
+	defer release()
 	if errors.Is(err, storage.ErrNotFound) {
 		if requirePresent && len(j.MetadataBytes) > 0 {
 			return storage.ErrPublicationConflict
@@ -289,4 +286,15 @@ func verifyOwnedDeletionObject(ctx context.Context, store storage.ObjectStore, o
 		return storage.ErrChecksumMismatch
 	}
 	return nil
+}
+
+func readDeletionMetadata(ctx context.Context, store storage.ObjectStore, key string, budget *agentapi.NativeReadBudget) ([]byte, func(), error) {
+	const limit = 32 << 20
+	reservation := budget.Reservation()
+	if !reservation.Reserve(limit) {
+		return nil, func() {}, agentapi.ReadBudgetLimit(errors.New("deletion metadata exceeds shared read budget"))
+	}
+	raw, err := storage.ReadPublicationMetadata(ctx, store, key)
+	reservation.Release(limit - int64(len(raw)))
+	return raw, func() { reservation.Release(int64(len(raw))) }, err
 }

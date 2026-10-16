@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -251,4 +252,60 @@ func TestOwnedDeletionRefusesSourceWinnerOrIntentChangesBeforeMetadataRemoval(t 
 			}
 		})
 	}
+}
+
+type deletionMetadataBudgetStore struct {
+	*storagetest.MemoryStore
+	reads int
+}
+
+func (s *deletionMetadataBudgetStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.reads++
+	return s.MemoryStore.GetLimited(ctx, key, limit)
+}
+func TestDeletionMetadataReadReservesBeforeProviderAndReleasesItsOwner(t *testing.T) {
+	t.Parallel()
+	remote := &deletionMetadataBudgetStore{MemoryStore: storagetest.NewMemoryStore()}
+	budget := agentapi.NewNativeReadBudget(256)
+	if _, release, err := readDeletionMetadata(t.Context(), remote, "metadata", budget); err == nil {
+		release()
+		t.Fatal("small ledger permitted provider allocation")
+	} else {
+		release()
+	}
+	if remote.reads != 0 {
+		t.Fatal("unreserved provider read", remote.reads)
+	}
+	budget = agentapi.NewNativeReadBudget(32 << 20)
+	raw, release, err := readDeletionMetadata(t.Context(), remote, "metadata", budget)
+	if !errors.Is(err, storage.ErrNotFound) || len(raw) != 0 {
+		t.Fatal(raw, err)
+	}
+	release()
+	r := budget.Reservation()
+	if !r.Reserve(32 << 20) {
+		t.Fatal("provider failure retained reservation")
+	}
+	r.Release(32 << 20)
+}
+
+func TestDeletionPositionCannotReadMetadataOutsideSharedLedger(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	reg := registration("bounded-position", writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
+	j, err := local.PrepareSessionDeletion(reg, state.RemovalReasonRetention, nil, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := &deletionMetadataBudgetStore{MemoryStore: storagetest.NewMemoryStore()}
+	budget := agentapi.NewNativeReadBudget(1 << 20)
+	err = verifyDeletionPosition(t.Context(), local, remote, j, "metadata", false, budget)
+	if err == nil || remote.reads != 0 {
+		t.Fatal("position fetched without reserved ceiling", remote.reads, err)
+	}
+	r := budget.Reservation()
+	if !r.Reserve(1 << 20) {
+		t.Fatal("failed position retained local decode charges")
+	}
+	r.Release(1 << 20)
 }

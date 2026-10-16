@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -11,11 +12,12 @@ import (
 // Hold each owning directory and regular-file identity before local forget.
 // A corrupt later directory must refuse before an earlier record is unlinked.
 type deletionRecords struct {
-	root  *os.Root
-	held  *local.RootedHome
-	home  string
-	dirs  map[string]*os.Root
-	files map[string]os.FileInfo
+	root       *os.Root
+	held       *local.RootedHome
+	home       string
+	dirs       map[string]*os.Root
+	files      map[string]os.FileInfo
+	syncParent func(*os.Root) error
 }
 
 func (s *Store) pinDeletionRecords(paths []string) (_ *deletionRecords, err error) {
@@ -25,6 +27,10 @@ func (s *Store) pinDeletionRecords(paths []string) (_ *deletionRecords, err erro
 	}
 	root := held.Root
 	r := &deletionRecords{root: root, held: held, home: s.home, dirs: map[string]*os.Root{".": root}, files: map[string]os.FileInfo{}}
+	r.syncParent = syncDurableParent
+	if s.deletionRecordsSync != nil {
+		r.syncParent = s.deletionRecordsSync
+	}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, r.close())
@@ -137,7 +143,10 @@ func (r *deletionRecords) removeEmptySession(id string) error {
 	if err != nil {
 		return err
 	}
-	entries, err := file.ReadDir(-1)
+	entries, err := file.ReadDir(1)
+	if errors.Is(err, io.EOF) {
+		err = nil
+	}
 	err = errors.Join(err, file.Close())
 	if err != nil {
 		return err
@@ -162,7 +171,7 @@ func (r *deletionRecords) removeEmptySession(id string) error {
 
 func (r *deletionRecords) close() (err error) {
 	for path, dir := range r.dirs {
-		err = errors.Join(err, syncDurableParent(dir))
+		err = errors.Join(err, r.syncParent(dir))
 		if path != "." {
 			err = errors.Join(err, dir.Close())
 		}

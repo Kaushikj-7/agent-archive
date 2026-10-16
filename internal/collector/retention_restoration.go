@@ -48,7 +48,7 @@ func (s *sessionScan) resumeRetentionDeletion() (sessionOutcome, bool, error) {
 		if err != nil {
 			return outcomeSkipped, true, err
 		}
-		if _, err = storage.ReadPublicationMetadata(s.ctx, s.remote, key); !errors.Is(err, storage.ErrNotFound) {
+		if _, err = s.historyGet(key, historyMetadataLimit); !errors.Is(err, storage.ErrNotFound) {
 			return outcomeSkipped, true, errors.Join(state.ErrRemovalPending, err)
 		}
 		j, err = s.local.AdvanceSessionDeletion(j, state.DeletionAbsent)
@@ -96,7 +96,7 @@ func (s *sessionScan) resumeRetentionAbsent(j state.SessionDeletion) (sessionOut
 	if err != nil {
 		return outcomeSkipped, true, err
 	}
-	before, err := storage.ReadPublicationMetadata(s.ctx, s.remote, key)
+	before, err := s.historyGet(key, historyMetadataLimit)
 	if !errors.Is(err, storage.ErrNotFound) && err != nil {
 		return outcomeSkipped, true, err
 	}
@@ -110,7 +110,7 @@ func (s *sessionScan) resumeRetentionAbsent(j state.SessionDeletion) (sessionOut
 	if err != nil {
 		return outcomeSkipped, true, fmt.Errorf("prepare exact retained restoration: %w", err)
 	}
-	after, err := storage.ReadPublicationMetadata(s.ctx, s.remote, key)
+	after, err := s.historyGet(key, historyMetadataLimit)
 	if err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return outcomeSkipped, true, err
 	}

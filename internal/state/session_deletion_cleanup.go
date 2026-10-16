@@ -42,6 +42,10 @@ func (s *Store) FinishDeletedSession(regID string) error {
 	if pending, err := s.HasPending(regID); err != nil || pending {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
+	j, found, err = s.loadSessionDeletion(regID)
+	if err != nil || !found {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
 	j.LocalRemoved = true
 	j.Phase = DeletionCleaned
 	j.MetadataBytes = nil

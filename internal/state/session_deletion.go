@@ -17,7 +17,7 @@ import (
 )
 
 const deletionDirectory = "session-deletions"
-const deletionWireLimit int64 = 48 << 20
+const deletionWireLimit int64 = durableControlBytes / 2
 
 // ErrRemovalPending keeps an interrupted, authorized deletion actionable.
 var ErrRemovalPending = errors.New("authorized session removal is unfinished; run sync to finish recovery")
@@ -67,19 +67,14 @@ type RetentionRestoration struct {
 	RequestToken   string `json:"request_token"`
 }
 
+// Freeze the admitted owner and source/relationship authority. Hook observations
+// and git-head observations may advance without retargeting this deletion;
+// relocation or link reconciliation must wait for its terminal resolution.
 func deletionOwner(reg archive.SessionRegistration) string {
-	raw, _ := json.Marshal(struct {
-		Session     string
-		Native      string
-		Project     string
-		Harness     string
-		Destination string
-		Admission   time.Time
-		Origin      archive.SessionOrigin
-		Batch       archive.ImportBatch
-		Stage       string
-		Previous    string
-	}{reg.ArchiveSessionID, reg.NativeSessionID, reg.ProjectID, reg.Harness.Name, reg.DestinationID, reg.Admitted(), reg.Origin, reg.ImportBatch, reg.StagedImportSHA256, reg.PreviousGenerationID})
+	reg.HookObservedAt = time.Time{}
+	reg.LastHead = nil
+	reg.LastHeadSeenAt = nil
+	raw, _ := json.Marshal(reg)
 	return publicationSHA256(append([]byte("deletion-owner/v1\x00"), raw...))
 }
 
@@ -194,6 +189,11 @@ func (s *Store) loadSessionDeletion(id string) (SessionDeletion, bool, error) {
 	if err != nil {
 		return j, true, err
 	}
+	reservation := s.readReservation()
+	if !reservation.Reserve(2 * int64(len(raw))) {
+		return j, true, errStateBudget
+	}
+	defer reservation.Release(2 * int64(len(raw)))
 	if err = s.unmarshalOwned(raw, &j); err != nil {
 		return j, true, errors.Join(ErrDurableStorageRecovery, err)
 	}
@@ -217,14 +217,12 @@ func (s *Store) loadSessionDeletion(id string) (SessionDeletion, bool, error) {
 			}
 		}
 	}
+	if err = s.retainDeletionCharge(3 * int64(len(j.MetadataBytes))); err != nil {
+		return j, true, err
+	}
 	if err = j.validate(id); err != nil {
 		return j, true, err
 	}
-	reservation := s.readReservation()
-	if !reservation.Reserve(2 * int64(len(raw))) {
-		return j, true, errStateBudget
-	}
-	defer reservation.Release(2 * int64(len(raw)))
 	canonical, err := json.Marshal(j)
 	if err != nil || !bytes.Equal(raw, append(canonical, '\n')) {
 		return j, true, ErrDurableStorageRecovery
@@ -254,18 +252,26 @@ func (s *Store) readDeletionObject(home *local.RootedHome, dir *os.Root, name st
 			reservation.Release(n)
 		}
 	}()
-	f, err := dir.Open(name)
+	open := dir.Open
+	if s.deletionFileOpen != nil {
+		open = func(name string) (*os.File, error) { return s.deletionFileOpen(dir, name) }
+	}
+	f, err := open(name)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { err = errors.Join(err, f.Close()) }()
+	defer func() { err = errors.Join(err, s.closePublicationFile(f)) }()
 	opened, err := f.Stat()
-	if err != nil || !os.SameFile(before, opened) {
+	if err != nil || !os.SameFile(before, opened) || opened.Size() != n || !before.ModTime().Equal(opened.ModTime()) {
 		return nil, ErrDurableStorageRecovery
 	}
-	out, err = io.ReadAll(io.LimitReader(f, limit+1))
-	if err != nil {
+	out = make([]byte, n)
+	if _, err = io.ReadFull(f, out); err != nil {
 		return nil, err
+	}
+	var extra [1]byte
+	if count, e := f.Read(extra[:]); count != 0 || !errors.Is(e, io.EOF) {
+		return nil, errors.Join(ErrDurableStorageRecovery, e)
 	}
 	after, err := dir.Lstat(name)
 	if err != nil || int64(len(out)) != n || !os.SameFile(opened, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
@@ -282,6 +288,7 @@ func (s *Store) readDeletionObject(home *local.RootedHome, dir *os.Root, name st
 }
 
 func (s *Store) saveSessionDeletion(j SessionDeletion, expected *string) error {
+	previousSHA := j.SHA256
 	j.SHA256 = deletionSHA(j)
 	if err := j.validate(j.Registration.ArchiveSessionID); err != nil {
 		return err
@@ -295,9 +302,8 @@ func (s *Store) saveSessionDeletion(j SessionDeletion, expected *string) error {
 				return err
 			}
 		}
-		var commit func(func() error) error
-		if expected != nil {
-			commit = func(rename func() error) error {
+		commit := func(rename func() error) error {
+			if expected != nil {
 				unlock, err := s.lockRequest(j.Registration.ArchiveSessionID)
 				if err != nil {
 					return err
@@ -310,8 +316,11 @@ func (s *Store) saveSessionDeletion(j SessionDeletion, expected *string) error {
 				if found && req.Token != *expected || !found && *expected != "" {
 					return ErrDeletionWorkChanged
 				}
-				return rename()
 			}
+			if err := s.checkDeletionControl(g, j, previousSHA); err != nil {
+				return err
+			}
+			return rename()
 		}
 		return s.writeDurableGuardChecked(s.durableContext(), g, deletionPath(j.Registration.ArchiveSessionID), j, commit)
 	})
@@ -320,6 +329,9 @@ func (s *Store) saveSessionDeletion(j SessionDeletion, expected *string) error {
 // PrepareSessionDeletion freezes complete, exact selecting metadata under the
 // request decision. It does not itself authorize any remote deletion.
 func (s *Store) PrepareSessionDeletion(reg archive.SessionRegistration, reason RemovalReason, raw []byte, at time.Time, token string) (SessionDeletion, error) {
+	if err := s.retainDeletionCharge(3 * int64(len(raw))); err != nil {
+		return SessionDeletion{}, err
+	}
 	old, found, err := s.LoadSessionDeletion(reg)
 	if err != nil {
 		return old, err
@@ -360,7 +372,11 @@ func (s *Store) PrepareSessionDeletion(reg archive.SessionRegistration, reason R
 	if reason == RemovalReasonRetention {
 		expected = &token
 	}
+	if found {
+		j.SHA256 = old.SHA256
+	}
 	err = s.saveSessionDeletion(j, expected)
+	j.SHA256 = deletionSHA(j)
 	return j, err
 }
 
@@ -602,4 +618,51 @@ func (j SessionDeletion) validateReferences(id string) error {
 
 func (j SessionDeletion) allowsMissingMetadata() bool {
 	return j.MetadataSHA256 == "" || j.LocalRemoved || j.Phase == DeletionFinalizing || j.Phase == DeletionRestored || j.Phase == DeletionCancelled
+}
+
+// Check under the durable writer lock immediately before selecting the new
+// control. Immutable payload staging does not grant permission to overwrite a
+// different phase, a replacement owner, or an absent active journal.
+func (s *Store) checkDeletionControl(g config.DurableStorageGuard, next SessionDeletion, previousSHA string) (err error) {
+	home, err := g.RootedHome(s.home)
+	if err != nil {
+		return err
+	}
+	dir, err := privateDirectory(home.Root, filepath.Join(deletionDirectory, next.Registration.ArchiveSessionID), false)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, dir.Close()) }()
+	raw, err := s.readDeletionObject(home, dir, "intent.json", durableControlBytes/2)
+	if errors.Is(err, os.ErrNotExist) && next.Phase == DeletionPrepared && previousSHA == next.SHA256 {
+		return nil
+	}
+	if err != nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	var current SessionDeletion
+	if err := s.unmarshalOwned(raw, &current); err != nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	if err := s.retainDeletionCharge(int64(len(raw))); err != nil {
+		return err
+	}
+	canonical, err := json.Marshal(current)
+	if err != nil || !bytes.Equal(raw, append(canonical, '\n')) || current.validateOwner(next.Registration.ArchiveSessionID) != nil || current.SHA256 != previousSHA || current.OwnerSHA256 != next.OwnerSHA256 {
+		return ErrDurableStorageRecovery
+	}
+	return home.Check()
+}
+
+func (s *Store) retainDeletionCharge(n int64) error {
+	reservation := s.readReservation()
+	if !reservation.Reserve(n) {
+		return errStateBudget
+	}
+	if s.resourceBudget != nil && s.resourceReleases != nil {
+		*s.resourceReleases = append(*s.resourceReleases, func() { reservation.Release(n) })
+	} else {
+		reservation.Release(n)
+	}
+	return nil
 }

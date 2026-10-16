@@ -434,7 +434,7 @@ func (s *Store) ForgetSession(archiveSessionID string, key agentmeta.SessionKey)
 
 // forgetSession is ForgetSession; withCandidates false is for a caller that
 // already removed the session's subagent candidates under their locks.
-func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey, withCandidates bool, revision, retirement *local.Staged) error {
+func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey, withCandidates bool, revision, retirement *local.Staged) (err error) {
 	if err := s.refuseTypedStagedRetirement(archiveSessionID); err != nil {
 		return err
 	}
@@ -449,19 +449,6 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 	}
 	if err := s.checkCatalogPendingRemoval(archiveSessionID); err != nil {
 		return err
-	}
-	if withCandidates {
-		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
-			return fmt.Errorf("remove linked subagent candidates: %w", err)
-		}
-	}
-	if retirement != nil {
-		if err := retirement.Commit(); err != nil {
-			return err
-		}
-		if err := s.indexStep("generation-retired"); err != nil {
-			return err
-		}
 	}
 	paths := []string{
 		s.registrationPath(archiveSessionID),
@@ -496,7 +483,27 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 	if err != nil {
 		return err
 	}
-	defer func() { _ = records.close() }()
+	defer func() { err = errors.Join(err, records.close()) }()
+	if err := s.validateForgottenSessionIdentity(archiveSessionID, key); err != nil {
+		return err
+	}
+	if err := records.currentHome(); err != nil {
+		return err
+	}
+	if withCandidates {
+		if err := s.removeSubagentCandidatesForSession(archiveSessionID); err != nil {
+			return fmt.Errorf("remove linked subagent candidates: %w", err)
+		}
+	}
+	if retirement != nil {
+		if err := retirement.Commit(); err != nil {
+			return err
+		}
+		if err := s.indexStep("generation-retired"); err != nil {
+			return err
+		}
+	}
+
 	for _, path := range paths {
 		// Keep registration deletion before index deletion: interrupted expiry
 		// must never leave an admitted owner invisible to bounded lookup.

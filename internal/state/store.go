@@ -86,6 +86,8 @@ type Store struct {
 	onIndexSync func()
 	// publicationFileClose injects a checked actual descriptor close in private fixtures.
 	publicationFileClose func(*os.File) error
+	deletionFileOpen     func(*os.Root, string) (*os.File, error)
+	deletionRecordsSync  func(*os.Root) error
 	// publicationRootClose is confined to final owned migration-directory close.
 	publicationRootClose func(*os.Root) error
 	// publicationAfterSavedRoot is a nil-default fixture fault at the final composition callback boundary.

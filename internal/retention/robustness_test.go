@@ -44,6 +44,10 @@ func (f *flakyStore) Put(ctx context.Context, key string, data []byte) error {
 	return f.ObjectStore.Put(ctx, key, data)
 }
 
+func (f *flakyStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	return f.ObjectStore.(storage.LimitedVersionedGetter).GetLimitedVersioned(ctx, key, limit)
+}
+
 // recordingStore counts every remote call, so a test can assert a sweep never
 // touched the bucket.
 type recordingStore struct {

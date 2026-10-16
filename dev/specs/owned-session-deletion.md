@@ -6,7 +6,7 @@ not enable native history admission, historical import staging, or live provider
 acceptance that their own entrypoint fences still withhold.
 
 An owned deletion uses `session-deletions/<archive ID>/intent.json`, version 1.
-The canonical journal binds the immutable local admission owner (session/native/
+The canonical journal freezes the complete registration except mutable hook and git-head observations; relocation and relationship reconciliation wait until terminal resolution. It binds the immutable local admission owner (session/native/
 project/harness/destination/admission/origin/import/generation identities), removal
 reason, exact selecting metadata SHA-256, ordered complete source references,
 reviewed request token and deletion time. The exact metadata wire is retained

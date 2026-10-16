@@ -3,11 +3,16 @@ package state
 import (
 	"bytes"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/local"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
@@ -115,5 +120,123 @@ func TestPinnedForgetRefusesDirectoryReplacementWithoutUnlinkingEitherOwner(t *t
 		if err != nil || !bytes.Equal(got, want) {
 			t.Fatal("refusal removed another owner", target, err)
 		}
+	}
+}
+
+func TestDeletionStalePhaseCannotReplaceCurrentIntent(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	reg := registration(t)
+	j, err := s.PrepareSessionDeletion(reg, RemovalReasonRetention, nil, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.AdvanceSessionDeletion(j, DeletionDeleting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(s.home, deletionPath(reg.ArchiveSessionID)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.Phase = DeletionAbsent
+	if err := s.saveSessionDeletion(j, nil); !errors.Is(err, ErrDurableStorageRecovery) {
+		t.Fatalf("stale phase replaced %s: %v", current.Phase, err)
+	}
+	after, err := os.ReadFile(filepath.Join(s.home, deletionPath(reg.ArchiveSessionID)))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("stale transition changed current intent", err)
+	}
+}
+
+func TestDeletionReadRefusesSameInodeGrowthBeforeAllocation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	path := filepath.Join(s.home, "growing-deletion")
+	if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	home, err := local.OpenRootedHome(s.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = home.Close() }()
+	budget := agentapi.NewNativeReadBudget(256)
+	scoped, closeScope := s.WithReadBudget(t.Context(), budget)
+	defer closeScope()
+	scoped.deletionFileOpen = func(root *os.Root, name string) (*os.File, error) {
+		f, err := root.Open(name)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(path, bytes.Repeat([]byte("x"), 64<<10), 0600); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+		return f, nil
+	}
+	closeFailure := errors.New("checked close")
+	var offset int64
+	scoped.publicationFileClose = func(f *os.File) error {
+		offset, _ = f.Seek(0, io.SeekCurrent)
+		return errors.Join(f.Close(), closeFailure)
+	}
+	if _, err := scoped.readDeletionObject(home, home.Root, "growing-deletion", 1<<20); !errors.Is(err, ErrDurableStorageRecovery) || !errors.Is(err, closeFailure) {
+		t.Fatal("growth or close failure was lost", err)
+	}
+	if offset != 0 {
+		t.Fatalf("read %d unreserved bytes after same-inode growth", offset)
+	}
+	r := budget.Reservation()
+	if !r.Reserve(256) {
+		t.Fatal("refused read retained its reservation")
+	}
+	r.Release(256)
+}
+
+func TestForgetPropagatesFinalDirectoryBarrierFailure(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	reg := registration(t)
+	if err := s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("final directory barrier")
+	s.deletionRecordsSync = func(root *os.Root) error { return errors.Join(syncDurableParent(root), failure) }
+	if err := s.ForgetSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(reg.Harness.Name), NativeID: reg.NativeSessionID}); !errors.Is(err, failure) {
+		t.Fatal("final durability failure was discarded", err)
+	}
+	if _, found, err := s.LoadRegistration(reg.ArchiveSessionID); err != nil || found {
+		t.Fatal("fixture did not reach final barrier", found, err)
+	}
+}
+
+func TestDeletionOwnerFreezesSourceAndRelationshipAuthority(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	reg := registration(t)
+	if _, err := s.PrepareSessionDeletion(reg, RemovalReasonRetention, nil, time.Now(), ""); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*archive.SessionRegistration){
+		"parent":         func(r *archive.SessionRegistration) { r.ParentSessionID = "changed-parent" },
+		"native-child":   func(r *archive.SessionRegistration) { r.NativeChild = !r.NativeChild },
+		"transcript":     func(r *archive.SessionRegistration) { r.TranscriptPath += "-relocated" },
+		"discovery-root": func(r *archive.SessionRegistration) { r.DiscoveryRoot = "/different-approved-root" },
+		"native-root":    func(r *archive.SessionRegistration) { r.NativeRootSessionID = "other-root" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := reg
+			mutate(&changed)
+			if _, found, err := s.LoadSessionDeletion(changed); !found || !errors.Is(err, ErrDurableStorageRecovery) {
+				t.Fatal("changed authority accepted", found, err)
+			}
+		})
+	}
+	observed := reg
+	observed.HookObservedAt = time.Now()
+	observed.LastHeadSeenAt = new(time.Time)
+	if _, found, err := s.LoadSessionDeletion(observed); err != nil || !found {
+		t.Fatal("hook observation retargeted owner", found, err)
 	}
 }
