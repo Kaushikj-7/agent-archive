@@ -18,6 +18,10 @@ follow [Semantic Versioning](https://semver.org/).
   decoded again. Capturing such a thread's growth needs about 5 times its
   filtered size in read memory instead of about 12.
 
+- `list`, `show` and `handoff` find a session by the agent's own session ID
+  as well as the archive's: `handoff 01a10e11 --harness codex` finds the
+  Codex thread whose ID starts `01a10e11`.
+
 ### Local native validation foundation
 
 - Muse local snapshots now supply exact raw content proofs and bounded provisional
@@ -80,6 +84,7 @@ follow [Semantic Versioning](https://semver.org/).
   time uses the validated reserved start. Accounting, tools, model switches,
   children, backfill, capture and Muse destination launch
   remain unavailable. Handoff also now respects Codex's recorded native start.
+
 
 - Keep unavailable Muse tool, file and Git measurements absent in derived
   metadata and full evaluation exports while preserving prompt/message counts.
