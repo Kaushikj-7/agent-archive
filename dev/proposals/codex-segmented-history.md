@@ -1,6 +1,7 @@
 # Segmented Codex history: capture a long thread a segment at a time
 
-Status: proposed, not implemented. Prepared 2026-10-16 against `0966523b`
+Status: proposed, not implemented; owner decisions D1–D9 recorded
+2026-10-16. Prepared 2026-10-16 against `0966523b`
 (main after [#615](https://github.com/wangjohn/agent-archive/pull/615)). No
 version, schema or configuration capability is allocated by this document;
 the PRs below allocate them under [versions](../maintainers/versions.md). The
@@ -28,9 +29,9 @@ about 11 MB a day.
   (160 MiB). The thread already fails that ceiling and sits in a
   `SizeLimitReadBudget` gap. The owner chose not to raise the ceiling.
 - **Filtered ceiling.** `collector.DefaultMaxTranscriptBytes` (64 MiB) bounds
-  the whole filtered thread. This thread reaches it within about a day of
-  growth, and any thread reaches it near 290 MB of rollout, whatever the
-  read ceiling is.
+  the whole filtered thread. Any thread reaches it near 290 MB of rollout,
+  whatever the read ceiling is. For this thread the read ceiling bound first
+  (near 45 MB filtered), so the filtered ceiling changes nothing for it today.
 - **CPU and upload.** Redacting kept text is the dominant cost of a read (32 s
   for a 190 MB rollout, per the `archive.MaxCodexRawTranscriptBytes` comment).
   Each pass that sees an appended record repeats all of it and uploads a new
@@ -43,6 +44,17 @@ the already-captured prefix of the **tip** too. This proposal therefore cuts a
 thread into **segments**: ordinal ranges of one rollout, where an earlier
 rollout's span is one sealed segment and the tip is cut into sealed chunks
 plus one open tail.
+
+## Until this ships
+
+Nothing is changed in the meantime. `87b47b56` stays in its read-ceiling gap at
+its last published snapshot. Raising the filtered ceiling would not help,
+because the read ceiling binds first. Raising the read ceiling was declined,
+and any full-chain stopgap meets a ceiling again within weeks. Waiting loses
+no history as long as the native rollouts stay on disk: the chain lookup also
+searches `archived_sessions/`, and the first segmented pass reads the chain
+from ordinal 0 (see [migration](#migration-of-existing-history-sources)). The
+only risk is the rollout files being deleted from the Codex home before then.
 
 ## Goals and non-goals
 
@@ -436,15 +448,18 @@ limit gap after one pass; a pass after more Codex activity uploads one segment;
 recorded. This document does not authorize running sync, backfill or purge
 against the owner's real archive.
 
-## Decisions for the owner
+## Owner decisions
 
-| | Decision | Recommendation |
+The owner accepted every recommendation below on 2026-10-16; the column
+records the decision.
+
+| | Question | Decision |
 | --- | --- | --- |
 | D1 | Which sessions use segments: every Codex history thread, only threads whose filtered size passes a threshold, or every Codex session including single-rollout ones. | Threads (history or single-rollout) whose filtered size passes 16 MiB. Smaller sessions keep schema 2/3, so the migration and its bucket churn touch only the few long threads. |
 | D2 | Whether to chunk the open tip, and the chunk target. | Yes, it is required for `87b47b56`, whose tip is 240 MB. Target 16 MiB filtered. |
 | D3 | Segment list in the metadata sidecar, or in a small head object it references. | Head object, so sidecar size (read by listing) stays independent of segment count. |
 | D4 | Derive metadata by streaming every segment per publication, or keep a private accumulator checkpoint. | Stream first; checkpoint only if profiles demand it. |
-| D5 | Keep sealed segments locally (counted in the 1 GiB staging quota), or drop past a bound and fetch from the bucket when needed. | Keep locally up to a per-session bound (e.g. 256 MiB), fetch with checksum verification beyond it. |
+| D5 | Keep sealed segments locally (counted in the 1 GiB staging quota), or drop past a bound and fetch from the bucket when needed. | Keep locally up to 256 MiB per session, fetch with checksum verification beyond it. |
 | D6 | Verify sealed raw prefixes by full streaming re-hash on each changed pass, or trust file identity and size for sealed rollouts with periodic full checks. Same question for remote readback of kept segments. | Full re-hash locally (it is O(1) memory and only on changed passes); HEAD-size plus checksum metadata for kept remote segments, full readback for new ones. |
 | D7 | New ceilings: per-thread total filtered, segments per revision, total raw. | 1 GiB filtered, 256 segments, 4 GiB raw. |
 | D8 | Release spacing: how long the reader ships before the writer is enabled, given older builds cannot read segmented sessions. | One release between PR 2 and PR 8, with the upgrade message in the old reader's refusal path already present. |

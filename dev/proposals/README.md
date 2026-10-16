@@ -32,7 +32,7 @@ Historical-only ownership status reconciled 2026-10-12 after #433 merged as
 | [Archive listing at scale](listing-at-scale.md) | Parallel listing, tracing, bounded metadata-body reads; 10k benchmark and 10k/20k operation-count coverage. | Full 1k/10k/100k measurement matrix and an index that bounds LIST header cost. |
 | [Cloud capture](cloud-capture.md) | No cloud collector/push or vendor pull implementation. | Proposed, unscheduled; requires producer probes and runtime/authentication design. |
 | [Muse Code integration](muse-integration.md) | Native qualification probes (against `7d8aee13`); no production capture. | Single proposed plan covering design, implementation order and acceptance gates; the first release is root capture only. Q0 reconciles the probes with the current base; implementation needs separate authorization. |
-| [Segmented Codex history](codex-segmented-history.md) | Proposed 2026-10-16; nothing implemented. | Capture long Codex threads a segment at a time (sealed rollout spans and tip chunks uploaded once, only the open tail re-read). Eight PRs from spec and readers to enablement; owner decisions D1–D9 open. |
+| [Segmented Codex history](codex-segmented-history.md) | Proposed 2026-10-16; nothing implemented. | Capture long Codex threads a segment at a time (sealed rollout spans and tip chunks uploaded once, only the open tail re-read). Eight PRs from spec and readers to enablement; owner decisions D1–D9 recorded 2026-10-16. |
 
 [Setup recent import](implemented/setup-recent-import.md) now includes both automatic
 seven-day import and the status prompt for existing installations. See the
