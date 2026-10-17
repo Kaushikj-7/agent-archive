@@ -190,7 +190,10 @@ func (q *durableQuota) scanPublished(ctx context.Context, remaining *int, u *dur
 			if supportedName {
 				version, e := q.publishedProtocol(ctx, path, info)
 				if e != nil {
-					return e
+					version, e = q.unreadablePublishedCharge(ctx, path, info, e)
+					if e != nil {
+						return e
+					}
 				}
 				if version == 1 {
 					continue
@@ -234,4 +237,28 @@ func (q *durableQuota) publishedAdditional(ctx context.Context, path string, old
 
 func legacyBlockedPublicationControl(p publishedState) bool {
 	return p.PublicationVersion == 0 && p.Status == CacheStatusBlocked && p.Bundle.ArchiveSessionID == "" && p.Bundle.NativeSessionID == "" && p.Commit == nil && len(p.Sources) == 0 && len(p.MetadataBytes) == 0 && p.LastPublished == nil && p.PublishedAt.IsZero()
+}
+
+// unreadablePublishedCharge accounts only a stable permission-denied peer at
+// the full protected rate. It grants no validated protocol fact or replacement
+// credit; writes to that file still require publishedProtocol to succeed.
+func (q *durableQuota) unreadablePublishedCharge(ctx context.Context, path string, expected os.FileInfo, readErr error) (int, error) {
+	openErr, ok := readErr.(*os.PathError)
+	if !ok || openErr.Op != "openat" || openErr.Path != path || (openErr.Err != syscall.EACCES && openErr.Err != syscall.EPERM) {
+		return 0, readErr
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, errors.Join(readErr, err)
+	}
+	if err := q.guard.CheckHome(q.path); err != nil {
+		return 0, errors.Join(readErr, err)
+	}
+	named, err := q.home.Root.Lstat(path)
+	if err != nil || expected == nil || !named.Mode().IsRegular() || !sameDurableStamp(expected, named) || expected.Mode() != named.Mode() {
+		return 0, errors.Join(readErr, ErrDurableStorageRecovery, err)
+	}
+	if err := errors.Join(ctx.Err(), q.home.Check(), q.guard.CheckHome(q.path)); err != nil {
+		return 0, errors.Join(readErr, err)
+	}
+	return 2, nil
 }
