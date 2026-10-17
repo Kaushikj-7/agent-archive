@@ -108,3 +108,27 @@ func TestNativeProtectedRawJournalReadPreservesReceiverAndLegacyGarbage(t *testi
 		}
 	})
 }
+
+func TestNativeJournalWhitespaceClassifierPreservesRefusal(t *testing.T) {
+	t.Parallel()
+	whitespace := []byte(" \t\r\n\u0085\u00a0\u2000")
+	unknown := bytes.Repeat([]byte(`"unknown":0,`), 32)
+	tail := bytes.Repeat(whitespace, 128)
+	for name, raw := range map[string][]byte{
+		"sticky-before-tail":  append(append([]byte(`{"broken":!,"native_import_protection":true,`), unknown...), tail...),
+		"sticky-after-fields": append(append(append([]byte(`{"broken":!,`), unknown...), []byte(`"native_replay_protection":true}`)...), tail...),
+		"space-before-colon":  append(append(append([]byte(`{"broken":!,"native_import_protection"`), whitespace...), []byte(`:true}`)...), tail...),
+		"space-before-fence":  append(append(append([]byte(`{"broken":!,"files_only":`), whitespace...), []byte(`{"writer":"native-authority-v16"}}`)...), tail...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if !nativeJournalAuthorityPresent(raw) {
+				t.Fatal("left whitespace hid protected key/fence")
+			}
+		})
+	}
+	ordinary := append(append([]byte(`{"broken":!,`), unknown...), tail...)
+	if nativeJournalAuthorityPresent(ordinary) {
+		t.Fatal("unprotected fields and trailing whitespace acquired authority")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 )
@@ -174,7 +175,7 @@ func nativeJournalAuthorityPresent(raw []byte) bool {
 		if end == len(raw) {
 			continue
 		}
-		rest := bytes.TrimSpace(raw[end+1:])
+		rest := bytes.TrimLeftFunc(raw[end+1:], unicode.IsSpace)
 		if len(rest) == 0 || rest[0] != ':' {
 			continue
 		}
@@ -182,7 +183,7 @@ func nativeJournalAuthorityPresent(raw []byte) bool {
 		if err := json.Unmarshal(raw[start:end+1], &key); err != nil {
 			continue
 		}
-		rest = bytes.TrimSpace(rest[1:])
+		rest = bytes.TrimLeftFunc(rest[1:], unicode.IsSpace)
 		switch strings.ToLower(key) {
 		case "native_authority_protection", "native_admission_protection", "native_import_protection", "native_replay_protection":
 			return true

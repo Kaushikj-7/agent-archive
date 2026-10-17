@@ -147,22 +147,20 @@ func nativeImportEscapedKeyPossible(raw []byte) bool {
 	if bytes.IndexByte(raw, '\\') < 0 {
 		return false
 	}
-	for i := 0; i < len(raw); i++ {
-		if raw[i] != '"' {
+	for start := 0; start < len(raw); start++ {
+		if raw[start] != '"' || nativeImportQuoteEscaped(raw, start) {
 			continue
 		}
-		start := i
-		i++
-		for i < len(raw) && raw[i] != '"' {
-			if raw[i] == '\\' {
-				i++
-			}
-			i++
+		// Every possible unescaped opening quote is independent. A damaged earlier
+		// string must not consume the opening quote of a later protected selector.
+		end := start + 1
+		for end < len(raw) && (raw[end] != '"' || nativeImportQuoteEscaped(raw, end)) {
+			end++
 		}
-		end := i + 1
-		if end > len(raw) {
-			return false
+		if end == len(raw) {
+			continue
 		}
+		end++
 		next := end
 		for next < len(raw) && (raw[next] == ' ' || raw[next] == '\n' || raw[next] == '\r' || raw[next] == '\t') {
 			next++
@@ -171,11 +169,20 @@ func nativeImportEscapedKeyPossible(raw []byte) bool {
 			continue
 		}
 		var key string
-		if json.Unmarshal(raw[start:end], &key) == nil && strings.EqualFold(key, "native_import") {
+		if err := json.Unmarshal(raw[start:end], &key); err == nil && strings.EqualFold(key, "native_import") {
 			return true
 		}
 	}
 	return false
+}
+
+func nativeImportQuoteEscaped(raw []byte, at int) bool {
+	slashes := 0
+	for at > 0 && raw[at-1] == '\\' {
+		slashes++
+		at--
+	}
+	return slashes%2 != 0
 }
 
 // NativeImportAdmissionContext binds immutable historical owner facts to normal
