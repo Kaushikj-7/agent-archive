@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
-	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // Index views retain the captured provider until the checked callback ends.

@@ -55,6 +55,9 @@ func TestNativeImportRegistrationRefusesChangedOwnerFacts(t *testing.T) {
 		"different original birth":      func(r *SessionRegistration) { r.SessionStartedAt = r.SessionStartedAt.Add(time.Second) },
 		"different binding proof":       func(r *SessionRegistration) { r.NativeBinding.Cwd = "/other" },
 		"different selected checkpoint": func(r *SessionRegistration) { r.NativeImport.Confirmation.SelectedSource.Boundary++ },
+		"live admission":                func(r *SessionRegistration) { r.NativeAdmission = &NativeAdmission{} },
+		"empty replay":                  func(r *SessionRegistration) { r.Replay = &Replay{} },
+		"identified replay":             func(r *SessionRegistration) { r.Replay = &Replay{RunID: "run-one"} },
 		"child":                         func(r *SessionRegistration) { r.NativeChild = true },
 	} {
 		t.Run(name, func(t *testing.T) {

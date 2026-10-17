@@ -24,6 +24,17 @@ func historicalNativeOwnerFixture(t *testing.T) (nativeAdmissionFixture, archive
 	if err := prepared.Close(); err != nil {
 		t.Fatal(err)
 	}
+	owner = historicalNativeRegistrationFromOwner(t, f, owner)
+	// Arrange a persisted historical owner; first-owner authority is tested only
+	// through its dedicated prepared port once that producer is connected.
+	if err := local.Write(f.store.registrationPath(owner.ArchiveSessionID), owner); err != nil {
+		t.Fatal(err)
+	}
+	return f, owner
+}
+
+func historicalNativeRegistrationFromOwner(t *testing.T, f nativeAdmissionFixture, owner archive.SessionRegistration) archive.SessionRegistration {
+	t.Helper()
 	owner.Origin = archive.SessionOriginImport
 	owner.NativeAdmission = nil
 	owner.ImportBatch = archive.NewImportBatch("2026-10-17-1")
@@ -39,12 +50,7 @@ func historicalNativeOwnerFixture(t *testing.T) (nativeAdmissionFixture, archive
 	if err := owner.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	// Arrange a persisted historical owner; first-owner authority is tested only
-	// through its dedicated prepared port once that producer is connected.
-	if err := local.Write(f.store.registrationPath(owner.ArchiveSessionID), owner); err != nil {
-		t.Fatal(err)
-	}
-	return f, owner
+	return owner
 }
 
 func TestNativeImportGenericWritersPreserveClosedReceiptAndNeedFence(t *testing.T) {
@@ -97,6 +103,56 @@ func TestNativeImportHistoricalOwnerCannotGainLiveCheckpointAuthority(t *testing
 	}
 	if !owner.RetainedOnly() || owner.CaptureFrozen {
 		t.Fatal("historical receipt fabricated frozen generation")
+	}
+	f.assertReleased(t)
+}
+
+func TestNativeImportDualAuthorityRefusalPreservesOrdinaryLiveReplay(t *testing.T) {
+	f := newNativeAdmissionFixture(t)
+	prepared, err := f.prepare(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := f.store.CommitNativeAdmission(t.Context(), prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prepared.Close(); err != nil {
+		t.Fatal(err)
+	}
+	historical := historicalNativeRegistrationFromOwner(t, f, live)
+	historical.NativeAdmission = live.NativeAdmission
+	if err := historical.Validate(); err == nil {
+		t.Fatal("receipt accepted actual valid live admission")
+	}
+	historical.NativeAdmission = nil
+	for _, replay := range []*archive.Replay{{}, {RunID: "ordinary-live-run"}} {
+		historical.Replay = replay
+		if err := historical.Validate(); err == nil {
+			t.Fatal("receipt accepted replay authority")
+		}
+	}
+	cfg, found, err := config.Load(f.store.home)
+	if err != nil || !found {
+		t.Fatal(err)
+	}
+	cfg.NativeReplayProtection = true
+	if err := config.Save(f.store.home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	live.Replay = &archive.Replay{RunID: "ordinary-live-run"}
+	if err := live.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// Arrange an already-classified owner; generic writers preserve its replay.
+	if err := local.Write(f.store.registrationPath(live.ArchiveSessionID), live); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.SaveRegistration(live); err != nil {
+		t.Fatal("ordinary live replay owner refused", err)
+	}
+	if _, err := f.store.UpdateRegistration(live.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.HookObservedAt = r.HookObservedAt.Add(1); return nil }); err != nil {
+		t.Fatal("ordinary live replay update refused", err)
 	}
 	f.assertReleased(t)
 }

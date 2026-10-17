@@ -28,7 +28,7 @@ func NativeImportBindingDigest(binding *NativeSourceBinding) (string, error) {
 // deliberately irrelevant to the authority of an already retained publication.
 func (r SessionRegistration) ValidateNativeImport() error {
 	n, b := r.NativeImport, r.NativeBinding
-	if n == nil || n.Validate() != nil || !admissionHex(r.ArchiveSessionID, 32) || !nativePath(r.ProjectRoot) || r.validateNativeBinding() != nil || b == nil || b.Version != 2 || b.Validate() != nil || !r.Imported() || r.Harness.Name != "muse" || r.IsChild() || r.ParentNativeSessionID != "" || b.ParentID != "" || b.RootID != "" && b.RootID != b.NativeID || r.HistoricalProject != nil || r.CodexBinding != nil || r.CodexAdmission != nil || r.PreviousGenerationID != "" || !r.ReadsTranscriptFile() {
+	if n == nil || n.Validate() != nil || !admissionHex(r.ArchiveSessionID, 32) || !nativePath(r.ProjectRoot) || r.validateNativeBinding() != nil || b == nil || b.Version != 2 || b.Validate() != nil || !r.Imported() || r.Harness.Name != "muse" || r.IsChild() || r.ParentNativeSessionID != "" || b.ParentID != "" || b.RootID != "" && b.RootID != b.NativeID || r.NativeAdmission != nil || r.Replay != nil || r.HistoricalProject != nil || r.CodexBinding != nil || r.CodexAdmission != nil || r.PreviousGenerationID != "" || !r.ReadsTranscriptFile() {
 		return ErrUnsupportedNativeImport
 	}
 	c := n.Confirmation
