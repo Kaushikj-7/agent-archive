@@ -183,7 +183,7 @@ func TestNativeChildSettledInvalidGraphHoldsScanWithoutChangingDurableWork(t *te
 				// return before published-state loading or source/publication.
 				p.scan(t.Context(), regs[i])
 			}
-			if p.result.Scanned != invalid || len(p.result.Waiting) != invalid || len(p.result.Errors) != 0 || len(p.result.Published) != 0 || state.PublishedStateLoads() != loads {
+			if p.result.Scanned != invalid || p.pending != invalid || len(p.result.Errors) != 0 || len(p.result.Published) != 0 || state.PublishedStateLoads() != loads {
 				t.Fatalf("invalid graph reached source/publication: %+v", p.result)
 			}
 			if !reflect.DeepEqual(before, snapshotMtimes(t, local.Home())) {
