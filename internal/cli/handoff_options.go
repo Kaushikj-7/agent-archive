@@ -84,7 +84,7 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	output := fs.String("output", "", "write to this file (mode 0600) instead of stdout")
 	force := fs.Bool("force", false, "with --output, replace an existing file")
 	noPreamble := fs.Bool("no-preamble", false, "omit the note addressed to the receiving agent")
-	to := fs.String("to", "", "launch a local claude, codex, or cursor session with this handoff")
+	to := fs.String("to", "", "launch a local claude, codex, cursor, or muse session with this handoff")
 	worktree := fs.Bool("worktree", false, "launch the agent in a new git worktree carrying this checkout's uncommitted and untracked files")
 	branch := fs.String("branch", "", "with --worktree, the new branch (default: handoff/ and the first 8 characters of SESSION_ID)")
 	here := fs.Bool("here", false, "run the launched agent in this terminal")
@@ -119,7 +119,7 @@ func validateHandoffOptionsWithCatalog(opts *handoffOptions, interactive bool, c
 	if opts.to != "" {
 		opts.to = agentmeta.Canonical(c, opts.to)
 		if opts.to == "" {
-			return "--to must be claude, codex, or cursor"
+			return "--to must be claude, codex, cursor, or muse"
 		}
 	}
 	if message := validateHandoffFlagCombinations(*opts, interactive); message != "" {
@@ -209,7 +209,7 @@ const noCurrentSessionMessage = "name a session ID or title, --latest, or --file
 func validateHandoffLaunchOptionsWithCatalog(to, output, format string, noPreamble bool, c agentmeta.Catalog) string {
 	switch {
 	case to != "" && !launchSupported(c, to):
-		return "--to must be claude, codex, or cursor"
+		return "--to must be claude, codex, cursor, or muse"
 	case to != "" && output != "":
 		return "--to and --output cannot be used together"
 	case to != "" && format != "markdown":

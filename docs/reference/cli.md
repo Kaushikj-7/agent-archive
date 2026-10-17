@@ -1127,7 +1127,7 @@ given.
   --output FILE         Write to FILE (mode 0600) instead of printing it
   --force               With --output, replace FILE if it exists
   --no-preamble         Omit the note addressed to the receiving agent
-  --to NAME             Start claude, codex, or cursor without asking (its
+  --to NAME             Start claude, codex, cursor, or muse (its
                         CLI must be on PATH). It reads a private copy of the
                         handoff, kept 7 days. With no session named, hands
                         off the agent session it runs in, else picks one on

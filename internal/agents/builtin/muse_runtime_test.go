@@ -13,7 +13,7 @@ func TestMuseBindingOffersLocalHandoffWithoutCapture(t *testing.T) {
 	t.Parallel()
 	r := NewBuiltins()
 	b, ok := r.Lookup(" MUSE-CODE ")
-	if !ok || b.Descriptor.ID != agentmeta.Muse || b.Descriptor.DisplayName != "Muse Code" || !slices.Equal(b.Descriptor.Operations, []agentmeta.Operation{agentmeta.Runtime, agentmeta.Parse, agentmeta.Source, agentmeta.NativeInspection, agentmeta.HistoricalDiscovery}) {
+	if !ok || b.Descriptor.ID != agentmeta.Muse || b.Descriptor.DisplayName != "Muse Code" || !slices.Equal(b.Descriptor.Operations, []agentmeta.Operation{agentmeta.Launch, agentmeta.Runtime, agentmeta.Parse, agentmeta.Source, agentmeta.NativeInspection, agentmeta.HistoricalDiscovery}) {
 		t.Fatalf("binding %+v; found %v", b, ok)
 	}
 	if b.Runtime == nil {
@@ -23,7 +23,7 @@ func TestMuseBindingOffersLocalHandoffWithoutCapture(t *testing.T) {
 		t.Fatal("local source/parser missing")
 	}
 	b.Sources, b.Filter, b.Parser = nil, nil, nil
-	b.Runtime = nil
+	b.Runtime, b.Launcher = nil, nil
 	b.NativeHeaders, b.Discovery, b.Preview = nil, nil, nil
 	b.Descriptor = agentmeta.Descriptor{}
 	if !reflect.DeepEqual(b, Integration{}) {

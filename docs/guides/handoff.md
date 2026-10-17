@@ -233,15 +233,23 @@ on a terminal; `AGENT_ARCHIVE_NONINTERACTIVE=0` turns asking back on. See
    (not macOS and not inside tmux), `handoff` exits 1 and prints the command
    to paste into a terminal; it never runs the agent without one.
 
-`--to` starts the installed `claude`, `codex`, or Cursor `agent` (else
+`--to` starts the installed `claude`, `codex`, `muse`, or Cursor `agent` (else
 `cursor-agent`) CLI in the current directory (or `--project DIR` with
 `--latest`, and before setup with any native selection). Codex gets that directory with `--cd` and Cursor with
-`--workspace`. Claude Code runs in it and is given only the handoff's folder
+`--workspace`; Muse also uses `--workspace`. Claude Code runs in it and is given only the handoff's folder
 with `--add-dir`, since it reads outside the project only from an added
 directory. The launched agent does not inherit the calling agent's session
-variables (such as `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`); your
+variables (such as `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`,
+`MUSE_THREAD_ID`, or `MUSE_SESSION_ID`) or a calling replay marker; your
 settings, such as `CLAUDE_CODE_USE_BEDROCK`, pass through. It never starts a
 remote agent.
+
+Muse starts a new conversation and receives the same private, filtered context
+artifact as the other destinations. It uses ordinary native permissions; approve
+any artifact read Muse requests. An exported Muse transcript is context, not a
+portable native resume. Dynamic replay forwarding in Muse remains unqualified
+across native launch modes and descendants, so this handoff does not advertise
+Muse replay support.
 
 ### Passing arguments to the agent
 
