@@ -37,11 +37,14 @@ type MeasuredStore struct {
 	// CaptureListingCosts retains request services for untimed observations or
 	// deterministic gates; leave false during benchmark timing.
 	CaptureListingCosts bool
+	// CaptureGETKeys retains successful body identities outside benchmark timing.
+	CaptureGETKeys bool
 	// GetDelay overrides Delay for body requests when nonzero.
 	GetDelay time.Duration
 	mu       sync.Mutex
 	metrics  ReadMetrics
 	listings []ListingRequestCost
+	getKeys  []string
 	active   int64
 }
 
@@ -103,6 +106,7 @@ func (s *MeasuredStore) Reset() {
 	}
 	s.metrics = ReadMetrics{}
 	s.listings = nil
+	s.getKeys = nil
 }
 
 // Metrics returns a concurrency-safe snapshot.
@@ -119,6 +123,26 @@ func (s *MeasuredStore) ListingCosts() []ListingRequestCost {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Clone(s.listings)
+}
+
+// SuccessfulGETKeys returns a private snapshot of successful Get, GetVersioned
+// and GetLimited identities, including duplicates. Failed attempts are excluded.
+func (s *MeasuredStore) SuccessfulGETKeys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.getKeys)
+}
+
+func (s *MeasuredStore) endGET(key string, data []byte, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.active--
+	if err == nil {
+		s.metrics.Bytes += int64(len(data))
+		if s.CaptureGETKeys {
+			s.getKeys = append(s.getKeys, key)
+		}
+	}
 }
 
 func (s *MeasuredStore) begin(ctx context.Context, list bool) error {
@@ -167,7 +191,7 @@ func (s *MeasuredStore) end(data []byte, objects []storage.Object) {
 
 // Get measures an ordinary body read.
 func (s *MeasuredStore) Get(ctx context.Context, key string) (data []byte, err error) {
-	defer func() { s.end(data, nil) }()
+	defer func() { s.endGET(key, data, err) }()
 	if err = s.begin(ctx, false); err != nil {
 		return
 	}
@@ -176,7 +200,7 @@ func (s *MeasuredStore) Get(ctx context.Context, key string) (data []byte, err e
 
 // GetVersioned measures one atomic body-and-validator read.
 func (s *MeasuredStore) GetVersioned(ctx context.Context, key string) (data []byte, etag string, err error) {
-	defer func() { s.end(data, nil) }()
+	defer func() { s.endGET(key, data, err) }()
 	if err = s.begin(ctx, false); err != nil {
 		return
 	}
@@ -188,7 +212,7 @@ func (s *MeasuredStore) GetVersioned(ctx context.Context, key string) (data []by
 
 // GetLimited measures a size-bounded body read.
 func (s *MeasuredStore) GetLimited(ctx context.Context, key string, limit int64) (data []byte, err error) {
-	defer func() { s.end(data, nil) }()
+	defer func() { s.endGET(key, data, err) }()
 	if err = s.begin(ctx, false); err != nil {
 		return
 	}

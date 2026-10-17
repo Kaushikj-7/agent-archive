@@ -134,10 +134,46 @@ func readPathListingTotals(calls []storagetest.ListingRequestCost) storagetest.R
 	return metrics
 }
 
+type readPathListingService struct {
+	Prefix  readPathListingPrefix
+	After   string
+	Through string
+}
+
+func readPathRequireListingServices(actual, expected []storagetest.ListingRequestCost) error {
+	planned := make(map[readPathListingService]int, len(expected))
+	service := func(call storagetest.ListingRequestCost) readPathListingService {
+		prefix := readPathListingPrefix(call.Prefix)
+		if prefix == readPathLegacyCanonicalListing {
+			prefix = readPathCanonicalListing
+		}
+		return readPathListingService{Prefix: prefix, After: call.After, Through: call.Through}
+	}
+	for _, call := range expected {
+		planned[service(call)]++
+	}
+	for _, call := range actual {
+		key := service(call)
+		if planned[key] == 0 {
+			return fmt.Errorf("unexpected listing service: %+v", key)
+		}
+		planned[key]--
+	}
+	for key, remaining := range planned {
+		if remaining != 0 {
+			return fmt.Errorf("missing required listing service: %+v", key)
+		}
+	}
+	return nil
+}
+
 func readPathDiscoveryBudget(measured storagetest.ReadMetrics, actual, expected []storagetest.ListingRequestCost, shared bool) error {
 	observed := readPathListingTotals(actual)
 	if measured.Lists == 0 || measured.Lists != observed.Lists || measured.ListPages != observed.ListPages || measured.ListKeys != observed.ListKeys || measured.ListBytes != observed.ListBytes || measured.DiscardedListBytes != observed.DiscardedListBytes || measured.LongestListPages != observed.LongestListPages {
 		return fmt.Errorf("listing accounting missing requests or costs: measured=%+v recorded=%+v", measured, observed)
+	}
+	if err := readPathRequireListingServices(actual, expected); err != nil {
+		return err
 	}
 	waves, err := readPathModeledListingWaves(actual, shared)
 	if err != nil {
@@ -197,6 +233,17 @@ func TestReadPathDiscoveryBudgetsRejectDuplicatedWorkAndExtraWaves(t *testing.T)
 				if err := readPathDiscoveryBudget(duplicateMetrics, duplicated, expected, shared); err == nil {
 					t.Fatal("accepted duplicated discovery", command, state, shared)
 				}
+				if command == readPathListPiped {
+					var omitted []storagetest.ListingRequestCost
+					for _, call := range expected {
+						if call.Prefix != listingindex.V2Prefix {
+							omitted = append(omitted, call)
+						}
+					}
+					if err := readPathDiscoveryBudget(readPathListingTotals(omitted), omitted, expected, shared); err == nil || !strings.Contains(err.Error(), "required listing service") {
+						t.Fatal("omitted empty-v2 request escaped gate", state, shared, err)
+					}
+				}
 				extra := slices.Clone(expected)
 				longest := 0
 				for i := range extra {
@@ -215,5 +262,264 @@ func TestReadPathDiscoveryBudgetsRejectDuplicatedWorkAndExtraWaves(t *testing.T)
 				}
 			}
 		}
+	}
+}
+
+// Successful body bytes are bounded independently of observed GETs. The fixture
+// refreshes complete legacy metadata except the newest 50 piped window. At most
+// two fallback metadata reads retain the existing GET-count allowance. Handoff
+// query spends those two reads on its selected metadata and real source bundle.
+func readPathExpectedGETBytes(command readPathCommand, state readPathCacheState, size int, headers []storage.Object) (int64, error) {
+	objects := make(map[string]int64, len(headers))
+	for _, object := range headers {
+		objects[object.Key] = object.Size
+	}
+	metadata := make([]int64, size)
+	var maximum int64
+	for i := range size {
+		key := readPathFixtureMetadataKey(i + 1)
+		n, ok := objects[key]
+		if !ok || n <= 0 {
+			return 0, fmt.Errorf("missing sized fixture metadata %s", key)
+		}
+		metadata[i] = n
+		maximum = max(maximum, n)
+	}
+	var total int64
+	switch state {
+	case readPathCold, readPathNoCache:
+		start := 0
+		if command == readPathListPiped {
+			start = max(0, size-50)
+		}
+		for _, n := range metadata[start:] {
+			total += n
+		}
+	case readPathChanged:
+		if command != readPathListPiped {
+			for _, n := range metadata[:max(1, size/100)] {
+				total += n
+			}
+		}
+	case readPathWarm:
+	default:
+		return 0, fmt.Errorf("unknown cache state %q", state)
+	}
+	if command != readPathHandoffQuery {
+		return total + 2*maximum, nil
+	}
+	// The first fixture session has one real compressed bundle and four one-byte
+	// historical placeholders. Its largest source object is the selected bundle.
+	var sourceBytes int64
+	for key, n := range objects {
+		if strings.HasPrefix(key, "sessions/codex/00000001000000000000000000000001/source.") {
+			sourceBytes = max(sourceBytes, n)
+		}
+	}
+	if sourceBytes <= 1 {
+		return 0, fmt.Errorf("missing sized selected source fixture")
+	}
+	return total + metadata[0] + sourceBytes, nil
+}
+
+func readPathGETByteBudget(command readPathCommand, state readPathCacheState, size int, metrics storagetest.ReadMetrics, headers []storage.Object) error {
+	maximum, err := readPathExpectedGETBytes(command, state, size, headers)
+	if err != nil {
+		return err
+	}
+	if metrics.Bytes > maximum {
+		return fmt.Errorf("successful GET bytes %d exceed fixture ceiling %d", metrics.Bytes, maximum)
+	}
+	return nil
+}
+
+func TestReadPathGETBytesRejectOversizedSuccessfulFallback(t *testing.T) {
+	t.Parallel()
+	const size = 100
+	mem := storagetest.NewMemoryStore()
+	storagetest.SeedReadPathArchive(t, mem, size, 0)
+	headers, err := mem.List(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range readPathCommands() {
+		for _, state := range []readPathCacheState{readPathCold, readPathWarm, readPathChanged, readPathNoCache} {
+			if state == readPathNoCache && !command.supportsNoCache() {
+				continue
+			}
+			limit, err := readPathExpectedGETBytes(command, state, size, headers)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := readPathGETByteBudget(command, state, size, storagetest.ReadMetrics{Bytes: limit}, headers); err != nil {
+				t.Fatal("valid byte boundary rejected", err)
+			}
+			if err := readPathGETByteBudget(command, state, size, storagetest.ReadMetrics{Bytes: limit + 1}, headers); err == nil {
+				t.Fatal("oversized body bytes accepted", command, state)
+			}
+		}
+	}
+	limit, err := readPathExpectedGETBytes(readPathShowPicker, readPathWarm, size, headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const oversizedKey = "unexpected-synthetic-source"
+	if err := mem.Put(t.Context(), oversizedKey, make([]byte, limit+1)); err != nil {
+		t.Fatal(err)
+	}
+	measured := storagetest.NewMeasuredStore(mem, 0)
+	if _, err := measured.Get(t.Context(), oversizedKey); err != nil {
+		t.Fatal(err)
+	}
+	metrics := measured.Metrics()
+	metrics.Lists, metrics.ListPages = 1, 1
+	if err := readPathOperationBudget(readPathShowPicker, readPathWarm, size, metrics); err != nil {
+		t.Fatal("negative control exceeded existing GET count slack", err)
+	}
+	if err := readPathGETByteBudget(readPathShowPicker, readPathWarm, size, metrics, headers); err == nil {
+		t.Fatal("successful oversized fallback read escaped byte gate")
+	}
+}
+
+func readPathFixtureMetadataKey(identity int) string {
+	harness := "codex"
+	if identity%20 == 0 {
+		harness = "future-agent"
+	}
+	return fmt.Sprintf("sessions/%s/%08x%024x/metadata.json", harness, identity, identity)
+}
+
+func readPathRequiredGETKeys(command readPathCommand, state readPathCacheState, size int) map[string]bool {
+	required := map[string]bool{}
+	switch state {
+	case readPathCold, readPathNoCache:
+		start := 1
+		if command == readPathListPiped {
+			start = max(1, size-49)
+		}
+		for identity := start; identity <= size; identity++ {
+			required[readPathFixtureMetadataKey(identity)] = true
+		}
+	case readPathChanged:
+		if command != readPathListPiped {
+			for identity := 1; identity <= max(1, size/100); identity++ {
+				required[readPathFixtureMetadataKey(identity)] = true
+			}
+		}
+	case readPathWarm:
+	}
+	return required
+}
+
+func readPathRequireGETCoverage(command readPathCommand, state readPathCacheState, size int, actual []string, headers []storage.Object) error {
+	required := readPathRequiredGETKeys(command, state, size)
+	allowed := make(map[string]bool, size+1)
+	for identity := 1; identity <= size; identity++ {
+		allowed[readPathFixtureMetadataKey(identity)] = true
+	}
+	if command == readPathHandoffQuery {
+		var source string
+		var largest int64
+		for _, object := range headers {
+			if strings.HasPrefix(object.Key, "sessions/codex/00000001000000000000000000000001/source.") && object.Size > largest {
+				source, largest = object.Key, object.Size
+			}
+		}
+		if largest <= 1 {
+			return fmt.Errorf("missing selected source fixture")
+		}
+		allowed[source], required[source] = true, true
+	}
+	seen := make(map[string]bool, len(actual))
+	for _, key := range actual {
+		if !allowed[key] {
+			return fmt.Errorf("unexpected successful body read %s", key)
+		}
+		seen[key] = true
+	}
+	for key := range required {
+		if !seen[key] {
+			return fmt.Errorf("required successful body read missing: %s", key)
+		}
+	}
+	return nil
+}
+
+func TestReadPathGETCoverageRejectsInventoryMaskedBySelectedReads(t *testing.T) {
+	t.Parallel()
+	const size = 200
+	mem := storagetest.NewMemoryStore()
+	storagetest.SeedReadPathArchive(t, mem, size, 0)
+	baseline, err := mem.List(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	storagetest.SeedReadPathArchive(t, mem, size, 1)
+	changed, err := mem.List(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []readPathCacheState{readPathCold, readPathChanged} {
+		headers := baseline
+		if state == readPathChanged {
+			headers = changed
+		}
+		// Omit an unrelated required metadata body, retaining the selected
+		// first session so its duplicate reads can mask the scalar floor.
+		required := readPathRequiredGETKeys(readPathHandoffQuery, state, size)
+		missing := readPathFixtureMetadataKey(2)
+		var actual []string
+		for key := range required {
+			if key != missing {
+				actual = append(actual, key)
+			}
+		}
+		var source string
+		var sourceSize int64
+		sizes := map[string]int64{}
+		for _, object := range headers {
+			sizes[object.Key] = object.Size
+			if strings.HasPrefix(object.Key, "sessions/codex/00000001000000000000000000000001/source.") && object.Size > sourceSize {
+				source, sourceSize = object.Key, object.Size
+			}
+		}
+		if err := readPathRequireGETCoverage(readPathHandoffQuery, readPathWarm, size, []string{source}, headers); err != nil {
+			t.Fatal("verified warm metadata cache reuse rejected", err)
+		}
+		// The duplicate selected metadata and legitimate source remain within
+		// count and byte allowances while leaving the unrelated key unread.
+		substitute := readPathFixtureMetadataKey(1)
+		actual = append(actual, substitute, source)
+		metrics := storagetest.ReadMetrics{Lists: 1, ListPages: 1, Gets: int64(len(actual))}
+		for _, key := range actual {
+			metrics.Bytes += sizes[key]
+		}
+		if err := readPathOperationBudget(readPathHandoffQuery, state, size, metrics); err != nil {
+			t.Fatal("negative exceeded original scalar gate", state, err)
+		}
+		if err := readPathGETByteBudget(readPathHandoffQuery, state, size, metrics, headers); err != nil {
+			t.Fatal("negative exceeded byte ceiling", state, err)
+		}
+		if err := readPathRequireGETCoverage(readPathHandoffQuery, state, size, actual, headers); err == nil {
+			t.Fatal("selected reads masked missing inventory", state)
+		}
+		complete := append(slices.Clone(actual), missing)
+		if err := readPathRequireGETCoverage(readPathHandoffQuery, state, size, complete, headers); err != nil {
+			t.Fatal("complete successful body set rejected", state, err)
+		}
+	}
+	// Piped reads require each newest-window identity; repeated selected reads
+	// cannot substitute for another row even when the aggregate GET count is 50.
+	required := readPathRequiredGETKeys(readPathListPiped, readPathCold, size)
+	var piped []string
+	missing := readPathFixtureMetadataKey(size)
+	for key := range required {
+		if key != missing {
+			piped = append(piped, key)
+		}
+	}
+	piped = append(piped, readPathFixtureMetadataKey(size-1))
+	if err := readPathRequireGETCoverage(readPathListPiped, readPathCold, size, piped, baseline); err == nil {
+		t.Fatal("duplicate piped row masked missing newest identity")
 	}
 }
