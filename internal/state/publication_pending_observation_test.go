@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,48 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
+
+type pendingObservationSliceContext []context.Context
+
+func (c pendingObservationSliceContext) Deadline() (time.Time, bool) { return c[0].Deadline() }
+func (c pendingObservationSliceContext) Done() <-chan struct{}       { return c[0].Done() }
+func (c pendingObservationSliceContext) Err() error                  { return c[0].Err() }
+func (c pendingObservationSliceContext) Value(key any) any           { return c[0].Value(key) }
+
+func TestPendingWriteObservationHandlesNoncomparableContextValue(t *testing.T) {
+	t.Parallel()
+	s, owner, before := pendingPressureFixture(t)
+	id := owner.registration.ArchiveSessionID
+	p, found, err := s.LoadPending(id)
+	if err != nil || !found {
+		t.Fatal(found, err)
+	}
+	// The interface field makes the wrapper type comparable even though its
+	// actual context value contains a slice. Context permits such values.
+	ctx := struct{ context.Context }{pendingObservationSliceContext{t.Context()}}
+	if !reflect.TypeOf(ctx).Comparable() || reflect.ValueOf(ctx).Comparable() {
+		t.Fatal("fixture must have a comparable type and noncomparable value")
+	}
+	budget := agentapi.NewNativeReadBudget(4 << 20)
+	read, closeRead := s.WithReadBudget(ctx, budget)
+	defer closeRead()
+	for range 2 {
+		if err := read.SavePending(id, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after, err := os.ReadFile(s.pendingPath(id))
+	if err != nil || !bytes.Equal(after, before) {
+		t.Fatal("context fallback changed exact pending authority", err)
+	}
+	if read.pendingObservation() != nil {
+		t.Fatal("noncomparable context must use the fully validated writer")
+	}
+	closeRead()
+	if n, _ := budget.Charged(); n != 0 {
+		t.Fatal("closed writer retained context-owned charges", n)
+	}
+}
 
 func observedPendingFixture(t *testing.T) (*Store, PendingPublication, *agentapi.NativeReadBudget, func()) {
 	t.Helper()
