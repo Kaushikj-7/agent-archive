@@ -196,8 +196,8 @@ func TestDisposableProviderHistoryRecoversAfterNativeAndLocalLoss(t *testing.T) 
 	preservedBytes, err := cloud.Get(t.Context(), revision.Source.Key)
 	must(t, err)
 	must(t, cloud.Delete(t.Context(), revision.Source.Key))
-	if _, err := reader.LoadRevision(t.Context(), peer, metadata, revision.RevisionID, reader.Limits{}); !errors.Is(err, storage.ErrNotFound) {
-		t.Fatal("independent reader accepted missing preserved source", err)
+	if _, err := reader.LoadRevision(t.Context(), peer, metadata, revision.RevisionID, reader.Limits{}); !errors.Is(err, reader.ErrRefreshRequired) {
+		t.Fatal("missing preserved source did not require metadata refresh", err)
 	}
 	must(t, cloud.Put(t.Context(), revision.Source.Key, preservedBytes))
 	if _, err := reader.LoadRevision(t.Context(), peer, metadata, revision.RevisionID, reader.Limits{}); err != nil {
