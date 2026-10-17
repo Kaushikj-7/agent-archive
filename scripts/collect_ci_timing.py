@@ -98,6 +98,82 @@ def inventory(workers):
             'Levenshtein': ['verify', 'native-release-vulnerabilities']}
 
 
+TOPOLOGY_FIELDS = ('schema', 'repository', 'pr_number', 'workers', 'observation_kind',
+                   'source', 'tree', 'parents', 'event_base', 'tested_base', 'head',
+                   'head_ref', 'head_repository', 'base_ref', 'workflow_source', 'workflow_ref')
+
+
+def validate_tested_merge(topology, commit, compare):
+    """Check retained API identity fields without changing the captured event."""
+    if (any(not isinstance(topology.get(key), str)
+            or not ci_worker_topology.SHA.fullmatch(topology[key])
+            for key in ('source', 'tree', 'head', 'event_base', 'tested_base'))
+            or topology.get('parents') != [topology['tested_base'], topology['head']]
+            or topology.get('workflow_source') != topology['source']):
+        raise ValueError('invalid tested merge identity')
+    if (not isinstance(commit, dict) or set(commit) != {'sha', 'tree', 'parents'}
+            or not isinstance(commit['tree'], dict) or set(commit['tree']) != {'sha'}
+            or not isinstance(commit['parents'], list) or len(commit['parents']) != 2
+            or any(not isinstance(row, dict) or set(row) != {'sha'} for row in commit['parents'])
+            or commit['sha'] != topology['source'] or commit['tree']['sha'] != topology['tree']
+            or [row['sha'] for row in commit['parents']] != topology['parents']):
+        raise ValueError('independent tested merge identity differs')
+    if topology['event_base'] != topology['tested_base']:
+        if (not isinstance(compare, dict) or set(compare) != {'status', 'merge_base_commit'}
+                or not isinstance(compare['merge_base_commit'], dict)
+                or set(compare['merge_base_commit']) != {'sha'}
+                or compare['status'] != 'ahead'
+                or compare['merge_base_commit']['sha'] != topology['event_base']):
+            raise ValueError('independent captured-base ancestry unavailable')
+
+
+def verify_tested_merge(api, topology):
+    """Read and retain only bounded commit/compare identity fields."""
+    raw = api.get(f'/repos/{REPOSITORY}/git/commits/{topology["source"]}')
+    parents = raw.get('parents', [])
+    if not isinstance(parents, list) or len(parents) != 2:
+        raise ValueError('independent tested merge identity differs')
+    commit = {'sha': raw.get('sha'), 'tree': {'sha': raw.get('tree', {}).get('sha')},
+              'parents': [{'sha': row.get('sha')} for row in parents]}
+    compare = None
+    if topology['event_base'] != topology['tested_base']:
+        raw = api.get(f'/repos/{REPOSITORY}/compare/{topology["event_base"]}...{topology["tested_base"]}')
+        compare = {'status': raw.get('status'),
+                   'merge_base_commit': {'sha': raw.get('merge_base_commit', {}).get('sha')}}
+    validate_tested_merge(topology, commit, compare)
+    return {'commit': commit, 'compare': compare}
+
+
+def tested_base_context(run, name, topology):
+    expected = dict(topology, workflow_ref=REPOSITORY + '/' + PATHS[name]
+                    + '@refs/pull/' + str(topology['pr_number']) + '/merge')
+    association = run['pull_requests'][0]
+    return {'kind': 'tested-base-association', 'run_id': run['id'], 'run_attempt': run['run_attempt'],
+            'workflow': name, 'topology': {key: expected[key] for key in TOPOLOGY_FIELDS},
+            'association': {'number': association['number'], 'head': association['head']['sha'],
+                            'base': association['base']['sha'], 'base_ref': association['base']['ref']}}
+
+
+def tested_base_identity(run, name, topology, api, proofs):
+    context = tested_base_context(run, name, topology)
+    if api is not None:
+        return dict(context, **verify_tested_merge(api, topology))
+    # Offline records retain the same API provenance as job snapshots; this is
+    # strict replay of those fields, not a new cryptographic authentication claim.
+    if not isinstance(proofs, (list, tuple)) or len(proofs) > 20:
+        raise ValueError('tested-base identity proof inventory exceeds bound')
+    matches = [proof for proof in proofs if isinstance(proof, dict)
+               and proof.get('run_id') == run['id'] and proof.get('run_attempt') == run['run_attempt']]
+    if len(matches) != 1 or set(matches[0]) != set(context) | {'commit', 'compare'}:
+        raise ValueError('missing exact retained tested-base identity')
+    proof = matches[0]
+    if (type(proof.get('run_id')) is not int or type(proof.get('run_attempt')) is not int
+            or any(proof.get(key) != value for key, value in context.items())):
+        raise ValueError('retained tested-base context differs')
+    validate_tested_merge(topology, proof['commit'], proof['compare'])
+    return proof
+
+
 def retained_identity(api, run, name, topology, archives):
     """Authenticate retained bytes against GitHub's digest, never a caller's claim."""
     if not archives:
@@ -128,34 +204,23 @@ def retained_identity(api, run, name, topology, archives):
                         + '@refs/pull/' + str(topology['pr_number']) + '/merge')
         # An entire guard identity is compared, not just the head SHA shared by
         # qualification siblings. Optional lint diagnostics are not identity.
-        fields = ('schema', 'repository', 'pr_number', 'workers', 'observation_kind',
-                  'source', 'tree', 'parents', 'event_base', 'tested_base', 'head',
-                  'head_ref', 'head_repository', 'base_ref', 'workflow_source', 'workflow_ref')
         if (proof.get('schema') != 1 or proof.get('run_id') != run['id']
                 or proof.get('run_attempt') != run['run_attempt']
                 or proof.get('workflow') != name or proof.get('workflow_path') != PATHS[name]
                 or proof.get('event') != 'pull_request'
-                or any(retained.get(key) != expected.get(key) for key in fields)
+                or any(retained.get(key) != expected.get(key) for key in TOPOLOGY_FIELDS)
                 or any(not isinstance(retained.get(key), str) or not ci_worker_topology.SHA.fullmatch(retained[key])
                        for key in ('source', 'tree', 'head', 'event_base', 'tested_base'))
                 or retained.get('parents') != [retained['tested_base'], retained['head']]
                 or retained['workflow_source'] != retained['source']):
             raise ValueError('retained run identity differs from exact context')
-        commit = api.get(f'/repos/{REPOSITORY}/git/commits/{retained["source"]}')
-        if (commit.get('sha') != retained['source'] or commit.get('tree', {}).get('sha') != retained['tree']
-                or [row.get('sha') for row in commit.get('parents', [])] != retained['parents']):
-            raise ValueError('independent tested merge identity differs')
-        if retained['event_base'] != retained['tested_base']:
-            compare = api.get(f'/repos/{REPOSITORY}/compare/{retained["event_base"]}...{retained["tested_base"]}')
-            if (compare.get('status') != 'ahead'
-                    or compare.get('merge_base_commit', {}).get('sha') != retained['event_base']):
-                raise ValueError('independent captured-base ancestry unavailable')
+        verify_tested_merge(api, retained)
         return {'artifact_id': artifact_id, 'digest': metadata['digest'],
                 'run_id': run['id'], 'run_attempt': run['run_attempt']}
     raise ValueError('no retained identity belongs to exact run and attempt')
 
 
-def validate_run(run, name, topology, *, api=None, archives=()):
+def validate_run(run, name, topology, *, api=None, archives=(), tested_base_proofs=()):
     associations = run.get('pull_requests')
     if (run.get('name') != name or run.get('path') != PATHS[name]
             or run.get('event') != 'pull_request'
@@ -169,9 +234,16 @@ def validate_run(run, name, topology, *, api=None, archives=()):
     if associations == [] and api is not None:
         return retained_identity(api, run, name, topology, archives)
     if (len(associations) != 1 or associations[0].get('number') != topology['pr_number']
-            or associations[0].get('head', {}).get('sha') != topology['head']
-            or associations[0].get('base', {}).get('sha') != topology['event_base']):
+            or associations[0].get('head', {}).get('sha') != topology['head']):
         raise ValueError('run does not belong to exact PR/workflow/revision context')
+    base = associations[0].get('base', {})
+    if base.get('sha') != topology['event_base']:
+        # GitHub may refresh the association to the already tested first parent.
+        # Accept exactly that parent, never arbitrary newer refs or descendants.
+        if (base.get('sha') != topology['tested_base']
+                or base.get('ref') != topology['base_ref']):
+            raise ValueError('run does not belong to exact PR/workflow/revision context')
+        return tested_base_identity(run, name, topology, api, tested_base_proofs)
     return None
 
 
@@ -205,13 +277,14 @@ def collect(api, topology, test_run_id, leven_run_id=None, *, live=False,
         matches = []
         for peer in peers:
             try:
-                validate_run(peer, 'Levenshtein', topology)
+                proof = validate_run(peer, 'Levenshtein', topology, api=api)
             except ValueError:
                 continue
-            matches.append(peer)
+            matches.append((peer, proof))
         if len(matches) > 1:
             raise ValueError('ambiguous paired Levenshtein runs; finalize with explicit run IDs')
-        runs.extend(matches)
+        runs.extend(peer for peer, _ in matches)
+        identity_proofs.extend(proof for _, proof in matches)
     else:
         raise ValueError('offline finalization requires explicit Test and Levenshtein run IDs')
     snapshots = [snapshot(api, run) for run in runs]
@@ -228,7 +301,8 @@ def collect(api, topology, test_run_id, leven_run_id=None, *, live=False,
         for run in runs:
             for attempt in range(1, run['run_attempt']):
                 old = snapshot(api, run, attempt)
-                validate_run(old['run'], run['name'], topology, api=api, archives=identity_archives)
+                proof = validate_run(old['run'], run['name'], topology, api=api, archives=identity_archives)
+                identity_proofs.append(proof)
                 samples.append(dict(sample, id=f'usage-{run["id"]}-attempt-{attempt}',
                                     scope='auxiliary-campaign', required_jobs={run['name']: required[run['name']]},
                                     workflows=[old], event_at=None))
@@ -248,7 +322,9 @@ def collect(api, topology, test_run_id, leven_run_id=None, *, live=False,
                            target_150s_met=None, directional_sample_ready=False)
     return {'schema': 1, 'collected_at': datetime.now(timezone.utc).isoformat(), 'snapshot_status': 'partial' if partial else 'terminal',
             'collection_mode': 'live' if live else 'offline', 'topology': topology,
-            'authenticated_retained_identities': [proof for proof in identity_proofs if proof],
+            'authenticated_retained_identities': [proof for proof in identity_proofs if proof and 'artifact_id' in proof],
+            'verified_tested_base_associations': [proof for proof in identity_proofs
+                                                if proof and proof.get('kind') == 'tested-base-association'],
             'input': document, 'report': result,
             'notes': [('Current collector allocation cannot be finalized while it is running.' if live
                        else 'Offline collector is outside measured workflows; record its cost separately if hosted.'),

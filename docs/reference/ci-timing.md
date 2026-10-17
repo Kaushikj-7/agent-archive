@@ -797,6 +797,21 @@ sufficient. Missing PR association without authenticated retained identity, or a
 explicit offline run IDs still must satisfy the exact context. Missing expected
 jobs cannot disappear by deriving inventory from the measured run.
 
+When GitHub refreshes a run's association to the exact tested first parent, the
+collector preserves the original event base. It accepts that association only for
+the same captured base ref and after independently checking the merge's SHA,
+tree and ordered parents, plus the event base's ancestry to the tested base.
+Later or unrelated base commits remain invalid. The compact commit/compare API
+identity fields are retained with the exact run, attempt and topology so offline
+history can replay the same checks. This has the same provenance boundary as
+retained API job snapshots; it does not replace the authenticated artifact path
+for an empty post-merge association or add a cryptographic authenticity claim.
+The diagnostic API request cap is 14, retaining its 20-second deadline: this
+covers ten worker-attempt inventories plus the enclosing run and two graph reads,
+or one inventory and the existing maximum approval pages plus those graph reads.
+This does not raise any test-cost budget or workflow timeout, and does not claim
+ten attempts plus maximum approval pages fit together in that request cap.
+
 Use `--experiment` on the implementation PR when it participates in the deliberate
 batch; reserved-prefix receipts already identify experiment siblings. Intentional
 experiments are excluded from normal-traffic percentile qualification. `--event-at`
