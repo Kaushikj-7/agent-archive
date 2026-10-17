@@ -171,13 +171,17 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   | Claude Code | `~/.claude/skills` | `<project>/.claude/skills` |
   | Codex | `~/.agents/skills`, `~/.codex/skills` | `<project>/.agents/skills` |
   | Cursor | `~/.cursor/skills` | `<project>/.cursor/skills` |
-  | Muse | `.agents/skills`, `.claude/skills` under home; exact Muse config and Codex skill roots | `.agents/skills`, `.codex/skills`, `.claude/skills` under project |
+  | Muse | `.agents/skills`, `.claude/skills` under home; exact Muse config, Codex and bundled skill roots | `.agents/skills`, `.codex/skills`, `.claude/skills` under project |
 
   Muse config inventory uses the injected `$XDG_CONFIG_HOME/muse/skills`, or
   `~/.config/muse/skills` only when that variable is known unset. Codex foreign
   inventory uses injected `$CODEX_HOME/skills`, or `~/.codex/skills` only when
   known unset. Unknown, empty or invalid configured paths are not guessed.
-  Plugin/builtin sources remain uninspected. Inventory proves installation only;
+  Builtin inventory uses only the caller-qualified effective data home plus
+  `muse/skills/bundled/muse-core/skills`. The data home is fixed once per Muse
+  observation pass, using the existing injected XDG data-location policy; no
+  provider guesses another location. Plugin installed provenance remains
+  unqualified and plugin sources remain uninspected. Inventory proves installation only;
   project trust, native activation, eligibility and invocation/read use remain
   unknown. Skill presence cannot activate Muse capture.
 
@@ -185,7 +189,13 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   per folder), never other files in them. In a user-level folder a
   symlinked skill is followed only when its resolved `SKILL.md` stays inside
   that selected skill root. A project's `SKILL.md` that resolves outside the
-  project is skipped. Sessions imported with `backfill` carry no skill evidence.
+  project is skipped. The shared observer also supports finite caller-qualified
+  manifest file declarations: only the declared regular files inside that exact
+  package can be read, with no recursive search or undeclared neighbors. This
+  does not supply missing native plugin installation provenance. All roots and
+  physical file aliases share the same 4 MB observation allowance; one file is
+  limited to 1 MB and an archived body to 16 KB. Sessions imported with `backfill`
+  carry no skill evidence.
 
   Change the mode in setup. The change limits subsequent uploads, including
   pending work rebuilt under the new mode, but does not remove copies already

@@ -112,3 +112,17 @@ func TestSkillEvidenceRootsRespectExactEnvironmentSnapshot(t *testing.T) {
 		}
 	}
 }
+
+func TestBuiltinSkillRootRequiresQualifiedDataHome(t *testing.T) {
+	t.Parallel()
+	for _, data := range []string{"", "relative", "/bad\x00root", "/bad\xffroot", "/" + strings.Repeat("x", 4096)} {
+		roots := Skills().EvidenceRoots(agentapi.SkillLocations{DataHome: data})
+		if len(roots) != 0 {
+			t.Fatalf("invented builtin root for %q: %+v", data, roots)
+		}
+	}
+	roots := Skills().EvidenceRoots(agentapi.SkillLocations{DataHome: "/synthetic/custom-data"})
+	if len(roots) != 1 || roots[0].Path != "/synthetic/custom-data/muse/skills/bundled/muse-core/skills" || roots[0].UserBoundary != "/synthetic/custom-data" || roots[0].Scope != "user_muse_builtin" {
+		t.Fatalf("builtin roots %+v", roots)
+	}
+}

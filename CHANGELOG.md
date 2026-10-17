@@ -9,7 +9,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Muse installed versions use a bounded, update-disabled `--version` probe.
   Skill installation shares `.agents/skills` with Codex and Cursor. Muse skill
   evidence follows the existing `none`, `metadata` and `body` settings, with
-  filtered installed inventory only; native eligibility and use remain unknown.
+  filtered installed inventory, including the exact bundled Muse skill root
+  under the caller-qualified data home. Native eligibility and use remain unknown.
   Exact runtime identity and public capture remain gated.
 
 - Prepare guarded capture of newly started Muse sessions, with explicit home,

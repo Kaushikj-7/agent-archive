@@ -408,6 +408,11 @@ adapter0.31.0. Existing shared bounds, secret redaction, mode selection and
 installed-only interpretation apply. No native invocation/eligibility or parser
 semantics change; Muse parser remains0.6.0 and other parsers/configuration/source/
 metadata schemas remain unchanged. Installation deduplicates the shared root.
+The same unreleased31 allocation includes exact qualified DataHome builtin
+inventory and bounded declared-file infrastructure for original PR10 installed
+plugin scope; production plugin catalog wiring still requires native provenance.
+One shared observation budget, no extra native process path, and existing
+Body/Metadata/None policy apply. No derived eligibility or use is introduced.
 Installed application version inspection is local and creates no capture proof.
 
 Muse guarded root admission adds the closed `muse-root-admission` capability to

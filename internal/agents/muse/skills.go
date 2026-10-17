@@ -39,6 +39,7 @@ func (skillProvider) EvidenceRoots(l agentapi.SkillLocations) []agentapi.SkillRo
 			add(base, "skills", "user_codex_foreign", false)
 		}
 	}
+	add(l.DataHome, "muse/skills/bundled/muse-core/skills", "user_muse_builtin", false)
 	add(l.ProjectRoot, ".agents/skills", "project_agents", true)
 	add(l.ProjectRoot, ".codex/skills", "project_codex_foreign", true)
 	add(l.ProjectRoot, ".claude/skills", "project_claude_foreign", true)

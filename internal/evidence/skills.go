@@ -10,9 +10,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -48,13 +50,36 @@ type SkillOptions struct {
 }
 
 type skillRoot struct {
-	path  string
-	scope string
-	user  string
+	layout agentapi.SkillLayout
+	files  []agentapi.SkillFile
+	path   string
+	scope  string
+	user   string
 	// project is the project root a project-level skill root belongs to, and
 	// empty for a user-level root. It bounds where a project skill's SKILL.md
 	// may resolve to (see skillBounds).
 	project string
+}
+
+// One shared allowance and physical read cache covers every root in an observation.
+// Manifest/catalog readers added later must reserve from this same allowance.
+type skillReadBudget struct {
+	remaining    int64
+	declarations int
+	cache        []cachedSkill
+}
+
+type cachedSkill struct {
+	info  os.FileInfo
+	bytes []byte
+}
+
+type skillCandidate struct {
+	path      string
+	name      string
+	id        string
+	valid     bool
+	directory bool
 }
 
 // ObserveSkills inventories immediate SKILL.md children of documented skill
@@ -80,10 +105,10 @@ func ObserveSkills(options SkillOptions) ([]archive.SupplementalEvidence, error)
 		return nil, fmt.Errorf("unsupported skill evidence mode %q", options.Mode)
 	}
 	roots := skillRoots(options)
-	remainingSnapshotBytes := int64(maxSnapshotBytes)
+	budget := skillReadBudget{remaining: maxSnapshotBytes, declarations: maxSkillsPerRoot}
 	var observations []archive.SupplementalEvidence
 	for _, root := range roots {
-		evidence, err := observeRoot(options.Harness, root, options.ObservedAt, &remainingSnapshotBytes, options.Mode)
+		evidence, err := observeRoot(options.Harness, root, options.ObservedAt, &budget, options.Mode)
 		if err != nil {
 			return nil, err
 		}
@@ -99,24 +124,114 @@ func ObserveSkills(options SkillOptions) ([]archive.SupplementalEvidence, error)
 func skillRoots(options SkillOptions) []skillRoot {
 	var roots []skillRoot
 	for _, declared := range options.Locations {
-		if declared.UserBoundary != "" {
-			addUserRoot := skillRoot{path: declared.Path, scope: declared.Scope, user: declared.UserBoundary}
-			roots = append(roots, addUserRoot)
-			continue
-		}
 		duplicate := false
 		for _, root := range roots {
-			if sameDirectory(root.path, declared.Path) {
+			if !sameDirectory(root.path, declared.Path) {
+				continue
+			}
+			// A project rooted at home must not repeat an existing user root.
+			if declared.Layout == agentapi.SkillDirectory && root.layout == agentapi.SkillDirectory && declared.UserBoundary == "" && root.user != "" {
 				duplicate = true
 				break
 			}
+			if root.scope == declared.Scope && root.user == declared.UserBoundary && root.project == declared.ProjectBoundary && root.layout == declared.Layout {
+				if root.layout == agentapi.SkillDirectory || len(root.files) <= maxSkillsPerRoot && slices.Equal(root.files, declared.Files) {
+					duplicate = true
+					break
+				}
+			}
 		}
 		if !duplicate {
-			roots = append(roots, skillRoot{path: declared.Path, scope: declared.Scope, project: declared.ProjectBoundary})
+			roots = append(roots, skillRoot{path: declared.Path, scope: declared.Scope, user: declared.UserBoundary, project: declared.ProjectBoundary, layout: declared.Layout, files: declared.Files})
 		}
 	}
-
 	return roots
+}
+
+func validSkillScope(value string) bool {
+	if len(value) == 0 || len(value) > 160 {
+		return false
+	}
+	for _, c := range []byte(value) {
+		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.' || c == ':' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validSkillDeclaration(file agentapi.SkillFile) bool {
+	if len(file.ID) == 0 || len(file.ID) > 80 || len(file.Path) == 0 || len(file.Path) > 4096 || !utf8.ValidString(file.Path) || filepath.IsAbs(file.Path) || strings.ContainsAny(file.Path, "\\:\x00") {
+		return false
+	}
+	for _, c := range []byte(file.Path) {
+		if c < 32 || c == 127 {
+			return false
+		}
+	}
+	for _, part := range strings.Split(file.Path, "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	for i, c := range []byte(file.ID) {
+		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || i > 0 && (c == '.' || c == '_' || c == '-') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func rootCandidates(root skillRoot, budget *skillReadBudget) ([]skillCandidate, int, error) {
+	if root.layout == agentapi.SkillDirectory && len(root.files) == 0 {
+		entries, err := os.ReadDir(root.path)
+		if err != nil {
+			return nil, 0, err
+		}
+		entries, omitted := boundedSkillEntries(entries)
+		out := make([]skillCandidate, 0, len(entries))
+		for _, entry := range entries {
+			out = append(out, skillCandidate{path: filepath.Join(root.path, entry.Name(), "SKILL.md"), name: entry.Name(), valid: true, directory: entry.IsDir() || entry.Type()&os.ModeSymlink != 0})
+		}
+		return out, omitted, nil
+	}
+	if root.layout != agentapi.SkillDeclaredFiles {
+		return nil, 0, errors.New("invalid skill layout")
+	}
+	info, err := os.Stat(root.path)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !info.IsDir() {
+		return nil, 0, errors.New("skill package is not a directory")
+	}
+	count := min(len(root.files), budget.declarations)
+	files := make([]agentapi.SkillFile, 0, count)
+	invalid := 0
+	for _, file := range root.files[:count] {
+		if validSkillDeclaration(file) {
+			files = append(files, file)
+		} else {
+			invalid++
+		}
+	}
+	budget.declarations -= count
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].ID == files[j].ID {
+			return files[i].Path < files[j].Path
+		}
+		return files[i].ID < files[j].ID
+	})
+	out := make([]skillCandidate, 0, count)
+	seen := map[string]bool{}
+	for _, file := range files {
+		valid := !seen[file.ID]
+		seen[file.ID] = true
+		out = append(out, skillCandidate{path: filepath.Join(root.path, filepath.FromSlash(file.Path)), name: file.ID, id: file.ID, valid: valid})
+	}
+	return out, len(root.files) - count + invalid, nil
 }
 
 func boundedSkillEntries(entries []os.DirEntry) ([]os.DirEntry, int) {
@@ -129,14 +244,17 @@ func boundedSkillEntries(entries []os.DirEntry) ([]os.DirEntry, int) {
 	return entries, omitted
 }
 
-func observeRoot(harness string, root skillRoot, observedAt time.Time, remainingSnapshotBytes *int64, mode config.SkillEvidence) ([]archive.SupplementalEvidence, error) {
+func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *skillReadBudget, mode config.SkillEvidence) ([]archive.SupplementalEvidence, error) {
+	if root.layout == agentapi.SkillDeclaredFiles && !validSkillScope(root.scope) {
+		return []archive.SupplementalEvidence{inventoryObservation(harness, "declared_skills", "unreadable", nil, false, observedAt)}, nil
+	}
 	bounds := newSkillBounds(root)
 	if root.user != "" && bounds.root == "" {
 		if _, err := os.Lstat(root.path); err == nil {
 			return []archive.SupplementalEvidence{inventoryObservation(harness, root.scope, "unreadable", nil, false, observedAt)}, nil
 		}
 	}
-	entries, err := os.ReadDir(root.path)
+	entries, omittedEntries, err := rootCandidates(root, budget)
 	if err != nil {
 		// Not a directory, permission denied, or any other read failure: the
 		// root exists but its inventory is unknown. Record that instead of
@@ -151,25 +269,28 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 		}
 		return []archive.SupplementalEvidence{inventoryObservation(harness, root.scope, rootStatus, nil, complete, observedAt)}, nil
 	}
-	entries, omittedEntries := boundedSkillEntries(entries)
 	provenance := "filesystem:" + strings.ToLower(strings.TrimSpace(harness))
 	var inventory []any
 	var snapshots []archive.SupplementalEvidence
 	omittedSnapshots := 0
 	uninspectedEntries := 0
 	for _, entry := range entries {
+		if !entry.valid {
+			uninspectedEntries++
+			continue
+		}
 		// Symlinks are resolved first, and the SKILL.md actually read is the
 		// resolved file, which must be a regular file inside the root's bounds.
-		path, err := filepath.EvalSymlinks(filepath.Join(root.path, entry.Name(), "SKILL.md"))
+		path, err := filepath.EvalSymlinks(entry.path)
 		if errors.Is(err, os.ErrNotExist) {
 			// Some legacy/configured roots contain grouped or plugin-managed
 			// subtrees. We do not recursively walk them; record the coverage gap.
-			if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			if entry.directory || root.layout == agentapi.SkillDeclaredFiles {
 				uninspectedEntries++
 			}
 			continue
 		}
-		if err != nil || !bounds.allow(path) {
+		if err != nil || (root.layout == agentapi.SkillDirectory && !bounds.allow(path)) || (root.layout == agentapi.SkillDeclaredFiles && !bounds.allowDeclared(path)) {
 			// Permission denied on the entry or its SKILL.md, or a SKILL.md that
 			// resolves outside the root's bounds: coverage gap.
 			uninspectedEntries++
@@ -180,27 +301,30 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 			uninspectedEntries++
 			continue
 		}
-		name := entry.Name()
+		name := entry.name
 		payload := map[string]any{
 			"name": name, "coverage": string(archive.SkillCoverageInstalledOnly), "scope": root.scope,
 			"uncertainty": "filesystem presence does not prove discovery, eligibility, or invocation",
 		}
+		installedName := map[string]any{"name": name}
+		if entry.id != "" {
+			installedName["id"] = entry.id
+		}
 		if info.Size() > maxSkillBytes {
-			inventory = append(inventory, map[string]any{"name": name})
+			inventory = append(inventory, installedName)
 			omittedSnapshots++
 			continue
 		}
-		if info.Size() > *remainingSnapshotBytes {
-			inventory = append(inventory, map[string]any{"name": name})
-			omittedSnapshots++
-			continue
-		}
-		original, err := readBounded(path, maxSkillBytes, info)
+		original, err := budget.read(path, info)
 		if err != nil {
-			uninspectedEntries++
+			if errors.Is(err, errSkillBudget) {
+				inventory = append(inventory, installedName)
+				omittedSnapshots++
+			} else {
+				uninspectedEntries++
+			}
 			continue
 		}
-		*remainingSnapshotBytes -= int64(len(original))
 		if parsed := frontmatterName(original); parsed != "" {
 			name = parsed
 			payload["name"] = name
@@ -213,7 +337,15 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 		digest := sha256.Sum256([]byte(archive.RedactText(string(original))))
 		hash := hex.EncodeToString(digest[:])
 		payload["sha256"] = hash
-		inventory = append(inventory, map[string]any{"name": name, "sha256": hash})
+		installed := map[string]any{"name": name, "sha256": hash}
+		if entry.id != "" {
+			installed["id"] = entry.id
+			payload["id"] = entry.id
+			// Distinct logical declarations sharing bytes must survive snapshot
+			// history identity without leaking their relative filesystem paths.
+			payload["scope"] = root.scope + ":" + entry.id
+		}
+		inventory = append(inventory, installed)
 		if mode == config.SkillEvidenceMetadata {
 			continue
 		}
@@ -306,7 +438,7 @@ func newSkillBounds(root skillRoot) skillBounds {
 	if root.user != "" {
 		resolvedUser, err := filepath.EvalSymlinks(root.user)
 		rel, relErr := filepath.Rel(root.user, root.path)
-		if err != nil || relErr != nil || resolvedRoot != filepath.Join(resolvedUser, rel) {
+		if err != nil || relErr != nil || !local.PathWithin(resolvedRoot, resolvedUser) || resolvedRoot != filepath.Join(resolvedUser, rel) {
 			resolvedRoot = ""
 		}
 	}
@@ -333,6 +465,30 @@ func (b skillBounds) allow(resolved string) bool {
 		return named && local.PathWithin(resolved, b.project)
 	}
 	return named && local.PathWithin(resolved, b.root)
+}
+
+func (b skillBounds) allowDeclared(resolved string) bool {
+	return b.root != "" && (!b.projectScoped || local.PathWithin(b.root, b.project)) && local.PathWithin(resolved, b.root)
+}
+
+var errSkillBudget = errors.New("skill observation byte budget exhausted")
+
+func (b *skillReadBudget) read(path string, info os.FileInfo) ([]byte, error) {
+	for _, cached := range b.cache {
+		if os.SameFile(cached.info, info) && cached.info.Size() == info.Size() && cached.info.ModTime().Equal(info.ModTime()) {
+			return cached.bytes, nil
+		}
+	}
+	if info.Size() < 0 || info.Size() > b.remaining {
+		return nil, errSkillBudget
+	}
+	// Reserve before I/O; failed reads do not replenish the allowance.
+	b.remaining -= info.Size()
+	original, err := readBounded(path, info.Size(), info)
+	if err == nil {
+		b.cache = append(b.cache, cachedSkill{info: info, bytes: original})
+	}
+	return original, err
 }
 
 // sameDirectory reports whether a and b are the same directory, compared
@@ -374,15 +530,16 @@ func readBounded(path string, limit int64, inspected os.FileInfo) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	if !opened.Mode().IsRegular() || !os.SameFile(inspected, opened) {
+	if !opened.Mode().IsRegular() || !os.SameFile(inspected, opened) || opened.Size() != inspected.Size() || !opened.ModTime().Equal(inspected.ModTime()) || opened.Size() < 0 || opened.Size() > limit {
 		return nil, errors.New("skill changed between inspection and read")
 	}
-	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	data, err := io.ReadAll(io.LimitReader(f, opened.Size()))
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > limit {
-		return nil, errors.New("source exceeded size limit while reading")
+	final, statErr := f.Stat()
+	if statErr != nil || int64(len(data)) != opened.Size() || !os.SameFile(opened, final) || final.Size() != opened.Size() || !final.ModTime().Equal(opened.ModTime()) {
+		return nil, errors.New("skill changed while reading")
 	}
 	return data, nil
 }

@@ -26,7 +26,7 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 	if code != 0 {
 		t.Fatalf("fixture handoff %d %s", code, stderr)
 	}
-	userHome, xdg, codexHome := t.TempDir(), t.TempDir(), t.TempDir()
+	userHome, xdg, codexHome, skillData := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 	env.UserHomeDir = func() (string, error) { return userHome, nil }
 	calls := map[string]int{}
 	env.LookupEnv = func(key string) (string, bool) {
@@ -36,11 +36,13 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 			return xdg, true
 		case skillCodexHome:
 			return codexHome, true
+		case "XDG_DATA_HOME":
+			return skillData, true
 		}
 		t.Fatalf("unexpected environment read %s", key)
 		return "", false
 	}
-	roots := []string{filepath.Join(xdg, "muse", "skills"), filepath.Join(userHome, ".agents", "skills"), filepath.Join(userHome, ".claude", "skills"), filepath.Join(codexHome, "skills"), filepath.Join(workspace, ".agents", "skills"), filepath.Join(workspace, ".codex", "skills"), filepath.Join(workspace, ".claude", "skills")}
+	roots := []string{filepath.Join(xdg, "muse", "skills"), filepath.Join(userHome, ".agents", "skills"), filepath.Join(userHome, ".claude", "skills"), filepath.Join(codexHome, "skills"), filepath.Join(workspace, ".agents", "skills"), filepath.Join(workspace, ".codex", "skills"), filepath.Join(workspace, ".claude", "skills"), filepath.Join(skillData, "muse/skills/bundled/muse-core/skills")}
 	body := []byte("---\nname: synthetic-review\n---\nuse token=synthetic-secret-value\n")
 	for _, root := range roots {
 		dir := filepath.Join(root, "synthetic-review")
@@ -60,7 +62,7 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 	// The user/project queries and later sessions reuse one immutable env snapshot.
 	_, err = observe(reg, env.Now())
 	must(t, err)
-	if len(calls) != 2 || calls["XDG_CONFIG_HOME"] != 1 || calls["CODEX_HOME"] != 1 {
+	if len(calls) != 3 || calls["XDG_CONFIG_HOME"] != 1 || calls["CODEX_HOME"] != 1 || calls["XDG_DATA_HOME"] != 1 {
 		t.Fatalf("environment snapshot reads: %v", calls)
 	}
 	bundle, err := archive.NewSourceBundle(reg, counter.TranscriptFilter, selected, env.Now(), evidence)
@@ -70,7 +72,7 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 	if bundle.Capture.FilterVersion != "31" || bundle.Capture.AdapterVersion != "0.31.0" {
 		t.Fatal("wrong privacy provenance")
 	}
-	for _, secret := range []string{"synthetic-secret-value", "PRIVATE_FOREIGN_FILE_SENTINEL", userHome, xdg, codexHome, outside} {
+	for _, secret := range []string{"synthetic-secret-value", "PRIVATE_FOREIGN_FILE_SENTINEL", userHome, xdg, codexHome, skillData, outside} {
 		if bytes.Contains(encoded, []byte(secret)) {
 			t.Fatalf("private skill value uploaded: %q", secret)
 		}
@@ -88,7 +90,7 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 			}
 		}
 	}
-	if snapshots != 7 {
+	if snapshots != 8 {
 		t.Fatalf("snapshot count %d", snapshots)
 	}
 	analysis, err := analyzeSource(t.Context(), env.Agents, bundle)
@@ -127,10 +129,13 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 
 func TestMuseSkillEnvironmentSnapshotBoundsAndAlias(t *testing.T) {
 	t.Parallel()
-	home, project, xdg := t.TempDir(), t.TempDir(), t.TempDir()
+	home, project, xdg, data := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 	dir := filepath.Join(xdg, "muse", "skills", "synthetic-review")
 	must(t, os.MkdirAll(dir, 0700))
 	must(t, os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: synthetic-review\n---\nsynthetic"), 0600))
+	builtinDir := filepath.Join(data, "muse/skills/bundled/muse-core/skills/synthetic-builtin")
+	must(t, os.MkdirAll(builtinDir, 0700))
+	must(t, os.WriteFile(filepath.Join(builtinDir, "SKILL.md"), []byte("BUILTIN_ONLY_SENTINEL"), 0600))
 	reads := 0
 	env := testEnv(t, t.TempDir(), time.Now())
 	env.UserHomeDir = func() (string, error) { return home, nil }
@@ -141,6 +146,8 @@ func TestMuseSkillEnvironmentSnapshotBoundsAndAlias(t *testing.T) {
 			return xdg, true
 		case skillCodexHome:
 			return strings.Repeat("x", 4097), true
+		case "XDG_DATA_HOME":
+			return data, true
 		}
 		t.Fatalf("unexpected key %s", key)
 		return "", false
@@ -149,7 +156,7 @@ func TestMuseSkillEnvironmentSnapshotBoundsAndAlias(t *testing.T) {
 	reg := archive.SessionRegistration{Harness: archive.Harness{Name: "muse-code"}, ProjectRoot: project}
 	items, err := observe(reg, env.Now())
 	must(t, err)
-	if reads != 2 {
+	if reads != 3 {
 		t.Fatalf("fixed snapshot reads %d", reads)
 	}
 	found := false
@@ -164,10 +171,30 @@ func TestMuseSkillEnvironmentSnapshotBoundsAndAlias(t *testing.T) {
 	if !found {
 		t.Fatal("alias lost exact config root")
 	}
+	must(t, os.Remove(filepath.Join(dir, "SKILL.md")))
+	must(t, os.Remove(filepath.Join(builtinDir, "SKILL.md")))
+	data = t.TempDir()
 	reg.Harness.Name = "muse"
+	aliasItems, aliasErr := observe(reg, env.Now())
+	must(t, aliasErr)
+	aliasFound, builtinFound := false, false
+	for _, item := range aliasItems {
+		if item.Payload["scope"] == "user_muse_config" && item.Payload["root_status"] == "present" {
+			aliasFound = true
+		}
+		if item.Payload["scope"] == "user_muse_builtin" && item.Payload["root_status"] == "present" {
+			builtinFound = true
+		}
+	}
+	if !builtinFound {
+		t.Fatal("alias requalified/reobserved changed builtin data home")
+	}
+	if !aliasFound {
+		t.Fatal("canonical alias repeated filesystem observation")
+	}
 	_, err = observe(reg, env.Now())
 	must(t, err)
-	if reads != 2 {
+	if reads != 3 {
 		t.Fatal("alias re-read environment")
 	}
 	for _, mode := range []config.SkillEvidence{config.SkillEvidenceNone, config.SkillEvidenceBody} {
@@ -175,7 +202,7 @@ func TestMuseSkillEnvironmentSnapshotBoundsAndAlias(t *testing.T) {
 		_, err = skillObserver(env, mode)(reg, env.Now())
 		must(t, err)
 	}
-	if reads != 2 {
+	if reads != 3 {
 		t.Fatal("none/import read skill environment")
 	}
 }

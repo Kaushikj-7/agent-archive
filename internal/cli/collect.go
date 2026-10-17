@@ -579,30 +579,44 @@ func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegis
 	userCache := map[string][]archive.SupplementalEvidence{}
 	projectCache := map[string][]archive.SupplementalEvidence{}
 	var museEnvironment *agentapi.RuntimeEnvironment
+	var museDataHome string
+	var museDataHomeSet bool
 	return func(reg archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
 		if reg.Imported() || mode == config.SkillEvidenceNone {
 			return nil, nil
 		}
-		if archive.CanonicalHarness(reg.Harness.Name) == "muse" && museEnvironment == nil {
-			museEnvironment = skillRootEnvironment(env)
+		harness := reg.Harness.Name
+		if archive.CanonicalHarness(harness) == "muse" {
+			harness = "muse"
+			if museEnvironment == nil {
+				museEnvironment = skillRootEnvironment(env)
+			}
 		}
-		userScope, ok := userCache[reg.Harness.Name]
+		userScope, ok := userCache[harness]
 		if !ok {
 			userHome, err := env.userHomeDir()
 			if err != nil {
 				return nil, err
 			}
-			userScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, UserHome: userHome, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, reg.Harness.Name, agentapi.SkillLocations{UserHome: userHome, Environment: museEnvironment})})
+			dataHome := ""
+			if harness == "muse" {
+				if !museDataHomeSet {
+					museDataHome = env.nativeDataHome(userHome)
+					museDataHomeSet = true
+				}
+				dataHome = museDataHome
+			}
+			userScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: harness, UserHome: userHome, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, harness, agentapi.SkillLocations{UserHome: userHome, DataHome: dataHome, Environment: museEnvironment})})
 			if err != nil {
 				return nil, err
 			}
-			userCache[reg.Harness.Name] = userScope
+			userCache[harness] = userScope
 		}
-		projectKey := reg.Harness.Name + "\x00" + reg.ProjectRoot
+		projectKey := harness + "\x00" + reg.ProjectRoot
 		projectScope, ok := projectCache[projectKey]
 		if !ok {
 			var err error
-			projectScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, ProjectRoot: reg.ProjectRoot, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, reg.Harness.Name, agentapi.SkillLocations{ProjectRoot: reg.ProjectRoot, Environment: museEnvironment})})
+			projectScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: harness, ProjectRoot: reg.ProjectRoot, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, harness, agentapi.SkillLocations{ProjectRoot: reg.ProjectRoot, Environment: museEnvironment})})
 			if err != nil {
 				return nil, err
 			}
