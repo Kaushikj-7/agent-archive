@@ -25,8 +25,9 @@ func packedGenerationFixture(t *testing.T) (*Store, archive.SessionRegistration,
 	if err != nil {
 		t.Fatal(err)
 	}
-	at := reg.RegisteredAt.Add(time.Hour)
-	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: key.NativeID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "test", CapturedAt: reg.RegisteredAt}}
+	publishedAt := reg.SessionStartedAt
+	at := publishedAt.Add(time.Hour)
+	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: key.NativeID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "test", CapturedAt: publishedAt}}
 	p, err := s.LoadPublishedState(reg.ArchiveSessionID)
 	if err != nil {
 		t.Fatal(err)
@@ -44,10 +45,10 @@ func packedGenerationFixture(t *testing.T) (*Store, archive.SessionRegistration,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Save(bundle, reg.RegisteredAt, CacheStatusPublished, raw); err != nil {
+	if err := p.Save(bundle, publishedAt, CacheStatusPublished, raw); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.SaveBlocked(bundle, reg.RegisteredAt, BlockedReasonTranscriptRewritten); err != nil {
+	if err := p.SaveBlocked(bundle, publishedAt, BlockedReasonTranscriptRewritten); err != nil {
 		t.Fatal(err)
 	}
 	// Populate the other empty shards so expiry exercises the real packed
