@@ -125,6 +125,9 @@ func TestNativeImportBatchUnreadableAuthorityPreventsFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, bad := range map[string][]byte{
+		"outer-filter-future":       bytes.Replace(raw, []byte(`"filters":{`), []byte(`"filters":{"future":true,`), 1),
+		"outer-filter-alias":        bytes.Replace(raw, []byte(`"include_home":`), []byte(`"Include_Home":`), 1),
+		"outer-filter-duplicate":    bytes.Replace(raw, []byte(`"include_home":`), []byte(`"include_home":true,"include_home":`), 1),
 		"future":                    bytes.Replace(raw, []byte("muse-historical-import-v1"), []byte("muse-historical-import-v2"), 1),
 		"malformed-before-selector": append([]byte(`{"id":!,"native_import":`), raw...),
 		"escaped-selector":          []byte(`{"id":!,"native\u005fimport":{}}`),

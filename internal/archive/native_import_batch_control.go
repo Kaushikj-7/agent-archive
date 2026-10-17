@@ -42,6 +42,17 @@ func DecodeNativeImportBatchControl(raw []byte, next *NativeImportBatchControl) 
 			return err
 		}
 	}
+	if present {
+		var fields struct {
+			Filters json.RawMessage `json:"filters"`
+		}
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return errors.Join(ErrUnsupportedNativeImport, err)
+		}
+		if err := nativeImportBatchFilterKeys(fields.Filters); err != nil {
+			return err
+		}
+	}
 	var value NativeImportBatchControl
 	if err := json.Unmarshal(raw, &value); err != nil {
 		if present {
@@ -79,7 +90,7 @@ func (b NativeImportBatchControl) MatchesRegistration(ctx context.Context, reg S
 	if err := b.Validate(ctx); err != nil {
 		return err
 	}
-	if reg.ValidateNativeImport() != nil || b.UndoneAt != nil {
+	if reg.ValidateNativeImport() != nil || reg.NativeImport.Membership.State != "attached" || b.UndoneAt != nil {
 		return ErrUnsupportedNativeImport
 	}
 	c := reg.NativeImport.Confirmation

@@ -97,13 +97,17 @@ func ReplaceImportBatchControl(ctx context.Context, home, id string, write func(
 	})
 }
 
-func readImportBatchBytes(home *local.RootedHome, id string) (raw []byte, err error) {
+func readImportBatchBytes(home *local.RootedHome, id string) ([]byte, error) {
+	return readImportBatchBytesBounded(home, id, archive.MaxImportBatchControlBytes)
+}
+
+func readImportBatchBytesBounded(home *local.RootedHome, id string, limit int64) (raw []byte, err error) {
 	name := filepath.Join("imports", id+".json")
 	info, err := home.Root.Lstat(name)
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() < 0 || info.Size() > archive.MaxImportBatchControlBytes {
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() < 0 || info.Size() > archive.MaxImportBatchControlBytes || info.Size() > limit {
 		return nil, ErrDurableStorageRecovery
 	}
 	f, err := home.Root.Open(name)
@@ -115,8 +119,12 @@ func readImportBatchBytes(home *local.RootedHome, id string) (raw []byte, err er
 	if err != nil || !os.SameFile(info, opened) || !sameDurableStamp(info, opened) {
 		return nil, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	raw, err = io.ReadAll(io.LimitReader(f, archive.MaxImportBatchControlBytes+1))
-	if err != nil || len(raw) != int(info.Size()) {
+	raw = make([]byte, int(info.Size()))
+	if _, err := io.ReadFull(f, raw); err != nil {
+		return nil, errors.Join(ErrDurableStorageRecovery, err)
+	}
+	var extra [1]byte
+	if n, err := f.Read(extra[:]); n != 0 || !errors.Is(err, io.EOF) {
 		return nil, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	after, err := f.Stat()
@@ -167,4 +175,52 @@ func inspectImportLocks(ctx context.Context, home *local.RootedHome, remaining *
 		}
 	}
 	return home.Check()
+}
+
+// nativeImportCurrentBatch borrows the existing read ledger before allocating
+// serialized and decoded control bytes. No returned control outlives the read.
+func (s *Store) nativeImportCurrentBatch(ctx context.Context, reg archive.SessionRegistration) (err error) {
+	if reg.NativeImport == nil {
+		return nil
+	}
+	if err := reg.ValidateNativeImport(); err != nil {
+		return err
+	}
+	id := reg.NativeImport.Confirmation.BatchID
+	if !archive.ValidImportBatchID(id) {
+		return archive.ErrUnsupportedNativeImport
+	}
+	held, err := local.OpenRootedHome(s.home)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, held.Close()) }()
+	info, err := held.Root.Lstat(filepath.Join("imports", id+".json"))
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > archive.MaxImportBatchControlBytes {
+		return ErrDurableStorageRecovery
+	}
+	reservation := s.readReservation()
+	n := 2 * info.Size()
+	if !reservation.Reserve(n) {
+		return errStateBudget
+	}
+	defer reservation.Release(n)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	raw, err := readImportBatchBytesBounded(held, id, info.Size())
+	if err != nil {
+		return err
+	}
+	var control archive.NativeImportBatchControl
+	if err := archive.DecodeNativeImportBatchControl(raw, &control); err != nil {
+		return err
+	}
+	if err := control.MatchesRegistration(ctx, reg); err != nil {
+		return err
+	}
+	return errors.Join(ctx.Err(), held.Check())
 }

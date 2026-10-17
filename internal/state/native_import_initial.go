@@ -53,10 +53,6 @@ func (s *Store) validateNativeImportStagedConfig(ctx context.Context, cfg config
 	if reg.NativeImport == nil {
 		return nil
 	}
-	rootErr := nativeImportConfiguredRoot(cfg, reg)
-	if rootErr == nil {
-		return nil
-	}
 	published, err := s.LoadPublishedStateContext(ctx, reg.ArchiveSessionID)
 	if err != nil {
 		return errors.Join(ErrReadySelectionFrozen, err)
@@ -68,5 +64,43 @@ func (s *Store) validateNativeImportStagedConfig(ctx context.Context, cfg config
 			return nil
 		}
 	}
-	return rootErr
+	return errors.Join(nativeImportConfiguredRoot(cfg, reg), s.nativeImportCurrentBatch(ctx, reg))
+}
+
+// A historical stage never enters the legacy generic registration adapter.
+// First ownership still requires the distinct prepared historical capability.
+func (s *Store) resumeOwnedNativeImport(ctx context.Context, stage ImportStage, reg archive.SessionRegistration, cfg config.Config) error {
+	current, found, err := s.LoadRegistration(reg.ArchiveSessionID)
+	if err != nil || !found || current.StagedImportSHA256 != stage.SHA256 || !sameImportStageOwner(reg, current) {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	if err := nativeImportStageFlags(cfg, current); err != nil {
+		return err
+	}
+	selected, err := s.LoadPublishedStateContext(ctx, current.ArchiveSessionID)
+	if err != nil {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	if !selected.found {
+		return errors.Join(nativeImportConfiguredRoot(cfg, current), s.nativeImportCurrentBatch(ctx, current))
+	}
+	if selected.state.PublicationVersion != 3 || selected.state.LastPublished == nil {
+		return ErrReadySelectionFrozen
+	}
+	proof := selected.state.LastPublished.StagedProof()
+	if proof == nil || proof.StageSHA256 != stage.SHA256 || validateNativeImportSelectionAuthority(current, proof.Core) != nil {
+		return ErrReadySelectionFrozen
+	}
+	bundle, err := s.readyDigest(ctx, stage.Bundle)
+	if err != nil || bundle != proof.Core.BundleSHA256 {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	pending, found, err := s.catalogPendingForFence(current.ArchiveSessionID)
+	if err != nil {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	if found && (pending.StagedProof() == nil || !sameStagedSelection(*pending.StagedProof(), *proof) || !bytes.Equal(pending.MetadataBytes, selected.state.MetadataBytes)) {
+		return ErrReadySelectionFrozen
+	}
+	return nil
 }

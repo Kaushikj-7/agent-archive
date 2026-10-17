@@ -249,6 +249,9 @@ func (s *Store) resumePreparedImport(ctx context.Context, stage ImportStage) err
 	if !cfg.ImportStagingProtection || !cfg.AcceptSession(reg) || cfg.DestinationID() != reg.DestinationID {
 		return nil
 	}
+	if reg.NativeImport != nil {
+		return s.resumeOwnedNativeImport(ctx, stage, reg, cfg)
+	}
 	var batch struct {
 		ID            string     `json:"id"`
 		DestinationID string     `json:"destination_id"`

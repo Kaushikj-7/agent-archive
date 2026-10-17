@@ -122,6 +122,12 @@ func newHistoricalNativeStage(t *testing.T) historicalNativeStage {
 	if err := config.Save(store.Home(), cfg); err != nil {
 		t.Fatal(err)
 	}
+	scope := archive.NativeImportBatchScope{BatchID: reg.ImportBatch.Recorded(), StartedAtUTC: at.UTC().Format(time.RFC3339Nano), DestinationID: reg.DestinationID, Filters: archive.ImportBatchFilters{Harnesses: []string{"muse"}, ProjectIDs: []string{}}, ProjectIDs: []string{reg.ProjectID}, Selected: []archive.NativeImportBatchSelection{{Kind: "ordinary-root", NativeID: reg.NativeSessionID, OriginalTUTC: reg.SessionStartedAt.UTC().Format(time.RFC3339Nano), ProjectID: reg.ProjectID, RootFingerprint: reg.NativeImport.Confirmation.RootFingerprint, RootRevision: reg.NativeBinding.RootRevision, BindingSHA256: reg.NativeImport.Confirmation.SelectedBindingSHA256, Source: *reg.NativeBinding.Checkpoint}}}
+	reg.NativeImport.Confirmation.ScopeSHA256, err = archive.NativeImportBatchScopeDigest(t.Context(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmation := archive.NativeImportBatchControl{ID: scope.BatchID, StartedAt: at, DestinationID: reg.DestinationID, Filters: scope.Filters, NativeImport: &archive.NativeImportBatchConfirmation{Contract: "muse-historical-import-v1", Instance: reg.NativeImport.Confirmation.BatchInstance, ScopeSHA256: reg.NativeImport.Confirmation.ScopeSHA256, Scope: scope}}
 	if err := reg.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -142,10 +148,7 @@ func newHistoricalNativeStage(t *testing.T) historicalNativeStage {
 	if err := local.Write(filepath.Join(store.Home(), "registrations", reg.ArchiveSessionID+".json"), reg); err != nil {
 		t.Fatal(err)
 	}
-	confirmation := struct {
-		ID            string `json:"id"`
-		DestinationID string `json:"destination_id"`
-	}{reg.ImportBatch.Recorded(), reg.DestinationID}
+
 	if err := local.Write(filepath.Join(store.Home(), "imports", reg.ImportBatch.Recorded()+".json"), confirmation); err != nil {
 		t.Fatal(err)
 	}

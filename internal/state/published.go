@@ -487,7 +487,9 @@ func (s *Store) loadPublishedStateContext(ctx context.Context, archiveSessionID 
 	return p, nil
 }
 
-func (p *Published) write(next publishedState) error {
+func (p *Published) write(next publishedState) error { return p.writeWithStaged(next, nil) }
+
+func (p *Published) writeWithStaged(next publishedState, staged *PendingPublication) error {
 	if err := p.preserveStagedPublished(p.store.durableContext(), &next); err != nil {
 		return err
 	}
@@ -551,6 +553,14 @@ func (p *Published) write(next publishedState) error {
 				return p.store.publicationAfterSavedRoot(home.Root)
 			}
 			return nil
+		})
+	} else if next.PublicationVersion == 3 && next.LastPublished != nil && next.LastPublished.StagedProof() != nil && next.LastPublished.StagedProof().Core.NativeImportAuthority != "" {
+		guard, err := p.store.nativeImportStagedCommit(p.store.durableContext(), p.id, staged, &next)
+		if err != nil {
+			return err
+		}
+		writeErr = config.WithDurableStorage(p.store.home, func(g config.DurableStorageGuard) error {
+			return p.store.writeDurableGuardWitnessed(p.store.durableContext(), g, filepath.Join("published", p.id+".json"), next, guard)
 		})
 	} else {
 		writeErr = p.store.writeCompact(p.store.publishedPath(p.id), next)

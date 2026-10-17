@@ -2,8 +2,10 @@ package state
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -47,6 +49,17 @@ func historicalNativeRegistrationFromOwner(t *testing.T, f nativeAdmissionFixtur
 		t.Fatal(err)
 	}
 	owner.NativeImport = &archive.NativeImport{Contract: "muse-historical-import-v1", Confirmation: archive.NativeImportConfirmation{BatchID: owner.ImportBatch.Recorded(), BatchInstance: strings.Repeat("a", 32), ScopeSHA256: strings.Repeat("b", 64), DestinationID: owner.DestinationID, ProjectID: owner.ProjectID, RootFingerprint: root, SelectedBindingSHA256: binding, SelectedSource: *owner.NativeBinding.Checkpoint}, Membership: archive.NativeImportMembership{ReceiptID: strings.Repeat("c", 32), State: "attached", Effects: []string{"registration"}}}
+	scope := archive.NativeImportBatchScope{BatchID: owner.ImportBatch.Recorded(), StartedAtUTC: owner.AdmittedAt.UTC().Format(time.RFC3339Nano), DestinationID: owner.DestinationID, Filters: archive.ImportBatchFilters{Harnesses: []string{"muse"}, ProjectIDs: []string{}}, ProjectIDs: []string{owner.ProjectID}, Selected: []archive.NativeImportBatchSelection{{Kind: "ordinary-root", NativeID: owner.NativeSessionID, OriginalTUTC: owner.SessionStartedAt.UTC().Format(time.RFC3339Nano), ProjectID: owner.ProjectID, RootFingerprint: root, RootRevision: owner.NativeBinding.RootRevision, BindingSHA256: binding, Source: *owner.NativeBinding.Checkpoint}}}
+	owner.NativeImport.Confirmation.ScopeSHA256, err = archive.NativeImportBatchScopeDigest(t.Context(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := archive.NativeImportBatchControl{ID: scope.BatchID, StartedAt: owner.AdmittedAt, DestinationID: owner.DestinationID, Filters: scope.Filters, NativeImport: &archive.NativeImportBatchConfirmation{Contract: "muse-historical-import-v1", Instance: owner.NativeImport.Confirmation.BatchInstance, ScopeSHA256: owner.NativeImport.Confirmation.ScopeSHA256, Scope: scope}}
+	// Explicit control arrangement accompanies this already-owned test receipt;
+	// it is not the purpose-specific confirmation/admission producer.
+	if err := local.Write(filepath.Join(f.store.home, "imports", scope.BatchID+".json"), control); err != nil {
+		t.Fatal(err)
+	}
 	if err := owner.Validate(); err != nil {
 		t.Fatal(err)
 	}

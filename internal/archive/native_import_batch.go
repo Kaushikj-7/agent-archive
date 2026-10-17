@@ -198,7 +198,7 @@ func (s *NativeImportBatchScope) UnmarshalJSON(raw []byte) error {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return err
 	}
-	if err := nativeImportClosedObject(fields.Filters, MaxNativeImportBatchBytes, []string{"harnesses", "project_ids", "include_home", "include_temp", "include_removed"}, []string{"mapping_digest", "since", "until", "since_arg", "until_arg"}); err != nil {
+	if err := nativeImportBatchFilterKeys(fields.Filters); err != nil {
 		return err
 	}
 	value := NativeImportBatchScope(next)
@@ -234,3 +234,7 @@ func (s *NativeImportBatchSelection) UnmarshalJSON(raw []byte) error {
 func ValidImportBatchID(id string) bool { return importBatchIDPattern.MatchString(id) }
 
 var importBatchIDPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}-[1-9][0-9]{0,5}$`)
+
+func nativeImportBatchFilterKeys(raw []byte) error {
+	return nativeImportClosedObject(raw, MaxNativeImportBatchBytes, []string{"harnesses", "project_ids", "include_home", "include_temp", "include_removed"}, []string{"mapping_digest", "since", "until", "since_arg", "until_arg"})
+}

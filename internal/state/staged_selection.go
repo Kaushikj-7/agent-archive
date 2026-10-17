@@ -182,7 +182,7 @@ func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingP
 	if err != nil {
 		return p, err
 	}
-	if err := nativeImportConfiguredRoot(cfg, reg); err != nil {
+	if err := errors.Join(nativeImportConfiguredRoot(cfg, reg), s.nativeImportCurrentBatch(ctx, reg)); err != nil {
 		return p, err
 	}
 	if !readySelectionOwnerMatches(reg, p.Bundle) || p.Bundle.History != nil || p.History != nil || p.MetadataOnly {
@@ -360,7 +360,7 @@ func (p *Published) saveStagedPublication(pending PendingPublication, at time.Ti
 	proof := *pending.StagedProof()
 	next.LastPublished.setStagedProof(&proof)
 	next.PublicationVersion = proof.Version
-	return p.write(next)
+	return p.writeWithStaged(next, &pending)
 }
 
 func (p *Published) preserveStagedPublished(ctx context.Context, next *publishedState) error {
