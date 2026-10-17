@@ -93,12 +93,8 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 		if r.Version == 0 {
 			continue
 		}
-		run := str(r.Fields["run_id"])
-		if r.Type == payloadRuntimeUserIntentMaterialized {
-			families.runs[run] = true
-		}
-		if newFamily(r) && (!families.runs[run] || families.observe(r) != nil) {
-			return view, nil, errFormat
+		if err := families.observeRow(r); err != nil {
+			return view, nil, err
 		}
 		ts := time.UnixMicro(r.Timestamp).UTC()
 		if ts.After(view.LatestRecordAt) {
@@ -109,14 +105,9 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 		case payloadApprovalWaitStarted, payloadApprovalWaitTerminal, payloadToolBatchStarted, payloadToolBatchTerminal:
 			// Omitted private effects do not create conversation facts.
 		case payloadRuntimeUserIntentAccepted:
-			id := str(f["intent_id"])
-			if id == "" {
-				return view, nil, errFormat
+			if err := acceptIntent(r, accepted); err != nil {
+				return view, nil, err
 			}
-			if _, ok := accepted[id]; ok {
-				return view, nil, errFormat
-			}
-			accepted[id] = r
 		case payloadRuntimeSession:
 			if str(f["kind"]) != "run" {
 				continue
@@ -239,4 +230,16 @@ func observeCompletion(r retained, joined map[string]bool, last map[string]int64
 func newConversationRun(f map[string]any, run string, started map[string]int) bool {
 	_, exists := started[run]
 	return conversationSourceShape(f) && !exists
+}
+
+func acceptIntent(r retained, accepted map[string]retained) error {
+	id := str(r.Fields["intent_id"])
+	if id == "" {
+		return errFormat
+	}
+	if _, exists := accepted[id]; exists {
+		return errFormat
+	}
+	accepted[id] = r
+	return nil
 }

@@ -60,8 +60,7 @@ func (Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 	reader := bufio.NewReaderSize(io.NewSectionReader(in.File, 0, in.File.Length()), 4096)
 	rows := []logicalRow{}
 	gaps := privacyGaps{}
-	line := int64(0)
-	encodedTotal := int64(0)
+	line, encodedTotal := int64(0), int64(0)
 	nativeJoins := nativeBodyJoins{}
 	// End private ownership before the earlier error-release defer runs too.
 	defer func() { nativeJoins = nativeBodyJoins{} }()
@@ -88,15 +87,7 @@ func (Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 			return out, release, errFormat
 		}
 		var decoded []logicalRow
-		var privateCharge int64
-		decoded, privateCharge, err = decodeNativeRows(raw, line, &nativeJoins)
-		if err == nil && privateCharge > 0 {
-			if !reservation.Reserve(privateCharge) {
-				err = errBudget
-			} else {
-				held += privateCharge
-			}
-		}
+		decoded, err = nativeJoins.decodeReserved(raw, line, reservation, &held)
 
 		if err == nil {
 			for _, r := range decoded {
@@ -610,4 +601,20 @@ func boundedNativeLimits(limits agentapi.ReadLimits) (int64, int64) {
 		record = archive.MaxRecordBytes
 	}
 	return raw, min(record, archive.MaxRecordBytes)
+}
+
+// decodeReserved transfers only private join ownership beyond physical decoding.
+// The caller still owns the physical reservation until it drops failed joins.
+func (s *nativeBodyJoins) decodeReserved(raw []byte, line int64, reservation *agentapi.NativeReadReservation, held *int64) ([]logicalRow, error) {
+	rows, charge, err := decodeNativeRows(raw, line, s)
+	if err != nil {
+		return nil, err
+	}
+	if charge > 0 {
+		if !reservation.Reserve(charge) {
+			return nil, errBudget
+		}
+		*held += charge
+	}
+	return rows, nil
 }

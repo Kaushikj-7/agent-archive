@@ -212,10 +212,8 @@ func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
 	if s.hasNew && s.sourceInvalid {
 		return errFormat
 	}
-	if enrichedTools(r.Fields) && str(r.Fields["event_kind"]) == string(eventAssistantToolCallsCommitted) {
-		if err := s.tools.registerCalls(r, int(r.Sequence-1), nil, p); err != nil {
-			return err
-		}
+	if err := s.observeCalls(r, p); err != nil {
+		return err
 	}
 	if !nativeNewFamily(r, p) {
 		return nil
@@ -388,4 +386,25 @@ func (s *nativeBodyJoins) readStart(r retained, p, rec map[string]any) error {
 	// Fields is the projected map owned by this row, never the native payload.
 	r.Fields["effect_join"] = committedFileReadJoin
 	return nil
+}
+
+func (s *nativeBodyJoins) observeCalls(r retained, p map[string]any) error {
+	if enrichedTools(r.Fields) && str(r.Fields["event_kind"]) == string(eventAssistantToolCallsCommitted) {
+		return s.tools.registerCalls(r, int(r.Sequence-1), nil, p)
+	}
+	return nil
+}
+
+func (s *familyState) observeRow(r retained) error {
+	run := str(r.Fields["run_id"])
+	if r.Type == payloadRuntimeUserIntentMaterialized {
+		s.runs[run] = true
+	}
+	if !newFamily(r) {
+		return nil
+	}
+	if !s.runs[run] {
+		return errFormat
+	}
+	return s.observe(r)
 }
