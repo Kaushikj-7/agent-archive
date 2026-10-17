@@ -140,6 +140,7 @@ var promptSites = classifiedCalls{
 // through a prompter. A read of standard input that waits for a person must
 // be refused when interaction is off; a read of a file need not be.
 var inputReads = classifiedCalls{
+	"capabilities.go":        {"io.Copy": 1},                           // fixed version subprocess stdout through the 4096-byte capped writer; never terminal input
 	"codex_label_host.go":    {"bufio.NewReaderSize": 1, "io.Copy": 1}, // bounded native process stdout/stderr only; never terminal input or an approval prompt
 	"setup_project_scope.go": {"json.NewDecoder": 1, "io.ReadAll": 1},  // explicit JSON or --yes file/stdin scope, never an implicit prompt
 	"pairing_receive.go":     {"io.ReadAll": 1, "bufio.NewReader": 1},  // bounded bundle input and buffered first-run answers; code/review preserve the checked terminal
