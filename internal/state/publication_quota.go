@@ -242,6 +242,8 @@ func legacyBlockedPublicationControl(p publishedState) bool {
 // unreadablePublishedCharge accounts only a stable permission-denied peer at
 // the full protected rate. It grants no validated protocol fact or replacement
 // credit; writes to that file still require publishedProtocol to succeed.
+//
+//nolint:errorlint // Only bare open errors and errno qualify; unwrapping joined failures would discard independent refusal causes.
 func (q *durableQuota) unreadablePublishedCharge(ctx context.Context, path string, expected os.FileInfo, readErr error) (int, error) {
 	openErr, ok := readErr.(*os.PathError)
 	if !ok || openErr.Op != "openat" || openErr.Path != path || (openErr.Err != syscall.EACCES && openErr.Err != syscall.EPERM) {

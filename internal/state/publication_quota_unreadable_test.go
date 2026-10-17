@@ -117,7 +117,7 @@ func TestUnreadablePublicationChargeRefusesJoinedErrorsAndChangedIdentity(t *tes
 		denied := &os.PathError{Op: "openat", Path: path, Err: syscall.EACCES}
 		closeFailure := errors.New("checked descriptor close failed")
 		for _, err := range []error{errors.Join(denied, context.Canceled), errors.Join(denied, closeFailure), errors.Join(denied, ErrDurableStorageRecovery), &os.PathError{Op: "read", Path: path, Err: syscall.EACCES}, &os.PathError{Op: "openat", Path: path + "-foreign", Err: syscall.EACCES}} {
-			if _, got := q.unreadablePublishedCharge(t.Context(), path, info, err); got != err {
+			if mode, got := q.unreadablePublishedCharge(t.Context(), path, info, err); mode != 0 || !errors.Is(got, err) {
 				t.Fatal("non-open or joined refusal was converted to accounting authority", err, got)
 			}
 		}
