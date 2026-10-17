@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -23,12 +24,17 @@ import (
 // no Published or Pending value read through the handle may outlive it.
 func (s *Store) WithReadBudget(ctx context.Context, budget *agentapi.NativeReadBudget) (*Store, func()) {
 	scoped := *s
+	scoped.pendingWrite = nil
+	if scoped.publicationAccounting != nil && scoped.publicationAccounting.budget != budget {
+		scoped.publicationAccounting = nil
+	}
 	if budget != s.resourceBudget {
 		scoped.resourceReservation = nil
 	}
 	scoped.resourceBudget = budget
 	scoped.resourceContext = ctx
 	scoped.resourceReleases = &[]func(){}
+	scoped.summaryBorrow = &publishedSummaryBorrow{}
 	var once sync.Once
 	return &scoped, func() {
 		once.Do(func() {
@@ -47,7 +53,18 @@ var errStateBudget = agentapi.ReadBudgetLimit(errors.New("local state exceeds sh
 // so a pending publication that meets it still requires recovery.
 var errStateFileUnstable = errors.New("local state file is not a stable regular file")
 
+// readBudgeted uses the context captured by WithReadBudget for this Store.
+// Explicit-context callers keep using readBudgetedContext without this boundary.
+//
+//nolint:contextcheck // durableContext supplies the original receiver-owned read scope; the analyzer cannot follow Store fields.
 func (s *Store) readBudgeted(path string, value any, retain bool) error {
+	return s.readBudgetedContext(s.durableContext(), path, value, retain)
+}
+
+func (s *Store) readBudgetedContext(ctx context.Context, path string, value any, retain bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	reservation := s.readReservation()
 	if s.resourceBudget == nil {
 		if _, published := value.(*publishedState); !published {
@@ -111,7 +128,7 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 			return err
 		}
 	}
-	if err := decodeStateJSON(data, value); err != nil {
+	if err := s.decodePublicationOwned(ctx, data, value); err != nil {
 		return err
 	}
 	if retain && s.resourceBudget != nil {
@@ -122,6 +139,7 @@ func (s *Store) readBudgeted(path string, value any, retain bool) error {
 }
 
 func (s *Store) writeCompact(path string, value any) error {
+	s.invalidatePublishedAccounting(path)
 	reservation := s.readReservation()
 	if s.resourceBudget == nil {
 		return local.WriteCompact(path, value)
@@ -148,10 +166,13 @@ func (s *Store) writeCompact(path string, value any) error {
 
 // unmarshalOwned charges an additional decoded view of bytes already owned by
 // this scope. Returned metadata has an independent lifetime from its wire input.
+// Its context and ledger come from WithReadBudget.
+//
+//nolint:contextcheck // durableContext supplies the original receiver-owned read scope; the analyzer cannot follow Store fields.
 func (s *Store) unmarshalOwned(data []byte, value any) error {
 	reservation := s.readReservation()
 	if s.resourceBudget == nil {
-		return json.Unmarshal(data, value)
+		return s.decodePublicationOwned(s.durableContext(), data, value)
 	}
 	if err := s.resourceContext.Err(); err != nil {
 		return err
@@ -160,7 +181,7 @@ func (s *Store) unmarshalOwned(data []byte, value any) error {
 	if !reservation.Reserve(n) {
 		return errStateBudget
 	}
-	if err := json.Unmarshal(data, value); err != nil {
+	if err := s.decodePublicationOwned(s.durableContext(), data, value); err != nil {
 		reservation.Release(n)
 		return err
 	}
@@ -254,22 +275,6 @@ func (p *Published) nextBudgeted(bundle archive.SourceBundle, at time.Time, stat
 	return p.state.next(bundle, at, status, reason, metadata, held, source), nil
 }
 
-// decodeStateJSON avoids encoding/json's complete-value method-dispatch scan
-// before the published decoder's own validity, authority, and full wire checks.
-// Invalid JSON still goes through encoding/json so corruption keeps its existing
-// syntax error and quarantine behavior. Other state decoders retain their route.
-func decodeStateJSON(data []byte, value any) error {
-	published, ok := value.(*publishedState)
-	if !ok {
-		return json.Unmarshal(data, value)
-	}
-	err := published.UnmarshalJSON(data)
-	if err != nil && !json.Valid(data) {
-		return json.Unmarshal(data, value)
-	}
-	return err
-}
-
 type stateReservation interface {
 	Reserve(int64) bool
 	Release(int64)
@@ -329,4 +334,26 @@ func (s *Store) ownStageValidationWire(ctx context.Context, stage ImportStage) (
 	}
 	var once sync.Once
 	return func() { once.Do(func() { owner.Release(n + scratch) }) }, nil
+}
+
+// decodePublicationOwned supplies only the inherited ledger to closed authority
+// decoding, while malformed JSON retains its existing corruption classification.
+func (s *Store) decodePublicationOwned(ctx context.Context, data []byte, value any) error {
+	var err error
+	switch p := value.(type) {
+	case *publishedState:
+		err = decodePublishedState(data, p, ctx, s.resourceBudget, s.readReservation())
+	case *PendingPublication:
+		err = decodePendingPublication(data, p, ctx, s.resourceBudget, s.readReservation())
+	default:
+		// Protected state types took the explicit-context branches above.
+		return json.Unmarshal(data, value)
+	}
+	if err != nil && !json.Valid(data) {
+		return json.Unmarshal(data, value)
+	}
+	if _, published := value.(*publishedState); published && err == nil && s.publishedReadDigest != nil {
+		*s.publishedReadDigest = sha256.Sum256(data)
+	}
+	return err
 }

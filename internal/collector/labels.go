@@ -69,14 +69,17 @@ func (p *pass) observeLabels(ctx context.Context) {
 			p.opts.labels[id] = entry
 		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
 	requests := p.prepareLabelRequests(ctx, providers, &cache, ids, eligible)
 	// Cursor's database location comes from the collector's own setting, the
 	// one its cursor-sqlite source reads; it is outside the cached scope.
 	env := p.opts.LabelEnvironment
 	env.CursorDatabase = p.opts.cursorDatabase()
 	requests = prioritizeLabelRequests(requests, providers, env, &cache)
+	// Retained context preparation is bounded by the request and byte caps.
+	// Give the native lookup its own bounded window so that preparation does
+	// not consume every cohort's opportunity before the provider is called.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	results := lookupLabelRequests(ctx, providers, env, requests)
 	p.recordLabelResults(requests, results, &cache)
 	trimLabelCache(&cache)
@@ -214,7 +217,7 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 		}
 		interpretation := "generic-label-context-v1"
 		if builder, ok := provider.(agentapi.LabelContextProvider); ok {
-			interpretation = builder.LabelContextVersion()
+			interpretation = builder.LabelContextVersion() + "/publication-codec2"
 		}
 		revision := sha256.Sum256([]byte(interpretation + "/" + archive.FilterVersion + "/" + p.opts.parserVersionFor(reg.Harness.Name)))
 		contract := hex.EncodeToString(revision[:])
@@ -240,6 +243,8 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 				if errors.Is(err, state.ErrDurableStorageRecovery) {
 					addError(p.result.Errors, id, err)
 					p.unreadable[id] = true
+					delete(cache.Entries, id)
+					delete(p.opts.labels, id)
 				}
 				continue
 			}
@@ -273,9 +278,12 @@ func (p *pass) prepareLabelRequests(ctx context.Context, providers map[string]ag
 				}
 			}
 		}
-		requests = append(requests, agentapi.LabelRequest{Registration: reg, Context: entry.Context})
 		entry.Scope = labelScope(reg, p.opts.LabelEnvironment, p.opts.MachineID)
 		cache.Entries[id] = entry
+		if entry.NextAt.After(p.now) {
+			continue
+		}
+		requests = append(requests, agentapi.LabelRequest{Registration: reg, Context: entry.Context})
 	}
 	return requests
 }

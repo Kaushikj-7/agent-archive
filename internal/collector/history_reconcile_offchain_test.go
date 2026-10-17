@@ -296,7 +296,8 @@ func withEarlierReplaceablePublication(t *testing.T) *sessionScan {
 		SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataBytes: rendered.metadata,
 		RequestToken: "earlier-request", ReadyAt: scan.now.Add(time.Minute),
 	}
-	if err := scan.local.SavePending(scan.id(), earlier); err != nil {
+	// Freeze a real current publication before exercising its replacement.
+	if err := scan.savePending(&earlier); err != nil {
 		t.Fatal(err)
 	}
 	scan.req.Token = "stop-request"

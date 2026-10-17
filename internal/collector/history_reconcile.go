@@ -278,48 +278,7 @@ func (p *revisionPlanner) stage(ctx context.Context, bundle archive.SourceBundle
 // boundaries, then delegates record semantics to the native integration. Physical
 // lengths, inherited records and copied headers are never coverage evidence.
 func ownedEvidenceCovered(adapter agentapi.TranscriptFilter, previous, candidate archive.SourceBundle) bool {
-	evidence, ok := adapter.(agentapi.RevisionEvidence)
-	if !ok || previous.Capture.FilterVersion != candidate.Capture.FilterVersion || previous.Capture.AdapterVersion != candidate.Capture.AdapterVersion || previous.Capture.SourceFormat != candidate.Capture.SourceFormat {
-		return false
-	}
-	if previous.History == nil || candidate.History == nil {
-		if revisionID(previous) != revisionID(candidate) {
-			return false
-		}
-		return adapter.EvidenceExtends(ownedRevisionProjection(evidence, previous), ownedRevisionProjection(evidence, candidate))
-	}
-	j := 0
-	for i := range previous.NativeRecords {
-		if !previous.OwnRecord(i) || !evidence.MeaningfulRevisionRecord(previous, i) {
-			continue
-		}
-		ordinal := revisionOrdinal(previous, i)
-		for j < len(candidate.NativeRecords) && (revisionOrdinal(candidate, j) < ordinal || !candidate.OwnRecord(j) || !evidence.MeaningfulRevisionRecord(candidate, j)) {
-			j++
-		}
-		if j == len(candidate.NativeRecords) || revisionOrdinal(candidate, j) != ordinal {
-			return false
-		}
-		left, right := previous, candidate
-		left.History, right.History = nil, nil
-		left.Ordinals, right.Ordinals = nil, nil
-		left.NativeRecords, right.NativeRecords = previous.NativeRecords[i:i+1], candidate.NativeRecords[j:j+1]
-		left.NativeText, right.NativeText = nil, nil
-		if !adapter.EvidenceExtends(left, right) {
-			return false
-		}
-	}
-	return true
-}
-
-func revisionOrdinal(bundle archive.SourceBundle, index int) uint64 {
-	if bundle.History != nil {
-		return bundle.Ordinals[index]
-	}
-	if index < 0 {
-		return 0
-	}
-	return uint64(index)
+	return agentapi.OwnedEvidenceCovered(adapter, previous, candidate)
 }
 
 // historyInputs supplies the existing frozen preparation engine's input shape.
@@ -451,20 +410,6 @@ func (p *revisionPlanner) checkStageEvidence(ctx context.Context, bundle archive
 		size += int(n)
 	}
 	return size, nil
-}
-
-// Legacy source2 has no raw ordinal proof. Its ordered native evidence can only
-// verify an extension of that same physical ordinary source, never another tip.
-func ownedRevisionProjection(evidence agentapi.RevisionEvidence, bundle archive.SourceBundle) archive.SourceBundle {
-	records := make([]map[string]any, 0, len(bundle.NativeRecords))
-	for i, record := range bundle.NativeRecords {
-		if bundle.OwnRecord(i) && evidence.MeaningfulRevisionRecord(bundle, i) {
-			records = append(records, record)
-		}
-	}
-	bundle.NativeRecords, bundle.History, bundle.Ordinals = records, nil, nil
-	bundle.NativeText = nil
-	return bundle
 }
 
 func (p *revisionPlanner) dropCoveredLegacyStage(bundle archive.SourceBundle) {

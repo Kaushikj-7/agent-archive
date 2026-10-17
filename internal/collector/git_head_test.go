@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -133,29 +133,113 @@ func stopAtNewCommit(t *testing.T, local *state.Store, reg archive.SessionRegist
 	return last
 }
 
-// A publication made before metadata was cached locally still gets the
-// commit a later stop recorded, at the same parser version.
-func TestStopCommitPublishesForLegacyPublication(t *testing.T) {
+// Fetched metadata cannot replace missing durable predecessor bytes.
+func TestStopCommitLegacyMissingBodyRemainsUnknown(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)
+	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
+	remote := &privacyPutStore{ObjectStore: storagetest.NewMemoryStore()}
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
+	publishOnce(t, local, remote, reg, &opts)
+	editPublishedState(t, local, func(raw map[string]any) { delete(raw, "metadata_bytes") })
+	stopAtNewCommit(t, local, reg, now.Add(time.Minute))
+	assertUnknownStopCommitRetained(t, local, remote, reg, &now, opts)
+}
+
+func assertUnknownStopCommitRetained(t *testing.T, local *state.Store, remote *privacyPutStore, reg archive.SessionRegistration, now *time.Time, opts Options) {
+	t.Helper()
+	prior, err := os.ReadFile(publishedPath(local, reg.ArchiveSessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := os.ReadFile(requestPath(local, reg.ArchiveSessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote.puts = nil
+	for pass := range 2 {
+		local, err = state.Open(local.Home())
+		if err != nil {
+			t.Fatal(err)
+		}
+		*now = now.Add(time.Hour)
+		result, err := Run(t.Context(), local, remote, opts)
+		if err != nil || !errors.Is(result.Errors[reg.ArchiveSessionID], storage.ErrPublicationConflict) || len(result.Published) != 0 || len(remote.puts) != 0 {
+			t.Fatalf("unknown stop attempt %d: %+v %v puts=%v", pass, result, err, remote.puts)
+		}
+		got, err := os.ReadFile(publishedPath(local, reg.ArchiveSessionID))
+		if err != nil || !bytes.Equal(got, prior) {
+			t.Fatalf("legacy predecessor changed: %v", err)
+		}
+		got, err = os.ReadFile(requestPath(local, reg.ArchiveSessionID))
+		if err != nil || !bytes.Equal(got, request) {
+			t.Fatalf("original stop request changed: %v", err)
+		}
+		published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+		if err != nil || published.PublicationPredecessor().State != state.PredecessorUnknown {
+			t.Fatalf("unknown predecessor lost: %v", err)
+		}
+	}
+}
+
+// The existing legacy SavePublication producer retains complete local metadata,
+// so a HEAD-only successor has exact replacement authority.
+func TestStopCommitPublishesForCompleteLegacyMetadata(t *testing.T) {
+	t.Parallel()
+	producer := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
 	reg.StartHead = &archive.GitHead{SHA: strings.Repeat("3f", 20), ObservedAt: reg.RegisteredAt}
 	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
-	publishOnce(t, local, remote, reg, &opts)
-	if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
+	metadata := publishOnce(t, producer, remote, reg, &opts)
+	prior, err := producer.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	bundle, at, found := prior.LastPublished()
+	if !found {
+		t.Fatal("producer did not publish")
+	}
+	local := newTestStore(t)
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := local.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.SavePublication(bundle, at, metadata.SourceBundle, prior.Metadata()); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.PublicationPredecessor().State != state.PredecessorPresent {
+		t.Fatal("complete legacy predecessor missing")
 	}
 	last := stopAtNewCommit(t, local, reg, now.Add(time.Minute))
 	now = now.Add(time.Hour)
-	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
-		t.Fatalf("run: %+v %v", result, err)
+	result, err := Run(t.Context(), local, remote, opts)
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatalf("complete legacy stop: %+v %v", result, err)
 	}
 	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
 	if after.GitHead == nil || after.GitHead.Last == nil || after.GitHead.Last.SHA != last.SHA {
-		t.Fatalf("legacy publication lost the stop commit: %+v", after.GitHead)
+		t.Fatalf("legacy publication lost stop: %+v", after.GitHead)
 	}
+	if request, found, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || !found || len(request.Reasons) != 1 || request.Reasons[0] != "stop" {
+		t.Fatalf("HEAD-only refresh consumed uncaptured stop request: %+v %v %v", request, found, err)
+	}
+	// A subsequent actual unchanged capture covers that live request, after the
+	// HEAD selection is durably installed; the metadata-only ACK did not.
+	now = now.Add(time.Hour)
+	result, err = Run(t.Context(), local, remote, opts)
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
+		t.Fatalf("complete legacy stop followup: %+v %v", result, err)
+	}
+	if _, found, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || found {
+		t.Fatalf("covered unchanged stop request retained: %v %v", found, err)
+	}
+
 }
 
 // A HEAD-only publication whose source has gone from storage re-uploads the
@@ -352,34 +436,26 @@ func (s *failingMetadataGets) GetVersioned(ctx context.Context, key string) ([]b
 	return s.MemoryStore.GetVersioned(ctx, key)
 }
 
-// A publication without cached metadata whose sidecar cannot be read for a
-// pass does not count the registration's commit as published: once storage
-// answers again, the commit is.
-func TestStopCommitWaitsForUnreadableLegacyMetadata(t *testing.T) {
+// Restored remote readability still cannot mint a missing durable predecessor.
+func TestStopCommitLegacyMissingBodyRemainsUnknownAfterReadFailure(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
-	remote := &failingMetadataGets{MemoryStore: storagetest.NewMemoryStore()}
+	failing := &failingMetadataGets{MemoryStore: storagetest.NewMemoryStore()}
+	remote := &privacyPutStore{ObjectStore: failing}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", RepoKey: (&countingLookup{}).lookup, Now: func() time.Time { return now }}
 	publishOnce(t, local, remote, reg, &opts)
-	if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
-		t.Fatal(err)
-	}
-	last := stopAtNewCommit(t, local, reg, now.Add(time.Minute))
-	remote.failing = true
+	editPublishedState(t, local, func(raw map[string]any) { delete(raw, "metadata_bytes") })
+	stopAtNewCommit(t, local, reg, now.Add(time.Minute))
+	failing.failing = true
 	now = now.Add(time.Hour)
-	if _, err := Run(context.Background(), local, remote, opts); err != nil {
-		t.Fatal(err)
+	remote.puts = nil
+	if result, err := Run(t.Context(), local, remote, opts); err != nil || len(result.Published) != 0 || len(remote.puts) != 0 {
+		t.Fatalf("unreadable attempt: %+v %v", result, err)
 	}
-	remote.failing = false
-	now = now.Add(time.Hour)
-	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
-		t.Fatalf("run: %+v %v", result, err)
-	}
-	if got := publishedLast(t, remote.MemoryStore, reg.ArchiveSessionID); got == nil || got.SHA != last.SHA {
-		t.Fatalf("published last = %+v, want %s", got, last.SHA)
-	}
+	failing.failing = false
+	assertUnknownStopCommitRetained(t, local, remote, reg, &now, opts)
 }
 
 // A remembered read failure does not hide a moved commit: the session is
@@ -411,5 +487,43 @@ func TestStopCommitIsNotHiddenByARememberedFailure(t *testing.T) {
 	stored.LastHead = &archive.GitHead{SHA: strings.Repeat("9e", 20), ObservedAt: now.Add(time.Minute)}
 	if unchanged(t, local, stored, opts) {
 		t.Error("a moved commit is hidden behind the remembered failure")
+	}
+}
+
+func (s *failingMetadataGets) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	if s.failing && strings.HasSuffix(key, "/metadata.json") {
+		return nil, "", errors.New("storage unavailable")
+	}
+	return s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
+}
+
+func TestUnchangedNoValidCurrentHeadDoesNotInventHeadDebt(t *testing.T) {
+	for _, current := range []*archive.GitHead{nil, {SHA: "invalid"}} {
+		t.Run(headFingerprint(current)+"absent-or-invalid", func(t *testing.T) {
+			local := newTestStore(t)
+			reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
+			reg.LastHead = &archive.GitHead{SHA: strings.Repeat("9e", 20), ObservedAt: reg.RegisteredAt}
+			remote := &failingMetadataGets{MemoryStore: storagetest.NewMemoryStore()}
+			now := reg.RegisteredAt.Add(time.Hour)
+			opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "machine", Now: func() time.Time { return now }}
+			publishOnce(t, local, remote, reg, &opts)
+			// No valid current observation claims that a different HEAD is owed.
+			editPublishedState(t, local, func(raw map[string]any) { delete(raw, "metadata_bytes") })
+			if _, err := local.UpdateRegistration(reg.ArchiveSessionID, func(r *archive.SessionRegistration) error { r.LastHead = current; return nil }); err != nil {
+				t.Fatal(err)
+			}
+			if err := local.SaveRequest(reg.ArchiveSessionID, "stop", now); err != nil {
+				t.Fatal(err)
+			}
+			remote.failing = true
+			now = now.Add(time.Hour)
+			result, err := Run(t.Context(), local, remote, opts)
+			if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
+				t.Fatalf("invented head debt: %+v %v", result, err)
+			}
+			if _, found, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || found {
+				t.Fatalf("unchanged request not completed: %v %v", found, err)
+			}
+		})
 	}
 }

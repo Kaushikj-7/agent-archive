@@ -196,10 +196,14 @@ func TestForgetIdleSessionKeepsTheRecordWhenTheForgetFailsPartWay(t *testing.T) 
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	// A non-empty directory where the published cache belongs cannot be
-	// removed, and it is removed after the registration.
-	if err := os.MkdirAll(filepath.Join(local.publishedPath(reg.ArchiveSessionID), "blocker"), 0o700); err != nil {
-		t.Fatal(err)
+	// The current durable preflight correctly refuses a non-file published
+	// control before removing any registration. Inject this partial failure at
+	// the existing later index boundary, after actual registration removal.
+	local.onIndexStep = func(step string) error {
+		if step == "forget-indexes" {
+			return errors.New("synthetic partial forget after registration removal")
+		}
+		return nil
 	}
 	removal := &RemovalRecord{Harness: "codex", Reason: RemovalReasonRetention, At: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)}
 	forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, removal)
@@ -211,6 +215,28 @@ func TestForgetIdleSessionKeepsTheRecordWhenTheForgetFailsPartWay(t *testing.T) 
 	}
 	if _, found, err := local.Removal("codex", reg.NativeSessionID); err != nil || !found {
 		t.Fatalf("a half-forgotten session lost its removal record: found=%t err=%v", found, err)
+	}
+}
+
+func TestForgetIdleSessionRefusesUnsafePublishedControlBeforeRemoval(t *testing.T) {
+	local := newTestStore(t)
+	reg := registration(t)
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(local.publishedPath(reg.ArchiveSessionID), "blocker"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	removal := &RemovalRecord{Harness: "codex", Reason: RemovalReasonRetention, At: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)}
+	forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(reg.Harness.Name)), NativeID: reg.NativeSessionID}, true, removal)
+	if !errors.Is(err, ErrDurableStorageRecovery) || forgotten {
+		t.Fatal("unsafe control passed forget preflight", forgotten, err)
+	}
+	if _, found, err := local.LoadRegistration(reg.ArchiveSessionID); err != nil || !found {
+		t.Fatal("unsafe control removed registration", found, err)
+	}
+	if _, found, err := local.Removal("codex", reg.NativeSessionID); err != nil || found {
+		t.Fatal("refusal retained a new removal authority", found, err)
 	}
 }
 

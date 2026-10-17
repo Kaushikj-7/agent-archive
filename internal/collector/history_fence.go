@@ -28,7 +28,7 @@ func (s *sessionScan) checkRetainedHistory() error {
 	return nil
 }
 
-func (s *sessionScan) checkHistoryPublication(p state.PendingPublication) error {
+func (s *sessionScan) checkHistoryPublicationLocal(p state.PendingPublication) error {
 	mark := len(s.retainedReleases)
 	defer s.releaseRetainedAfter(mark)
 	var next archive.Metadata
@@ -39,30 +39,52 @@ func (s *sessionScan) checkHistoryPublication(p state.PendingPublication) error 
 		if p.History.Preparing {
 			return archive.ErrHistoryMutationPending
 		}
-		_, err := s.checkFrozenHistoryMetadata(p)
+		_, err := s.frozenHistoryMetadata(p)
 		return err
 	}
-	if err := archive.CheckHistoryMutation(p.Bundle, next); err != nil {
+	return archive.CheckHistoryMutation(p.Bundle, next)
+}
+
+func (s *sessionScan) checkHistoryPublicationBody(p state.PendingPublication, raw []byte) error {
+	mark := len(s.retainedReleases)
+	defer s.releaseRetainedAfter(mark)
+	if err := s.checkHistoryPublicationLocal(p); err != nil {
 		return err
 	}
-	if s.reg.Harness.Name != "codex" {
+	if p.History != nil {
+		if len(raw) == 0 {
+			if p.History.ExpectedMetadataSHA256 != "" {
+				return errHistoryMetadataConflict
+			}
+			return nil
+		}
+		if metadataSHA(raw) == metadataSHA(p.MetadataBytes) {
+			return nil
+		}
+		if p.History.ExpectedMetadataSHA256 == "" || metadataSHA(raw) != p.History.ExpectedMetadataSHA256 {
+			return errHistoryMetadataConflict
+		}
+		var previous archive.Metadata
+		if err := s.unmarshalRetained(raw, &previous); err != nil {
+			return err
+		}
+		if _, err := previous.SourceReferences(); err != nil {
+			return err
+		}
+		return s.validateAuthorityIdentity(previous)
+	}
+	if s.reg.Harness.Name != "codex" || len(raw) == 0 {
 		return nil
-	}
-	// Lost local state cannot authorize flattening a readable remote history sidecar.
-	raw, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
-	if errors.Is(err, storage.ErrNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
 	}
 	var previous archive.Metadata
 	if err := s.unmarshalRetained(raw, &previous); err != nil {
 		return err
 	}
 	if err := archive.CheckHistoryMutation(archive.SourceBundle{}, previous); err != nil {
-		return err
+		// A decoded remote history body is a conflicting position for an
+		// ordinary publication, as well as unsupported lifecycle mutation.
+		return errors.Join(storage.ErrPublicationConflict, err)
 	}
-	_, err = previous.SourceReferences()
+	_, err := previous.SourceReferences()
 	return err
 }

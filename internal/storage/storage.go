@@ -368,7 +368,19 @@ func verifyStoredObject(ctx context.Context, store ObjectStore, key, sha256Hex s
 			return nil
 		}
 	}
-	data, err := ReadAndVerify(ctx, store, key, sha256Hex)
+	var data []byte
+	var err error
+	if getter, ok := store.(LimitedGetter); ok && size > 0 {
+		data, err = getter.GetLimited(ctx, key, int64(size))
+		if errors.Is(err, ErrObjectTooLarge) {
+			err = fmt.Errorf("%w for %q", ErrChecksumMismatch, key)
+		}
+		if err == nil && !VerifySHA256(data, sha256Hex) {
+			err = ErrChecksumMismatch
+		}
+	} else {
+		data, err = ReadAndVerify(ctx, store, key, sha256Hex)
+	}
 	if err != nil {
 		return err
 	}

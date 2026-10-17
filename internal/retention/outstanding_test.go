@@ -1,7 +1,9 @@
 package retention
 
 import (
+	"encoding/json"
 	"fmt"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"path/filepath"
 	"testing"
 	"time"
@@ -151,7 +153,7 @@ func TestExpiryDeferralMatchesTheRuleBeforeOutstanding(t *testing.T) {
 					if err := local.SaveRegistration(reg); err != nil {
 						t.Fatal(err)
 					}
-					bundle := archive.SourceBundle{Capture: archive.SourceCapture{Harness: reg.Harness, CapturedAt: t0}}
+					var bundle archive.SourceBundle
 					switch capture {
 					case "":
 					case state.CacheStatusPublished, state.CacheStatusRateLimited:
@@ -171,6 +173,9 @@ func TestExpiryDeferralMatchesTheRuleBeforeOutstanding(t *testing.T) {
 							}
 						}
 					case state.CacheStatusBlocked, state.CacheStatusDeclined:
+						// The cached nonpublished candidate also carries complete
+						// owning identity before guarded pending admission.
+						bundle = expiryPending(t, reg, t0).Bundle
 						published, err := local.LoadPublishedState("s1")
 						if err != nil {
 							t.Fatal(err)
@@ -190,9 +195,12 @@ func TestExpiryDeferralMatchesTheRuleBeforeOutstanding(t *testing.T) {
 						}
 					}
 					if upload {
-						if err := local.SavePending("s1", state.PendingPublication{
-							Bundle: bundle, SourceKey: "k", MetadataKey: "m", SourceSHA256: "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a", SourceBytes: []byte{1}, MetadataBytes: []byte(`{}`),
-						}); err != nil {
+						// Upload debt is a complete real source/metadata envelope, even
+						// when the cache facet is blocked or declined. These
+						// facets remain independent; malformed authority is
+						// not a way to model ordinary outstanding work.
+						pending := expiryPending(t, reg, t0)
+						if err := local.SavePending("s1", pending); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -215,4 +223,38 @@ func TestExpiryDeferralMatchesTheRuleBeforeOutstanding(t *testing.T) {
 			}
 		}
 	}
+}
+
+func expiryPending(t *testing.T, reg archive.SessionRegistration, at time.Time) state.PendingPublication {
+	t.Helper()
+	_, filter, ok := builtin.NewBuiltins().LookupSources(reg.Harness.Name)
+	if !ok {
+		t.Fatal("missing actual registered source codec")
+	}
+	bundle, err := archive.NewSourceBundle(reg, filter, archive.FilteredTranscript{Format: "synthetic-retained-jsonl", Records: [][]byte{[]byte(`{"type":"turn_context","model":"synthetic"}`)}}, at, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packed, err := archive.BuildCompressedSource(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := archive.SourceObjectKey(bundle, packed.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}
+	metadata, err := archive.BuildMetadataWithAnalysis(bundle, archive.Analysis{}, nil, "m", reg.SessionStartedAt, at, ref, archive.ParserInfo{Name: reg.Harness.Name, Version: filter.Version()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataKey, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state.PendingPublication{Bundle: bundle, SourceKey: key, MetadataKey: metadataKey, SourceSHA256: packed.SHA256, SourceBytes: packed.Bytes, MetadataBytes: body}
 }

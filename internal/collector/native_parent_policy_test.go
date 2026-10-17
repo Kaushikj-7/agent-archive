@@ -135,7 +135,14 @@ func TestNativeParentPolicySuccessorPreservesOriginalHeaderAuthority(t *testing.
 			if _, err := scan.resumeHistory(scan.ctx, p); !errors.Is(err, archive.ErrHistoryMutationPending) {
 				t.Fatal("completed repair policy successor", err)
 			}
-			next, found, err := scan.local.LoadPending(scan.id())
+			if _, found, err := scan.local.LoadPending(scan.id()); !found || !errors.Is(err, state.ErrDurableStorageRecovery) {
+				t.Fatal("generic reader bypassed privacy original", found, err)
+			}
+			restarted, err := state.Open(scan.local.Home())
+			if err != nil {
+				t.Fatal(err)
+			}
+			next, found, err := restarted.LoadPublicationPending(scan.id())
 			if err != nil || !found {
 				t.Fatal(err)
 			}

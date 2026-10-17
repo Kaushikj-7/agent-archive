@@ -58,17 +58,6 @@ func (s *sessionScan) rewrittenSinceCapture(read sourceRead) (bool, error) {
 	return read.observed.size() < signature.TranscriptSize, nil
 }
 
-// refilterBundle filters a retained snapshot's records again with adapter
-// (the current filter), keeping its capture time, its supplemental evidence
-// (filtered again by NewSourceBundle), and its capture gaps. Filtered output
-// is valid filter input and refilters unchanged under the same rules
-// (FuzzFilterJSONL, FuzzCursorText), so under newer rules only what they
-// now drop or redact changes. What the earlier filter already dropped stays
-// dropped.
-func refilterBundle(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle) (archive.SourceBundle, error) {
-	return refilterBundleBounded(ctx, reg, adapter, bundle, agentapi.ReadLimits{})
-}
-
 func refilterBundleBounded(ctx context.Context, reg archive.SessionRegistration, adapter archive.Adapter, bundle archive.SourceBundle, limits agentapi.ReadLimits) (archive.SourceBundle, error) {
 	if err := ctx.Err(); err != nil {
 		return archive.SourceBundle{}, err
@@ -76,7 +65,7 @@ func refilterBundleBounded(ctx context.Context, reg archive.SessionRegistration,
 	if bundle.SchemaVersion != archive.SourceSchemaVersion && bundle.SchemaVersion != archive.HistorySourceSchemaVersion {
 		return archive.SourceBundle{}, errors.New("unsupported retained source schema")
 	}
-	if bundle.ArchiveSessionID != reg.ArchiveSessionID || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name || !retainedParentMatches(reg, bundle) {
+	if bundle.ArchiveSessionID != reg.ArchiveSessionID || bundle.NativeSessionID != reg.NativeSessionID || bundle.ProjectID != reg.ProjectID || bundle.Capture.Harness.Name != reg.Harness.Name || (bundle.ParentSessionID != reg.ParentSessionID && (!agentapi.RetainedNativeChildOwned(reg, bundle) || bundle.ParentSessionID != "")) {
 		return archive.SourceBundle{}, errors.New("retained refilter identity mismatch")
 	}
 	if err := bundle.ValidateHistory(); err != nil {
@@ -182,13 +171,6 @@ func (s *sessionScan) refilterRewritten(_ context.Context, read sourceRead, snap
 	return refiltered, true, nil
 }
 
-// Native parent links may resolve after a retained revision was captured. The
-// stable child owner still identifies that earlier evidence; a different known
-// parent remains a conflict.
-func retainedParentMatches(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
-	return bundle.ParentSessionID == reg.ParentSessionID || nativeChildOwned(reg, bundle) && bundle.ParentSessionID == ""
-}
-
 // Only positively identified native child evidence can acquire its first archive parent.
 func nativeParentResolved(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
 	return nativeChildOwned(reg, bundle) && bundle.ParentSessionID == "" && reg.ParentSessionID != ""
@@ -198,18 +180,7 @@ func nativeParentResolved(reg archive.SessionRegistration, bundle archive.Source
 // admitted owner and a supported persisted child binding may upgrade it; parent
 // links and current native observations cannot supply that proof.
 func nativeChildOwned(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {
-	if !reg.NativeChild {
-		return false
-	}
-	if bundle.NativeChild {
-		return true
-	}
-	binding := reg.CodexBinding
-	return binding != nil && binding.Child && binding.Validate() == nil &&
-		reg.Harness.Name == archive.HarnessCodex && bundle.Capture.Harness.Name == archive.HarnessCodex &&
-		binding.NativeThreadID == reg.NativeSessionID && bundle.NativeSessionID == reg.NativeSessionID &&
-		bundle.ArchiveSessionID == reg.ArchiveSessionID && bundle.ProjectID == reg.ProjectID &&
-		binding.Home != "" && nativeBindingRelationshipsMatch(reg, binding)
+	return agentapi.RetainedNativeChildOwned(reg, bundle)
 }
 
 func nativeChildMarkerPending(reg archive.SessionRegistration, bundle archive.SourceBundle) bool {

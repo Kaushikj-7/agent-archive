@@ -11,12 +11,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 )
 
 // CacheStatus distinguishes why a bundle sits in the local published cache,
@@ -78,17 +80,26 @@ func (r BlockedReason) Recoverable() bool { return r == BlockedReasonTranscriptM
 // when that happened, and why the bundle is in the state it's in. It is the
 // JSON of published/<id>.json.
 type publishedState struct {
+	settlePrivacy      bool
 	PublicationVersion int `json:"publication_version,omitempty"`
 	// Summary restates, ahead of everything else in the file, the few facts
 	// a caller that is not scanning the session needs (see
 	// LoadPublishedSummary), so they can be read without decoding the source
 	// bundles that follow. write keeps it in step; state written before it
 	// existed has none and is decoded in full instead.
-	Summary       *PublishedSummary    `json:"summary,omitempty"`
-	MetadataBytes []byte               `json:"metadata_bytes,omitempty"`
-	Bundle        archive.SourceBundle `json:"bundle"`
-	PublishedAt   time.Time            `json:"published_at"`
-	Status        CacheStatus          `json:"status"`
+	Summary            *PublishedSummary          `json:"summary,omitempty"`
+	PrivacyReceipts    []PrivacySource            `json:"privacy_receipts,omitempty"`
+	SettledPrivacy     *SettledPrivacyPreparation `json:"settled_privacy,omitempty"`
+	Preparation        *PreparationAuthority      `json:"preparation,omitempty"`
+	Payloads           []PublicationSource        `json:"payloads,omitempty"`
+	Cleanup            *CleanupProgress           `json:"cleanup,omitempty"`
+	Commit             *PublicationCommit         `json:"source_set_commit5,omitempty"`
+	Sources            []archive.SourceReference  `json:"sources,omitempty"`
+	PredecessorUnknown bool                       `json:"predecessor_unknown,omitempty"`
+	MetadataBytes      []byte                     `json:"metadata_bytes,omitempty"`
+	Bundle             archive.SourceBundle       `json:"bundle"`
+	PublishedAt        time.Time                  `json:"published_at"`
+	Status             CacheStatus                `json:"status"`
 	// BlockedReason is set only while Status is CacheStatusBlocked.
 	BlockedReason BlockedReason `json:"blocked_reason,omitempty"`
 	// PreBlockStatus is the status a recoverable block replaced, so clearing
@@ -332,12 +343,16 @@ func validSourceReference(ref archive.SourceReference) bool {
 // replaces it; a recoverable block remembers the status it replaced and
 // accumulates the hook evidence it held back while it lasts.
 func (p publishedState) next(bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, reason BlockedReason, metadata []byte, deferred []archive.SupplementalEvidence, source *archive.SourceReference) publishedState {
+	commit, sources := p.Commit, p.Sources
 	last := p.detachedLastPublished()
 	if last == nil && p.Status == CacheStatusPublished {
 		snapshot := publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.PublishedAt}
 		last = &snapshot
 	}
 	if status == CacheStatusPublished {
+		if p.PublicationVersion != 5 {
+			commit, sources = nil, nil
+		}
 		// The candidate becoming the current bundle is exactly what was just
 		// published, so the snapshot records only when, not a second copy.
 		last = &publishedSnapshot{PublishedAt: publishedAt, SameAsBundle: true, Source: source}
@@ -361,7 +376,7 @@ func (p publishedState) next(bundle archive.SourceBundle, publishedAt time.Time,
 	if len(metadata) == 0 {
 		metadata = p.MetadataBytes
 	}
-	next := publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: metadata}
+	next := publishedState{PublicationVersion: p.PublicationVersion, PrivacyReceipts: p.PrivacyReceipts, SettledPrivacy: p.SettledPrivacy, Preparation: p.Preparation, Payloads: p.Payloads, Cleanup: p.Cleanup, Commit: commit, Sources: sources, PredecessorUnknown: p.PredecessorUnknown, Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: metadata}
 	if p.AgeFrom != nil && p.AgeFrom.For.Equal(next.captureAge(bundle, metadata)) {
 		next.AgeFrom = p.AgeFrom
 	}
@@ -388,12 +403,32 @@ func (s *Store) publishedPath(archiveSessionID string) string {
 // publishedStateLoads counts LoadPublishedState calls; see PublishedStateLoads.
 var publishedStateLoads atomic.Int64
 
+// PublishedReadObservation contains process-wide read diagnostics for cost tests.
+// Its fields and the returned load count are separate atomic snapshots, not a
+// jointly atomic view; comparisons require sequential test execution.
+type PublishedReadObservation struct {
+	// SummaryValidationBytes counts actual complete-wire bytes hashed by summaries.
+	SummaryValidationBytes int64
+}
+
 // PublishedStateLoads reports how many times this process has read a
 // session's published state (LoadPublishedState, and every Store method
 // built on it). The file holds whole source bundles, so a collector scan
 // reads it once per session. It exists for tests, which use the count to
 // keep it that way; production code has no use for it.
-func PublishedStateLoads() int64 { return publishedStateLoads.Load() }
+// Optional observations also receive the actual summary validation byte count.
+func PublishedStateLoads(observations ...*PublishedReadObservation) int64 {
+	loads := publishedStateLoads.Load()
+	if len(observations) > 0 {
+		bytes := summaryValidationBytes.Load()
+		for _, observation := range observations {
+			if observation != nil {
+				observation.SummaryValidationBytes = bytes
+			}
+		}
+	}
+	return loads
+}
 
 // LoadPublishedState reads a session's published state. A session with none
 // yet yields an empty one (Found reports false) that saves create.
@@ -416,9 +451,10 @@ func (s *Store) loadPublishedStateContext(ctx context.Context, archiveSessionID 
 	if !safeFileComponent(archiveSessionID) {
 		return nil, errors.New("archive session ID is not a safe file name component")
 	}
+	s.preparePublicationAccounting(archiveSessionID)
 	publishedStateLoads.Add(1)
 	p := &Published{store: s, id: archiveSessionID}
-	found, err := s.readOwned(s.publishedPath(archiveSessionID), &p.state)
+	found, err := s.readPublishedOwned(s.publishedPath(archiveSessionID), &p.state)
 	if err != nil {
 		// In a collector pass a corrupt file was moved aside: reported once,
 		// then the session is one that never published (quarantineInPass).
@@ -462,10 +498,66 @@ func (p *Published) write(next publishedState) error {
 		return err
 	}
 	next.Summary = &summary
-	if err := p.store.writeCompact(p.store.publishedPath(p.id), next); err != nil {
+	var writeErr error
+	var savedDigest [32]byte
+	var candidate *publicationAccountingFact
+	var binding publicationAccountingContext
+	var releaseCandidate func()
+	defer func() {
+		if releaseCandidate != nil {
+			releaseCandidate()
+		}
+	}()
+	if next.PublicationVersion == 5 {
+		if err := p.store.validateSelectingPublishedBudgeted(next); err != nil {
+			return err
+		}
+		writeErr = config.WithPublicationComposition(p.store.home, func(g config.PublicationCompositionGuard) error {
+			storage, err := g.Storage(p.store.home)
+			if err != nil {
+				return err
+			}
+			if next.settlePrivacy && next.Preparation != nil && next.Commit != nil && next.Commit.Purpose == PublicationPrivacyRewrite {
+				var e error
+				next, e = p.store.mintSettledPrivacy(next)
+				if e != nil {
+					return e
+				}
+			}
+			path := filepath.Join("published", p.id+".json")
+			sum, n, e := p.store.writeDurableGuardDigest(p.store.durableContext(), storage, path, next)
+			if e != nil {
+				return e
+			}
+			savedDigest = sum
+			candidate, binding, releaseCandidate, e = p.store.savedAccountingCandidate(storage, path, sum, n)
+			if e != nil {
+				return e
+			}
+			if candidate != nil && p.store.publicationAfterSavedRoot != nil {
+				home, e := storage.RootedHome(p.store.home)
+				if e != nil {
+					return e
+				}
+				return p.store.publicationAfterSavedRoot(home.Root)
+			}
+			return nil
+		})
+	} else {
+		writeErr = p.store.writeCompact(p.store.publishedPath(p.id), next)
+	}
+	if err := writeErr; err != nil {
 		return err
 	}
+	if candidate != nil {
+		if a := p.store.accountingScope(); a == nil || !a.install(*candidate, binding) {
+			return errStateBudget
+		}
+	}
 	p.state, p.found = next, true
+	if next.PublicationVersion == 5 {
+		p.store.cacheSavedSummary(p.id, summary, savedDigest)
+	}
 	return nil
 }
 
@@ -501,10 +593,10 @@ func (p *Published) ClampAgeFrom(at time.Time) error {
 }
 
 // LoadPublishedSummary reads a session's PublishedSummary. found is false
-// when nothing has been saved for the session. It reads only the summary at
-// the head of the file, not the source bundles after it, so it costs about as
-// much as a stat; state written before the summary existed is decoded in
-// full.
+// when nothing has been saved for the session. Legacy summaries use the file
+// prefix. Protected selecting states require full validation; source-set states
+// can reuse a bounded Store-owned derived summary after hashing the complete
+// current file and validating current configuration and rooted identity.
 func (s *Store) LoadPublishedSummary(archiveSessionID string) (summary PublishedSummary, found bool, err error) {
 	if !safeFileComponent(archiveSessionID) {
 		return PublishedSummary{}, false, errors.New("archive session ID is not a safe file name component")
@@ -549,7 +641,7 @@ func readLeadingSummary(reader io.Reader) (summary PublishedSummary, ok bool, er
 	}
 	if name, ok := key.(string); ok && strings.EqualFold(name, "publication_version") {
 		var version int
-		if decoder.Decode(&version) != nil || (version != 2 && version != 3 && version != 4) {
+		if decoder.Decode(&version) != nil || (version != 2 && version != 3 && version != 4 && version != 5) {
 			return summary, false, ErrDurableStorageRecovery
 		}
 		return summary, false, errSelectingPublishedFullDecode
@@ -664,10 +756,24 @@ func (p *Published) Save(bundle archive.SourceBundle, publishedAt time.Time, sta
 // SavePublication records a completed publication: bundle becomes both the
 // comparison baseline and the last published snapshot, source is the object
 // its metadata points at, and metadata is the document that was uploaded.
-func (p *Published) SavePublication(bundle archive.SourceBundle, publishedAt time.Time, source archive.SourceReference, metadata []byte) error {
+func (p *Published) SavePublication(bundle archive.SourceBundle, publishedAt time.Time, source archive.SourceReference, metadata []byte, committed ...PendingPublication) error {
+	if len(committed) > 1 {
+		return errors.New("at most one committed source-set journal is permitted")
+	}
 	next, err := p.nextBudgeted(bundle, publishedAt, CacheStatusPublished, "", metadata, nil, &source)
 	if err != nil {
 		return err
+	}
+	next.PredecessorUnknown = false
+	if len(committed) == 1 {
+		pending := committed[0]
+		if pending.SourceReference() != source || !bytes.Equal(pending.MetadataBytes, metadata) || !reflect.DeepEqual(bundle, pending.Bundle) {
+			return errors.New("committed journal differs from publication")
+		}
+		next, err = attachPublication(next, pending, p.store.durableContext(), p.store.resourceBudget)
+		if err != nil {
+			return err
+		}
 	}
 	return p.write(next)
 }
@@ -741,7 +847,17 @@ func (p *Published) CacheMetadata(metadata []byte) error {
 	if bytes.Equal(p.state.MetadataBytes, metadata) {
 		return nil
 	}
+	// A fetched remote legacy body cannot supply the lost durable predecessor.
+	// The caller can derive from its borrowed response during this pass, while
+	// the durable cache remains unknown across restart.
+	if p.state.PublicationVersion == 0 && p.state.Commit == nil && len(p.state.MetadataBytes) == 0 && len(metadata) > 0 {
+		return nil
+	}
 	next := p.state
+	// A newly fetched legacy body is useful for derivation, not replacement authority.
+	if len(p.state.MetadataBytes) == 0 && len(metadata) > 0 {
+		next.PredecessorUnknown = p.state.Commit == nil || publicationSHA256(metadata) != p.state.Commit.MetadataSHA256
+	}
 	next.MetadataBytes = metadata
 	return p.write(next)
 }
@@ -756,6 +872,12 @@ func (p *Published) SaveRepublishedMetadata(pending PendingPublication, at time.
 	next := p.state
 	next.MetadataBytes = pending.MetadataBytes
 	next.PublishedAt = at
+	// A legacy acknowledged publication replaces the old seal, not just its body.
+	// Its complete references remain readable from the exact cached metadata.
+	if next.PublicationVersion != 5 {
+		next.Commit, next.Sources = nil, nil
+	}
+	next.PredecessorUnknown = false
 	source := pending.SourceReference()
 	if next.Status == CacheStatusPublished {
 		// The current bundle is the republished one, so the snapshot shares it.
@@ -763,6 +885,13 @@ func (p *Published) SaveRepublishedMetadata(pending PendingPublication, at time.
 		next.LastPublished = &publishedSnapshot{PublishedAt: at, SameAsBundle: true, Source: &source}
 	} else {
 		next.LastPublished = &publishedSnapshot{Bundle: pending.Bundle, PublishedAt: at, Source: &source}
+	}
+	if pending.Commit != nil {
+		var err error
+		next, err = attachPublication(next, pending, p.store.durableContext(), p.store.resourceBudget)
+		if err != nil {
+			return err
+		}
 	}
 	return p.write(next)
 }

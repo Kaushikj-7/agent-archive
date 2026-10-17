@@ -10,7 +10,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
@@ -263,18 +262,32 @@ func TestOverCeilingReadAndBuildRespectPendingUpload(t *testing.T) {
 		remote := storagetest.NewMemoryStore()
 		opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "m"}
 		publishOnce(t, local, remote, reg, &opts)
-		if pending {
-			// resume validates protected pending bytes before superseding an
-			// unattempted upload, so the fixture needs their real checksum.
-			if err := local.SavePending(reg.ArchiveSessionID, state.PendingPublication{ReadyAt: reg.RegisteredAt, SourceKey: "source", MetadataKey: "metadata", SourceSHA256: storage.SHA256Hex([]byte("source")), SourceBytes: []byte("source"), MetadataBytes: []byte(`{}`)}); err != nil {
-				t.Fatal(err)
-			}
-		}
 		published, err := local.LoadPublishedState(reg.ArchiveSessionID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		scan := newSessionScan(t.Context(), local, remote, reg, state.Request{Token: "new-request"}, published, reg.RegisteredAt.Add(time.Hour), opts)
+		if pending {
+			// A superseded upload still needs valid frozen source and privacy
+			// evidence; arbitrary placeholder bytes cannot authorize the read.
+			bundle, _, found := published.LastPublished()
+			if !found {
+				t.Fatal("fixture has no published source")
+			}
+			rendered, err := renderPublication(scan.ctx, scan.resolveParser(), scan.parserVersion(), bundle, reg, scan.now, opts, scan.priorRepoKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owed := state.PendingPublication{
+				SkillEvidence: string(opts.skillEvidence()), Bundle: bundle,
+				SourceKey: rendered.source.Key, SourceSHA256: rendered.source.SHA256,
+				SourceBytes: rendered.sourceBytes, MetadataKey: rendered.metadataKey, MetadataBytes: rendered.metadata,
+				ReadyAt: reg.RegisteredAt, RequestToken: "earlier-request",
+			}
+			if err := scan.savePending(&owed); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if pending && c.read {
 			// The new hook request supersedes the unattempted publication,
 			// so resume lets the scan proceed to the source read.

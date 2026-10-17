@@ -171,7 +171,7 @@ func (m *Metadata) validateRevisionHistory() error {
 		return nil
 	}
 	h := m.History
-	if h == nil || m.Harness.Name != "codex" || !historyID.MatchString(h.CurrentRevision) || len(h.Preserved) > MaxHistorySpans {
+	if h == nil || m.Harness.Name != "codex" || !historyID.MatchString(h.CurrentRevision) || len(h.Preserved) > MaxPreservedRevisions {
 		return errors.New("invalid revision history")
 	}
 	seen := map[string]bool{h.CurrentRevision: true}

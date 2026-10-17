@@ -148,6 +148,10 @@ func prepareDiscoveryConfig(c *Config) error {
 	if c.SearchLifecycleProtection {
 		c.SchemaVersion = 16
 	}
+	if c.SourceSetPublicationProtection {
+		c.DurableStorageProtection = true
+		c.SchemaVersion = 17
+	}
 	return validateDiscoveryConfig(*c)
 }
 
@@ -639,6 +643,12 @@ func peelHistoricalProjectProtection(c Config) (Config, error) {
 }
 
 func unsupportedPreparedWriter(c Config) bool {
+	if c.SchemaVersion == 17 {
+		if !c.SourceSetPublicationProtection || !c.DurableStorageProtection {
+			return true
+		}
+		c = sourceSetUnderlyingConfig(c)
+	}
 	if c.SchemaVersion == 16 {
 		if !c.SearchLifecycleProtection {
 			return true
@@ -696,6 +706,14 @@ func peelCatalogProtection(c Config) (Config, error) {
 // peelProtectedWriterLayers validates catalog, historical and import fences in order.
 func peelProtectedWriterLayers(c Config) (Config, error) {
 	var err error
+	if c.SourceSetPublicationProtection {
+		if c.SchemaVersion != 17 || !c.DurableStorageProtection {
+			return c, errors.New("source-set publication requires protected schema 17")
+		}
+		c = sourceSetUnderlyingConfig(c)
+	} else if c.SchemaVersion == 17 {
+		return c, errors.New("source-set publication requires its permanent protection")
+	}
 	c, err = peelSearchProtection(c)
 	if err != nil {
 		return c, err
@@ -772,6 +790,9 @@ func peelPublicationProtection(c Config) (Config, error) {
 
 // SupportsOrdinarySelection preserves the ordinary codec under both supported floors.
 func (c Config) SupportsOrdinarySelection() bool {
+	if c.SourceSetPublicationProtection && c.SchemaVersion == 17 {
+		c = sourceSetUnderlyingConfig(c)
+	}
 	if c.SearchLifecycleProtection {
 		if c.SchemaVersion != 16 {
 			return false
@@ -783,6 +804,9 @@ func (c Config) SupportsOrdinarySelection() bool {
 
 // SupportsStagedSelection never enables catalog staging.
 func (c Config) SupportsStagedSelection() bool {
+	if c.SourceSetPublicationProtection && c.SchemaVersion == 17 {
+		c = sourceSetUnderlyingConfig(c)
+	}
 	if c.SearchLifecycleProtection {
 		if c.SchemaVersion != 16 {
 			return false
@@ -838,6 +862,9 @@ func unsupportedScopedPreparedWriter(c Config) bool {
 
 // SupportsSettledCursorSelection accepts only the distinct closed Cursor floor.
 func (c Config) SupportsSettledCursorSelection() bool {
+	if c.SourceSetPublicationProtection && c.SchemaVersion == 17 {
+		c = sourceSetUnderlyingConfig(c)
+	}
 	if c.SearchLifecycleProtection {
 		if c.SchemaVersion != 16 {
 			return false

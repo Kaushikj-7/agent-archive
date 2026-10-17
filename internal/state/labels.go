@@ -108,7 +108,7 @@ func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64
 	}
 	publishedStateLoads.Add(1)
 	p := &Published{store: s, id: id, found: true}
-	if err := decodeStateJSON(data, &p.state); err != nil {
+	if err := s.decodePublicationOwned(s.durableContext(), data, &p.state); err != nil {
 		return nil, int64(len(data)), err
 	}
 	if p.state.PublicationVersion == 3 || p.state.PublicationVersion == 4 {

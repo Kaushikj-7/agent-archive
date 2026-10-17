@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 	"time"
 
@@ -122,7 +121,7 @@ func TestHistoryPolicyMismatchReplacesDescriptorButKeepsOriginalEvidence(t *test
 			if _, err := scan.publish(scan.ctx, read, candidate); !errors.Is(err, archive.ErrHistoryMutationPending) {
 				t.Fatal(err)
 			}
-			p, found, err := scan.local.LoadPending(scan.id())
+			p, found, err := scan.local.LoadPublicationPending(scan.id())
 			if err != nil || !found {
 				t.Fatal(err)
 			}
@@ -150,9 +149,12 @@ func TestHistoryPolicyMismatchReplacesDescriptorButKeepsOriginalEvidence(t *test
 			if err != nil || bytes.Equal(before, after) {
 				t.Fatal("stricter successor was not persisted", err)
 			}
-			next, found, err := scan.local.LoadPending(scan.id())
-			if err != nil || !found || next.Attempted || next.History.Preparing || !reflect.DeepEqual(p.History.Inputs, next.History.Inputs) {
+			next, found, err := scan.local.LoadPublicationPending(scan.id())
+			if err != nil || !found || next.Attempted || next.History.Preparing || len(p.History.Inputs) != len(next.History.Inputs) {
 				t.Fatal("original evidence/provenance discarded", err)
+			}
+			for i, input := range p.History.Inputs {
+				assertOriginalHistoryInput(t, scan.local, scan.id(), next.History.Inputs[i], input)
 			}
 			for _, stage := range p.History.Sources {
 				if _, err := scan.local.ReadPendingSource(scan.id(), stage); err != nil {

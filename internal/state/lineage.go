@@ -493,6 +493,7 @@ func (s *Store) forgetSession(archiveSessionID string, key agentmeta.SessionKey,
 				return err
 			}
 		}
+		s.invalidatePublishedAccounting(path)
 		remove := os.Remove
 		if path == filepath.Join(s.home, importStageRelative(archiveSessionID)) {
 			remove = func(string) error { return s.RemoveImportStage(archiveSessionID) }

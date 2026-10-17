@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -13,9 +14,11 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -60,8 +63,9 @@ func TestHistoricalRevisedHistoryKeepsAllSourcesWithoutNativeCheckout(t *testing
 	must(t, err)
 
 	cloud := storagetest.NewMemoryStore()
+	remote := &historicalHistoryPublicationStore{fourthPublicationStore: &fourthPublicationStore{MemoryStore: cloud}}
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at.Add(2*time.Minute))
-	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return cloud, nil }
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
 	mapping := writeHistoricalMapping(t, project)
 	env.repoKey = func(string) string { t.Fatal("historical source invoked Git"); return "" }
 	var out, errOut bytes.Buffer
@@ -80,6 +84,110 @@ func TestHistoricalRevisedHistoryKeepsAllSourcesWithoutNativeCheckout(t *testing
 	}
 	must(t, db.Close())
 	must(t, os.RemoveAll(nativeHome))
+	// A failed selecting upload must retain the exact original stage even when
+	// every native dependency has gone. Only a complete verified retry releases it.
+	remote.failures = 64
+	for range 4 {
+		result, err := runOnePass(env, true)
+		must(t, err)
+		for _, issue := range result.Errors {
+			if !errors.Is(issue, archive.ErrHistoryMutationPending) && !errors.Is(issue, io.ErrUnexpectedEOF) {
+				t.Fatalf("failed selected revision recovery: %+v", result)
+			}
+		}
+		if len(result.Published) != 0 {
+			t.Fatal("failed selecting upload claimed publication")
+		}
+		if remote.failures < 64 {
+			break
+		}
+	}
+	if remote.failures == 64 {
+		t.Fatal("control never attempted the selecting metadata upload")
+	}
+	retained, found, err := local.LoadImportStage(t.Context(), regs[0])
+	must(t, err)
+	if !found || retained.SHA256 != stage.SHA256 || !reflect.DeepEqual(retained.Preserved, stage.Preserved) {
+		t.Fatal("failed selecting upload changed or released original stage")
+	}
+	if pending, err := local.HasPending(regs[0].ArchiveSessionID); err != nil || !pending {
+		t.Fatal("failed selecting upload lost its retry journal", pending, err)
+	}
+	// A different, independently valid stage for the same session cannot be
+	// released by the frozen transaction, even once its remote bytes are exact.
+	stagePath := filepath.Join(home, "sessions", regs[0].ArchiveSessionID, "import-stage", "stage.json")
+	originalStage, err := os.ReadFile(stagePath)
+	must(t, err)
+	foreignHome := canonical()
+	must(t, os.Chmod(foreignHome, 0700))
+	must(t, config.Save(foreignHome, mustLoadConfig(t, home)))
+	foreignStore, err := state.Open(foreignHome)
+	must(t, err)
+	foreignReg := regs[0]
+	foreignReg.StagedImportSHA256 = ""
+	foreignBundle := stage.Bundle
+	foreignBundle.Capture.CapturedAt = foreignBundle.Capture.CapturedAt.Add(time.Second)
+	foreignReg.StagedImportSHA256, err = foreignStore.SaveImportSourceSet(t.Context(), foreignReg, foreignBundle, stage.Preserved, stage.SkillEvidence)
+	must(t, err)
+	if foreignReg.StagedImportSHA256 == regs[0].StagedImportSHA256 {
+		t.Fatal("replacement must have a distinct actual stage digest")
+	}
+	if _, found, err := foreignStore.LoadImportStage(t.Context(), foreignReg); err != nil || !found {
+		t.Fatal("replacement stage must validate independently", found, err)
+	}
+	foreignRaw, err := os.ReadFile(filepath.Join(foreignHome, "sessions", foreignReg.ArchiveSessionID, "import-stage", "stage.json"))
+	must(t, err)
+	pendingPath := filepath.Join(home, "pending", regs[0].ArchiveSessionID+".json")
+	pendingBefore, err := os.ReadFile(pendingPath)
+	must(t, err)
+	frozen, pendingFound, err := local.LoadPublicationPending(regs[0].ArchiveSessionID)
+	must(t, err)
+	if !pendingFound || frozen.JournalVersion != 5 || frozen.Commit == nil || frozen.History == nil {
+		t.Fatalf("foreign-stage control requires actual ready source-set history: found=%t version=%d commit=%t history=%t", pendingFound, frozen.JournalVersion, frozen.Commit != nil, frozen.History != nil)
+	}
+	currentOwner, ownerFound, err := local.LoadRegistration(regs[0].ArchiveSessionID)
+	must(t, err)
+	if !ownerFound || currentOwner.StagedImportSHA256 != regs[0].StagedImportSHA256 {
+		t.Fatal("control lost its admitted original stage owner", ownerFound, currentOwner.StagedImportSHA256)
+	}
+	// Admission recovery intentionally drops superseded unadmitted stages.
+	// Replace after the actual selecting PUT so this control reaches owned
+	// completion, with the original admission and frozen journal still intact.
+	replaced := false
+	remote.metadataWritten = func(key string, body []byte) {
+		if key != frozen.MetadataKey || !bytes.Equal(body, frozen.MetadataBytes) {
+			t.Fatal("replacement did not follow the exact frozen selecting PUT", key)
+		}
+		actualPending, err := os.ReadFile(pendingPath)
+		must(t, err)
+		if !bytes.Equal(actualPending, pendingBefore) {
+			t.Fatal("selecting PUT changed the frozen ready history journal")
+		}
+		actualStage, err := os.ReadFile(stagePath)
+		must(t, err)
+		if !bytes.Equal(actualStage, originalStage) {
+			t.Fatal("original stage changed before the selecting PUT")
+		}
+		must(t, os.WriteFile(stagePath, foreignRaw, 0600))
+		if _, _, err := local.LoadImportStage(t.Context(), currentOwner); !errors.Is(err, state.ErrDurableStorageRecovery) {
+			t.Fatal("foreign stage must be refused by the actual current owner", err)
+		}
+		replaced = true
+	}
+	remote.failures = 0
+	refused, err := runOnePass(env, true)
+	must(t, err)
+	if !replaced || len(refused.Published) != 0 || !errors.Is(refused.Errors[regs[0].ArchiveSessionID], state.ErrDurableStorageRecovery) {
+		t.Fatal("foreign stage was released by a different selecting owner", refused)
+	}
+	afterForeign, err := os.ReadFile(stagePath)
+	must(t, err)
+	afterPending, err := os.ReadFile(pendingPath)
+	must(t, err)
+	if !bytes.Equal(afterForeign, foreignRaw) || !bytes.Equal(afterPending, pendingBefore) {
+		t.Fatal("foreign-stage refusal changed stage or frozen retry journal")
+	}
+	must(t, os.WriteFile(stagePath, originalStage, 0600))
 	for range 4 {
 		result, err := runOnePass(env, true)
 		must(t, err)
@@ -185,4 +293,23 @@ func TestHistoricalRevisedHistoryKeepsAllSourcesWithoutNativeCheckout(t *testing
 		t.Fatal("excluded retained dependencies were republished")
 	}
 
+}
+
+// Preserve the actual outage store and its provider interfaces while placing a
+// replacement precisely between the selecting write and closing readback.
+type historicalHistoryPublicationStore struct {
+	*fourthPublicationStore
+	metadataWritten func(string, []byte)
+}
+
+func (s *historicalHistoryPublicationStore) Put(ctx context.Context, key string, body []byte) error {
+	if err := s.fourthPublicationStore.Put(ctx, key, body); err != nil {
+		return err
+	}
+	if strings.HasSuffix(key, "/metadata.json") && s.metadataWritten != nil {
+		after := s.metadataWritten
+		s.metadataWritten = nil
+		after(key, body)
+	}
+	return nil
 }

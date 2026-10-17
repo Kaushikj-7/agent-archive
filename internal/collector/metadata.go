@@ -110,8 +110,8 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 		// against. The next content change publishes current metadata.
 		return outcomeSkipped, false, nil
 	}
-	// Cache before any early return below, so a legacy publication is
-	// migrated exactly once rather than re-read on every scan.
+	// Cache only an already-owned selecting body. A legacy missing predecessor
+	// remains unknown; this pass borrows last.encoded and a retry reads it again.
 	if err := s.published.CacheMetadata(last.encoded); err != nil {
 		return outcomeSkipped, false, err
 	}
@@ -136,7 +136,7 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 		}
 		return ""
 	}(), SkillEvidence: string(s.opts.skillEvidence()), MetadataOnly: true, Bundle: last.bundle, SourceKey: source.ref.Key, MetadataKey: key, SourceSHA256: source.ref.SHA256, SourceBytes: source.bytes, SourceSize: source.ref.CompressedBytes, MetadataBytes: metadataBytes, ReadyAt: s.now, Attempted: true}
-	if err := s.local.SavePending(s.id(), pending); err != nil {
+	if err := s.savePending(&pending); err != nil {
 		return outcomeSkipped, false, err
 	}
 	outcome, err = s.publishPending(s.ctx, pending)
@@ -368,6 +368,11 @@ func (s *sessionScan) parserVersion() string {
 // It needs no request: the scan signature's PublishedLastHead brings a
 // session whose registration has moved past it back for a scan.
 func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (sessionOutcome, bool, error) {
+	if last.legacy {
+		if err := s.published.CacheMetadata(last.encoded); err != nil {
+			return outcomeSkipped, false, err
+		}
+	}
 	next := last.metadata
 	next.ApplyGitHead(s.reg)
 	oldHead, err := s.marshalRetained(last.metadata.GitHead)
@@ -408,7 +413,7 @@ func (s *sessionScan) publishRecordedGitHead(last lastPublication, key string) (
 		return outcomeSkipped, false, err
 	}
 	pending := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), MetadataOnly: true, Bundle: last.bundle, SourceKey: source.ref.Key, MetadataKey: key, SourceSHA256: source.ref.SHA256, SourceBytes: source.bytes, SourceSize: source.ref.CompressedBytes, MetadataBytes: encoded, ReadyAt: s.now, Attempted: true}
-	if err := s.local.SavePending(s.id(), pending); err != nil {
+	if err := s.savePending(&pending); err != nil {
 		return outcomeSkipped, false, err
 	}
 	outcome, err := s.publishPending(s.ctx, pending)

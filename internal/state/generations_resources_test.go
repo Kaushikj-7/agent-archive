@@ -46,7 +46,7 @@ func TestGenerationValidationAndJournalPressurePreserveRetry(t *testing.T) {
 	}
 	budget = agentapi.NewNativeReadBudget(2*int64(len(before)) - 1)
 	scoped, closeScope := s.WithReadBudget(t.Context(), budget)
-	if _, _, err := scoped.loadGenerationRecovery(reg.ArchiveSessionID); !errors.Is(err, agentapi.ErrReadBudget) {
+	if _, _, err := scoped.loadGenerationRecovery(t.Context(), reg.ArchiveSessionID); !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatal("journal bypassed pressure", err)
 	}
 	closeScope()
@@ -98,7 +98,7 @@ func TestMalformedGenerationHistoryJournalRemainsUntouched(t *testing.T) {
 	if _, err := s.BeginGenerationRecovery(reg.ArchiveSessionID, at, generationBuilder(at)); !errors.Is(err, interrupted) {
 		t.Fatal(err)
 	}
-	journal, found, err := s.loadGenerationRecovery(reg.ArchiveSessionID)
+	journal, found, err := s.loadGenerationRecovery(t.Context(), reg.ArchiveSessionID)
 	if err != nil || !found {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestGenerationPressureLeavesLargeJournalAndReplaysLaterSmallJournal(t *test
 		t.Fatal(err)
 	}
 	// Begin returns no routing result on interruption; the durable journal owns it.
-	journal, found, err := s.loadGenerationRecovery(reg.ArchiveSessionID)
+	journal, found, err := s.loadGenerationRecovery(t.Context(), reg.ArchiveSessionID)
 	if err != nil || !found {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestGenerationPressureLeavesLargeJournalAndReplaysLaterSmallJournal(t *test
 	if err := scoped.ResumeGenerationRecoveries(t.Context()); !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatal("large refusal missing", err)
 	}
-	resumed, found, err := s.loadGenerationRecovery(reg.ArchiveSessionID)
+	resumed, found, err := s.loadGenerationRecovery(t.Context(), reg.ArchiveSessionID)
 	if err != nil || !found || !resumed.Complete || resumed.Next != next {
 		t.Fatal("large journal starved smaller replay", resumed, err)
 	}
@@ -280,7 +280,7 @@ func TestGenerationJoinedCancellationRemainsDecisive(t *testing.T) {
 	if err := s.ResumeGenerationRecoveries(t.Context()); !errors.Is(err, context.Canceled) || !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatal("joined cancellation hidden", err)
 	}
-	journal, found, err := s.loadGenerationRecovery(reg.ArchiveSessionID)
+	journal, found, err := s.loadGenerationRecovery(t.Context(), reg.ArchiveSessionID)
 	if err != nil || !found || journal.Complete {
 		t.Fatal("cancelled journal acknowledged", journal, err)
 	}

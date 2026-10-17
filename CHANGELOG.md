@@ -206,6 +206,12 @@ follow [Semantic Versioning](https://semver.org/).
   Cursor tool calls without recorded results no longer claim zero results;
   unstructured exports omit unavailable edited-file lists.
 
+- Recover complete historical source-set publications from exact private retained evidence,
+  with one shared disk/memory budget and permanent source-set writer protection.
+  Stronger privacy replaces all selected revisions and retires obsolete private
+  proof bodies only after the full local selection is durable. Historical import
+  admission staging and additional native ancestor permission remain separate.
+
 - Commands run inside Muse detect its session environment to avoid interactive
   prompts and pagers. Handoff into supported agents removes inherited Muse
   session variables. This adds presence detection only; Muse capture, current
@@ -697,6 +703,12 @@ and the cleanup repair do not turn either failed tagged gate into a pass.
   coverage remains tracked for release testing.
 
 ### Fixed
+
+- Publication retries verify the complete selected source set and exact committed
+  metadata before acknowledging capture. A different remote winner or unknown
+  predecessor stays pending instead of overwriting retained evidence. A recorded
+  predecessor that is now missing also requires reconciliation; queued evidence
+  stays local and pending.
 
 - Preserve confirmed backfill evidence before registering sessions, including
   selected Codex history and native children. Imports can finish after native

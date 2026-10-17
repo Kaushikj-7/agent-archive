@@ -77,11 +77,11 @@ func (ClaudeAdapter) FilterSubagentJSONL(r io.Reader, metaJSON []byte) (archive.
 
 // filterClaudeJSONL is the Claude Code filter, with lead, when not nil, a
 // subagent-meta record to write first.
-func filterClaudeJSONL(r io.Reader, lead map[string]any) (archive.FilteredTranscript, error) {
+func filterClaudeJSONL(r io.Reader, lead map[string]any, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
 	return filterJSONL(r, "claude-jsonl", map[string]bool{
 		"user": true, "assistant": true, "tool_use": true, "tool_result": true,
 		"message": true, "summary": true,
-	}, lead)
+	}, lead, bounds...)
 }
 
 // CursorAdapter filters hook-provided JSONL records, a hook-provided text
@@ -99,10 +99,14 @@ func (CursorAdapter) Version() string { return adapterVersion }
 // FilterJSONL keeps only the Cursor record types this adapter recognizes,
 // through the shared privacy filter, and labels the result cursor-jsonl.
 func (CursorAdapter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error) {
+	return filterCursorJSONL(r)
+}
+
+func filterCursorJSONL(r io.Reader, bounds ...archive.CaptureBoundary) (archive.FilteredTranscript, error) {
 	return filterJSONL(r, "cursor-jsonl", map[string]bool{
 		"session": true, "message": true, "tool_call": true, "tool_result": true,
 		"event": true, "turn_ended": true,
-	}, nil)
+	}, nil, bounds...)
 }
 
 // textRole is the lower-case role name of a Cursor text transcript section

@@ -24,7 +24,7 @@ var errPendingFenceView = errors.Join(ErrDurableStorageRecovery, errors.New("pen
 // pendingFenceFields are the fields of a pending publication its fences read:
 // the proofs and the catalog commit it carries and, inside the bundle, the
 // session it belongs to, decoded by PendingPublication's own rules. The
-// fields a future writer's publication carries (unsupportedPendingFields)
+// fields a future writer's publication carries (the legacy decoder's refusals)
 // are kept too, so the view refuses such a publication as a whole decode
 // does. Everything else (the bundle's records, the source and metadata
 // bytes, the history journal) is scanned past, not decoded.
@@ -57,6 +57,21 @@ var pendingFenceFields = jsonProjection{
 // past, but only a whole read (LoadPending) checks their typed values.
 func (s *Store) pendingFenceView(id string) (PendingPublication, bool, error) {
 	var pending PendingPublication
+	// Source-set publication is a closed protocol: its full preparation and
+	// source graph must be validated, including fields legacy fences refuse.
+	// Probe only its discriminator with bounded memory before the legacy view.
+	var marker struct {
+		Version int `json:"journal_version"`
+	}
+	if err := s.readProjected(s.pendingPath(id), jsonProjection{"journal_version": nil}, &marker); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return pending, false, nil
+		}
+		return pending, false, err
+	}
+	if marker.Version == 5 {
+		return s.catalogPendingForFence(id)
+	}
 	err := s.readProjected(s.pendingPath(id), pendingFenceFields, &pending)
 	if errors.Is(err, os.ErrNotExist) {
 		return pending, false, nil

@@ -59,7 +59,7 @@ func TestCursorTextOverTheLimitBlocksOnceAndClearsOnChange(t *testing.T) {
 	}
 	writeTranscript(t, dirOf(path), baseOf(path), cursorTextTranscript(3, 200))
 	if result := runAt(t, local, remote, at.Add(2*time.Minute)); len(result.Published) != 1 || len(result.Errors) != 0 {
-		t.Fatalf("the smaller transcript did not publish: %#v", result)
+		t.Fatalf("the smaller transcript did not publish: %#v; errors: %v", result, result.Errors)
 	}
 	if _, blocked, _ := local.LoadBlocked("session-1"); blocked {
 		t.Fatal("the gap outlived the oversize transcript")

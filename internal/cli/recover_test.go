@@ -57,7 +57,9 @@ func TestRecoverCrashWindowsQueueHooksUntilReceiptCompletes(t *testing.T) {
 			var journal map[string]any
 			must(t, json.Unmarshal(raw, &journal))
 			delete(journal, "complete")
-			journal["registration"], journal["pending"], journal["request"] = reg, pending, request
+			durablePending, err := os.ReadFile(filepath.Join(home, "pending", next+".json"))
+			must(t, err)
+			journal["registration"], journal["pending"], journal["request"] = reg, json.RawMessage(durablePending), request
 			must(t, local.Write(journalPath, journal))
 			if seam == "generation-journal" {
 				old.CaptureFrozen = false
@@ -226,7 +228,7 @@ func TestRecoverFrozenFeedbackRetainsIdentityAgeAndRetry(t *testing.T) {
 	}
 	cfg, _, err := config.Load(home)
 	must(t, err)
-	opts := collector.Options{Sources: registryFor(env), Parsers: parsersFor(env), MachineID: cfg.MachineID, Now: env.Now, RepoKey: env.repoKey}
+	opts := collector.Options{Sources: registryFor(env), Parsers: parsersFor(env), MachineID: cfg.MachineID, Now: env.Now, RepoKey: env.repoKey, SkillEvidence: cfg.EffectiveSkillEvidence(), RequireSkillUse: cfg.RequireSkillUse}
 	result, err := collector.Run(t.Context(), store, failingPutStore{bucket}, opts)
 	if err != nil || result.Errors[id] == nil {
 		t.Fatalf("expected frozen upload retry: %#v %v", result, err)
@@ -303,7 +305,13 @@ func TestRecoverReplayRefusesPredecessorPublicationKey(t *testing.T) {
 	var journal map[string]any
 	must(t, json.Unmarshal(raw, &journal))
 	delete(journal, "complete")
-	journal["registration"], journal["pending"], journal["request"] = reg, pending, request
+	durablePending, err := os.ReadFile(filepath.Join(home, "pending", next+".json"))
+	must(t, err)
+	var corruptPending map[string]any
+	must(t, json.Unmarshal(durablePending, &corruptPending))
+	corruptPending["metadata_key"] = pending.MetadataKey
+	corruptPending["metadata_bytes"] = pending.MetadataBytes
+	journal["registration"], journal["pending"], journal["request"] = reg, corruptPending, request
 	must(t, local.Write(journalPath, journal))
 	err = store.ResumeGenerationRecoveries(t.Context())
 	if errors.Is(err, state.ErrSessionIndexRecoveryRequired) {
@@ -363,7 +371,7 @@ func TestRecoverPreviewConfirmAndHookRouting(t *testing.T) {
 		t.Fatalf("confirm exit %d %s", code, errOut.String())
 	}
 	cfg, _, err := config.Load(home)
-	if err != nil || !cfg.GenerationProtection || !cfg.DurableStorageProtection || cfg.SchemaVersion != 7 {
+	if err != nil || !cfg.GenerationProtection || !cfg.DurableStorageProtection || !cfg.SourceSetPublicationProtection || cfg.SchemaVersion != 17 {
 		t.Fatalf("missing downgrade protection %#v %v", cfg, err)
 	}
 	next, found, err := store.GenerationSuccessor(id)

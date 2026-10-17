@@ -2,6 +2,7 @@ package collector
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -10,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -118,7 +121,100 @@ func TestRunHistoryPreparationCheckpointFailureKeepsPriorDescriptor(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending.History.Preparing, pending.History.PrivacyCursor = true, 1
+	// This is an imported original legacy preparing descriptor, assembled
+	// before the protocol2 freeze. Never mutate an existing selecting seal.
+	currentBytes, err := scan.readRetainedInputBytes(metadata.SourceBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending = state.PendingPublication{Bundle: pending.Bundle, SourceKey: metadata.SourceBundle.Key, SourceSHA256: metadata.SourceBundle.SHA256, SourceBytes: currentBytes, MetadataKey: pending.MetadataKey, MetadataBytes: pending.MetadataBytes, ReadyAt: pending.ReadyAt, SkillEvidence: pending.SkillEvidence, History: &state.PendingHistory{Version: 1, Preparing: true, Inputs: pending.History.Inputs, FilterVersion: archive.FilterVersion, AdapterVersion: pending.Bundle.Capture.AdapterVersion}}
+	// A fresh disposable root represents the legacy producer's original
+	// descriptor. The prior fixture's protocol2 crash links are not its proof.
+	originalLocal := scan.local
+	fresh := newTestStore(t)
+	cfg, _, err := config.Load(originalLocal.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(fresh.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := fresh.SaveRegistration(scan.reg); err != nil {
+		t.Fatal(err)
+	}
+	for _, originalInput := range pending.History.Inputs {
+		raw, err := originalLocal.ReadPendingSource(scan.id(), state.PendingSource{Reference: originalInput.Reference, Name: originalInput.Reference.SHA256 + ".gz"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stage, err := fresh.StagePendingSource(scan.id(), originalInput.Reference, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending.History.Sources = append(pending.History.Sources, stage)
+	}
+	scan.local = fresh
+	scan.published, err = fresh.LoadPublishedState(scan.id())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := scan.local.SavePending(scan.id(), pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := scan.sealPending(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := scan.advanceHistoryPreparation(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending.History.PrivacyCursor != 1 {
+		t.Fatal("actual first checkpoint missing", pending.History)
+	}
+	// Only owning replay may interpret the retained original. Native preview,
+	// naming and generic readers keep their evidence fence.
+	budget := agentapi.NewNativeReadBudget(128 << 20)
+	scoped, closeScope := scan.local.WithReadBudget(t.Context(), budget)
+	available := budget.Available()
+	if err := scoped.CheckDurableSessionRead(scan.id()); !errors.Is(err, state.ErrDurableStorageRecovery) {
+		t.Fatal("generic evidence fence weakened", err)
+	}
+	if err := scoped.CheckPublicationSessionRead(scan.reg, scan.opts.MachineID, scan.publicationAdmission()); err != nil {
+		t.Fatal("owning replay unavailable", err)
+	}
+	wrong := scan.reg
+	wrong.NativeSessionID = "foreign"
+	if err := scoped.CheckPublicationSessionRead(wrong, scan.opts.MachineID, scan.publicationAdmission()); !errors.Is(err, state.ErrDurableStorageRecovery) {
+		t.Fatal("foreign replay owner accepted", err)
+	}
+	if err := scoped.CheckPublicationSessionRead(scan.reg, scan.opts.MachineID, "foreign"); !errors.Is(err, state.ErrDurableStorageRecovery) {
+		t.Fatal("foreign replay context accepted", err)
+	}
+	if budget.Available() != available {
+		t.Fatal("read-only guard leaked loans")
+	}
+	closeScope()
+	extra := filepath.Join(scan.local.Home(), "publication-evidence", scan.id(), "unknown")
+	if err := os.WriteFile(extra, []byte("unknown"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := scan.local.CheckPublicationSessionRead(scan.reg, scan.opts.MachineID, scan.publicationAdmission()); !errors.Is(err, state.ErrDurableStorageRecovery) {
+		t.Fatal("extra evidence admitted", err)
+	}
+	if err := os.Remove(extra); err != nil {
+		t.Fatal(err)
+	}
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	canceledLocal, closeCanceled := scan.local.WithReadBudget(canceled, budget)
+	if err := canceledLocal.CheckPublicationSessionRead(scan.reg, scan.opts.MachineID, scan.publicationAdmission()); !errors.Is(err, context.Canceled) {
+		t.Fatal("canceled owning read accepted", err)
+	}
+	closeCanceled()
+	pressured, closePressure := scan.local.WithReadBudget(t.Context(), agentapi.NewNativeReadBudget(16<<10))
+	if err := pressured.CheckPublicationSessionRead(scan.reg, scan.opts.MachineID, scan.publicationAdmission()); !errors.Is(err, agentapi.ErrReadBudget) {
+		t.Fatal("owning read bypassed ledger", err)
+	}
+	closePressure()
 	pending.History.PreparedAt = time.Time{}
 	pending.Attempted = false
 	remote := &historyCrashStore{MemoryStore: scan.remote.(*storagetest.MemoryStore)}
@@ -285,7 +381,7 @@ func convergeHistoryLocalRetry(t *testing.T, scan *sessionScan, remote *historyC
 	t.Helper()
 	var final state.PendingPublication
 	for range 8 {
-		pending, found, err := scan.local.LoadPending(scan.id())
+		pending, found, err := scan.local.LoadPublicationPending(scan.id())
 		if err != nil || !found {
 			t.Fatal("frozen retry descriptor lost", err)
 		}
@@ -328,4 +424,51 @@ func convergeHistoryLocalRetry(t *testing.T, scan *sessionScan, remote *historyC
 	}
 	t.Fatal("frozen local retry did not converge")
 	return final
+}
+
+// freshLegacyHistoryOriginal imports a synthetic complete original descriptor
+// before its first seal, preserving every verified original stage and age.
+func freshLegacyHistoryOriginal(t *testing.T, scan *sessionScan, p state.PendingPublication) state.PendingPublication {
+	t.Helper()
+	var m archive.Metadata
+	if err := json.Unmarshal(p.MetadataBytes, &m); err != nil {
+		t.Fatal(err)
+	}
+	current, err := scan.readRetainedInputBytes(m.SourceBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := scan.local
+	fresh := newTestStore(t)
+	cfg, _, err := config.Load(original.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(fresh.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := fresh.SaveRegistration(scan.reg); err != nil {
+		t.Fatal(err)
+	}
+	out := state.PendingPublication{Bundle: p.Bundle, SourceKey: m.SourceBundle.Key, SourceSHA256: m.SourceBundle.SHA256, SourceBytes: current, MetadataKey: p.MetadataKey, MetadataBytes: p.MetadataBytes, ReadyAt: p.ReadyAt, SkillEvidence: p.SkillEvidence, History: &state.PendingHistory{Version: 1, Preparing: true, Inputs: p.History.Inputs, FilterVersion: archive.FilterVersion, AdapterVersion: p.Bundle.Capture.AdapterVersion}}
+	for _, input := range out.History.Inputs {
+		raw, err := original.ReadPendingSource(scan.id(), state.PendingSource{Reference: input.Reference, Name: input.Reference.SHA256 + ".gz"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stage, err := fresh.StagePendingSource(scan.id(), input.Reference, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out.History.Sources = append(out.History.Sources, stage)
+	}
+	scan.local = fresh
+	scan.published, err = fresh.LoadPublishedState(scan.id())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fresh.SavePending(scan.id(), out); err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

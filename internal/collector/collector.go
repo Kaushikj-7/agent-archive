@@ -4,7 +4,7 @@
 // local state through internal/state, builds on internal/local for atomic
 // file I/O and the machine-level lock, and does not own transcript reading
 // (archive adapters), privacy filtering (archive adapters), or storage
-// upload mechanics (storage.PutSourceThenMetadataIndexed). A caller runs Run under
+// upload mechanics (storage.PutResolvedSourceSetThenMetadataReadback). A caller runs Run under
 // local.Lock(home) so only one collector process acts on a given home at a
 // time; Run itself does not take that lock.
 //
@@ -24,7 +24,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -316,9 +315,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if durableErr != nil {
 		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
 	}
-	admission, closeAdmission := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
-	admissionErr := admission.ResumeImportAdmissions(ctx)
-	closeAdmission()
+	admissionErr := resumeImportAdmissionsForPass(ctx, local, opts)
 	if admissionErr != nil {
 		return Result{Errors: map[string]error{"staged-imports": admissionErr}}, admissionErr
 	}
@@ -368,6 +365,8 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	closeCursorPass := openCursorPass(nil, &opts)
 	var closeNativeInventory func() error
 	defer func() { runErr = errors.Join(runErr, closeSourceAndNative(closeCursorPass, closeNativeInventory)) }()
+	local, closeAccounting := local.WithPublicationAccounting(ctx, (&sessionScan{opts: opts}).readBudget())
+	defer closeAccounting()
 
 	subagents := materializeSubagentCandidates(ctx, local, opts, now)
 	opts.repoKeys = newRepoKeyCache(opts.RepoKey)
@@ -430,6 +429,13 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		return p.result, err
 	}
 	return p.result, p.saveStatus()
+}
+
+func resumeImportAdmissionsForPass(ctx context.Context, local *state.Store, opts Options) error {
+	admission, closeAdmission := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
+	err := admission.ResumeImportAdmissions(ctx)
+	closeAdmission()
+	return err
 }
 
 func (p *pass) orderedExecutionRegistrations() []archive.SessionRegistration {
@@ -575,8 +581,10 @@ func (p *pass) loadWork() error {
 	// pass like any other outstanding work.
 	p.pending = len(registrationIssues)
 	registered := make(map[string]bool, len(registrations)+len(registrationIssues))
+	publicationOwners := make(map[string]archive.SessionRegistration, len(registrations))
 	for _, reg := range registrations {
 		registered[reg.ArchiveSessionID] = true
+		publicationOwners[reg.ArchiveSessionID] = reg
 	}
 	for id, issue := range registrationIssues {
 		addError(p.result.Errors, id, issue)
@@ -592,7 +600,14 @@ func (p *pass) loadWork() error {
 			continue
 		}
 		if registered[id] && obligation.Namespace == state.GenerationRecoveryStorage && !orphaned[id] {
-			if err := checkDurableSessionRead(p.ctx, p.local, id, p.opts); err != nil {
+			owner, found := publicationOwners[id]
+			var readErr error
+			if found {
+				readErr = checkPublicationSessionRead(p.ctx, p.local, owner, p.opts)
+			} else {
+				readErr = checkDurableSessionRead(p.ctx, p.local, id, p.opts)
+			}
+			if err := readErr; err != nil {
 				orphaned[id] = true
 				p.pending++
 				p.durableCounted[id] = true
@@ -1114,18 +1129,16 @@ func (p *pass) repairListingIndex() {
 			}
 			continue
 		}
-		getter, ok := p.remote.(storage.VersionedGetter)
-		if !ok {
-			continue
+		scan := newSessionScan(p.ctx, p.local, p.remote, reg, state.Request{}, nil, p.now, p.opts)
+		err = scan.repairListingRevision(repair.MetadataKey)
+		if errors.Is(err, errListingPredecessorUnknown) {
+			continue // Repair stays owed until the publication's owner is known.
 		}
-		data, _, err := getter.GetVersioned(p.ctx, repair.MetadataKey)
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, errListingMetadataAbsent) {
 			_ = p.local.RemoveListingRepair(id)
 			continue
 		}
-		if err == nil {
-			err = listingindex.PublishRevision(p.ctx, p.remote, repair.MetadataKey, data)
-		}
+
 		if err == nil {
 			err = p.local.RemoveListingRepair(id)
 		}

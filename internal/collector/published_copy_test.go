@@ -2,20 +2,20 @@ package collector
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
-// One scan both refreshes a session's metadata for a new parser and
-// publishes its grown transcript, over state written before either the
-// source reference or the metadata document was cached. The refresh reads
-// the live metadata from the bucket and caches it in the published state;
-// the publication after it must see that update through the scan's one
-// in-memory copy, and name the object the live metadata points at as the
-// one it supersedes. From a stale copy it would find no reference at all.
-func TestParserUpgradeAndPublicationInOneScanOverLegacyState(t *testing.T) {
+// A remote cache body may support derivation, but cannot authorize replacing
+// a legacy publication whose exact predecessor was never retained locally.
+func TestParserUpgradeOverLegacyStateRetainsDerivedPendingWithoutGuessingPredecessor(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
@@ -27,21 +27,24 @@ func TestParserUpgradeAndPublicationInOneScanOverLegacyState(t *testing.T) {
 	})
 	now := t0.Add(time.Hour)
 	result, err := Run(context.Background(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", ParserVersion: "upgraded", Now: func() time.Time { return now }})
-	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+	if err != nil || !errors.Is(result.Errors["session-1"], storage.ErrPublicationConflict) || len(result.Published) != 0 {
 		t.Fatalf("scan: %#v %v", result, err)
 	}
-	superseded, err := local.LoadSuperseded("session-1")
-	if err != nil {
+	pending, found, err := local.LoadPending("session-1")
+	if err != nil || !found || pending.Commit == nil || pending.Commit.Predecessor != state.PredecessorUnknown {
+		t.Fatal("derived evidence not pending", found, err)
+	}
+	var next archive.Metadata
+	if err := json.Unmarshal(pending.MetadataBytes, &next); err != nil {
 		t.Fatal(err)
 	}
-	if len(superseded) != 1 || superseded[0].Key != firstKey {
-		t.Fatalf("superseded = %#v, want only %s", superseded, firstKey)
+	if next.Parser.Version != "upgraded" || next.SourceBundle.Key == firstKey {
+		t.Fatal("grown current-parser evidence not retained")
 	}
-	current := fetchMetadata(t, store, "codex", "session-1")
-	if current.Parser.Version != "upgraded" || current.SourceBundle.Key == firstKey {
-		t.Fatalf("metadata = parser %q, source %s", current.Parser.Version, current.SourceBundle.Key)
+	if superseded, err := local.LoadSuperseded("session-1"); err != nil || len(superseded) != 0 {
+		t.Fatal("uncommitted predecessor retired", superseded, err)
 	}
-	if source, found, err := local.LoadLastPublishedSource("session-1"); err != nil || !found || source != current.SourceBundle {
-		t.Fatalf("recorded source = %#v %v %v, want %#v", source, found, err, current.SourceBundle)
+	if current := fetchMetadata(t, store, "codex", "session-1"); current.SourceBundle.Key != firstKey {
+		t.Fatal("remote cache guessed as replacement authority")
 	}
 }

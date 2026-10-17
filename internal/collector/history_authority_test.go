@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -104,43 +105,80 @@ func TestRunRecoversWholeHistoryAuthorityAfterStateLoss(t *testing.T) {
 	for _, corrupt := range []bool{false, true} {
 		t.Run(map[bool]string{false: "missing", true: "corrupt"}[corrupt], func(t *testing.T) {
 			t.Parallel()
-			scan, pending, cloud, _ := frozenHistoryFixture(t)
-			if err := scan.local.SaveRegistration(scan.reg); err != nil {
-				t.Fatal(err)
+			producer, pending := privacyJournal(t)
+			if _, err := producer.publishPending(producer.ctx, pending); err != nil {
+				t.Fatal("real complete history publication", err)
 			}
-			if err := scan.local.RemovePending(scan.id()); err != nil {
-				t.Fatal(err)
-			}
-			if err := cloud.Put(t.Context(), pending.MetadataKey, pending.MetadataBytes); err != nil {
-				t.Fatal(err)
-			}
-			if corrupt {
-				path := filepath.Join(scan.local.Home(), "published", scan.id()+".json")
-				if err := os.WriteFile(path, []byte("{"), 0600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			opts := Options{MachineID: "m", Sources: testSources, Parsers: testParsers, Now: func() time.Time { return scan.now }}
-			if corrupt {
-				if _, err := Run(t.Context(), scan.local, cloud, opts); err != nil {
-					t.Fatal(err)
-				}
-			}
-			result, err := Run(t.Context(), scan.local, cloud, opts)
-			if err != nil || !errors.Is(result.Errors[scan.id()], archive.ErrHistoryMutationPending) {
-				t.Fatalf("%#v %v", result, err)
-			}
-			published, err := scan.local.LoadPublishedState(scan.id())
+			local := newTestStore(t)
+			cfg, _, err := config.Load(producer.local.Home())
 			if err != nil {
 				t.Fatal(err)
 			}
-			metadata, found, err := published.LastPublishedMetadata()
-			if err != nil || !found || len(metadata.History.Preserved) != 1 || !bytes.Equal(published.Metadata(), pending.MetadataBytes) {
-				t.Fatalf("incomplete authority: %#v %v %v", metadata, found, err)
+			if err := config.Save(local.Home(), cfg); err != nil {
+				t.Fatal(err)
 			}
-			raw, err := cloud.Get(t.Context(), pending.MetadataKey)
-			if err != nil || !bytes.Equal(raw, pending.MetadataBytes) {
-				t.Fatal("remote sidecar changed", err)
+			if err := local.SaveRegistration(producer.reg); err != nil {
+				t.Fatal(err)
+			}
+			remote := &privacyPutStore{ObjectStore: producer.remote}
+			before, err := remote.Get(t.Context(), pending.MetadataKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts := producer.opts
+			if corrupt {
+				path := publishedPath(local, producer.id())
+				bad := []byte("{")
+				if err := os.WriteFile(path, bad, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := local.SaveRequest(producer.id(), "stop", producer.now); err != nil {
+					t.Fatal(err)
+				}
+				request, err := os.ReadFile(requestPath(local, producer.id()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				first, err := Run(t.Context(), local, remote, opts)
+				if err != nil || !errors.Is(first.Errors[producer.id()], state.ErrQuarantined) || len(first.Published) != 0 {
+					t.Fatalf("corrupt authority not quarantined: %+v %v", first, err)
+				}
+				files := local.QuarantinedFiles()
+				if len(files) != 1 {
+					t.Fatal("corrupt authority lost", files)
+				}
+				raw, err := os.ReadFile(filepath.Join(local.Home(), files[0]))
+				if err != nil || !bytes.Equal(raw, bad) {
+					t.Fatal("quarantined bytes changed", err)
+				}
+				retry, err := Run(t.Context(), local, remote, opts)
+				if !errors.Is(err, state.ErrDurableStorageRecovery) || len(retry.Published) != 0 {
+					t.Fatalf("anonymous corruption not owed: %+v %v", retry, err)
+				}
+				raw, err = os.ReadFile(requestPath(local, producer.id()))
+				if err != nil || !bytes.Equal(raw, request) {
+					t.Fatal("owed request changed", err)
+				}
+			} else {
+				result, err := Run(t.Context(), local, remote, opts)
+				if err != nil {
+					t.Fatalf("missing authority recovery: %+v %v", result, err)
+				}
+				published, err := local.LoadPublishedState(producer.id())
+				if err != nil {
+					t.Fatal(err)
+				}
+				metadata, found, err := published.LastPublishedMetadata()
+				if err != nil || !found || metadata.History == nil || len(metadata.History.Preserved) != 2 || !bytes.Equal(published.Metadata(), before) {
+					t.Fatalf("incomplete restored baseline: %#v %v %v result=%+v", metadata, found, err, result)
+				}
+				if len(result.Errors) != 0 {
+					t.Fatalf("restored complete baseline followup: %+v", result)
+				}
+			}
+			after, err := remote.Get(t.Context(), pending.MetadataKey)
+			if err != nil || !bytes.Equal(after, before) || len(remote.puts) != 0 {
+				t.Fatal("state loss guessed or replaced remote authority", err, remote.puts)
 			}
 		})
 	}

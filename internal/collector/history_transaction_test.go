@@ -170,6 +170,14 @@ func (s *oversizedHistoryStore) Get(context.Context, string) ([]byte, error) {
 	panic("unbounded history GET")
 }
 
+func (s *oversizedHistoryStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	if key == s.oversizedKey {
+		s.seenLimit = limit
+		return nil, "", storage.ErrObjectTooLarge
+	}
+	return s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
+}
+
 func TestOversizedHistoryMetadataAndRemoteStageLeaveFrozenWorkUntouched(t *testing.T) {
 	t.Parallel()
 	scan, pending, cloud, old := frozenHistoryFixture(t)
@@ -202,17 +210,20 @@ func TestOversizedHistoryMetadataAndRemoteStageLeaveFrozenWorkUntouched(t *testi
 
 func TestSequentialHistoryPreparationPreservesCaptureAndPrivacyObligation(t *testing.T) {
 	t.Parallel()
-	scan, pending, cloud, old := frozenHistoryFixture(t)
-	original, err := cloud.Get(t.Context(), old.Key)
-	if err != nil {
+	scan, pending := privacyJournal(t)
+	defer scan.releaseRetained()
+	var metadata archive.Metadata
+	if err := json.Unmarshal(pending.MetadataBytes, &metadata); err != nil {
 		t.Fatal(err)
 	}
-	bundle, err := archive.ReadSourceBundle(bytes.NewReader(original), archive.DecodeOptions{})
+	input := &pending.History.Inputs[1]
+	bundle, err := scan.loadHistoryInput(metadata, *input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	captured := bundle.Capture.CapturedAt
 	bundle.Capture.FilterVersion = "14"
+	bundle.NativeRecords[len(bundle.NativeRecords)-1]["api_key"] = "sk-abcdefghijklmnopqrstuv"
 	packed, err := archive.BuildCompressedSource(bundle)
 	if err != nil {
 		t.Fatal(err)
@@ -226,26 +237,32 @@ func TestSequentialHistoryPreparationPreservesCaptureAndPrivacyObligation(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	var metadata archive.Metadata
-	if err := json.Unmarshal(pending.MetadataBytes, &metadata); err != nil {
-		t.Fatal(err)
+	old := input.Reference
+	input.Reference, input.FilterVersion = prior, "14"
+	for i := range pending.History.Sources {
+		if pending.History.Sources[i].Reference == old {
+			pending.History.Sources[i] = stage
+		}
 	}
-	metadata.History.Preserved[0].Source = prior
+	for i := range metadata.History.Preserved {
+		if metadata.History.Preserved[i].RevisionID == input.RevisionID {
+			metadata.History.Preserved[i].Source, metadata.History.Preserved[i].FilterVersion = prior, "14"
+		}
+	}
 	pending.MetadataBytes, err = json.Marshal(metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending.History.Sources = []state.PendingSource{stage}
-	pending.History.Preparing = true
-	pending.History.Inputs = []state.HistoryInput{{Reference: prior, RevisionID: metadata.History.Preserved[0].RevisionID, CapturedAt: captured, FilterVersion: "14"}}
-	scan.opts.Sources = testSources
-	if err := scan.local.SavePending(scan.id(), pending); err != nil {
-		t.Fatal(err)
+	pending = freshLegacyHistoryOriginal(t, scan, pending)
+	for pending.History.Preparing {
+		if err := scan.advanceHistoryPreparation(&pending); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := scan.advanceHistoryPreparation(&pending); err != nil {
 		t.Fatal(err)
 	}
-	if pending.History.Preparing || pending.History.PrivacyCursor != 1 || len(pending.History.Retired) != 1 || !pending.History.Retired[0].PrivacySensitive || pending.History.Retired[0].Reference != prior {
+	if pending.History.Preparing || pending.History.PrivacyCursor != len(pending.History.Inputs) || len(pending.History.Retired) != 1 || !pending.History.Retired[0].PrivacySensitive || pending.History.Retired[0].Reference != prior {
 		t.Fatal(pending.History)
 	}
 	if err := json.Unmarshal(pending.MetadataBytes, &metadata); err != nil {
@@ -254,7 +271,7 @@ func TestSequentialHistoryPreparationPreservesCaptureAndPrivacyObligation(t *tes
 	if !metadata.History.Preserved[0].CapturedAt.Equal(captured) || metadata.History.Preserved[0].Source == prior {
 		t.Fatal(metadata.History)
 	}
-	saved, found, err := scan.local.LoadPending(scan.id())
+	saved, found, err := scan.local.LoadPublicationPending(scan.id())
 	if err != nil || !found {
 		t.Fatal(found, err)
 	}

@@ -41,33 +41,33 @@ func writeCorrupt(t *testing.T, path string) {
 	}
 }
 
-// Only a collector pass, the files' only writer, moves a collector-owned file
-// aside; any other reader reports it and leaves it.
-func TestCollectorOwnedFilesAreMovedAsideOnlyInAPass(t *testing.T) {
+// Pending journals can be the only evidence of an interrupted publication.
+// Neither ordinary readers nor collector passes may forget unreadable bytes.
+func TestCorruptPendingRemainsActionableInEveryPass(t *testing.T) {
 	store := newTestStore(t)
-	writeCorrupt(t, store.pendingPath("session-1"))
-	if _, _, err := store.LoadPending("session-1"); err == nil || errors.Is(err, ErrQuarantined) {
-		t.Fatalf("outside a pass: %v", err)
+	path := store.pendingPath("session-1")
+	writeCorrupt(t, path)
+	for _, reader := range []*Store{store, store.ForCollectorPass(), store.ForCollectorPass()} {
+		if _, found, err := reader.LoadPending("session-1"); !found || err == nil || errors.Is(err, ErrQuarantined) {
+			t.Fatalf("pending: %v %v", found, err)
+		}
+		if pending, err := reader.HasPending("session-1"); err != nil || !pending {
+			t.Fatal(pending, err)
+		}
 	}
-	if _, err := os.Stat(store.pendingPath("session-1")); err != nil {
-		t.Fatal("moved aside outside a pass")
+	if _, err := os.Stat(path); err != nil || store.LostPublication("session-1") {
+		t.Fatal("pending evidence was moved", err)
 	}
-	pass := store.ForCollectorPass()
-	if _, _, err := pass.LoadPending("session-1"); !errors.Is(err, ErrQuarantined) {
-		t.Fatalf("in a pass: %v", err)
+	legacy := quarantinePath(path)
+	if err := os.WriteFile(legacy, []byte("older quarantined evidence"), 0600); err != nil {
+		t.Fatal(err)
 	}
-	if _, found, err := pass.LoadPending("session-1"); found || err != nil {
-		t.Fatalf("after: %v %v", found, err)
-	}
-	if !store.LostPublication("session-1") {
-		t.Fatal("the lost pending publication is not remembered")
+	if !store.LostPublication("session-1") || len(store.QuarantinedFiles()) != 1 {
+		t.Fatal("older quarantined evidence became invisible")
 	}
 }
 
-// A pending publication holds bytes not yet uploaded. Only one whose bytes
-// are no longer JSON at all is moved aside; one that is JSON of another shape
-// (written by a newer version, then downgraded) is reported and left where
-// it is, so the version that wrote it can still upload it.
+// A journal of an unsupported shape remains evidence for a compatible reader.
 func TestPendingOfAnotherShapeIsNeverMovedAside(t *testing.T) {
 	pass := newTestStore(t).ForCollectorPass()
 	path := pass.pendingPath("session-1")

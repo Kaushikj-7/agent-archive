@@ -1,10 +1,14 @@
 package config
 
 import (
+	"crypto/sha256"
 	"errors"
+	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -57,12 +61,37 @@ func (g DurableStorageGuard) RootedHome(home string) (*local.RootedHome, error) 
 // WithDurableStorage saves the sticky writer fence before any new
 // publication obligation. It holds hooks.lock, so nested callers pass its guard
 // to private write helpers instead of reacquiring the lock.
-func WithDurableStorage(home string, write func(DurableStorageGuard) error) (err error) {
+func WithDurableStorage(home string, write func(DurableStorageGuard) error) error {
+	return withPublicationStorage(home, false, write)
+}
+
+// PublicationCompositionGuard requires the durably saved composition floor.
+// Its storage witness borrows the same held root and lock scope.
+type PublicationCompositionGuard struct{ storage DurableStorageGuard }
+
+// Storage derives the subordinate witness without acquiring another lock.
+func (g PublicationCompositionGuard) Storage(home string) (DurableStorageGuard, error) {
+	if err := g.storage.CheckHome(home); err != nil {
+		return DurableStorageGuard{}, err
+	}
+	return g.storage, nil
+}
+
+// WithPublicationComposition persists source-set protocol5 protection before allocation.
+func WithPublicationComposition(home string, write func(PublicationCompositionGuard) error) error {
+	return withPublicationStorage(home, true, func(g DurableStorageGuard) error { return write(PublicationCompositionGuard{storage: g}) })
+}
+
+func withPublicationStorage(home string, composition bool, write func(DurableStorageGuard) error) error {
+	return withPublicationStorageClosing(home, composition, write, func(held *local.RootedHome) error { return held.Close() })
+}
+
+func withPublicationStorageClosing(home string, composition bool, write func(DurableStorageGuard) error, closeHome func(*local.RootedHome) error) (err error) {
 	held, err := local.OpenRootedHome(home)
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, held.Close()) }()
+	defer func() { err = errors.Join(err, closeHome(held)) }()
 	// Reject unsupported/missing current config before creating even a lock file.
 	// The protected config is loaded again under hooks; this preflight grants no witness.
 	deadline := time.Now().Add(time.Second)
@@ -93,25 +122,9 @@ func WithDurableStorage(home string, write func(DurableStorageGuard) error) (err
 	if err = rootedConfigUnchanged(held, configBefore); err != nil {
 		return err
 	}
-	if !cfg.DurableStorageProtection {
-		cfg.DurableStorageProtection = true
-		if err = prepareDiscoveryConfig(&cfg); err != nil {
-			return err
-		}
-		if err = held.Check(); err != nil {
-			return err
-		}
-		if err = local.RootedWrite(held.Root, "config.json", cfg); err != nil {
-			return err
-		}
-		configBefore, err = held.Root.Lstat("config.json")
-		if err != nil {
-			return err
-		}
-		verified, present, e := LoadRooted(held)
-		if e != nil || !present || !verified.DurableStorageProtection || (verified.SchemaVersion < 7 || verified.SchemaVersion > 16 || verified.SchemaVersion == 14) {
-			return errors.Join(errors.New("durable storage protection was not persisted"), e)
-		}
+	configBefore, err = ensurePublicationStorageProtection(held, cfg, composition, configBefore)
+	if err != nil {
+		return err
 	}
 	if err = held.Check(); err != nil {
 		return err
@@ -159,23 +172,75 @@ func loadDurableStoragePreflight(home *local.RootedHome, deadline time.Time) (Co
 
 // LoadRooted reads the current configuration through a caller-held archive home.
 // It uses Load's decoder and validation without creating or changing a floor.
-func LoadRooted(home *local.RootedHome) (cfg Config, found bool, err error) {
+func LoadRooted(home *local.RootedHome) (Config, bool, error) {
+	cfg, found, _, err := LoadRootedObserved(home)
+	return cfg, found, err
+}
+
+// LoadRootedObserved returns the digest of the same supported bytes decoded by
+// LoadRooted. It neither creates a protection floor nor supplies write authority.
+func LoadRootedObserved(home *local.RootedHome) (cfg Config, found bool, digest [32]byte, err error) {
+	return LoadRootedObservedBounded(home, math.MaxInt64)
+}
+
+// LoadRootedObservedBounded limits the exact observation before allocating or
+// decoding it. A caller can reserve for an earlier file size without allowing a
+// larger replacement to consume memory outside that reservation.
+func LoadRootedObservedBounded(home *local.RootedHome, maxBytes int64) (cfg Config, found bool, digest [32]byte, err error) {
 	if err = home.Check(); err != nil {
-		return Config{}, false, err
+		return Config{}, false, digest, err
 	}
 	before, err := home.Root.Lstat("config.json")
 	if errors.Is(err, os.ErrNotExist) {
-		return Config{}, false, nil
+		return Config{}, false, digest, nil
 	}
 	if err != nil || !before.Mode().IsRegular() {
-		return Config{}, false, errors.Join(errors.New("rooted configuration must be a regular file"), err)
+		return Config{}, false, digest, errors.Join(errors.New("rooted configuration must be a regular file"), err)
 	}
-	raw, readErr := home.Root.ReadFile("config.json")
+	if before.Size() < 0 || before.Size() > maxBytes {
+		return Config{}, false, digest, errors.New("rooted configuration exceeds the reserved read limit")
+	}
+	raw, readErr := readRootedConfigObserved(home, before)
 	if err := rootedConfigReadUnchanged(home, before, raw, readErr); err != nil {
-		return Config{}, false, err
+		return Config{}, false, digest, err
 	}
 	cfg, found, _, err = decodeLoadedConfig(raw, readErr, filepath.Join(home.Root.Name(), "config.json"), agentmeta.Builtins())
-	return cfg, found, errors.Join(err, home.Check())
+	err = errors.Join(err, home.Check())
+	if err == nil {
+		digest = sha256.Sum256(raw)
+	}
+	return cfg, found, digest, err
+}
+
+func readRootedConfigObserved(home *local.RootedHome, before os.FileInfo) (raw []byte, err error) {
+	f, err := home.Root.OpenFile("config.json", os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if e := f.Close(); e != nil {
+			raw = nil
+			err = errors.Join(err, e)
+		}
+	}()
+	opened, err := f.Stat()
+	if err != nil || !opened.Mode().IsRegular() || opened.Size() < 0 || opened.Size() > math.MaxInt-1 || !os.SameFile(before, opened) || before.Size() != opened.Size() || !before.ModTime().Equal(opened.ModTime()) {
+		return nil, errors.Join(errRootedConfigObservationChanged, err)
+	}
+	raw = make([]byte, opened.Size())
+	if _, err = io.ReadFull(f, raw); err != nil {
+		return nil, err
+	}
+	var extra [1]byte
+	n, e := f.Read(extra[:])
+	if n != 0 || !errors.Is(e, io.EOF) {
+		return nil, errors.Join(errRootedConfigObservationChanged, e)
+	}
+	after, err := f.Stat()
+	if err != nil || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return nil, errors.Join(errRootedConfigObservationChanged, err)
+	}
+	return raw, nil
 }
 
 func rootedConfigReadUnchanged(home *local.RootedHome, before os.FileInfo, raw []byte, readErr error) error {
@@ -209,4 +274,32 @@ func rootedConfigUnchanged(home *local.RootedHome, before os.FileInfo) error {
 		return errors.Join(errors.New("durable storage configuration changed before write guard"), err)
 	}
 	return home.Check()
+}
+
+func ensurePublicationStorageProtection(held *local.RootedHome, cfg Config, composition bool, configBefore os.FileInfo) (os.FileInfo, error) {
+	if !cfg.DurableStorageProtection || (composition && !cfg.SourceSetPublicationProtection) {
+		if composition {
+			cfg.SourceSetPublicationProtection = true
+		}
+		cfg.DurableStorageProtection = true
+		if err := prepareDiscoveryConfig(&cfg); err != nil {
+			return nil, err
+		}
+		if err := held.Check(); err != nil {
+			return nil, err
+		}
+		if err := local.RootedWrite(held.Root, "config.json", cfg); err != nil {
+			return nil, err
+		}
+		var err error
+		configBefore, err = held.Root.Lstat("config.json")
+		if err != nil {
+			return nil, err
+		}
+		verified, present, e := LoadRooted(held)
+		if e != nil || !present || !verified.DurableStorageProtection || (verified.SchemaVersion < 7 || verified.SchemaVersion > 17 || verified.SchemaVersion == 14) || (composition && !verified.SourceSetPublicationProtection) {
+			return nil, errors.Join(errors.New("durable storage protection was not persisted"), e)
+		}
+	}
+	return configBefore, nil
 }

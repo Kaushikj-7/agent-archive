@@ -274,6 +274,12 @@ func (s *countingGetStore) Get(ctx context.Context, key string) ([]byte, error) 
 	return s.MemoryStore.Get(ctx, key)
 }
 
+// GetLimited counts the same source read when verification uses its bound.
+func (s *countingGetStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.gets++
+	return s.MemoryStore.GetLimited(ctx, key, limit)
+}
+
 func (s *countingGetStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
 	s.stats++
 	return s.MemoryStore.Stat(ctx, key)

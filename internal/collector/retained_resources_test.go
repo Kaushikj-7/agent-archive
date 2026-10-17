@@ -141,14 +141,14 @@ func TestHistoryVerificationRefusesSharedPressureThenMakesProgress(t *testing.T)
 	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
-	if err := scan.ensureHistorySource(pending.SourceKey, pending.SourceSHA256, pending.SourceBytes); !errors.Is(err, agentapi.ErrReadBudget) {
+	if err := scan.verifyHistorySource(scan.ctx, pending.SourceKey, pending.SourceSHA256, len(pending.SourceBytes)); !errors.Is(err, agentapi.ErrReadBudget) {
 		t.Fatalf("verification bypassed exhausted shared ledger: %v", err)
 	}
 	if remote.sourceLimitedGets != 0 || remote.sourceGets != 0 {
 		t.Fatal("source was read before reserving")
 	}
 	reservation.Release(pressure)
-	if err := scan.ensureHistorySource(pending.SourceKey, pending.SourceSHA256, pending.SourceBytes); err != nil {
+	if err := scan.verifyHistorySource(scan.ctx, pending.SourceKey, pending.SourceSHA256, len(pending.SourceBytes)); err != nil {
 		t.Fatal(err)
 	}
 	if used, _ := budget.Charged(); used != 0 {
@@ -279,4 +279,11 @@ func TestNativeHistoryAliasesRemainChargedAfterProviderClose(t *testing.T) {
 	if used != 0 {
 		t.Fatal("history alias scope leaked", used)
 	}
+}
+
+func (s *noChecksumHistoryStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	if strings.Contains(key, "/source.") {
+		s.sourceLimitedGets++
+	}
+	return s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
 }

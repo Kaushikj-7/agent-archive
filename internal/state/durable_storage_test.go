@@ -85,7 +85,7 @@ func TestDurableQuotaChargesPhysicalHistoryDuplicatesAndTemps(t *testing.T) {
 			return e
 		}
 		defer func() { _ = q.Close() }()
-		u, e := q.usage()
+		u, e := q.usageContext(t.Context())
 		if e != nil {
 			return e
 		}
@@ -110,7 +110,7 @@ func TestDurableAtomicShrinkGrowthAndInterruptedCopies(t *testing.T) {
 		defer func() { _ = q.Close() }()
 		for _, size := range []int{25, 150, 150} {
 			data := make([]byte, size)
-			if e = q.write("pending/old.json", int64(size), func(w io.Writer) error { _, e := w.Write(data); return e }); e != nil {
+			if e = q.writeContext(t.Context(), "pending/old.json", int64(size), func(w io.Writer) error { _, e := w.Write(data); return e }); e != nil {
 				return e
 			}
 			_ = data
@@ -246,7 +246,7 @@ func TestInterruptedDurableAtomicWriteRemainsCharged(t *testing.T) {
 			return e
 		}
 		defer func() { _ = q.Close() }()
-		return q.write("pending/old.json", 5, func(w io.Writer) error {
+		return q.writeContext(t.Context(), "pending/old.json", 5, func(w io.Writer) error {
 			if _, e = w.Write([]byte("newer")); e != nil {
 				return e
 			}
@@ -272,7 +272,7 @@ func TestInterruptedDurableAtomicWriteRemainsCharged(t *testing.T) {
 			return e
 		}
 		defer func() { _ = q.Close() }()
-		usage, e := q.usage()
+		usage, e := q.usageContext(t.Context())
 		if !errors.Is(e, ErrDurableStorageRecovery) {
 			return e
 		}
@@ -578,7 +578,7 @@ func TestDurableCorruptPendingWithoutSourcesIsRetainedAndOwed(t *testing.T) {
 			return err
 		}
 		defer func() { _ = q.Close() }()
-		usage, err := q.usage()
+		usage, err := q.usageContext(t.Context())
 		if err != nil {
 			return err
 		}
@@ -612,7 +612,7 @@ func TestDurableLegacyQuarantineIsInactiveOnlyBeforeFloorUpgrade(t *testing.T) {
 			return err
 		}
 		defer func() { _ = q.Close() }()
-		usage, err := q.usage()
+		usage, err := q.usageContext(t.Context())
 		if !errors.Is(err, ErrDurableStorageRecovery) || usage.physical != 8 || usage.charged != 16 {
 			t.Fatalf("quarantine quota: %+v %v", usage, err)
 		}

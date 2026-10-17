@@ -1,8 +1,12 @@
 package retention
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
+	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,12 +33,9 @@ func sessionObjects(t *testing.T, store storage.ObjectStore, id string) int {
 	return len(objects)
 }
 
-// A published state moved aside because it no longer decoded was the only
-// local record that the session's objects are in the bucket. Once the
-// transcript is gone too, the session looks never published; retention used
-// to forget it locally without a bucket call, leaving its objects forever.
-// It now deletes them like a published session's.
-func TestSessionWhosePublishedStateWasLostIsStillDeletedFromTheBucket(t *testing.T) {
+// Corruption is not clean state loss: quarantine retains anonymous authority
+// and global owed work must prevent guessing a replacement or deletion.
+func TestCorruptPublishedAuthorityRemainsOwedBeforeRetention(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
@@ -44,23 +45,78 @@ func TestSessionWhosePublishedStateWasLostIsStillDeletedFromTheBucket(t *testing
 	if err := os.Remove(filepath.Join(dir, "s1.jsonl")); err != nil {
 		t.Fatal(err)
 	}
+	before := sessionObjects(t, store, "s1")
 	corruptFile(t, local, "published/s1.json")
-	if r := collect(t, local, store, t0.Add(time.Hour)); !errors.Is(r.Errors["s1"], state.ErrQuarantined) {
-		t.Fatalf("errors = %v", r.Errors)
+	if r := collect(t, local, store, t0.Add(time.Hour)); !errors.Is(r.Errors["s1"], state.ErrQuarantined) || len(r.Published) != 0 {
+		t.Fatalf("first quarantine: %+v", r)
 	}
-	collect(t, local, store, t0.Add(2*time.Hour))
+	quarantined := local.QuarantinedFiles()
+	if len(quarantined) != 1 {
+		t.Fatalf("quarantined %v", quarantined)
+	}
+	retained, err := os.ReadFile(filepath.Join(local.Home(), quarantined[0]))
+	if err != nil || !bytes.Equal(retained, []byte(`{"trunc`)) {
+		t.Fatalf("exact corrupt authority not retained: %q %v", retained, err)
+	}
+	bindings := builtin.NewBuiltins()
+	result, err := collector.Run(t.Context(), local, store, collector.Options{Sources: bindings, Parsers: bindings, MachineID: "m", Now: func() time.Time { return t0.Add(2 * time.Hour) }})
+	if !errors.Is(err, state.ErrDurableStorageRecovery) || len(result.Published) != 0 {
+		t.Fatalf("anonymous owed retry: %+v %v", result, err)
+	}
+	swept := sweep(t, local, store, t0.Add(retentionWindow+time.Hour), Options{})
+	if !errors.Is(swept.Errors["s1"], state.ErrDurableStorageRecovery) || len(swept.DeletedSessions) != 0 {
+		t.Fatalf("corrupt authority deletion: %+v", swept)
+	}
+	if after := sessionObjects(t, store, "s1"); after != before {
+		t.Fatalf("remote objects changed %d→%d", before, after)
+	}
+	again, err := os.ReadFile(filepath.Join(local.Home(), quarantined[0]))
+	if err != nil || !bytes.Equal(again, retained) || registered(t, local) != 1 {
+		t.Fatalf("owed authority changed %v", err)
+	}
+}
+
+// A fresh legitimate registration root has no corrupt/orphan selecting proof.
+// Complete remote authority is independently verified, restored, then expired
+// through the actual retention deletion path once its original age is due.
+func TestCleanAbsentPublishedAuthorityIsRestoredThenExpired(t *testing.T) {
+	t.Parallel()
+	producer := newTestStore(t)
+	store := storagetest.NewMemoryStore()
+	dir := t.TempDir()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	publishTwice(t, producer, store, "s1", dir, t0)
+	reg, found, err := producer.LoadRegistration("s1")
+	if err != nil || !found {
+		t.Fatal(found, err)
+	}
+	cfg, _, err := config.Load(producer.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := newTestStore(t)
+	if err := config.Save(local.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "s1.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	restored := collect(t, local, store, t0.Add(2*time.Hour))
+	if len(restored.Errors) != 0 {
+		t.Fatalf("clean restore: %+v", restored)
+	}
 	if summary, found, err := local.LoadPublishedSummary("s1"); err != nil || !found || !summary.Published || !summary.SourceSetComplete {
-		t.Fatal("verified remote authority was not recovered", err)
+		t.Fatalf("verified complete baseline not restored: %+v %v %v", summary, found, err)
 	}
 	result := sweep(t, local, store, t0.Add(retentionWindow+time.Hour), Options{})
 	if len(result.Errors) != 0 || len(result.DeletedSessions) != 1 {
-		t.Fatalf("%#v", result)
+		t.Fatalf("%+v", result)
 	}
 	if n := sessionObjects(t, store, "s1"); n != 0 {
-		t.Fatalf("%d object(s) of a session that lost its published state outlived retention", n)
-	}
-	if quarantined := local.QuarantinedFiles(); len(quarantined) != 0 {
-		t.Fatalf("the moved-aside copy outlived its session: %v", quarantined)
+		t.Fatalf("%d remote objects outlived retention", n)
 	}
 }
 

@@ -171,6 +171,27 @@ single-component v2/v3 hints, and older readers use compatibility scanning when
 they reject segmented hints. Canonical source and metadata schemas, derived
 metadata, privacy filtering, adapter and parser versions are unchanged.
 
+Private source-set publication uses `{version: 17, writer: source-set-publication-v17}`
+with sticky `source_set_publication_protection` and durable-storage protection.
+The source-set outer pending `journal_version: 5` and published
+`publication_version: 5` use the distinct `source_set_commit5` field; the inner
+selecting commit keeps version 2 and its existing digest domain. Preparing
+journals have no selecting commit; ready journals bind the complete source set.
+The same held root durably establishes the writer fence before emitting these
+records. Older configuration writers reject the new marker, and older journal
+readers reject the new outer version rather than interpreting its authority as
+legacy state. Unknown and mixed selecting protocols fail closed.
+
+This is a capability layer over existing configuration, preserving every lower
+consent, search, import and selection protection. It does not redefine ordinary
+ReadySelection2, staged selection3, Cursor selection4 or catalog `commit`.
+Unprotected legacy ordinary publication and full historical source sets use the
+new protocol; existing protected ordinary/staged/catalog paths retain their
+own authority. Legacy replay is upgraded only from retained committed evidence;
+unknown predecessor authority remains pending. Remote source/metadata schemas
+and filter versions are unchanged. Every save and rollback preserves the writer
+floor and all lower protections.
+
 Codex native child ownership advances its parser from the naming policy 0.25.0
 to 0.26.0. Native children retain their stable thread identity and own admission,
 and `native_child` remains observable while their parent archive link is pending.

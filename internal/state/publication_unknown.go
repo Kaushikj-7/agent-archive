@@ -2,7 +2,9 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/wirepolicy"
 )
@@ -14,38 +16,26 @@ type unsupportedPublicationField struct{}
 
 func (*unsupportedPublicationField) UnmarshalJSON([]byte) error { return ErrDurableStorageRecovery }
 
-type unsupportedPendingFields struct {
-	Sources        unsupportedPublicationField `json:"sources"`
-	Phase          unsupportedPublicationField `json:"phase"`
-	Preparation    unsupportedPublicationField `json:"preparation"`
-	Progress       unsupportedPublicationField `json:"progress"`
-	Cleanup        unsupportedPublicationField `json:"cleanup"`
-	AdmissionStage unsupportedPublicationField `json:"admission_stage"`
-}
-
-type unsupportedPublishedFields struct {
-	Cursor             unsupportedPublicationField `json:"cursor_commit4"`
-	Staged             unsupportedPublicationField `json:"staged_commit3"`
-	Selection          unsupportedPublicationField `json:"selection_commit"`
-	Commit             unsupportedPublicationField `json:"commit"`
-	Sources            unsupportedPublicationField `json:"sources"`
-	PredecessorUnknown unsupportedPublicationField `json:"predecessor_unknown"`
-}
-
 // UnmarshalJSON refuses foreign publication authority before legacy fallback.
-func (p *PendingPublication) UnmarshalJSON(data []byte) error {
+func decodeLegacyPendingPublication(data []byte, p *PendingPublication) error {
 	if err := rejectDuplicateSelectionKeys(data); err != nil {
 		return err
 	}
 	type pendingJSON PendingPublication
 	wire := struct {
 		*pendingJSON
-		unsupportedPendingFields
-		Commit    json.RawMessage `json:"commit"`
-		Version   json.RawMessage `json:"journal_version"`
-		Selection json.RawMessage `json:"selection_commit"`
-		Staged    json.RawMessage `json:"staged_commit3"`
-		Cursor    json.RawMessage `json:"cursor_commit4"`
+		SourceSet      unsupportedPublicationField `json:"source_set_commit5"`
+		Sources        unsupportedPublicationField `json:"sources"`
+		Phase          unsupportedPublicationField `json:"phase"`
+		Preparation    unsupportedPublicationField `json:"preparation"`
+		Progress       unsupportedPublicationField `json:"progress"`
+		Cleanup        unsupportedPublicationField `json:"cleanup"`
+		AdmissionStage unsupportedPublicationField `json:"admission_stage"`
+		Commit         json.RawMessage             `json:"commit"`
+		Version        json.RawMessage             `json:"journal_version"`
+		Selection      json.RawMessage             `json:"selection_commit"`
+		Staged         json.RawMessage             `json:"staged_commit3"`
+		Cursor         json.RawMessage             `json:"cursor_commit4"`
 	}{pendingJSON: (*pendingJSON)(p)}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
@@ -110,15 +100,26 @@ func (p *PendingPublication) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (p *publishedState) UnmarshalJSON(data []byte) error {
-	if err := rejectDuplicateAuthorityKeys(data, []string{"publication_version", "last_published"}); err != nil {
+func decodeLegacyPublishedState(data []byte, p *publishedState) error {
+	if err := rejectDuplicateAuthorityKeys(data, []string{"publication_version", "last_published", "status"}); err != nil {
 		return err
 	}
 	type publishedJSON publishedState
 	wire := struct {
 		*publishedJSON
-		unsupportedPublishedFields
-		Version json.RawMessage `json:"publication_version"`
+		SourceSet          unsupportedPublicationField `json:"source_set_commit5"`
+		Cursor             unsupportedPublicationField `json:"cursor_commit4"`
+		Staged             unsupportedPublicationField `json:"staged_commit3"`
+		Selection          unsupportedPublicationField `json:"selection_commit"`
+		Commit             unsupportedPublicationField `json:"commit"`
+		Sources            unsupportedPublicationField `json:"sources"`
+		PredecessorUnknown unsupportedPublicationField `json:"predecessor_unknown"`
+		SettledPrivacy     unsupportedPublicationField `json:"settled_privacy"`
+		PrivacyReceipts    unsupportedPublicationField `json:"privacy_receipts"`
+		Preparation        unsupportedPublicationField `json:"preparation"`
+		Payloads           unsupportedPublicationField `json:"payloads"`
+		Cleanup            unsupportedPublicationField `json:"cleanup"`
+		Version            json.RawMessage             `json:"publication_version"`
 	}{publishedJSON: (*publishedJSON)(p)}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
@@ -234,4 +235,40 @@ func decodePendingCursorProof(p *PendingPublication, version, raw json.RawMessag
 		return ErrDurableStorageRecovery
 	}
 	return nil
+}
+
+// UnmarshalJSON dispatches distinct publication authorities without reinterpreting
+// the existing ordinary, staged, Cursor, or catalog wire contracts.
+func (p *PendingPublication) UnmarshalJSON(data []byte) error {
+	return decodePendingPublication(data, p, context.Background(), nil)
+}
+
+func (p *publishedState) UnmarshalJSON(data []byte) error {
+	return decodePublishedState(data, p, context.Background(), nil)
+}
+
+func decodePendingPublication(data []byte, p *PendingPublication, ctx context.Context, budget *agentapi.NativeReadBudget, owners ...stateReservation) error {
+	var marker struct {
+		Version int `json:"journal_version"`
+	}
+	if err := json.Unmarshal(data, &marker); err != nil {
+		return err
+	}
+	if marker.Version == 5 {
+		return decodeSourceSetPendingPublication(data, p, ctx, budget, owners...)
+	}
+	return decodeLegacyPendingPublication(data, p)
+}
+
+func decodePublishedState(data []byte, p *publishedState, ctx context.Context, budget *agentapi.NativeReadBudget, owners ...stateReservation) error {
+	var marker struct {
+		Version int `json:"publication_version"`
+	}
+	if err := json.Unmarshal(data, &marker); err != nil {
+		return err
+	}
+	if marker.Version == 5 {
+		return decodeSourceSetPublishedState(data, p, ctx, budget, owners...)
+	}
+	return decodeLegacyPublishedState(data, p)
 }

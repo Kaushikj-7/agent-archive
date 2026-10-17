@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"io"
@@ -20,7 +21,7 @@ type durableRootStamp struct{ info os.FileInfo }
 type durableInspectionCache struct {
 	mu          sync.Mutex
 	home        os.FileInfo
-	stamps      [2]durableRootStamp
+	stamps      [3]durableRootStamp
 	obligations []DurableStorageObligation
 	anonymous   bool
 	valid       bool
@@ -65,8 +66,8 @@ func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]Dura
 	if err != nil {
 		return nil, true, 0, err
 	}
-	roots := [2]string{"pending", generationRecoveryDir}
-	var stamps [2]durableRootStamp
+	roots := [3]string{"pending", generationRecoveryDir, "published"}
+	var stamps [3]durableRootStamp
 	for i, name := range roots {
 		info, e := home.Root.Lstat(name)
 		if errors.Is(e, os.ErrNotExist) {
@@ -77,7 +78,7 @@ func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]Dura
 		}
 		stamps[i].info = info
 	}
-	if cache.valid && cache.legacy == legacy && os.SameFile(cache.home, homeInfo) && sameDurableStamp(cache.stamps[0].info, stamps[0].info) && sameDurableStamp(cache.stamps[1].info, stamps[1].info) {
+	if cache.valid && cache.legacy == legacy && os.SameFile(cache.home, homeInfo) && sameDurableStamp(cache.stamps[0].info, stamps[0].info) && sameDurableStamp(cache.stamps[1].info, stamps[1].info) && sameDurableStamp(cache.stamps[2].info, stamps[2].info) {
 		return append([]DurableStorageObligation(nil), cache.obligations...), cache.anonymous, cache.entries, home.Check()
 	}
 	cache.valid = false
@@ -159,8 +160,10 @@ func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remainin
 				continue
 			}
 			id := strings.TrimSuffix(entry.Name(), ".json")
-			if info.Mode().IsRegular() && strings.HasSuffix(entry.Name(), ".json") && safeFileComponent(id) {
-				out = append(out, DurableStorageObligation{SessionID: id, Namespace: namespace})
+			if info.Mode().IsRegular() && strings.HasSuffix(entry.Name(), ".json") && safeFileComponent(id) && !strings.HasPrefix(entry.Name(), ".pending-") {
+				if name != "published" {
+					out = append(out, DurableStorageObligation{SessionID: id, Namespace: namespace})
+				}
 				continue
 			}
 			unknown = true
@@ -267,8 +270,24 @@ func acknowledgedLegacyQuarantine(name string) bool {
 
 // CheckDurableSessionRead refuses unknown session obligations before preview
 // opens a provider. It shares the root/config cache and bounded local probes.
-func (s *Store) CheckDurableSessionRead(id string) (err error) {
-	if !safeFileComponent(id) || len(id) > 250 || strings.IndexFunc(id, unicode.IsControl) >= 0 {
+func (s *Store) CheckDurableSessionRead(id string) error {
+	return s.checkDurableSessionRead(id, nil)
+}
+
+type publicationReadOwner struct {
+	registration archive.SessionRegistration
+	machine      string
+	admission    string
+}
+
+// CheckPublicationSessionRead validates owned publication replay only. Generic
+// preview, naming and fresh native eligibility retain CheckDurableSessionRead.
+func (s *Store) CheckPublicationSessionRead(reg archive.SessionRegistration, machine, admission string) error {
+	return s.checkDurableSessionRead(reg.ArchiveSessionID, &publicationReadOwner{reg, machine, admission})
+}
+
+func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner) (err error) {
+	if unsafeDurableSessionID(id) {
 		return ErrDurableStorageRecovery
 	}
 	home, err := local.OpenRootedHome(s.home)
@@ -291,6 +310,89 @@ func (s *Store) CheckDurableSessionRead(id string) (err error) {
 	if err != nil {
 		return err
 	}
+	if err := s.validateDurableReadReceipt(home, id, found); err != nil {
+		return err
+	}
+	evidence, err := rootHasEntries(home.Root, filepath.Join("publication-evidence", id))
+	if err != nil || evidence && owner == nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	history, err := rootHasEntries(home.Root, filepath.Join("sessions", id, "pending-sources"))
+	if err != nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	info, pendingErr := home.Root.Lstat(filepath.Join("pending", id+".json"))
+	present := pendingErr == nil
+	if pendingErr != nil && !errors.Is(pendingErr, os.ErrNotExist) || present && !info.Mode().IsRegular() {
+		return errors.Join(ErrDurableStorageRecovery, pendingErr)
+	}
+	if (history || present || evidence) && !found {
+		return ErrDurableStorageRecovery
+	}
+	if evidence && owner != nil {
+		if err := s.validatePublicationEvidenceDirectory(home.Root, id); err != nil {
+			return err
+		}
+	}
+
+	if history || present || evidence {
+		if err := s.validateDurableReadPending(id, history, owner); err != nil {
+			return err
+		}
+	}
+	return s.durableContext().Err()
+}
+
+// CheckDurableReadRoots refuses anonymous recovery work before native content is read.
+// It reuses bounded observations, never ownership or cleanup authority.
+func (s *Store) CheckDurableReadRoots() error { _, err := s.inspectDurableReadRoots(); return err }
+
+func publicationReadOwnerChanged(metadata archive.Metadata, reg archive.SessionRegistration, origin archive.SessionOrigin, owner *publicationReadOwner, pending PendingPublication) bool {
+	return (metadata.SessionID != reg.ArchiveSessionID || metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.Harness.Name != reg.Harness.Name || metadata.PreviousGenerationID != reg.PreviousGenerationID || !metadata.StartedAt.Equal(reg.SessionStartedAt) || metadata.Origin != origin || owner.machine != "" && metadata.MachineID != owner.machine || pending.Preparation == nil || pending.Preparation.DestinationID != reg.DestinationID || pending.Preparation.AdmissionContext != owner.admission)
+}
+
+func (s *Store) validateDurableReadPending(id string, history bool, owner *publicationReadOwner) error {
+	// This guard discards the validated transaction; its decoded inputs
+	// must not accumulate on the caller's existing ledger.
+	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
+	var pending PendingPublication
+	var readable bool
+	var readErr error
+	if owner != nil {
+		pending, readable, readErr = scratch.LoadPublicationPending(id)
+		if readErr == nil && readable && pending.JournalVersion == 5 {
+			var metadata archive.Metadata
+			readErr = scratch.unmarshalOwned(pending.MetadataBytes, &metadata)
+			reg := owner.registration
+			origin := reg.Origin
+			if origin == archive.SessionOriginHook {
+				origin = ""
+			}
+			if readErr == nil && publicationReadOwnerChanged(metadata, reg, origin, owner, pending) {
+				readErr = ErrDurableStorageRecovery
+			}
+		}
+	} else {
+		pending, readable, readErr = scratch.LoadPending(id)
+	}
+	missingHistory := history && pending.History == nil
+	closeScratch()
+	// A capacity refusal has not inspected the publication. Keep it owed and
+	// retryable; it proves neither missing history nor damaged authority.
+	if errors.Is(readErr, agentapi.ErrReadBudget) && !errors.Is(readErr, ErrDurableStorageRecovery) {
+		return readErr
+	}
+	if readErr != nil || !readable || missingHistory {
+		return errors.Join(ErrDurableStorageRecovery, readErr)
+	}
+	return nil
+}
+
+func unsafeDurableSessionID(id string) bool {
+	return !safeFileComponent(id) || len(id) > 250 || strings.IndexFunc(id, unicode.IsControl) >= 0
+}
+
+func (s *Store) validateDurableReadReceipt(home *local.RootedHome, id string, found bool) error {
 	info, receiptErr := home.Root.Lstat(filepath.Join(generationRecoveryDir, id+".json"))
 	if receiptErr == nil {
 		if !found || !info.Mode().IsRegular() {
@@ -303,48 +405,5 @@ func (s *Store) CheckDurableSessionRead(id string) (err error) {
 	} else if !errors.Is(receiptErr, os.ErrNotExist) {
 		return errors.Join(ErrDurableStorageRecovery, receiptErr)
 	}
-	evidence, err := rootHasEntries(home.Root, filepath.Join("publication-evidence", id))
-	if err != nil || evidence {
-		return errors.Join(ErrDurableStorageRecovery, err)
-	}
-	history, err := rootHasEntries(home.Root, filepath.Join("sessions", id, "pending-sources"))
-	if err != nil {
-		return errors.Join(ErrDurableStorageRecovery, err)
-	}
-	info, pendingErr := home.Root.Lstat(filepath.Join("pending", id+".json"))
-	present := pendingErr == nil
-	if pendingErr != nil && !errors.Is(pendingErr, os.ErrNotExist) || present && !info.Mode().IsRegular() {
-		return errors.Join(ErrDurableStorageRecovery, pendingErr)
-	}
-	if (history || present) && !found {
-		return ErrDurableStorageRecovery
-	}
-	if history || present {
-		if err := s.checkPendingReadable(id, history); err != nil {
-			return err
-		}
-	}
 	return s.durableContext().Err()
 }
-
-// checkPendingReadable reads the pending publication CheckDurableSessionRead
-// found. This guard discards the validated transaction; its decoded inputs
-// must not accumulate on the caller's existing ledger.
-func (s *Store) checkPendingReadable(id string, history bool) error {
-	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
-	pending, readable, readErr := scratch.LoadPending(id)
-	missingHistory := history && pending.History == nil
-	closeScratch()
-	if errors.Is(readErr, agentapi.ErrReadBudget) {
-		// Memory for reading it, not the evidence, is what is missing.
-		return readErr
-	}
-	if readErr != nil || !readable || missingHistory {
-		return errors.Join(ErrDurableStorageRecovery, readErr)
-	}
-	return nil
-}
-
-// CheckDurableReadRoots refuses anonymous recovery work before native content is read.
-// It reuses bounded observations, never ownership or cleanup authority.
-func (s *Store) CheckDurableReadRoots() error { _, err := s.inspectDurableReadRoots(); return err }

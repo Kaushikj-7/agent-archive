@@ -2,9 +2,12 @@ package cli
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -65,7 +68,17 @@ func legacyNativeChildEnvelope(t *testing.T, local *state.Store, cloud *storaget
 	key, err := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
 	must(t, err)
 	must(t, cloud.Put(t.Context(), key, raw))
-	published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+	// Create the complete older producer shape through its validated persistence
+	// API in a fresh private scope. Never prune a current selecting Commit into legacy.
+	cfg, _, err := config.Load(local.Home())
+	must(t, err)
+	legacyHome := t.TempDir()
+	must(t, os.Chmod(legacyHome, 0700))
+	must(t, config.Save(legacyHome, cfg))
+	legacyStore, err := state.Open(legacyHome)
+	must(t, err)
+	must(t, legacyStore.SaveRegistration(admitted))
+	published, err := legacyStore.LoadPublishedState(reg.ArchiveSessionID)
 	must(t, err)
 	must(t, published.SavePublication(sources[metadata.History.CurrentRevision], metadata.CapturedAt, metadata.SourceBundle, raw))
 	// Ownership interpretation can upgrade before retained source headers do.
@@ -88,6 +101,9 @@ func legacyNativeChildEnvelope(t *testing.T, local *state.Store, cloud *storaget
 		t.Fatal("optional legacy source marker invalidated acknowledged metadata")
 	}
 	must(t, published.SavePublication(sources[metadata.History.CurrentRevision], metadata.CapturedAt, metadata.SourceBundle, raw))
+	legacyRaw, err := os.ReadFile(filepath.Join(legacyHome, "published", reg.ArchiveSessionID+".json"))
+	must(t, err)
+	must(t, os.WriteFile(filepath.Join(local.Home(), "published", reg.ArchiveSessionID+".json"), legacyRaw, 0600))
 	_, err = local.UpdateRegistration(reg.ArchiveSessionID, func(current *archive.SessionRegistration) error {
 		current.NativeChild, current.NativeRootSessionID, current.ParentNativeSessionID, current.NativeSourceHome, current.NativeLinkVersion = false, "", "", "", 0
 		return nil

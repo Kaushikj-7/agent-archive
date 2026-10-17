@@ -32,14 +32,14 @@ func checkStagedConfigAuthority(data []byte) error {
 		if err = d.Decode(&value); err != nil {
 			return err
 		}
-		for _, name := range []stagedConfigField{stagedConfigSchemaField, stagedConfigSelectionField, stagedConfigCursorField, stagedConfigPickerField, stagedConfigSearchField} {
+		for _, name := range []stagedConfigField{stagedConfigSchemaField, stagedConfigSelectionField, stagedConfigCursorField, stagedConfigPickerField, stagedConfigSearchField, stagedConfigSourceSetField} {
 			if strings.EqualFold(key, string(name)) {
 				seen[string(name)]++
 				if name == stagedConfigSchemaField {
 					schema = value
 					schemaExact = schemaExact && key == string(name)
 				}
-				if name == stagedConfigSelectionField || name == stagedConfigCursorField || name == stagedConfigPickerField || name == stagedConfigSearchField {
+				if name == stagedConfigSelectionField || name == stagedConfigCursorField || name == stagedConfigPickerField || name == stagedConfigSearchField || name == stagedConfigSourceSetField {
 					staged = true
 					if key != string(name) || seen[string(name)] != 1 || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 						return errors.New("invalid staged configuration authority")
@@ -84,6 +84,8 @@ func checkStagedWriterObject(raw []byte) error {
 	}
 	return nil
 }
+
+const stagedConfigSourceSetField stagedConfigField = "source_set_publication_protection"
 
 type stagedWriterField string
 
