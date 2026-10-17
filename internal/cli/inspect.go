@@ -156,18 +156,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return fs.usageError("--project and --all-projects cannot be used together: --project lists one project, --all-projects lists every project")
 	}
 	if *source == "local" {
-		if err := localReadFlags(fs, "source", "harness", "limit", "json", "all-projects", "project", "no-pager"); err != nil {
-			return fs.usageError("%v", err)
-		}
-		canonical, ok := harnessFlagWithCatalog(catalogFor(env), *harness)
-		if !ok {
-			return fs.usageError("%s", harnessFlagError(*harness))
-		}
-		if *limit < 0 {
-			return fs.usageError("--limit cannot be negative")
-		}
-		*harness = canonical
-		return runLocalList(env, stdout, stderr, localReadOptions{harness: *harness, project: *project, allProjects: *allProjects, query: query, limit: *limit, json: *jsonOut})
+		return runLocalListCommand(fs, env, stdout, stderr, localReadOptions{harness: *harness, project: *project, allProjects: *allProjects, query: query, limit: *limit, json: *jsonOut})
 	}
 	if *source != "archive" {
 		return fs.usageError("--source must be archive or local")
@@ -181,17 +170,9 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if code != 0 {
 		return code
 	}
-	store, cfg, found, err := openReadOnlyStore(env)
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
-		return 1
-	}
-	if !found {
-		terminal.Println(stderr, preSetupGuidanceFor(env))
-		return 1
-	}
-	if *rebuildIndex && !rebuildListingIndex(env, store, stderr) {
-		return 1
+	store, cfg, code := openListStore(env, stderr, *rebuildIndex)
+	if code != 0 {
+		return code
 	}
 	ctx, browsing, stopReads := listReadContext(env, store, opts, stdin, stdout)
 	defer stopReads()
@@ -254,6 +235,32 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return code
 	}
 	return printListWithPager(ctx, env, stdout, stderr, opts.noPager, choices)
+}
+
+// openListStore retains list's configuration and explicit rebuild checks.
+func openListStore(env listCommandDependencies, stderr io.Writer, rebuild bool) (storage.ObjectStore, config.Config, int) {
+	store, cfg, code := openReadOnlyCommandStore(env, stderr, "list")
+	if code != 0 {
+		return nil, cfg, code
+	}
+	if rebuild && !rebuildListingIndex(env, store, stderr) {
+		return nil, cfg, 1
+	}
+	return store, cfg, 0
+}
+
+// openReadOnlyCommandStore reports the shared setup and read-only open failures.
+func openReadOnlyCommandStore(env readOnlyStoreDependencies, stderr io.Writer, command string) (storage.ObjectStore, config.Config, int) {
+	store, cfg, found, err := openReadOnlyStore(env)
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)
+		return nil, cfg, 1
+	}
+	if !found {
+		terminal.Println(stderr, preSetupGuidanceFor(env))
+		return nil, cfg, 1
+	}
+	return store, cfg, 0
 }
 
 // listReadContext starts discovery before scope preparation and owns both
@@ -686,20 +693,8 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if *full && *jsonOut {
 		return fs.usageError("--full is for the readable transcript; --json always includes every retained tool result")
 	}
-	if *source == "local" {
-		if err := localReadFlags(fs, "source", "harness", "project", "all-projects", "transcript", "full", "json", "no-pager", "max-bytes"); err != nil {
-			return fs.usageError("%v", err)
-		}
-		if sessionID == "" {
-			return fs.usageError("--source local needs a native session ID; use list --source local to find one")
-		}
-		if *project != "" && *allProjects {
-			return fs.usageError("--project and --all-projects cannot be used together")
-		}
-		return runLocalShow(env, stdout, stderr, localReadOptions{harness: *harness, project: *project, allProjects: *allProjects, query: sessionID, json: *jsonOut, transcript: *transcript, full: *full, maxBytes: *maxBytes})
-	}
-	if *source != "archive" || *project != "" || *allProjects {
-		return fs.usageError("--source must be archive or local; --project and --all-projects need --source local")
+	if handled, code := dispatchShowSource(fs, env, stdout, stderr, *source, localReadOptions{harness: *harness, project: *project, allProjects: *allProjects, query: sessionID, json: *jsonOut, transcript: *transcript, full: *full, maxBytes: *maxBytes}); handled {
+		return code
 	}
 
 	if sessionID == "" && !browseInteractive(env, stdin, stdout) {
@@ -712,14 +707,9 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return fs.usageError("--transcript needs a SESSION_ID; pick a session with show and press t, or run show SESSION_ID --transcript")
 	}
 
-	store, cfg, found, err := openReadOnlyStore(env)
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
-		return 1
-	}
-	if !found {
-		terminal.Println(stderr, preSetupGuidanceFor(env))
-		return 1
+	store, cfg, code := openReadOnlyCommandStore(env, stderr, "show")
+	if code != 0 {
+		return code
 	}
 
 	ctx, stopReads := readCommandContext(env)

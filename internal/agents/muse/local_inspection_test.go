@@ -18,8 +18,10 @@ import (
 type localInspectionFiles struct{}
 
 func (localInspectionFiles) ReadDir(path string) ([]fs.DirEntry, error) { return os.ReadDir(path) }
-func (localInspectionFiles) Lstat(path string) (fs.FileInfo, error)     { return os.Lstat(path) }
-func (localInspectionFiles) Open(path string) (io.ReadCloser, error)    { return os.Open(path) }
+
+func (localInspectionFiles) Lstat(path string) (fs.FileInfo, error) { return os.Lstat(path) }
+
+func (localInspectionFiles) Open(path string) (io.ReadCloser, error) { return os.Open(path) }
 
 func TestLocalInspectionKeepsPurposeBounds(t *testing.T) {
 	t.Parallel()
@@ -53,7 +55,7 @@ func TestLocalInspectionRecognizesOnlyQualifiedOrdinaryPaths(t *testing.T) {
 	t.Parallel()
 	p := LocalInspection{}
 	e := agentapi.NativePathEnvironment{Locations: agentapi.NativeLocations{DataHome: "/synthetic/data"}}
-	path := filepath.Join(e.Locations.DataHome, "muse/sessions/2026/10/15/00000000-0000-7000-8000-000000000001/session.jsonl")
+	path := filepath.Join(e.Locations.DataHome, "muse", "sessions", "2026", "10", "15", "00000000-0000-7000-8000-000000000001", "session.jsonl")
 	if !p.RecognizesTranscriptPath(e, path) {
 		t.Fatal("ordinary locator unrecognized")
 	}
