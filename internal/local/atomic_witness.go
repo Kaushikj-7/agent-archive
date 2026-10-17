@@ -47,11 +47,11 @@ func (w *AtomicWriteWitness) Check(root *os.Root) error {
 	}
 	s := w.state
 	home, err := root.Stat(".")
-	if err != nil || !os.SameFile(home, s.home) {
+	if err != nil || !home.IsDir() || home.Mode() != s.home.Mode() || home.Mode().Perm()&0077 != 0 || !os.SameFile(home, s.home) {
 		return errors.Join(errAtomicWitness, err)
 	}
 	parent, err := root.Lstat(filepath.Dir(s.name))
-	if err != nil || !parent.IsDir() || parent.Mode()&os.ModeSymlink != 0 || !os.SameFile(parent, s.parent) {
+	if err != nil || !parent.IsDir() || parent.Mode() != s.parent.Mode() || parent.Mode().Perm()&0077 != 0 || !os.SameFile(parent, s.parent) {
 		return errors.Join(errAtomicWitness, err)
 	}
 	file, err := root.Lstat(s.name)

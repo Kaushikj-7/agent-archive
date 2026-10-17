@@ -123,7 +123,12 @@ func TestNativeImportAtomicCommitRechecksCurrentAuthority(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					previous := cfg
 					cfg.Paused = true
+					cfg, err = config.ReconcileMuseCapture(cfg, previous, reg.AdmittedAt.Add(time.Hour))
+					if err != nil {
+						t.Fatal(err)
+					}
 					if err := config.Save(s.Home(), cfg); err != nil {
 						t.Fatal(err)
 					}

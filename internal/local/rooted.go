@@ -127,6 +127,7 @@ func rootedAtomicWrite(root *os.Root, name string, write func(io.Writer) error, 
 		}
 		defer func() { witness.state.active.Store(false) }()
 		commit = func(rename func() error) error {
+			defer witness.state.active.Store(false)
 			return witnessed.check(witness, func() error {
 				if e := witness.verify(witnessed.ctx, witnessed.scratch); e != nil {
 					return e
