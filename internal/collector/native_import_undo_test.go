@@ -8,7 +8,12 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/retention"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
+
+type historicalUndoCatalog struct{ *historicalNativeReadback }
+
+func (historicalUndoCatalog) CatalogMetadataAuthority() bool { return true }
 
 // Generic undo must not consume the acknowledged evidence of a historical
 // receipt, even after its original typed payload has become a retained successor.
@@ -41,14 +46,19 @@ func TestNativeImportReleasedUndoPreservesAcknowledgedSuccessor(t *testing.T) {
 	if err != nil || !found {
 		t.Fatal("later request", err)
 	}
-	undoErr := retention.DeleteOwnedSession(t.Context(), f.store, f.remote, f.reg, state.RemovalReasonUndo, f.at.Add(3*time.Hour))
-	after, readErr := f.remote.Get(t.Context(), key)
-	if readErr != nil || !bytes.Equal(before, after) {
-		t.Fatalf("generic undo changed acknowledged selecting evidence: undo=%v read=%v", undoErr, readErr)
+	for _, remote := range []storage.ObjectStore{f.remote, historicalUndoCatalog{f.remote}} {
+		stale := f.reg
+		stale.NativeImport = nil
+		undoErr := retention.DeleteOwnedSession(t.Context(), f.store, remote, stale, state.RemovalReasonUndo, f.at.Add(3*time.Hour))
+		after, readErr := f.remote.Get(t.Context(), key)
+		if readErr != nil || !bytes.Equal(before, after) {
+			t.Fatalf("generic undo changed acknowledged selecting evidence: undo=%v read=%v", undoErr, readErr)
+		}
+		if undoErr == nil {
+			t.Fatal("generic historical undo was accepted")
+		}
 	}
-	if undoErr == nil {
-		t.Fatal("generic historical undo was accepted")
-	}
+
 	current, found, err := f.store.LoadRequest(f.reg.ArchiveSessionID)
 	if err != nil || !found || current.Token != request.Token {
 		t.Fatal("independent request changed", err)

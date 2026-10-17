@@ -6,6 +6,9 @@ import "github.com/wangjohn/agent-archive/internal/archive"
 // Purpose-specific receipt transitions must preserve acknowledged evidence and
 // later independent work. Both the supplied snapshot and actual owner matter.
 func (s *Store) CheckSessionUndo(reg archive.SessionRegistration) error {
+	if !safeFileComponent(reg.ArchiveSessionID) {
+		return ErrSessionIdentityConflict
+	}
 	if reg.NativeImport != nil {
 		return archive.ErrUnsupportedNativeImport
 	}
