@@ -159,6 +159,8 @@ func TestStartupCandidateOrderInvalidHintsPreserveWorkAndReleaseScratch(t *testi
 				hint.cancel = cancel
 			case startupHintPressure:
 				limit = 1
+			case startupHintBorrowed:
+				// The factory is selected below before constructing the pass.
 			}
 			budget := agentapi.NewNativeReadBudget(limit)
 			factory := startupOrderingFactory
