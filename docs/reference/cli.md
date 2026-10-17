@@ -74,7 +74,7 @@ Import history
   agent-archive migrate     Migrate to an isolated catalog destination
 
 Evaluate agents
-  agent-archive eval        Export sessions for an evaluation tool (JSON Lines)
+  agent-archive eval        Export sessions or prepare replay launch plans
 
 Maintenance
   agent-archive uninstall   Remove integrations; keep local data
@@ -1210,10 +1210,12 @@ Guide: [Export sessions for evaluation](../guides/eval-export.md); records in [e
 ```text
 Usage: agent-archive eval export SESSION_ID... | --ids-from - | --scan
        | --file PATH --harness NAME [--detail metadata|full] [--max-bytes N]
+       agent-archive eval replay-plan --harness muse < request.json
 
 Export sessions for an evaluation tool, one JSON Lines record per session
 (schemas/eval-export.schema.json), from the archive or from transcripts on
-this machine. Read-only and never interactive.
+this machine. Read-only and never interactive. The replay-plan action prepares
+private launch artifacts for an external replay runner.
 ```
 
 No flags.
@@ -1272,6 +1274,25 @@ Nothing is uploaded or written.
 | `--since` | a value | — |
 | `--until` | a value | — |
 | `--workers` | a value | `0` |
+
+## agent-archive eval replay-plan
+
+Guide: [Prepare replay launch artifacts](../guides/muse-replay-plan.md).
+
+```text
+Usage: agent-archive eval replay-plan --harness muse < request.json
+
+Prepare one bounded, versioned JSON replay launch plan from explicit file and
+ownership observations. Planning reads no settings or archive state and changes
+no files. The request and response each have a 64 KiB aggregate limit.
+
+The plan reports qualified:false. Native launch, forwarding qualification and
+runner lifetime belong to the external runner; ordinary handoff stays unchanged.
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--harness` | a value | — |
 
 ## agent-archive uninstall
 
