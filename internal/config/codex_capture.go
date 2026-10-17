@@ -201,6 +201,10 @@ func (c Config) CodexDiscoveryGeneration(root, cwd string, started, now time.Tim
 // PreserveWriterFence protects rollback snapshots without copying authorization.
 // A legacy snapshot restored over v3 remains included-project-only and fenced.
 func PreserveWriterFence(next *Config, previous Config) {
+	if next.MuseCaptureLastIssuedAt.Before(previous.MuseCaptureLastIssuedAt) {
+		next.MuseCaptureLastIssuedAt = previous.MuseCaptureLastIssuedAt
+	}
+	next.NativeAdmissionProtection = next.NativeAdmissionProtection || previous.NativeAdmissionProtection || previous.MuseCapture != nil
 	next.DeletionProtection = next.DeletionProtection || previous.DeletionProtection
 	next.SourceSetPublicationProtection = next.SourceSetPublicationProtection || previous.SourceSetPublicationProtection
 	next.SearchLifecycleProtection = next.SearchLifecycleProtection || previous.SearchLifecycleProtection

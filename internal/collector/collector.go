@@ -33,6 +33,7 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	preparedStartup    *preparedStartupReader
 	CollectorGuard     *local.CollectorGuard
 	CatalogDestination string
 	// HistoricalSourceAllowed vetoes explicitly excluded native dependencies at staging.
@@ -351,7 +352,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if state.SessionIndexRecoveryInterrupted(recoveryErr) {
 		recoveryErr = nil
 	}
-	replayErr := capture.ReplayAdmissionIntents(local.Home(), now, opts.Decoders)
+	replayErr := capture.ReplayAdmissionIntentsWithin(ctx, local.Home(), now, opts.Decoders)
 	// The caller holds the collector lock, so this pass is the only writer
 	// of the files it owns and may move a corrupt one aside.
 	local = local.ForCollectorPass()
@@ -364,7 +365,13 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// Establish one lazy source scope before child admission borrows its ledger.
 	closeCursorPass := openCursorPass(nil, &opts)
 	var closeNativeInventory func() error
-	defer func() { runErr = errors.Join(runErr, closeSourceAndNative(closeCursorPass, closeNativeInventory)) }()
+	var closeStartupCandidates func()
+	defer func() {
+		runErr = errors.Join(runErr, closeSourceAndNative(closeCursorPass, closeNativeInventory))
+		if closeStartupCandidates != nil {
+			closeStartupCandidates()
+		}
+	}()
 	local, closeAccounting := local.WithPublicationAccounting(ctx, (&sessionScan{opts: opts}).readBudget())
 	defer closeAccounting()
 
@@ -380,20 +387,13 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		result:             Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
 		expiredSubagents:   subagents.expired,
 	}
+	closeStartupCandidates = p.releaseStartupCandidates
 	defer p.releaseLabelResources()
-	if generationRecoveryErr != nil {
-		p.result.Errors["generation-recovery"] = generationRecoveryErr
-	}
-	if recoveryErr != nil {
-		p.result.Errors["session-index"] = recoveryErr
-	}
-	if replayErr != nil {
-		p.result.Errors["admission-intents"] = replayErr
-	}
+	p.recordInitialErrors(generationRecoveryErr, recoveryErr, replayErr)
 	// A loadWork failure returns before saveStatus, so this pass's expired
 	// subagents never reach status.json's list. That is accepted: the list
 	// is informational, and each parent's capture gap is already saved.
-	if err := p.loadWork(); err != nil {
+	if err := p.loadCaptureWork(); err != nil {
 		return Result{}, err
 	}
 	var inventoryErr error
@@ -402,6 +402,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		return Result{}, inventoryErr
 	}
 
+	p.admitStartupCandidates()
 	p.loadDeferredSince()
 	p.reconcileNativeLinks()
 	p.observeLabels(ctx)
@@ -499,6 +500,9 @@ func generationRecoveryStopsPass(err error) bool {
 
 // pass is one Run: its inputs, what it has found so far, and its result.
 type pass struct {
+	startupCandidates   []startupCandidate
+	startupCharge       *agentapi.NativeReadReservation
+	startupChargeBytes  int64
 	labelLocal          *state.Store
 	closeLabelResources func()
 	labelStates         map[string]*state.Published
@@ -754,7 +758,9 @@ func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 	// Everything the session's scan charges counts against its own ceiling
 	// too, so one large session cannot leave the others without room, and
 	// its own excess is told from pressure others put on the ledger.
-	defer budget.BeginScope(sessionReadCeiling)()
+	if p.opts.preparedStartup == nil {
+		defer budget.BeginScope(sessionReadCeiling)()
+	}
 	scopedLocal, closeLocal := p.local.WithReadBudget(ctx, budget)
 	p.local = scopedLocal
 	defer func() { closeLocal(); p.local = priorLocal }()
@@ -1158,4 +1164,27 @@ func (r Result) CloseStagedResults() {
 	if r.stagedDiagnostics != nil {
 		r.stagedDiagnostics.close()
 	}
+}
+
+func (p *pass) recordInitialErrors(generation, recovery, replay error) {
+	if generation != nil {
+		p.result.Errors["generation-recovery"] = generation
+	}
+	if recovery != nil {
+		p.result.Errors["session-index"] = recovery
+	}
+	// Pure pass interruption leaves queued work pending. Joined local failures
+	// must still reach diagnostics even when they also wrap cancellation.
+	_, joined := replay.(interface{ Unwrap() []error })
+	interrupted := !joined && errors.Unwrap(replay) == nil && (errors.Is(replay, context.Canceled) || errors.Is(replay, context.DeadlineExceeded))
+	if replay != nil && !interrupted {
+		p.result.Errors["admission-intents"] = replay
+	}
+}
+
+func (p *pass) loadCaptureWork() error {
+	if err := p.loadWork(); err != nil {
+		return err
+	}
+	return p.loadStartupCandidates()
 }

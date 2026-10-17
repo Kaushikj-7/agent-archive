@@ -42,16 +42,17 @@ type appStatus struct {
 	// PreSetupSessions are sessions from the 7 days before discovery's
 	// start floor that discovery refused and that are not archived. Absent
 	// when there are none.
-	PreSetupSessions  *preSetupSessions `json:"pre_setup_sessions,omitempty"`
-	PublishedSessions int               `json:"published_sessions"`
-	VerifiedSessions  int               `json:"verified_sessions"`
-	Configured        bool              `json:"configured"`
-	HookObserved      bool              `json:"hook_observed"`
-	CapturedLocally   bool              `json:"captured_locally"`
-	Published         bool              `json:"published"`
-	ReadBackVerified  bool              `json:"read_back_verified"`
-	VerifiedAt        time.Time         `json:"verified_at,omitzero"`
-	VerificationState string            `json:"verification_state"`
+	PreSetupSessions  *preSetupSessions                 `json:"pre_setup_sessions,omitempty"`
+	PublishedSessions int                               `json:"published_sessions"`
+	VerifiedSessions  int                               `json:"verified_sessions"`
+	Configured        bool                              `json:"configured"`
+	HookObserved      bool                              `json:"hook_observed"`
+	NativeStartup     *capture.NativeStartupObservation `json:"native_startup,omitempty"`
+	CapturedLocally   bool                              `json:"captured_locally"`
+	Published         bool                              `json:"published"`
+	ReadBackVerified  bool                              `json:"read_back_verified"`
+	VerifiedAt        time.Time                         `json:"verified_at,omitzero"`
+	VerificationState string                            `json:"verification_state"`
 	// VerificationDetail explains a read-back that has not succeeded yet for
 	// the current publication: the last error, attempts so far, and when the
 	// collector will retry. Empty once every publication is verified.
@@ -470,6 +471,7 @@ func readStatus(env Env) (view statusView, err error) {
 	for _, name := range cfg.Harnesses {
 		view.Apps = append(view.Apps, sessions.appStatus(name, cfg, home, view.Collector.SessionIssues))
 	}
+	readNativeStartupStatus(&view, cfg, home, sessions.regs, env.now())
 	readPreSetupSessions(&view, cfg, home, store, sessions.regs, env.now())
 	for _, name := range cfg.ImportedHarnesses {
 		if len(cfg.Harnesses) == 0 || slices.Contains(cfg.Harnesses, name) {
@@ -1330,6 +1332,12 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 // capture is not yet read-back verified, if any.
 func chooseCaptureStep(view *statusView) {
 	for _, app := range view.Apps {
+		if app.NativeStartup != nil && app.NativeStartup.Pending > 0 {
+			view.State = "Waiting for capture"
+			view.problem = "Muse startup observed; native source proof pending"
+			view.Next = "Run agent-archive sync to check the queued Muse startup against its original capture window."
+			break
+		}
 		if app.Name == "codex" && app.CodexCaptureScope == string(config.CodexAllProjects) && app.Sessions == 0 {
 			view.State = "Waiting for capture"
 			view.problem = "Waiting for the first Codex task"
@@ -1826,6 +1834,14 @@ func (sc statusScreen) appRow(app appStatus, limit int) statusRow {
 	}
 	if freshStart {
 		row.notes = append(row.notes, statusNote{s.warnMark(), "New sessions can't be captured yet: " + app.Capabilities.FreshStart.NextAction})
+	}
+	if app.NativeStartup != nil {
+		if app.NativeStartup.Pending > 0 {
+			row.notes = append(row.notes, statusNote{sc.info(), "Startup observed; waiting for native source proof."})
+		}
+		if !app.NativeStartup.Complete {
+			row.notes = append(row.notes, statusNote{s.warnMark(), "Queued startup observation is incomplete; the pending count is a lower bound."})
+		}
 	}
 	sc.addCodexDiscoveryRow(&row, app)
 	if discoveryEnabled(app) && app.Hooks != "installed" && !optionalCodexHooks(app) {

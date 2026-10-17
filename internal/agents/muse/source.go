@@ -42,7 +42,8 @@ func localSourceEnvironment(ctx context.Context, env agentapi.SourceEnvironment)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if env.RequireConfinedHistory || env.NativeRoot != nil || env.LegacyUnboundRegistration {
+	qualified := env.NativeRoot != nil && env.NativeRoot.Agent == "muse" && env.NativeRoot.Validate() == nil && env.NativeLocators != nil && env.ReadBudget != nil && env.Policy.Root == env.NativeRoot.Canonical && env.Policy.RejectSymlinks
+	if (env.RequireConfinedHistory || env.NativeRoot != nil || env.LegacyUnboundRegistration) && !qualified {
 		return agentapi.Wrap(agentapi.Unsafe, errors.Join(agentapi.ErrInvalidSourceBinding, errors.New("muse capture unavailable: qualified native source binding required; use handoff --file for local reading")))
 	}
 	return nil

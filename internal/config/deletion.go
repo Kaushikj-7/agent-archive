@@ -193,7 +193,14 @@ func validateDeletionGuardVersion(raw []byte) error {
 		if version.Version != 16 {
 			return errors.New("unsupported native authority configuration version")
 		}
-		if err := exactAuthorityObject(raw, []string{"version", "writer", "base"}); err != nil {
+		names := []string{"version", "writer", "base"}
+		if version.Admission != "" {
+			if version.Admission != "muse-root-admission" {
+				return errors.New("unsupported native admission guard capability")
+			}
+			names = append(names, "admission")
+		}
+		if err := exactAuthorityObject(raw, names); err != nil {
 			return err
 		}
 		return validateNativeBase(version.Base)
