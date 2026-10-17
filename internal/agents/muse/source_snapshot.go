@@ -235,7 +235,7 @@ func (s *sourceSnapshot) startupFacts(ctx context.Context) (archive.NativeSource
 		if len(rows) >= 3 && rows[2].Type == payloadRuntimeSessionCaptureSelection {
 			needed = 8
 		}
-		if len(rows) >= 4 && rows[2].Type == payloadRuntimeSessionMetadata && rows[3].Type == payloadRuntimeSessionMetadata {
+		if len(rows) >= 4 && rows[2].Type == payloadRuntimeSessionMetadata && (rows[3].Type == payloadRuntimeSessionMetadata || rows[3].Type == payloadRuntimeSessionRouteFacts) {
 			needed = 5
 		}
 		if len(rows) < needed {
