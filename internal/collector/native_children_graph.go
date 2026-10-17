@@ -98,7 +98,7 @@ func (index *nativeChildGraphIndex) validateAncestry() {
 			if root == "" && reg.NativeRootSessionID == "" && !reg.NativeChild && reg.ParentNativeSessionID == "" && reg.ParentSessionID == "" {
 				root = reg.NativeSessionID
 			}
-			if observed := reg.NativeRootSessionID; observed != "" {
+			if observed := nativeAncestryRoot(reg); observed != "" {
 				if root != "" && root != observed {
 					invalid = true
 				}
@@ -111,6 +111,16 @@ func (index *nativeChildGraphIndex) validateAncestry() {
 			done[node] = true
 		}
 	}
+}
+
+func nativeAncestryRoot(reg archive.SessionRegistration) string {
+	// Codex session_id may identify a child's immediate-parent history scope.
+	// Preserve that source fact without interpreting it as the terminal tree
+	// root. Distinct explicit roots, including fork provenance, still compare.
+	if reg.Harness.Name == archive.HarnessCodex && reg.NativeChild && reg.NativeRootSessionID == reg.ParentNativeSessionID {
+		return ""
+	}
+	return reg.NativeRootSessionID
 }
 
 func (g nativeChildGraph) accepts(reg archive.SessionRegistration) bool {

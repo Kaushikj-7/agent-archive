@@ -246,17 +246,18 @@ func TestNativeChildGraphBudgetRefusalHoldsSettledChildrenAfterPressureClears(t 
 				mtimes := snapshotMtimes(t, local.Home())
 				loads := state.PublishedStateLoads()
 				budget := agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
-				p := &pass{ctx: t.Context(), local: local, registrations: regs, now: at, result: Result{Errors: map[string]error{}},
-					opts: Options{sourcePasses: &sourcePassSet{env: agentapi.SourceEnvironment{ReadBudget: budget}}}}
+				registrations := regs
 				if refusal == "fixed bound" {
 					// Count-only padding represents already loaded registration
 					// metadata. The bound must refuse before any graph allocation.
-					perRegistration := 2*int64(reflect.TypeFor[archive.SessionRegistration]().Size()) + 2048
-					p.registrations = make([]archive.SessionRegistration, int(agentapi.PassReadBudget/perRegistration)+1)
-					copy(p.registrations, regs)
+					perRegistration := nativeChildGraphRegistrationCharge()
+					registrations = make([]archive.SessionRegistration, int(agentapi.PassReadBudget/perRegistration)+1)
+					copy(registrations, regs)
 				} else if !budget.ReserveUnscoped(agentapi.PassReadBudget - 1) {
 					t.Fatal("could not establish synthetic cache pressure")
 				}
+				p := &pass{ctx: t.Context(), local: local, registrations: registrations, now: at, result: Result{Errors: map[string]error{}},
+					opts: Options{sourcePasses: &sourcePassSet{env: agentapi.SourceEnvironment{ReadBudget: budget}}}}
 				p.reconcileNativeLinks()
 				if refusal == "ledger pressure" {
 					// Scanning can free idle caches. The refusal must remain safe

@@ -230,7 +230,7 @@ func (p *pass) holdUnopenedScan(reg archive.SessionRegistration) bool {
 		p.opts.progress(id, false)
 		return true
 	}
-	if !p.unreadable[id] && !(p.nativeChildGraphUnchecked && reg.NativeChild) {
+	if !p.unreadable[id] && (!p.nativeChildGraphUnchecked || !reg.NativeChild) {
 		return false
 	}
 	if !p.durableCounted[id] {

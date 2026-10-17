@@ -42,6 +42,14 @@ func nativeRegistrationRevision(reg archive.SessionRegistration) string {
 	return ""
 }
 
+func nativeChildGraphRegistrationCharge() int64 {
+	size := reflect.TypeFor[archive.SessionRegistration]().Size()
+	if size > 1<<20 {
+		return agentapi.PassReadBudget + 1 // Existing fixed bound refuses before allocation.
+	}
+	return 2*int64(size) + 2048
+}
+
 func (p *pass) reconcileNativeLinks() {
 	p.nativeChildGraphUnchecked = false
 	children := 0
@@ -59,7 +67,7 @@ func (p *pass) reconcileNativeLinks() {
 	// Temporary relationship maps borrow the already loaded registrations and
 	// the existing source ledger. Include map buckets, traversal vectors and
 	// registration value copies before allocating; release before source scans.
-	perRegistration := 2*int64(reflect.TypeFor[archive.SessionRegistration]().Size()) + 2048
+	perRegistration := nativeChildGraphRegistrationCharge()
 	budget := (&sessionScan{opts: p.opts}).readBudget()
 	if int64(len(p.registrations)) > agentapi.PassReadBudget/perRegistration {
 		for range children {
