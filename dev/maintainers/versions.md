@@ -421,3 +421,13 @@ pending count, latest observation, and completeness; it conveys no local capture
 publication or readback proof. There is no filter/parser/upload schema bump.
 Public setup excludes Muse until separately reviewed root-scoped native command,
 TUI/exec/serve and platform acceptance unlocks it.
+
+The optional qualified-index `native_reservation` marker is a closed comparable
+`muse-root-reservation-v1:` plus64lowercasehex digest, exactly89bytes by the
+prefix/sha256 sizes. Existing index version1 and native/config/journal numeric
+floors are unchanged. The existing sticky admission capability fences older
+writers before mutation. The marker binds the full original candidate and
+concrete binding; it is never sufficient source/admission authority by itself.
+Only exact fresh concrete preparation may reuse a pending reservation. Supported
+cleanup requires a complete matching durable Muse owner/proof/binding; missing,
+mismatched and unsupported pending authority is preserved/refused.

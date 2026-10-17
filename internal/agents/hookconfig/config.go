@@ -575,25 +575,25 @@ func exactMarkerCommand(command string, spec Spec) bool {
 	if !found {
 		return false
 	}
-	_, rest, ok := quotedAbsoluteWord(rest)
+	rest, ok := quotedAbsoluteWord(rest)
 	if !ok {
 		return false
 	}
-	_, rest, ok = quotedAbsoluteWord(rest)
+	rest, ok = quotedAbsoluteWord(rest)
 	if !ok {
 		return false
 	}
 	return rest == "_hook --harness "+spec.Name+" # "+spec.Owner
 }
 
-func quotedAbsoluteWord(rest string) (word, remainder string, ok bool) {
+func quotedAbsoluteWord(rest string) (remainder string, ok bool) {
 	var value strings.Builder
 	for {
 		switch {
 		case strings.HasPrefix(rest, "'"):
 			n := strings.IndexByte(rest[1:], '\'')
 			if n < 0 {
-				return "", "", false
+				return "", false
 			}
 			value.WriteString(rest[1 : n+1])
 			rest = rest[n+2:]
@@ -601,10 +601,10 @@ func quotedAbsoluteWord(rest string) (word, remainder string, ok bool) {
 			value.WriteByte('\'')
 			rest = rest[3:]
 		case strings.HasPrefix(rest, " "):
-			word = value.String()
-			return word, rest[1:], filepath.IsAbs(word) && !strings.ContainsAny(word, "\x00\r\n")
+			word := value.String()
+			return rest[1:], filepath.IsAbs(word) && !strings.ContainsAny(word, "\x00\r\n")
 		default:
-			return "", "", false
+			return "", false
 		}
 	}
 }

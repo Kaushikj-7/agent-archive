@@ -861,3 +861,27 @@ deterministic pipeline. Public setup still excludes Muse by default. Actual
 production-generated command delivery and native root-scoped TUI/exec/serve and
 platform acceptance remain separate gates; this implementation does not establish
 broader child/import/runtime/skill/launch or dynamic replay parity.
+
+PR6 observation identity accepts the bounded opaque ASCII hook contract. That
+only authorizes a candidate query. The existing qualified native census and
+ordinary source format still require their supported canonical UUID identities;
+unsupported opaque source formats remain pending/refused before Filter or owner.
+UUID spelling, ordering and timestamps supply no freshness evidence.
+
+A pending first-owner reservation now carries `native_reservation`, a comparable
+`muse-root-reservation-v1:` plus lowercase SHA256 digest of the complete original
+candidate and concrete source binding. The domain-separated digest excludes the
+minted archive ID and registration timestamps. It is never admission/recovery
+proof: exact retry must freshly reopen, validate and concretely Filter the same
+candidate/source. Missing, changed or future authority preserves/refuses the
+reservation. Append after a crash conservatively refuses; automatic abandonment
+or changed-source recovery is outside this contract. Only a complete matching
+durable Muse owner with valid birth admission/v2 binding allows supported-marker
+cleanup by the existing index finish/recovery machinery.
+
+Reservation authority is a physical per-key overlay. Current pending native
+reservations are never projected into packed census rows. Active unsupported
+packed markers refuse before repair/fallback; authoritative physical overlays
+remain intact through a census. Explicitly obsolete known derived aggregates
+retain the existing bounded replacement lifecycle; PR6 adds no whole-obsolete-
+aggregate scan or claim about hypothetical future authority hidden there.

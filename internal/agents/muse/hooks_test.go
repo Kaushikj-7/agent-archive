@@ -146,3 +146,83 @@ func FuzzRootHookDecoder(f *testing.F) {
 		}
 	})
 }
+
+func TestRootHookRemovalKeepsOtherInstallationExactBytes(t *testing.T) {
+	t.Parallel()
+	hooks := Hooks()
+	first := agentapi.HookOwner{Executable: "/synthetic/one/archive", DataHome: "/synthetic/one/data", DefaultDataHome: "/synthetic/default"}
+	second := agentapi.HookOwner{Executable: "/synthetic/two/archive", DataHome: "/synthetic/two/data", DefaultDataHome: "/synthetic/default"}
+	file := agentapi.HookFile{Path: "/synthetic/settings.json", Regular: true, Mode: 0600}
+	changes, err := hooks.Plan(agentapi.HookPlanRequest{Action: agentapi.HookInstall, Owner: first, File: file})
+	if err != nil || len(changes) != 1 {
+		t.Fatal(changes, err)
+	}
+	file.Present, file.Bytes = true, changes[0].After
+	// Force the second handler beside the first exactly as the legacy isolation
+	// regression does, then require removal to retain the other handler bytes.
+	var original map[string]json.RawMessage
+	if err := json.Unmarshal(file.Bytes, &original); err != nil {
+		t.Fatal(err)
+	}
+	firstRaw := file.Bytes
+	secondChanges, err := hooks.Plan(agentapi.HookPlanRequest{Action: agentapi.HookInstall, Owner: second, File: agentapi.HookFile{Path: file.Path, Regular: true, Mode: 0600}})
+	if err != nil || len(secondChanges) != 1 {
+		t.Fatal(secondChanges, err)
+	}
+	var secondDoc map[string]json.RawMessage
+	if err := json.Unmarshal(secondChanges[0].After, &secondDoc); err != nil {
+		t.Fatal(err)
+	}
+	var firstEvents, secondEvents map[string][]json.RawMessage
+	if err := json.Unmarshal(original["hooks"], &firstEvents); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(secondDoc["hooks"], &secondEvents); err != nil {
+		t.Fatal(err)
+	}
+	for event, entries := range secondEvents {
+		firstEvents[event] = append(firstEvents[event], entries...)
+	}
+	raw, err := json.Marshal(firstEvents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original["hooks"] = raw
+	file.Bytes, err = json.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Compare with the bytes actually supplied to removal, after the fixture's
+	// forced merge encoder has compacted its RawMessages.
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(file.Bytes, &merged); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(merged["hooks"], &firstEvents); err != nil {
+		t.Fatal(err)
+	}
+	for event, entries := range firstEvents {
+		secondEvents[event] = entries[len(entries)-1:]
+	}
+	changes, err = hooks.Plan(agentapi.HookPlanRequest{Action: agentapi.HookRemove, Owner: first, File: file})
+	if err != nil || len(changes) != 1 {
+		t.Fatal(changes, err)
+	}
+	for _, entries := range secondEvents {
+		for _, entry := range entries {
+			if !bytes.Contains(changes[0].After, entry) {
+				t.Fatalf("other handler bytes lost: %s", changes[0].After)
+			}
+		}
+	}
+	file.Bytes = changes[0].After
+	inspection, err := hooks.Inspect(agentapi.HookInspectionRequest{File: file, Owner: second})
+	if err != nil || !inspection.Installed || len(inspection.Others) != 0 {
+		t.Fatal(inspection, err)
+	}
+	file.Bytes = firstRaw
+	inspection, err = hooks.Inspect(agentapi.HookInspectionRequest{File: file, Owner: second})
+	if err != nil || inspection.Owned || len(inspection.Others) != 1 {
+		t.Fatal("foreign ownership not distinguished", inspection, err)
+	}
+}

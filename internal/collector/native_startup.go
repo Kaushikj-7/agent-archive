@@ -85,7 +85,7 @@ func (p *pass) admitStartupCandidates() {
 			continue
 		}
 		if err := p.admitStartupCandidate(candidate); err != nil {
-			p.result.Errors["muse-startup:"+candidate.intent.NativeSessionID] = err
+			p.result.Errors["muse-startup"] = agentapi.Wrap(agentapi.Unavailable, errors.New("native startup proof is unavailable or no longer matches captured authority"))
 		}
 	}
 }

@@ -68,26 +68,10 @@ func replayMuseOwnerIntents(ctx context.Context, home string, at time.Time, afte
 		if err := applyEvent(home, scoped, cfg, event, intent.ObservedAt, gitLookups{}, after, nil); err != nil {
 			return err
 		}
-		unlock, err := local.NamedLockWait(home, "admission-intents.lock", admissionQueueWait)
-		if err != nil {
+		if err := ackMuseOwnerIntent(ctx, home, path, intent, after); err != nil {
 			return err
-		}
-		current, readErr := readMuseIntent(path)
-		if readErr == nil && RecognizedAdmissionIntent(current) && ctx.Err() == nil {
-			a, _ := json.Marshal(current)
-			b, _ := json.Marshal(intent)
-			if bytes.Equal(a, b) {
-				err = removeAdmissionIntent(path)
-				if err == nil {
-					err = effectBoundary(after, effectIntentAck)
-				}
-			}
 		}
 
-		unlock()
-		if err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -114,4 +98,31 @@ func readMuseIntent(path string) (intent agentapi.AdmissionIntent, readErr error
 	}
 	readErr = json.Unmarshal(raw, &intent)
 	return intent, readErr
+}
+
+func ackMuseOwnerIntent(ctx context.Context, home, path string, intent agentapi.AdmissionIntent, after func(effectName) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	unlock, err := local.NamedLockWait(home, "admission-intents.lock", admissionQueueWait)
+	if err != nil {
+		return err
+	}
+	current, readErr := readMuseIntent(path)
+	if readErr == nil && RecognizedAdmissionIntent(current) && ctx.Err() == nil {
+		a, _ := json.Marshal(current)
+		b, _ := json.Marshal(intent)
+		if bytes.Equal(a, b) {
+			err = removeAdmissionIntent(path)
+			if err == nil {
+				err = effectBoundary(after, effectIntentAck)
+			}
+		}
+	}
+
+	unlock()
+	if err != nil {
+		return err
+	}
+	return ctx.Err()
 }

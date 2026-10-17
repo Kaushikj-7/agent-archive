@@ -14,8 +14,6 @@ func nativeIntentShapeFixture() AdmissionIntent {
 	return AdmissionIntent{Version: 2, Harness: "muse", NativeMode: NativeStartupCandidate, NativeSessionID: "opaque-root", ProjectRoot: "/synthetic/project", ObservedCwd: "/synthetic/project", DestinationID: strings.Repeat("a", 64), ObservedAt: time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC), Event: "SessionStart", NativeAdmission: &archive.NativeAdmission{Contract: "muse-root-admission", HookContract: "muse-root-hooks-v1", RootFingerprint: strings.Repeat("b", 64), PolicyFingerprint: strings.Repeat("c", 64), WindowGeneration: strings.Repeat("d", 32)}}
 }
 
-const futureNativeMode NativeIntentMode = "future"
-
 func TestNativeIntentShapeAndWireBoundsPreserveLegacy(t *testing.T) {
 	t.Parallel()
 	valid := nativeIntentShapeFixture()
@@ -26,7 +24,11 @@ func TestNativeIntentShapeAndWireBoundsPreserveLegacy(t *testing.T) {
 		func(i *AdmissionIntent) { i.ProjectRoot = "relative" },
 		func(i *AdmissionIntent) { i.ProjectRoot = "/" + strings.Repeat("a", 4096) },
 		func(i *AdmissionIntent) { i.NativeOwnerID = "unproven-owner" },
-		func(i *AdmissionIntent) { i.NativeMode = futureNativeMode },
+		func(i *AdmissionIntent) {
+			if err := json.Unmarshal([]byte(`"future"`), &i.NativeMode); err != nil {
+				t.Fatal(err)
+			}
+		},
 		func(i *AdmissionIntent) {
 			i.ProjectRoot = "/" + strings.Repeat("\x01", 4094)
 			i.ObservedCwd = i.ProjectRoot
@@ -75,4 +77,32 @@ func TestNativeIntentShapeAndWireBoundsPreserveLegacy(t *testing.T) {
 	if decoded.UnmarshalJSON(padded) == nil {
 		t.Fatal("oversized private record accepted")
 	}
+}
+
+func FuzzNativeAdmissionIntentWire(f *testing.F) {
+	raw, err := json.Marshal(nativeIntentShapeFixture())
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(raw)
+	f.Add([]byte(`{"version":2,"native_mode":"future"}`))
+	f.Add([]byte(`{"version":2,"Version":1}`))
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > 64<<10 {
+			return
+		}
+		var intent AdmissionIntent
+		if err := json.Unmarshal(raw, &intent); err != nil {
+			return
+		}
+		if intent.Version == 2 && !ValidNativeAdmissionIntentShape(intent) {
+			t.Fatal("decoder accepted unsupported private authority")
+		}
+		if intent.Version == 2 {
+			canonical, err := json.MarshalIndent(intent, "", "  ")
+			if err != nil || len(canonical)+1 > MaxNativeAdmissionIntentBytes {
+				t.Fatal("decoded private record exceeds bound", err)
+			}
+		}
+	})
 }

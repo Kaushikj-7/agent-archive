@@ -355,15 +355,6 @@ type deferredFollowup struct {
 	events []agentapi.LifecycleEvent
 }
 
-// ReplayAdmissionIntents runs before the collector reads registrations. The
-// current configuration and project activation are checked again; an intent
-// never revives an excluded project. Successfully handled and expired intents
-// are removed, while transient failures remain for the next pass. Hook
-// registration is idempotent by native session ID.
-func ReplayAdmissionIntents(home string, now time.Time, lookups ...agentapi.DecodersLookup) error {
-	return ReplayAdmissionIntentsWithin(context.Background(), home, now, lookups...)
-}
-
 // ReplayAdmissionIntentsWithin preserves the collector caller's cancellation
 // for native continuation staging and final writes. Legacy callers retain the
 // context-free entry and their existing wire behavior.
@@ -421,10 +412,6 @@ func replayProjectPreflight(home string, now time.Time) (map[string]sourcefacts.
 		}
 	}
 	return preflight, admissionReplayCursor{After: lastAttempt}
-}
-
-func replayAdmissionIntents(home string, now time.Time, lookup agentapi.DecodersLookup, after func(effectName) error) error {
-	return replayAdmissionIntentsWithin(context.Background(), home, now, lookup, after)
 }
 
 func replayAdmissionIntentsWithin(ctx context.Context, home string, now time.Time, lookup agentapi.DecodersLookup, after func(effectName) error) error {

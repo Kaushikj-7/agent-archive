@@ -29,10 +29,10 @@ type NativeHookContractProvider interface {
 
 // NativeSession contains exact native identity and observed native version facts.
 type NativeSession struct {
-	Agent    agentmeta.ID
-	NativeID string
-	Version  string
-	Mode     NativeMode
+	Agent    agentmeta.ID `json:"Agent"`
+	NativeID string       `json:"NativeID"`
+	Version  string       `json:"Version"`
+	Mode     NativeMode   `json:"Mode"`
 }
 
 // EventKind is an archive-relevant lifecycle action, independent of native names.
@@ -80,9 +80,9 @@ const (
 
 // StartEvidence requests at most one bounded stat and never a source read.
 type StartEvidence struct {
-	Kind   Freshness
-	Reason FreshnessReason
-	Path   string
+	Kind   Freshness       `json:"Kind"`
+	Reason FreshnessReason `json:"Reason"`
+	Path   string          `json:"Path"`
 }
 
 // LocatorUpdate declares a validated file locator's permitted update semantics.
@@ -107,11 +107,11 @@ const (
 
 // ChildObservation contains native child facts, without archive admission policy.
 type ChildObservation struct {
-	ID                string
-	Path              string
-	Type              string
-	MissingDetail     string
-	CaptureTranscript bool
+	ID                string `json:"ID"`
+	Path              string `json:"Path"`
+	Type              string `json:"Type"`
+	MissingDetail     string `json:"MissingDetail"`
+	CaptureTranscript bool   `json:"CaptureTranscript"`
 }
 
 // LifecycleEvent is a typed local result. Raw native payloads are never retained.

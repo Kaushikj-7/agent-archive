@@ -52,6 +52,7 @@ const (
 	refusalUnknownContinuation museRootRefusalCase = "unknown_continuation"
 	refusalDuplicateSelector   museRootRefusalCase = "duplicate_selector"
 	refusalTrailingPayload     museRootRefusalCase = "trailing_payload"
+	refusalOpaqueID            museRootRefusalCase = "unsupported_opaque_source_id"
 )
 
 type museRootCaptureFixture struct {
@@ -184,7 +185,7 @@ func TestMuseRootHookCandidatePublishesThroughSharedInventory(t *testing.T) {
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	if !strings.Contains(measured.String(), "filter_input_bytes "+strconv.Itoa(len(sourceBytes))) {
+	if museTraceFilterInput(t, measured.String()) != int64(len(sourceBytes)) {
 		t.Fatalf("native Filter ran more or less than once: %s", measured.String())
 	}
 	if registrations[0].SessionStartedAt != birth {
@@ -290,7 +291,7 @@ func TestMuseRootHookCandidatePublishesThroughSharedInventory(t *testing.T) {
 	if err := guarded.SaveRequest("foreign-owner", "turn_start", observed.Add(3*time.Second)); err == nil {
 		t.Fatal("continuation wrote foreign owner request")
 	}
-	if err := capture.ReplayAdmissionIntents(home, observed.Add(3*time.Second), registry); err != nil {
+	if err := capture.ReplayAdmissionIntentsWithin(t.Context(), home, observed.Add(3*time.Second), registry); err != nil {
 		t.Fatal(err)
 	}
 	updated, found, err := store.LoadRegistration(owner.ArchiveSessionID)
@@ -314,13 +315,15 @@ func TestMuseRootHookCandidatePublishesThroughSharedInventory(t *testing.T) {
 
 // Sequential: each case observes the process-wide FilterBytes trace counter.
 func TestMuseRootAdmissionRefusesUnsupportedSourceBeforeOwnership(t *testing.T) {
-	for _, kind := range []museRootRefusalCase{refusalBeforeWindow, refusalAfterActivation, refusalMalformedSuffix, refusalDuplicateCopy, refusalUnknownContinuation, refusalDuplicateSelector, refusalTrailingPayload} {
+	for _, kind := range []museRootRefusalCase{refusalBeforeWindow, refusalAfterActivation, refusalMalformedSuffix, refusalDuplicateCopy, refusalUnknownContinuation, refusalDuplicateSelector, refusalTrailingPayload, refusalOpaqueID} {
 		t.Run(string(kind), func(t *testing.T) {
 			f := newMuseRootCaptureFixture(t)
 			disableTrace := trace.Enable()
 			defer disableTrace()
 			cfg := f.cfg
 			switch kind {
+			case refusalUnknownContinuation, refusalDuplicateSelector, refusalTrailingPayload, refusalOpaqueID:
+				// These cases mutate the actual CLI payload below.
 			case refusalBeforeWindow:
 				next := cfg
 				next.NativeRoots = append([]archive.NativeRoot(nil), cfg.NativeRoots...)
@@ -358,6 +361,13 @@ func TestMuseRootAdmissionRefusesUnsupportedSourceBeforeOwnership(t *testing.T) 
 			}
 			name := "SessionStart"
 			payload := map[string]any{"hook_event_name": name, "session_id": "00000000-0000-7000-8000-000000000001", "cwd": f.project, "transcript_path": nil, "source": "startup"}
+			if kind == refusalOpaqueID {
+				payload["session_id"] = "opaque_root-1"
+				f.env.LookupEnv = func(key string) (string, bool) {
+					_, present := museTestIdentityEnvironment(key)
+					return "opaque_root-1", present
+				}
+			}
 			if kind == refusalUnknownContinuation {
 				payload["hook_event_name"] = "Stop"
 				delete(payload, "source")
@@ -389,10 +399,18 @@ func TestMuseRootAdmissionRefusesUnsupportedSourceBeforeOwnership(t *testing.T) 
 			if err != nil || len(registrations) != 0 || len(result.Published) != 0 {
 				t.Fatalf("unsupported source acquired ownership: %+v %+v %v", registrations, result, err)
 			}
+			for key, issue := range result.Errors {
+				detail := key + " " + issue.Error()
+				for _, private := range []string{"00000000-0000-7000-8000-000000000001", f.path, f.project, "opaque_root-1"} {
+					if strings.Contains(detail, private) {
+						t.Fatalf("unowned diagnostic exposed identity/path: %s", detail)
+					}
+				}
+			}
 			var measured bytes.Buffer
 			trace.Write(&measured)
-			if kind == refusalBeforeWindow || kind == refusalAfterActivation || kind == refusalDuplicateCopy || kind == refusalUnknownContinuation || kind == refusalDuplicateSelector || kind == refusalTrailingPayload {
-				if strings.Contains(measured.String(), "filter_input_bytes") {
+			if kind == refusalBeforeWindow || kind == refusalAfterActivation || kind == refusalDuplicateCopy || kind == refusalUnknownContinuation || kind == refusalDuplicateSelector || kind == refusalTrailingPayload || kind == refusalOpaqueID {
+				if museTraceFilterInput(t, measured.String()) != 0 {
 					t.Fatalf("refused input reached full Filter: %s", measured.String())
 				}
 			}
@@ -422,4 +440,27 @@ func TestMuseRootAdmissionRefusesUnsupportedSourceBeforeOwnership(t *testing.T) 
 			}
 		})
 	}
+}
+
+func museTraceFilterInput(t *testing.T, output string) int64 {
+	t.Helper()
+	var total int64
+	found := false
+	for line := range strings.SplitSeq(output, "\n") {
+		if !strings.HasPrefix(line, "native totals: ") {
+			continue
+		}
+		for item := range strings.SplitSeq(strings.TrimPrefix(line, "native totals: "), ", ") {
+			fields := strings.Fields(item)
+			if len(fields) != 2 || fields[0] != "filter_input_bytes" {
+				continue
+			}
+			value, err := strconv.ParseInt(fields[1], 10, 64)
+			if err != nil || found {
+				t.Fatalf("ambiguous native Filter metric: %s", output)
+			}
+			total, found = value, true
+		}
+	}
+	return total
 }

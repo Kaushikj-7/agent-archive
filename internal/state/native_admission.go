@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -131,7 +133,13 @@ func (p *PreparedNativeAdmission) verify(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := p.input.File.Check(); err != nil {
+		return err
+	}
 	if err := p.content.VerifyContent(ctx); err != nil {
+		return err
+	}
+	if err := p.input.File.Check(); err != nil {
 		return err
 	}
 	return p.lookup.Check(ctx, p.reg.NativeSessionID, p.selection)
@@ -203,6 +211,11 @@ func (s *Store) CommitNativeAdmission(ctx context.Context, p *PreparedNativeAdmi
 	}
 	expected := p.index
 	reserved := indexEntry(key, p.reg.ArchiveSessionID)
+	authority, err := p.reservationAuthority()
+	if err != nil {
+		return archive.SessionRegistration{}, err
+	}
+	reserved.NativeReservation = authority
 	if p.indexFound && p.index.Reservation != "" {
 		reserved = p.index
 	} else {
@@ -215,7 +228,7 @@ func (s *Store) CommitNativeAdmission(ctx context.Context, p *PreparedNativeAdmi
 	indexStore := *s
 	indexStore.indexSnapshots = true
 	indexStore.onWriteSync = s.onIndexSync
-	err := indexStore.writeUnderLock(lockedWrite{path: qualifiedSessionIndexPath(s.home, key), lock: lock, beforeLock: func() error { return p.verify(ctx) }, check: func() error { return p.checkPolicy(ctx, time.Now().UTC()) }, change: func(current fileSnapshot) (any, bool, error) {
+	err = indexStore.writeUnderLock(lockedWrite{nativeReservation: p, path: qualifiedSessionIndexPath(s.home, key), lock: lock, beforeLock: func() error { return p.verify(ctx) }, check: func() error { return p.checkPolicy(ctx, time.Now().UTC()) }, change: func(current fileSnapshot) (any, bool, error) {
 		if current.found != p.indexFound {
 			return nil, false, errIndexMoved
 		}
@@ -330,6 +343,13 @@ func (p *PreparedNativeAdmission) allocateNativeAdmissionIdentity() error {
 		return err
 	}
 	if p.indexFound && !p.index.Absent {
+		authority, err := p.reservationAuthority()
+		if err != nil {
+			return err
+		}
+		if !supportedNativeReservation(p.index.NativeReservation) || p.index.NativeReservation != authority {
+			return errors.New("native pending reservation authority differs or is missing")
+		}
 		registered, e := p.store.matchingRegistration(key, p.index.ArchiveSessionID)
 		if e != nil || registered || p.index.Reservation == "" {
 			return errors.New("native startup already has an owner or conflicting index")
@@ -376,16 +396,22 @@ func nativeFilteredStartupMatches(filtered archive.FilteredTranscript, binding *
 }
 
 func copyNativeAdmissionCandidate(candidate NativeAdmissionCandidate) (NativeAdmissionCandidate, error) {
-	if !agentapi.ValidNativeAdmissionIntentShape(candidate.Intent) || candidate.Intent.NativeMode != agentapi.NativeStartupCandidate {
+	if !agentapi.ValidNativeAdmissionIntentShape(candidate.Intent) || candidate.Intent.NativeMode != agentapi.NativeStartupCandidate || candidate.Root.Agent != "muse" || candidate.Root.Validate() != nil || candidate.ProjectRoot != candidate.Intent.ProjectRoot || !validNativeAdmissionProjectID(candidate.ProjectID) {
 		return NativeAdmissionCandidate{}, agentapi.ErrInvalidSourceBinding
 	}
-	raw, err := json.Marshal(candidate)
+	raw, err := json.Marshal(candidate.Intent)
 	if err != nil {
 		return NativeAdmissionCandidate{}, err
 	}
-	var copied NativeAdmissionCandidate
-	if err := json.Unmarshal(raw, &copied); err != nil {
+	// Supplemental root/project fields contain immutable bounded strings. Only
+	// the intent owns pointers/slices requiring a defensive copy.
+	copied := candidate
+	if err := json.Unmarshal(raw, &copied.Intent); err != nil {
 		return NativeAdmissionCandidate{}, err
 	}
 	return copied, nil
+}
+
+func validNativeAdmissionProjectID(id string) bool {
+	return len(id) <= 4096 && strings.TrimSpace(id) != "" && utf8.ValidString(id) && !strings.ContainsAny(id, "\x00\r\n")
 }

@@ -42,10 +42,11 @@ type qualifiedSessionIndexEntry struct {
 	ArchiveSessionID string       `json:"archive_session_id,omitempty"`
 	// Reservation owns an unfinished ID, distinct from a committed index whose
 	// registration disappeared. A durable registration wins even before cleanup.
-	Reservation string `json:"reservation,omitempty"`
-	Conflict    bool   `json:"conflict,omitempty"`
-	Recovery    bool   `json:"recovery,omitempty"`
-	Absent      bool   `json:"absent,omitempty"`
+	Reservation       string `json:"reservation,omitempty"`
+	NativeReservation string `json:"native_reservation,omitempty"`
+	Conflict          bool   `json:"conflict,omitempty"`
+	Recovery          bool   `json:"recovery,omitempty"`
+	Absent            bool   `json:"absent,omitempty"`
 }
 
 func indexEntry(key agentmeta.SessionKey, id string) qualifiedSessionIndexEntry {
@@ -79,6 +80,9 @@ func (s *Store) readQualifiedIndex(key agentmeta.SessionKey) (qualifiedSessionIn
 	err := s.readIndexControlJSON(qualifiedSessionIndexPath(s.home, key), &entry)
 	if errors.Is(err, os.ErrNotExist) {
 		return s.packedSessionIndexEntry(key)
+	}
+	if errors.Is(err, errUnsupportedNativeReservation) {
+		return entry, false, err
 	}
 	if IsUndecodable(err) {
 		return entry, false, ErrSessionIndexRecoveryRequired
