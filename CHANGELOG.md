@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `eval replay-plan --harness muse` prepares bounded, versioned replay launch
+  artifacts through the production hook planner for an external runner. It
+  preserves observed settings and reports preparation only; native replay
+  forwarding remains unqualified.
+
 - `handoff --to muse` starts a new Muse conversation using the existing private,
   filtered context artifact and normal permissions. Muse transcripts can also
   hand off to Claude Code, Codex and Cursor. Ordinary handoffs clear a calling

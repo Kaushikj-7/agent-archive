@@ -612,7 +612,7 @@ Import history
   agent-archive migrate     Migrate to an isolated catalog destination
 
 Evaluate agents
-  agent-archive eval        Export sessions for an evaluation tool (JSON Lines)
+  agent-archive eval        Export sessions or prepare replay launch plans
 
 Maintenance
   agent-archive uninstall   Remove integrations; keep local data

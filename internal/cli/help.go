@@ -83,10 +83,21 @@ Recovery permanently fences older binaries out of this data directory.
 `,
 	"eval": `Usage: agent-archive eval export SESSION_ID... | --ids-from - | --scan
        | --file PATH --harness NAME [--detail metadata|full] [--max-bytes N]
+       agent-archive eval replay-plan --harness muse < request.json
 
 Export sessions for an evaluation tool, one JSON Lines record per session
 (schemas/eval-export.schema.json), from the archive or from transcripts on
-this machine. Read-only and never interactive.
+this machine. Read-only and never interactive. The replay-plan action prepares
+private launch artifacts for an external replay runner.
+`,
+	"eval replay-plan": `Usage: agent-archive eval replay-plan --harness muse < request.json
+
+Prepare one bounded, versioned JSON replay launch plan from explicit file and
+ownership observations. Planning reads no settings or archive state and changes
+no files. The request and response each have a 64 KiB aggregate limit.
+
+The plan reports qualified:false. Native launch, forwarding qualification and
+runner lifetime belong to the external runner; ordinary handoff stays unchanged.
 `,
 	"eval export": `Usage: agent-archive eval export SESSION_ID... [--detail metadata|full]
        agent-archive eval export --ids-from - [--detail metadata|full]

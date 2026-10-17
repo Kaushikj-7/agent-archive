@@ -203,6 +203,7 @@ var commandGuides = map[string]string{
 	"handoff":           "[Continue a session in another agent](../guides/handoff.md)",
 	"uninstall":         "[Uninstall](../getting-started/uninstall.md)",
 	"eval":              "[Export sessions for evaluation](../guides/eval-export.md); records in [eval export schema](../../schemas/eval-export.schema.json)",
+	"eval replay-plan":  "[Prepare replay launch artifacts](../guides/muse-replay-plan.md)",
 	"eval export":       "[Export sessions for evaluation](../guides/eval-export.md); records in [eval export schema](../../schemas/eval-export.schema.json)",
 	"purge":             "[Privacy cleanup](../security/privacy.md#after-a-filter-upgrade)",
 	"purge plan":        "[Privacy cleanup](../security/privacy.md#after-a-filter-upgrade)",

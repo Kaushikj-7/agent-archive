@@ -36,7 +36,7 @@ const maxEvalWorkers = 8
 // maxEvalInputLine is the longest line --ids-from reads.
 const maxEvalInputLine = 64 << 10
 
-// runEvalCommand implements `agent-archive eval`, whose one action is export.
+// runEvalCommand dispatches the machine-consumer evaluation actions.
 func runEvalCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	if len(args) > 0 && strings.HasPrefix(args[0], "-") {
 		fs := env.newCommandFlags("eval", stderr)
@@ -45,10 +45,12 @@ func runEvalCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		}
 	}
 	if len(args) == 0 {
-		terminal.Println(stderr, "agent-archive: eval: choose export; run agent-archive eval --help")
+		terminal.Println(stderr, "agent-archive: eval: choose export or replay-plan; run agent-archive eval --help")
 		return 2
 	}
 	switch args[0] {
+	case "replay-plan":
+		return runEvalReplayPlan(args[1:], stdin, stdout, stderr, env)
 	case "export":
 		return runEvalExport(args[1:], stdin, stdout, stderr, env)
 	default:
