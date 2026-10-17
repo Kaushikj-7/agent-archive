@@ -256,6 +256,10 @@ func (s *Store) loadProtectedSessionDeletion(id string) (SessionDeletion, bool, 
 }
 
 func (s *Store) readDeletionObject(home *local.RootedHome, dir *os.Root, name string, limit int64) (out []byte, err error) {
+	ctx := s.durableContext()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	before, err := dir.Lstat(name)
 	if err != nil {
 		return nil, err
@@ -282,17 +286,21 @@ func (s *Store) readDeletionObject(home *local.RootedHome, dir *os.Root, name st
 	if err != nil {
 		return nil, err
 	}
-	defer func() { err = errors.Join(err, s.closePublicationFile(f)) }()
+	defer func() { err = errors.Join(err, s.closePublicationFile(f), ctx.Err()) }()
 	opened, err := f.Stat()
 	if err != nil || !os.SameFile(before, opened) || opened.Size() != n || !before.ModTime().Equal(opened.ModTime()) {
 		return nil, ErrDurableStorageRecovery
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	reader := exactPendingContextReader{ctx: ctx, reader: f}
 	out = make([]byte, n)
-	if _, err = io.ReadFull(f, out); err != nil {
+	if _, err = io.ReadFull(reader, out); err != nil {
 		return nil, err
 	}
 	var extra [1]byte
-	if count, e := f.Read(extra[:]); count != 0 || !errors.Is(e, io.EOF) {
+	if count, e := reader.Read(extra[:]); count != 0 || !errors.Is(e, io.EOF) {
 		return nil, errors.Join(ErrDurableStorageRecovery, e)
 	}
 	after, err := dir.Lstat(name)
