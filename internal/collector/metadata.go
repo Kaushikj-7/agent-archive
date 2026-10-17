@@ -131,7 +131,7 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 		return outcomeSkipped, false, err
 	}
 	pending := state.PendingPublication{ImportExpectedMetadataSHA256: func() string {
-		if s.reg.StagedImportSHA256 != "" {
+		if s.importStageActive() {
 			return metadataSHA(last.encoded)
 		}
 		return ""

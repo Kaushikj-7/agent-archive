@@ -45,6 +45,11 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 	if errors.Is(publishedErr, state.ErrDurableStorageRecovery) {
 		return archive.SourceBundle{}, publishedErr
 	}
+	if reg.NativeImport != nil && publishedErr == nil && published.Summary().Published {
+		if err := published.ValidateNativeImportAuthority(reg); err != nil {
+			return archive.SourceBundle{}, err
+		}
+	}
 	if reg.StagedImportSHA256 != "" && (publishedErr != nil || !published.Summary().Published) {
 		stage, found, err := store.LoadImportStage(ctx, reg)
 		if err != nil {

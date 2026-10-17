@@ -142,7 +142,7 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 			return outcomeSkipped, errors.New("frozen history maintenance cannot decline an existing publication")
 		}
 		pending := state.PendingPublication{ImportExpectedMetadataSHA256: func() string {
-			if s.reg.StagedImportSHA256 != "" {
+			if s.importStageActive() {
 				return metadataSHA(s.published.Metadata())
 			}
 			return ""
@@ -195,6 +195,9 @@ func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bo
 func (p *pass) retainedSignatureAuthority(reg archive.SessionRegistration) error {
 	if reg.HistoricalProject == nil && reg.NativeImport == nil {
 		return p.local.FrozenGeneration(reg)
+	}
+	if reg.NativeImport != nil {
+		return p.local.NativeImportRetainedAuthority(p.ctx, reg)
 	}
 	s := sessionScan{reg: reg}
 	return s.validateHistoricalSnapshot()
@@ -299,7 +302,7 @@ func generationRecoveryBuilder(ctx context.Context, owner *sessionScan, filtered
 
 func (s *sessionScan) retainedOnlyAuthority() error {
 	if s.reg.NativeImport != nil {
-		return s.reg.ValidateNativeImport()
+		return s.published.ValidateNativeImportAuthority(s.reg)
 	}
 	if s.reg.HistoricalProject != nil {
 		return s.reg.ValidateHistoricalProject()

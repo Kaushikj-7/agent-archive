@@ -58,7 +58,7 @@ func (q *StagedSelection) UnmarshalJSON(raw []byte) error {
 	if json.Unmarshal(raw, &fields) != nil {
 		return ErrDurableStorageRecovery
 	}
-	if err := rejectStagedNullAliases(fields["proof"], []string{"version", "bundle_sha256", "metadata_sha256", "source_set_sha256", "binding_sha256", "destination_id", "admission_context", "policy_context", "predecessor", "predecessor_sha256", "purpose", "sha256"}); err != nil {
+	if err := rejectStagedNullAliases(fields["proof"], []string{"version", "bundle_sha256", "metadata_sha256", "source_set_sha256", "binding_sha256", "destination_id", "admission_context", "policy_context", "predecessor", "predecessor_sha256", "purpose", "sha256", "native_import_authority"}); err != nil {
 		return err
 	}
 	*q = StagedSelection(v)
@@ -80,6 +80,9 @@ func (q *StagedSelection) validateDigest() error {
 
 func (q *StagedSelection) validateProofShape() error {
 	if q == nil || !q.validStagedProtocol() || q.Core.SHA256 != "" || q.HadRequest != (q.CoveredToken != "") || len(q.CoveredToken) > 128 || len(q.Core.DestinationID) == 0 || len(q.Core.DestinationID) > 128 {
+		return ErrDurableStorageRecovery
+	}
+	if q.Core.NativeImportAuthority != "" && (q.Version != 3 || !readyDigestValid(q.Core.NativeImportAuthority)) {
 		return ErrDurableStorageRecovery
 	}
 	for _, digest := range []string{q.StageSHA256, q.RosterSHA256, q.SHA256, q.Core.BundleSHA256, q.Core.MetadataSHA256, q.Core.SourceSetSHA256, q.Core.BindingSHA256, q.Core.AdmissionContext, q.Core.PolicyContext} {
@@ -108,6 +111,9 @@ func (owned *PendingPublication) validateStagedShape() error {
 		return nil
 	}
 	q := p.StagedProof()
+	if q.Core.NativeImportAuthority != "" && (q.Version != 3 || !readyDigestValid(q.Core.NativeImportAuthority)) {
+		return ErrDurableStorageRecovery
+	}
 	if p.CursorSelection != nil && p.StagedSelection != nil || (q.Version == 4 && p.CursorSelection == nil) || (q.Version == 3 && p.StagedSelection == nil) {
 		return ErrDurableStorageRecovery
 	}
@@ -209,6 +215,10 @@ func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingP
 	if err != nil {
 		return p, err
 	}
+	q.Core.NativeImportAuthority, err = nativeImportSelectionAuthority(reg)
+	if err != nil {
+		return p, err
+	}
 	q.Core.AdmissionContext, err = s.readyDigest(ctx, reg)
 	if err != nil {
 		return p, err
@@ -303,6 +313,9 @@ func (s *Store) validateStagedSelectionWithSource(ctx context.Context, p Pending
 	if p.SkillEvidence != string(cfg.EffectiveSkillEvidence()) || stage.SkillEvidence != cfg.EffectiveSkillEvidence() || stage.Bundle.Capture.FilterVersion != archive.FilterVersion {
 		return ErrReadySelectionFrozen
 	}
+	if err := validateNativeImportSelectionAuthority(reg, q.Core); err != nil {
+		return err
+	}
 	if cfg.DestinationID() != q.Core.DestinationID || stage.SHA256 != q.StageSHA256 || !readySelectionOwnerMatches(reg, p.Bundle) {
 		return ErrDurableStorageRecovery
 	}
@@ -351,6 +364,11 @@ func (p *Published) preserveStagedPublished(ctx context.Context, next *published
 			return ErrReadySelectionFrozen
 		}
 		if next.LastPublished.StagedProof() == nil {
+			if prior.StagedProof().Core.NativeImportAuthority != "" {
+				if allowed, err := p.nativeImportSelectingSuccessor(ctx, next); allowed || err != nil {
+					return err
+				}
+			}
 			if readySHA(next.MetadataBytes) != prior.StagedProof().Core.MetadataSHA256 {
 				return ErrReadySelectionFrozen
 			}
@@ -408,10 +426,21 @@ func (p *Published) validateStagedPublished(ctx context.Context, next *published
 	if err != nil || !found || reg.StagedImportSHA256 != q.StageSHA256 || !readySelectionOwnerMatches(reg, retained) {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
+	if err := validateNativeImportSelectionAuthority(reg, q.Core); err != nil {
+		return err
+	}
 	if q.Version == 4 {
 		if err := p.validatePublishedSettledStage(ctx, q, reg); err != nil {
 			return err
 		}
+	}
+	if reg.NativeImport != nil && reg.NativeImport.Membership.State == "detached" {
+		original, err := p.store.nativeImportReleasedSelection(ctx, reg)
+		if err != nil || !sameStagedSelection(original, *q) {
+			return errors.Join(ErrDurableStorageRecovery, err)
+		}
+		next.PublicationVersion = q.Version
+		return nil
 	}
 	admission, err := p.store.readyDigest(ctx, reg)
 	if err != nil || admission != q.Core.AdmissionContext {

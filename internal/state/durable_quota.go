@@ -539,6 +539,10 @@ func chargeDurableFile(path, name string, size int64, u *durableUsage) error {
 // writeDurableGuardDigest retains the exact emitted digest only after guarded
 // atomic publication succeeds. It never substitutes disk quota for a memory lease.
 func (s *Store) writeDurableGuardDigest(ctx context.Context, g config.DurableStorageGuard, path string, p any) (sum [32]byte, n int64, err error) {
+	return s.writeDurableGuardDigestChecked(ctx, g, path, p, nil)
+}
+
+func (s *Store) writeDurableGuardDigestChecked(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit func(func() error) error) (sum [32]byte, n int64, err error) {
 	if err = g.CheckHome(s.home); err != nil {
 		return sum, n, err
 	}
@@ -574,7 +578,7 @@ func (s *Store) writeDurableGuardDigest(ctx context.Context, g config.DurableSto
 	defer reservation.Release(digestScratch)
 	hash := sha256.New()
 	var emitted int64
-	err = q.writeContext(ctx, path, n, func(w io.Writer) error {
+	err = q.writeWithHeadroomContext(ctx, path, n, func(w io.Writer) error {
 		output := &publicationEmittedWriter{writer: io.MultiWriter(w, hash)}
 		e := jsonwire.Encode(ctx, output, p, reservation)
 		emitted = output.written
@@ -582,7 +586,7 @@ func (s *Store) writeDurableGuardDigest(ctx context.Context, g config.DurableSto
 			return errors.Join(errStateBudget, e)
 		}
 		return e
-	})
+	}, commit, 0)
 	if err == nil {
 		copy(sum[:], hash.Sum(nil))
 		n = emitted

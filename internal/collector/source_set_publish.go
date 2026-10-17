@@ -278,7 +278,7 @@ func (s *sessionScan) finishSourceSetAcknowledgment(pending state.PendingPublica
 	// source-set transaction is prepared. Release it only after exact closing
 	// readback and the local commit, keeping the journal if cleanup must retry.
 	// Typed stage release remains owned by its separate readback protocol.
-	if s.reg.StagedImportSHA256 != "" {
+	if s.importStageActive() {
 		if err := s.local.RemoveOwnedImportStage(s.reg); err != nil {
 			return fmt.Errorf("release completed source-set import stage: %w", err)
 		}
@@ -380,6 +380,9 @@ func (s *sessionScan) sourceSetUpload(pending state.PendingPublication) (*storag
 }
 
 func (s *sessionScan) sealPending(p *state.PendingPublication) error {
+	if err := s.validateNativeImportRetained(); err != nil {
+		return err
+	}
 	if s.usesExistingPublicationProtocol(p) {
 		return nil
 	}
@@ -437,6 +440,9 @@ func (s *sessionScan) sealPending(p *state.PendingPublication) error {
 }
 
 func (s *sessionScan) savePending(p *state.PendingPublication) error {
+	if err := s.validateNativeImportRetained(); err != nil {
+		return err
+	}
 	if s.usesExistingPublicationProtocol(p) {
 		return s.local.SavePending(s.id(), *p)
 	}
@@ -454,7 +460,7 @@ func (s *sessionScan) usesExistingPublicationProtocol(p *state.PendingPublicatio
 	if p.Commit != nil || p.History != nil {
 		return false
 	}
-	if p.Selection != nil || p.StagedProof() != nil || p.Catalog != nil || s.reg.StagedImportSHA256 != "" {
+	if p.Selection != nil || p.StagedProof() != nil || p.Catalog != nil || s.importStageActive() {
 		return true
 	}
 	// Catalog mutation authority is frozen by publishPending before upload.
@@ -476,17 +482,14 @@ func (s *sessionScan) publicationPolicy(bundle archive.SourceBundle) (string, er
 }
 
 func (s *sessionScan) publicationAdmission() string {
-	var receipt string
 	if s.reg.NativeImport != nil {
-		if s.reg.ValidateNativeImport() != nil {
-			return ""
-		}
-		var err error
-		receipt, err = s.reg.NativeImport.IdentityDigest()
+		context, err := archive.NativeImportAdmissionContext(s.reg)
 		if err != nil {
 			return ""
 		}
+		return context
 	}
+	var receipt string
 	body, _ := json.Marshal(struct {
 		Session               string                `json:"Session"`
 		Native                string                `json:"Native"`

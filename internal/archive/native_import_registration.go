@@ -170,3 +170,30 @@ func nativeImportEscapedKeyPossible(raw []byte) bool {
 	}
 	return false
 }
+
+// NativeImportAdmissionContext binds immutable historical owner facts to normal
+// retained publication preparation. Closed membership detachment is normalized
+// by IdentityDigest; native input and batch control are never consulted.
+func NativeImportAdmissionContext(r SessionRegistration) (string, error) {
+	if err := r.ValidateNativeImport(); err != nil {
+		return "", err
+	}
+	receipt, err := r.NativeImport.IdentityDigest()
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(struct {
+		Session               string        `json:"Session"`
+		Native                string        `json:"Native"`
+		Project               string        `json:"Project"`
+		Admission             string        `json:"Admission"`
+		Origin                SessionOrigin `json:"Origin"`
+		Batch                 ImportBatch   `json:"Batch"`
+		NativeImportAuthority string        `json:"NativeImportAuthority,omitempty"`
+	}{r.ArchiveSessionID, r.NativeSessionID, r.ProjectID, r.Admitted().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), r.Origin, r.ImportBatch, receipt})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:]), nil
+}

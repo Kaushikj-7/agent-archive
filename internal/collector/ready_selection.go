@@ -18,7 +18,7 @@ func (s *sessionScan) freezeOrdinaryReadySelection(ctx context.Context, p *state
 	if !found || !cfg.PublicationCompositionProtection {
 		return nil
 	}
-	staged := s.reg.StagedImportSHA256 != "" && cfg.StagedSelectionProtection
+	staged := s.importStageActive() && cfg.StagedSelectionProtection
 	if staged {
 		if !cfg.SupportsStagedSelection() {
 			return state.ErrReadySelectionFrozen
@@ -27,7 +27,7 @@ func (s *sessionScan) freezeOrdinaryReadySelection(ctx context.Context, p *state
 			return state.ErrReadySelectionFrozen
 		}
 	}
-	if p.History != nil || p.Bundle.History != nil || p.MetadataOnly || s.reg.HistoricalProject != nil || s.reg.StagedImportSHA256 != "" && !staged {
+	if p.History != nil || p.Bundle.History != nil || p.MetadataOnly || s.reg.HistoricalProject != nil || s.importStageActive() && !staged {
 		return state.ErrReadySelectionFrozen
 	}
 	_, found, err = s.published.LastPublishedMetadata()

@@ -524,8 +524,16 @@ func (p *Published) write(next publishedState) error {
 					return e
 				}
 			}
+			var guard func(func() error) error
+			if next.Bundle.Capture.Harness.Name == "muse" && next.Commit != nil {
+				var e error
+				guard, e = p.store.nativeImportPublicationCommit(p.store.durableContext(), p.id, nativeImportPublicationTarget{Admission: next.Commit.AdmissionContext, Destination: next.Commit.DestinationID, Policy: next.Commit.PolicyContext, Adapter: next.Bundle.Capture.AdapterVersion, Predecessor: next.Commit.PredecessorSHA256, Metadata: next.Commit.MetadataSHA256, Preparation: next.Commit.PreparationSHA256})
+				if e != nil {
+					return e
+				}
+			}
 			path := filepath.Join("published", p.id+".json")
-			sum, n, e := p.store.writeDurableGuardDigest(p.store.durableContext(), storage, path, next)
+			sum, n, e := p.store.writeDurableGuardDigestChecked(p.store.durableContext(), storage, path, next, guard)
 			if e != nil {
 				return e
 			}

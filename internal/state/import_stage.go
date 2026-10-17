@@ -1050,6 +1050,16 @@ func (s *Store) classifyReleasedImportOwner(ctx context.Context, id string, rece
 	if reg.Validate() != nil || reg.ArchiveSessionID != id || reg.Origin != archive.SessionOriginImport || reg.ImportBatch.Recorded() == "" || reg.StagedImportSHA256 != q.StageSHA256 || reg.DestinationID != q.Core.DestinationID {
 		return reg, ErrReadySelectionFrozen
 	}
+	if err := validateNativeImportSelectionAuthority(reg, q.Core); err != nil {
+		return reg, err
+	}
+	if reg.NativeImport != nil && reg.NativeImport.Membership.State == "detached" {
+		original, err := s.nativeImportReleasedSelection(ctx, reg)
+		if err != nil || !sameStagedSelection(original, q) {
+			return reg, errors.Join(ErrReadySelectionFrozen, err)
+		}
+		return reg, nil
+	}
 	digest, err := s.readyDigest(ctx, reg)
 	if err != nil || digest != q.Core.AdmissionContext {
 		return reg, errors.Join(ErrReadySelectionFrozen, err)
