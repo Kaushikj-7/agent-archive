@@ -226,6 +226,8 @@ func TestNativeImportReleasedDetachIgnoresRemovedRootAndPreservesIndependentRequ
 		t.Fatal("root removal fixture", err)
 	}
 	previous := cfg
+	cfg.Harnesses = []string{"codex"}
+	cfg.ImportedHarnesses = []string{"muse"}
 	cfg.NativeRoots = nil
 	cfg, err = config.ReconcileMuseCapture(cfg, previous, reg.AdmittedAt.Add(time.Hour))
 	if err != nil {
