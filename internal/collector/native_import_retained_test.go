@@ -113,6 +113,15 @@ func newHistoricalNativeStage(t *testing.T) historicalNativeStage {
 	if err != nil {
 		t.Fatal(err)
 	}
+	root := archive.NativeRoot{Agent: "muse", Configured: filepath.Dir(path), Canonical: filepath.Dir(path), Revision: reg.NativeBinding.RootRevision}
+	reg.NativeImport.Confirmation.RootFingerprint, err = archive.NativeRootFingerprint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.NativeRoots = []archive.NativeRoot{root}
+	if err := config.Save(store.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
 	if err := reg.Validate(); err != nil {
 		t.Fatal(err)
 	}

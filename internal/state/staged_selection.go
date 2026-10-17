@@ -182,6 +182,9 @@ func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingP
 	if err != nil {
 		return p, err
 	}
+	if err := nativeImportConfiguredRoot(cfg, reg); err != nil {
+		return p, err
+	}
 	if !readySelectionOwnerMatches(reg, p.Bundle) || p.Bundle.History != nil || p.History != nil || p.MetadataOnly {
 		return p, ErrReadySelectionFrozen
 	}
@@ -336,7 +339,10 @@ func (s *Store) validateStagedSelectionWithSource(ctx context.Context, p Pending
 	if err != nil || binding != q.Core.BindingSHA256 || readySHA(p.MetadataBytes) != q.Core.MetadataSHA256 {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	return s.validateStagedPendingMetadata(ctx, p, q)
+	if err := s.validateStagedPendingMetadata(ctx, p, q); err != nil {
+		return err
+	}
+	return s.validateNativeImportStagedConfig(ctx, cfg, reg, p)
 }
 
 func (p *Published) saveStagedPublication(pending PendingPublication, at time.Time) error {
