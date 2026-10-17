@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func nativeImportBatchFixture(t *testing.T) NativeImportBatchConfirmation {
@@ -94,5 +95,20 @@ func TestNativeImportBatchBoundsAndCancellation(t *testing.T) {
 	cancel()
 	if _, err := NativeImportBatchScopeDigest(ctx, nativeImportBatchFixture(t).Scope); !errors.Is(err, context.Canceled) {
 		t.Fatal("lost caller cancellation", err)
+	}
+}
+
+func TestNativeImportBatchControlPreservesCallerCancellation(t *testing.T) {
+	t.Parallel()
+	n := nativeImportBatchFixture(t)
+	started, err := time.Parse(time.RFC3339Nano, n.Scope.StartedAtUTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := NativeImportBatchControl{ID: n.Scope.BatchID, StartedAt: started, Filters: n.Scope.Filters, DestinationID: n.Scope.DestinationID, NativeImport: &n}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := b.Validate(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatal("control lost caller cancellation", err)
 	}
 }

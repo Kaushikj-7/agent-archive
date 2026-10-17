@@ -156,3 +156,27 @@ func TestNativeImportBatchUnreadableAuthorityPreventsFallback(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeImportBatchOrdinarySelectorLikeStringsRemainOrdinary(t *testing.T) {
+	t.Parallel()
+	b := Batch{ID: "2026-10-17-1", StartedAt: time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC), Filters: BatchFilters{Harnesses: []string{"native_import"}, ProjectIDs: []string{"native_import"}}, DestinationID: "native_import"}
+	raw, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Batch
+	if err := decodeBatch(raw, &decoded); err != nil {
+		t.Fatal("ordinary values acquired private selector semantics", err)
+	}
+	if decoded.NativeImport != nil || decoded.DestinationID != b.DestinationID {
+		t.Fatal("ordinary value changed")
+	}
+	home := t.TempDir()
+	if err := SaveBatch(home, b); err != nil {
+		t.Fatal(err)
+	}
+	batches, err := LoadBatches(home)
+	if err != nil || len(batches) != 1 || batches[0].NativeImport != nil {
+		t.Fatal("ordinary persisted batch changed domain", err)
+	}
+}

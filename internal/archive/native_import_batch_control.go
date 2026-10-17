@@ -34,9 +34,6 @@ func DecodeNativeImportBatchControl(raw []byte, next *NativeImportBatchControl) 
 		}
 		return err
 	}
-	if nativeImportKeyPossible(raw) {
-		present = true
-	}
 	if present {
 		if err := nativeImportClosedObjectNulls(raw, MaxImportBatchControlBytes, []string{"id", "started_at", "filters", "destination_id", "native_import"}, []string{"completed_at", "projects_added", "apps_added", "projects_kept_out", "sessions", "staged_sessions", "subagents", "retention", "undone_at", "projects_excluded", "projects_kept", "projects_kept_for"}, []string{"projects_added", "apps_added", "sessions", "subagents"}); err != nil {
 			return err
@@ -71,8 +68,11 @@ func DecodeNativeImportBatchControl(raw []byte, next *NativeImportBatchControl) 
 
 // Validate binds the closed section to its immutable enclosing batch header.
 func (b NativeImportBatchControl) Validate(ctx context.Context) error {
-	if b.NativeImport == nil || b.NativeImport.Validate(ctx) != nil || !ValidImportBatchID(b.ID) {
+	if b.NativeImport == nil || !ValidImportBatchID(b.ID) {
 		return ErrUnsupportedNativeImport
+	}
+	if err := b.NativeImport.Validate(ctx); err != nil {
+		return err
 	}
 	scope := b.NativeImport.Scope
 	if scope.BatchID != b.ID || scope.StartedAtUTC != b.StartedAt.UTC().Format(time.RFC3339Nano) || scope.DestinationID != b.DestinationID || !reflect.DeepEqual(scope.Filters, b.Filters) {

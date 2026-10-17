@@ -94,6 +94,9 @@ func TestNativeImportBatchInitialGuardAndExactACKCleanup(t *testing.T) {
 				if err != nil || !found {
 					t.Fatal(err)
 				}
+				// Admission recovery receives a bounded descriptor, with source bundles
+				// intentionally released. It must reopen actual selected evidence.
+				stage.Bundle = archive.SourceBundle{}
 				resume := s.resumePreparedImport(t.Context(), stage)
 				if (resume == nil) != acknowledged {
 					t.Fatal("resume bypassed creating batch or required it after ACK", resume)
@@ -150,10 +153,11 @@ func TestNativeImportBatchFinalPendingAndSelectingCAS(t *testing.T) {
 					proof := *pending.StagedProof()
 					candidate.LastPublished.setStagedProof(&proof)
 					candidate.PublicationVersion = 3
-					candidate.Summary, err = s.summaryBudgeted(candidate)
+					summary, err := s.summaryBudgeted(candidate)
 					if err != nil {
 						t.Fatal(err)
 					}
+					candidate.Summary = &summary
 					next = &candidate
 					value = candidate
 					target = filepath.Join("published", reg.ArchiveSessionID+".json")

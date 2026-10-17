@@ -70,6 +70,12 @@ func (s *Store) validateNativeImportStagedConfig(ctx context.Context, cfg config
 // A historical stage never enters the legacy generic registration adapter.
 // First ownership still requires the distinct prepared historical capability.
 func (s *Store) resumeOwnedNativeImport(ctx context.Context, stage ImportStage, reg archive.SessionRegistration, cfg config.Config) error {
+	read, closeRead := s.WithReadBudget(ctx, s.resourceBudget)
+	defer closeRead()
+	return read.resumeOwnedNativeImportInScope(ctx, stage, reg, cfg)
+}
+
+func (s *Store) resumeOwnedNativeImportInScope(ctx context.Context, stage ImportStage, reg archive.SessionRegistration, cfg config.Config) error {
 	current, found, err := s.LoadRegistration(reg.ArchiveSessionID)
 	if err != nil || !found || current.StagedImportSHA256 != stage.SHA256 || !sameImportStageOwner(reg, current) {
 		return errors.Join(ErrReadySelectionFrozen, err)
@@ -91,7 +97,11 @@ func (s *Store) resumeOwnedNativeImport(ctx context.Context, stage ImportStage, 
 	if proof == nil || proof.StageSHA256 != stage.SHA256 || validateNativeImportSelectionAuthority(current, proof.Core) != nil {
 		return ErrReadySelectionFrozen
 	}
-	bundle, err := s.readyDigest(ctx, stage.Bundle)
+	full, found, err := s.LoadImportStage(ctx, current)
+	if err != nil || !found || full.SHA256 != stage.SHA256 {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	bundle, err := s.readyDigest(ctx, full.Bundle)
 	if err != nil || bundle != proof.Core.BundleSHA256 {
 		return errors.Join(ErrReadySelectionFrozen, err)
 	}
