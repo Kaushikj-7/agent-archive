@@ -34,7 +34,7 @@ func (p musePriorLabelsParser) Parse(ctx context.Context, b archive.SourceBundle
 	if err == nil {
 		a.Facts.Name = "Prior synthetic attribution"
 		for i := range a.View.Turns {
-			if a.View.Turns[i].Model != "" {
+			if a.View.Turns[i].Kind == archive.TurnKindHumanPrompt || a.View.Turns[i].Kind == archive.TurnKindAssistant {
 				a.View.Turns[i].Model = "synthetic-prior-model"
 			}
 		}
@@ -124,7 +124,7 @@ func TestMuseRetainedMetadataRefreshReachesWarmConsumers(t *testing.T) {
 		t.Fatal("retained name fixture did not establish the current label")
 	}
 	if prior.Name != "Prior synthetic attribution" || len(prior.Models) == 0 || prior.Models[0].Attributes["gen_ai.request.model"] != "synthetic-prior-model" {
-		t.Fatal("old parser fixture did not establish stale labels and model")
+		t.Fatalf("old parser fixture did not establish stale labels and model: name=%q models=%+v", prior.Name, prior.Models)
 	}
 	// Warm the actual catalog and model-filtered statistics before publication.
 	if _, errOut, code := runShow(t, f.env, prior.Name, "--harness", "muse", "--json"); code != 0 {
