@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -53,7 +54,7 @@ func ReadRevision(ctx context.Context, store storage.ObjectStore, key, revisionI
 	if err != nil {
 		return archive.Metadata{}, archive.SourceBundle{}, err
 	}
-	selected, _, _, err := revisionSourceMetadata(metadata, revisionID)
+	selected, err := agentapi.SelectRevisionSourceMetadata(metadata, revisionID)
 	if err != nil {
 		return archive.Metadata{}, archive.SourceBundle{}, err
 	}

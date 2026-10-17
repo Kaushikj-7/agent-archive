@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -22,13 +23,13 @@ func TestEveryPendingCountAgrees(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	bundle := func(reg archive.SessionRegistration) archive.SourceBundle {
-		return archive.SourceBundle{ArchiveSessionID: reg.ArchiveSessionID, Capture: archive.SourceCapture{Harness: reg.Harness, CapturedAt: now.Add(-time.Hour)}}
+		return pendingCountPublication(t, reg, now.Add(-time.Hour)).Bundle
 	}
 	pendingUpload := func(t *testing.T, store *state.Store, reg archive.SessionRegistration) {
 		t.Helper()
-		if err := store.SavePending(reg.ArchiveSessionID, state.PendingPublication{
-			Bundle: bundle(reg), SourceKey: "k", MetadataKey: "m", SourceSHA256: "s", SourceBytes: []byte{1}, MetadataBytes: []byte{1}, ReadyAt: now.Add(time.Hour),
-		}); err != nil {
+		pending := pendingCountPublication(t, reg, now.Add(-time.Hour))
+		pending.ReadyAt = now.Add(time.Hour)
+		if err := store.SavePending(reg.ArchiveSessionID, pending); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -154,4 +155,27 @@ func TestEveryPendingCountAgrees(t *testing.T) {
 			}
 		})
 	}
+}
+
+// pendingCountPublication keeps the cache and upload facets independently valid.
+func pendingCountPublication(t *testing.T, reg archive.SessionRegistration, at time.Time) state.PendingPublication {
+	t.Helper()
+	_, filter, ok := productionAgents.LookupSources(reg.Harness.Name)
+	if !ok {
+		t.Fatal("missing actual registered source codec")
+	}
+	bundle, err := archive.NewSourceBundle(reg, filter, archive.FilteredTranscript{Format: "synthetic-retained-jsonl", Records: [][]byte{[]byte(`{"type":"turn_context","model":"synthetic"}`)}}, at, nil)
+	must(t, err)
+	packed, err := archive.BuildCompressedSource(bundle)
+	must(t, err)
+	key, err := archive.SourceObjectKey(bundle, packed.SHA256)
+	must(t, err)
+	ref := archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}
+	metadata, err := archive.BuildMetadataWithAnalysis(bundle, archive.Analysis{}, nil, "synthetic-machine", reg.SessionStartedAt, at, ref, archive.ParserInfo{Name: reg.Harness.Name, Version: filter.Version()})
+	must(t, err)
+	body, err := json.Marshal(metadata)
+	must(t, err)
+	metadataKey, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
+	must(t, err)
+	return state.PendingPublication{Bundle: bundle, SourceKey: key, MetadataKey: metadataKey, SourceSHA256: packed.SHA256, SourceBytes: packed.Bytes, MetadataBytes: body}
 }

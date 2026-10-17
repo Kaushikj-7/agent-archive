@@ -53,12 +53,14 @@ type HistoryInput struct {
 	// ParentSessionID freezes this immutable input's header authority separately
 	// from the output envelope. Nil retains pre-provenance journal compatibility;
 	// a pointer to an empty string positively records an unresolved parent.
+	NativeChild         *bool                   `json:"native_child,omitempty"`
 	ParentSessionID     *string                 `json:"parent_session_id,omitempty"`
 	SourceSchemaVersion int                     `json:"source_schema_version,omitempty"`
 	Reference           archive.SourceReference `json:"reference"`
 	RevisionID          string                  `json:"revision_id"`
 	CapturedAt          time.Time               `json:"captured_at"`
 	FilterVersion       string                  `json:"filter_version"`
+	AdapterVersion      string                  `json:"adapter_version,omitempty"`
 }
 
 // PendingSource identifies an immutable owned stage by checksum-derived name.
@@ -76,12 +78,23 @@ type RetiredSource struct {
 
 // ValidateHistoryBudgeted reserves the independent ephemeral metadata view used
 // by journal validation. The input bytes retain their original caller ownership.
-func (p PendingPublication) ValidateHistoryBudgeted(id string, budget *agentapi.NativeReadBudget) error {
+func (owned *PendingPublication) ValidateHistoryBudgeted(id string, budget *agentapi.NativeReadBudget) error {
+	p := *owned
 	reservation := budget.Reservation()
 	if p.History == nil {
 		return nil
 	}
 	n := int64(len(p.MetadataBytes))
+	if p.Preparation != nil {
+		for _, input := range p.Preparation.Inputs {
+			if h := input.HookObservations; h != nil {
+				if len(h.Body) > 32<<20 {
+					return ErrDurableStorageCapacity
+				}
+				n += 8 * int64(len(h.Body))
+			}
+		}
+	}
 	if !reservation.Reserve(n) {
 		return errStateBudget
 	}
@@ -90,11 +103,12 @@ func (p PendingPublication) ValidateHistoryBudgeted(id string, budget *agentapi.
 }
 
 // ValidateHistory refuses future journals and references outside this session.
-func (p PendingPublication) ValidateHistory(id string) error {
+func (owned *PendingPublication) ValidateHistory(id string) error {
+	p := *owned
 	if p.History == nil {
 		return nil
 	}
-	if p.History.Version != pendingHistoryVersion {
+	if p.History.Version != pendingHistoryVersion && (p.JournalVersion != 5 || p.History.Version != 2) {
 		return errors.Join(ErrDurableStorageRecovery, errors.New("pending history requires a newer writer"))
 	}
 	if err := validatePredecessorSHA(p.History.ExpectedMetadataSHA256); err != nil {
@@ -159,7 +173,7 @@ func (s *Store) checkPendingHistoryVersion(id string) error {
 		} `json:"history"`
 	}
 	if err := s.readBudgeted(s.pendingPath(id), &header, false); err == nil {
-		if header.History != nil && header.History.Version != pendingHistoryVersion {
+		if header.History != nil && header.History.Version != pendingHistoryVersion && header.History.Version != 2 {
 			return errors.Join(ErrDurableStorageRecovery, errors.New("pending history requires a newer writer"))
 		}
 	}
@@ -191,6 +205,24 @@ func (s *Store) StagePendingSource(id string, ref archive.SourceReference, data 
 		return PendingSource{}, err
 	}
 	return PendingSource{Reference: ref, Name: name}, nil
+}
+
+// StagePublicationSource freezes a protocol2 input after the composition floor.
+func (s *Store) StagePublicationSource(id string, ref archive.SourceReference, data []byte) (PendingSource, error) {
+	if err := validatePendingHistorySource(id, ref.SHA256+".gz"); err != nil {
+		return PendingSource{}, err
+	}
+	if len(data) != ref.CompressedBytes || len(data) > maxPendingHistoryBytes || publicationSHA256(data) != ref.SHA256 {
+		return PendingSource{}, ErrDurableStorageRecovery
+	}
+	err := config.WithPublicationComposition(s.home, func(g config.PublicationCompositionGuard) error {
+		storage, e := g.Storage(s.home)
+		if e != nil {
+			return e
+		}
+		return s.stagePendingSourceGuard(storage, id, ref, data)
+	})
+	return PendingSource{Reference: ref, Name: ref.SHA256 + ".gz"}, err
 }
 
 // ReadPendingSource reads only the journal's bounded private checksum stage.
@@ -248,13 +280,14 @@ func validatePredecessorSHA(value string) error {
 	return nil
 }
 
-func (p PendingPublication) validateHistoryInputs(m archive.Metadata) error {
+func (owned *PendingPublication) validateHistoryInputs(m archive.Metadata) error {
+	p := *owned
 	if p.History.PrivacyCursor < 0 || p.History.PrivacyCursor > len(p.History.Inputs) || len(p.History.Inputs) > archive.MaxHistorySpans+1 || p.History.Preparing && p.Attempted {
 		return errors.New("invalid history preparation progress")
 	}
 	seen := map[string]bool{}
 	for _, input := range p.History.Inputs {
-		if seen[input.RevisionID] || input.SourceSchemaVersion != 0 && input.SourceSchemaVersion != archive.SourceSchemaVersion && input.SourceSchemaVersion != archive.HistorySourceSchemaVersion {
+		if len(input.AdapterVersion) > 4096 || seen[input.RevisionID] || input.SourceSchemaVersion != 0 && input.SourceSchemaVersion != archive.SourceSchemaVersion && input.SourceSchemaVersion != archive.HistorySourceSchemaVersion {
 			return errors.New("invalid frozen input provenance")
 		}
 		seen[input.RevisionID] = true

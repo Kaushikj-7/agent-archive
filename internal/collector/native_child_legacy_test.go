@@ -103,6 +103,8 @@ func TestLegacyNativeChildMigrationRefusesChangedAuthorityWithoutWrites(t *testi
 func TestLegacyNativeChildPreparationFreezesParentAndDoesNotReadNative(t *testing.T) {
 	t.Parallel()
 	scan, p := privacyJournal(t)
+	p.JournalVersion, p.Phase = 0, ""
+	p.Commit, p.Preparation, p.Progress, p.Cleanup, p.Sources = nil, nil, nil, nil, nil
 	facts := *scan.reg.CodexBinding
 	facts.Child, facts.RootID = true, ""
 	scan.reg.CodexBinding, scan.reg.NativeChild, scan.reg.NativeSourceHome = &facts, true, facts.Home
@@ -112,6 +114,9 @@ func TestLegacyNativeChildPreparationFreezesParentAndDoesNotReadNative(t *testin
 	for i := range p.History.Inputs {
 		p.History.Inputs[i].ParentSessionID = nil
 	}
+	// Import the verified original descriptor before its first protocol2 seal;
+	// rewinding an already selecting commit is not a supported legacy producer.
+	p = freshLegacyHistoryOriginal(t, scan, p)
 	paths, err := filepath.Glob(filepath.Join(facts.Home, "rollout-*.jsonl"))
 	if err != nil || len(paths) == 0 {
 		t.Fatal("native fixture inputs missing", err)

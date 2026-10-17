@@ -115,7 +115,7 @@ func (r *CursorScratch) Reserve(n int64) (err error) {
 			return err
 		}
 		defer func() { err = errors.Join(err, q.Close()) }()
-		u, err := q.usage()
+		u, err := q.usageContext(r.ctx)
 		if err != nil {
 			return err
 		}

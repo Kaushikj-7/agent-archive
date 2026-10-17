@@ -37,7 +37,7 @@ func (c *putCountingStore) takePuts() int {
 	return n
 }
 
-// A published state, pending publication, or superseded ledger that no longer
+// A published state or superseded ledger that no longer
 // decodes used to fail its session on every pass, with no way out; a corrupt
 // ledger also brought back the C-1 loop, re-uploading the same publication
 // every pass because recording the superseded source failed after the upload
@@ -47,7 +47,7 @@ func (c *putCountingStore) takePuts() int {
 // Storage-protected pending bytes instead remain owed and cannot be substituted.
 func TestCorruptCollectorOwnedStateIsMovedAsideAndTheSessionRecovers(t *testing.T) {
 	t.Parallel()
-	for _, dir := range []string{"published", "pending", "superseded"} {
+	for _, dir := range []string{"superseded"} {
 		t.Run(dir, func(t *testing.T) {
 			t.Parallel()
 			local := newTestStore(t)

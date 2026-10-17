@@ -6,9 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Muse local handoff accepts the observed file-read effect profile and complete
-  or failed effect bodies. These private bodies are still omitted; they do not
-  establish tool success, errors or parallel execution.
+- Pending Muse inventory queries recover when an unfinished date directory is
+  removed or renamed between passes, while retaining complete uniqueness checks.
 
 - Codex multi-agent subagents are named after the task their parent gave them
   (`/root/fix_upload_retry` reads "fix upload retry") instead of showing only
@@ -33,6 +32,10 @@ follow [Semantic Versioning](https://semver.org/).
 - Read-path benchmarks now account for provider LIST pages and transferred
   headers, including range overread. Content-free trace counts distinguish
   local catalog validation and decoding from remote discovery costs.
+
+- Muse local handoff accepts the observed file-read effect profile and complete
+  or failed effect bodies. These private bodies are still omitted; they do not
+  establish tool success, errors or parallel execution.
 
 - Muse local handoff previews now read only their reserved head/tail windows,
   avoiding whole-file hashes while browsing large histories. Selected sessions
@@ -209,6 +212,12 @@ follow [Semantic Versioning](https://semver.org/).
   metadata and full evaluation exports while preserving prompt/message counts.
   Cursor tool calls without recorded results no longer claim zero results;
   unstructured exports omit unavailable edited-file lists.
+
+- Recover complete historical source-set publications from exact private retained evidence,
+  with one shared disk/memory budget and permanent source-set writer protection.
+  Stronger privacy replaces all selected revisions and retires obsolete private
+  proof bodies only after the full local selection is durable. Historical import
+  admission staging and additional native ancestor permission remain separate.
 
 - Commands run inside Muse detect its session environment to avoid interactive
   prompts and pagers. Handoff into supported agents removes inherited Muse
@@ -701,6 +710,12 @@ and the cleanup repair do not turn either failed tagged gate into a pass.
   coverage remains tracked for release testing.
 
 ### Fixed
+
+- Publication retries verify the complete selected source set and exact committed
+  metadata before acknowledging capture. A different remote winner or unknown
+  predecessor stays pending instead of overwriting retained evidence. A recorded
+  predecessor that is now missing also requires reconciliation; queued evidence
+  stays local and pending.
 
 - Preserve confirmed backfill evidence before registering sessions, including
   selected Codex history and native children. Imports can finish after native

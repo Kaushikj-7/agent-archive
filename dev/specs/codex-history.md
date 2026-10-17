@@ -241,13 +241,84 @@ references. Every source key must be checksum-addressed under the same archive
 session prefix. Prior source-schema-2 references are permitted. Reader validation
 precedes derivation and selection; a malformed reference cannot widen reads.
 
+The collector's already-enabled history publication uses exact retained source
+sets. Private source-set version 17 (`source-set-publication-v17`) permanently
+protects outer protocol-5 publication and derives the durable-storage guard
+inside the same held private root before a new journal is emitted. Its distinct
+`source_set_commit5` field retains inner selecting commit version 2. Existing
+ordinary ReadySelection2, staged3, Cursor4 and catalog authority remain separate;
+all prior configuration protections are preserved. It preserves existing native consent and
+history ownership checks; it does not enable historical import admission or
+future native ancestor authority. Unchanged settled admission uses exact-byte validated summary reuse and existing
+scan signatures. Summary reuse still reads the complete file; cold processes
+validate and decode in full. Generation recovery validates the exact frozen successor.
+
+Private pending state retains legacy active-source fields and adds a versioned
+commit identity plus up to 65 exact source payload references: one current and
+64 preserved revisions. The revision-reference limit is independent of the
+64 physical graph-span limit. Inline compressed replay payload descriptors are capped at
+128 MiB in aggregate; the active payload is stored once. The collector preserves
+its existing 32 MiB compressed-object producer, resolver and retained-reader
+ceiling, independently of the 128 MiB filtered-data ceiling. Generic ref-only
+state/storage descriptors can exceed that aggregate and retain a 128 MiB
+descriptor bound. Descriptor validity does not expand the collector read allowance;
+over-ceiling references retain pending evidence rather than authorizing larger
+reads. Owned history-stage handles resolve serially under the same shared memory and
+1 GiB physical disk budget. Protocol-5 admission-stage handles remain unsupported; existing typed import
+staging retains its own selecting protocol and cleanup authority. Malformed journals remain visible pending
+evidence and block replacement; older quarantined copies remain visible to status
+and retention. An obsolete adapter/filter/skill policy retains replay evidence
+for explicit refiltering rather than uploading or discarding it.
+
+The exact SHA-256 of metadata bytes binds retries. The semantic source-set digest
+uses deterministic JSON of all known metadata fields (including schema, ownership,
+selection, capture/filter/producer/relationship/generation facts), with preserved
+references sorted by revision ID, plus private destination, admission, policy and
+mutation purpose. Referenced revision IDs, timestamps, keys, checksums and sizes
+must be valid and unique. The raw digest also binds unknown fields and encoding.
+The predecessor is explicitly known absent, known present with its exact body
+digest, or unknown. A remote exact-next body permits local completion after every
+source verifies; an exact predecessor permits replacement. Any other body,
+unreadable remote evidence or unknown predecessor stays pending, without adopting
+the remote winner as replacement authority. Legacy state with neither exact
+metadata nor a recorded predecessor stays pending until its evidence is restored
+or reconciled. Existing checksum-addressed objects with different bytes are never
+overwritten. These operations rely on unsynced, single-owner local state; a
+GET/compare/PUT sequence is not a cross-machine atomic conditional write.
+
+A physical selection change preserves the exact prior current reference and all
+prior preserved references. Same-revision updates cannot accumulate append
+snapshots and require a provider-approved continuation bound to both source
+digests, plus consistent retained filtered ordinals, spans and record prefixes.
+Filtered equality alone cannot prove raw native prefix continuity or authorize
+using a filtered source as a raw dependency. Missing proof stays pending. Privacy
+full-set replacement requires typed transformation receipts, exact predecessor
+and next sets, and durable old-key retirement. Successful full local settlement
+prunes obsolete private raw proof bodies; maintenance-owed baseline acknowledgement
+retains the exact original proof and obligations. Selection-only publication
+cannot evict or rewrite preserved evidence. At capacity, preserve the committed archive and stop.
+
+Listing repair indexes the exact validated phase-C response and its same-response
+validator. A later phase-D conflict can leave a harmless stale hint, with repair
+still owed; that hint never authorizes adopting an unverified winner.
+The verified metadata and full local source set become durable before covered
+requests complete; pending removal is last. A later admission-stage port must
+resolve one immutable size/checksum-bound object at a time under aggregate disk
+quota (including temporary/pending copies), protect referenced handles and release
+staging only after that local commit and request completion. No native reread or
+Git reattribution may replace admitted evidence. Remote wire schemas and filter
+versions are unchanged. Leading `publication_version: 5`, pending `journal_version: 5` and the closed
+`source_set_commit5` phase codecs agree with the permanent source-set writer
+floor; legacy and other selecting-protocol dispatch remain explicit. Future historical admission and native ancestor authority are separate
+gates.
 The collector publishes related histories through its existing durable pending
 journal. Every final reference is verified before exact predecessor preflight and
 metadata replacement, and every reference plus exact metadata bytes is read back
 before acknowledgement. An exact committed retry performs no source or metadata
 PUT. Stronger privacy resolves predecessor/final state before replacing private
 work; unknown authority remains pending. Older config writers remain protected by
-the permanent config-v5 writer marker.
+the permanent source-set-publication-v17 marker, preserving prior history,
+storage, import, search and selection protections.
 
 Retained maintenance carries the complete source set and original captures.
 Frozen generations use retained bytes and recorded Git facts. Retention uses the

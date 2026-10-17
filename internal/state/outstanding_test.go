@@ -18,7 +18,7 @@ import (
 func TestOutstandingFacets(t *testing.T) {
 	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	bundle := func(reg archive.SessionRegistration) archive.SourceBundle {
-		return archive.SourceBundle{Capture: archive.SourceCapture{Harness: reg.Harness, CapturedAt: at}}
+		return archive.SourceBundle{ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, CapturedAt: at}}
 	}
 	for _, tc := range []struct {
 		name          string

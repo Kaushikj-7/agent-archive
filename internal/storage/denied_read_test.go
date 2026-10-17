@@ -206,3 +206,15 @@ func TestVerifyAccessPassesWhenMissingKeysReadAsDenied(t *testing.T) {
 		t.Fatalf("VerifyAccess under a 403-for-missing policy: %v", err)
 	}
 }
+
+func TestS3SourceSetPublicationWorksWhenMissingKeysReadAsDenied(t *testing.T) {
+	fake := &deniedReadS3{objects: map[string][]byte{}, unreadable: map[string]bool{}, listAllowed: true}
+	store := newDeniedReadStore(t, fake, "agent-archive")
+	source, metadata := []byte("source bytes"), []byte(`{"metadata":true}`)
+	if err := PutSourceSetThenMetadata(context.Background(), store, []SourcePublication{{Key: "sessions/claude/abc/source.1.jsonl.gz", SHA256: SHA256Hex(source), Size: len(source), Bytes: source}}, "sessions/claude/abc/metadata.json", metadata, MetadataPredecessor{Known: true}, RetryPolicy{MaxAttempts: 1}); err != nil {
+		t.Fatalf("first publication under a 403-for-missing policy: %v", err)
+	}
+	if got := string(fake.objects["agent-archive/sessions/claude/abc/metadata.json"]); got != string(metadata) {
+		t.Fatalf("metadata = %q, want it published", got)
+	}
+}

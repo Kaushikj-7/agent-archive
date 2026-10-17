@@ -98,6 +98,14 @@ func uploadedByAnotherBuild(t *testing.T, local *state.Store, store storage.Obje
 			t.Fatal(err)
 		}
 	})
+	// Keep the simulated other-build publication's authoritative body in step.
+	published, err := local.LoadPublishedState("session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(t.Context(), "sessions/codex/session-1/metadata.json", published.Metadata()); err != nil {
+		t.Fatal(err)
+	}
 	return ref
 }
 
@@ -165,6 +173,20 @@ func (s *sourceReadCounter) Get(ctx context.Context, key string) ([]byte, error)
 	return s.MemoryStore.Get(ctx, key)
 }
 
+func (s *sourceReadCounter) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if key == s.key {
+		s.reads++
+	}
+	return s.MemoryStore.GetLimited(ctx, key, limit)
+}
+
+func (s *sourceReadCounter) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	if key == s.key {
+		s.reads++
+	}
+	return s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
+}
+
 func (s *sourceReadCounter) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
 	if key == s.key {
 		s.reads++
@@ -175,10 +197,9 @@ func (s *sourceReadCounter) Stat(ctx context.Context, key string) (storage.Objec
 // A metadata-only publication that carries only the recorded source reference
 // (this build cannot build the retained bundle) cannot succeed when that
 // source is gone from storage or differs from its record. It is reported
-// once, dropped so it never wedges the session, and recorded as a refresh
-// this parser cannot do: later passes neither retry it nor read the source
-// again, and status counts it.
-func TestUnverifiableRecordedSourceIsReportedOnceAndNotRetried(t *testing.T) {
+// as actionable pending work on each bounded retry. Retained journal evidence
+// is never discarded to conceal missing or corrupt referenced storage.
+func TestUnverifiableRecordedSourceRetainsPendingEvidence(t *testing.T) {
 	t.Parallel()
 	for _, damage := range []string{"missing", "different"} {
 		t.Run(damage, func(t *testing.T) {
@@ -207,9 +228,13 @@ func TestUnverifiableRecordedSourceIsReportedOnceAndNotRetried(t *testing.T) {
 				t.Fatal(err)
 			}
 			metadataKey, _ := archive.MetadataObjectKey("codex", "session-1")
+			publication, err := local.LoadPublishedState("session-1")
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := local.SavePending("session-1", state.PendingPublication{
 				MetadataOnly: true, Bundle: bundle, SourceKey: recorded.Key, SourceSHA256: recorded.SHA256, SourceSize: recorded.CompressedBytes,
-				MetadataKey: metadataKey, MetadataBytes: []byte(`{}`), ReadyAt: now,
+				MetadataKey: metadataKey, MetadataBytes: publication.Metadata(), ReadyAt: now,
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -233,18 +258,17 @@ func TestUnverifiableRecordedSourceIsReportedOnceAndNotRetried(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if pass == 1 && !errors.Is(result.Errors["session-1"], wantErr) {
-					t.Fatalf("pass 1: errors %v, want %v", result.Errors, wantErr)
+				wantReads := 1
+				if pass > 1 {
+					wantReads = 2
+				} // One authoritative listing repair and one pending publication.
+				if !errors.Is(result.Errors["session-1"], wantErr) || store.reads-before != wantReads {
+					t.Fatalf("pass %d: bounded retry errors=%v reads=%d", pass, result.Errors, store.reads-before)
 				}
-				if pass > 1 && (len(result.Errors) != 0 || store.reads != before) {
-					t.Fatalf("pass %d: errors %v, %d source reads: the refresh was retried", pass, result.Errors, store.reads-before)
+				if pending, err := local.HasPending("session-1"); err != nil || !pending {
+					t.Fatalf("pass %d: durable evidence lost: %v %v", pass, pending, err)
 				}
-				if pending, err := local.HasPending("session-1"); err != nil || pending {
-					t.Fatalf("pass %d: the unpublishable publication is still pending: %v %v", pass, pending, err)
-				}
-				if status, err := local.LoadStatus(); err != nil || status.UnrefreshableSummaries != 1 || (pass > 1 && status.LastError != "") {
-					t.Fatalf("pass %d: status %#v %v", pass, status, err)
-				}
+
 			}
 			if got := fetchMetadata(t, memory, "codex", "session-1").Parser.Version; got != "one" {
 				t.Fatalf("metadata was replaced: parser %q", got)

@@ -56,19 +56,19 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 	if err := s.local.SweepPendingSources(s.id()); err != nil {
 		return err
 	}
-	active, err := s.local.StagePendingSource(s.id(), p.SourceReference(), p.SourceBytes)
+	active, err := s.local.StagePublicationSource(s.id(), p.SourceReference(), p.SourceBytes)
 	if err != nil {
 		return err
 	}
 	history.Sources = append(history.Sources, active)
 	for _, source := range s.revisions.Sources {
-		stage, err := s.local.StagePendingSource(s.id(), source.Reference, source.Bytes)
+		stage, err := s.local.StagePublicationSource(s.id(), source.Reference, source.Bytes)
 		if err != nil {
 			return err
 		}
 		history.Sources = append(history.Sources, stage)
 	}
-	history.Inputs = append(history.Inputs, state.HistoryInput{Reference: p.SourceReference(), RevisionID: s.revisions.Current, CapturedAt: p.Bundle.Capture.CapturedAt, FilterVersion: p.Bundle.Capture.FilterVersion, SourceSchemaVersion: p.Bundle.SchemaVersion})
+	history.Inputs = append(history.Inputs, state.HistoryInput{Reference: p.SourceReference(), RevisionID: s.revisions.Current, CapturedAt: p.Bundle.Capture.CapturedAt, FilterVersion: p.Bundle.Capture.FilterVersion, AdapterVersion: p.Bundle.Capture.AdapterVersion, SourceSchemaVersion: p.Bundle.SchemaVersion})
 	if err := s.freezePreservedHistoryInputs(&final, history); err != nil {
 		return err
 	}
@@ -76,22 +76,8 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 	parent := p.Bundle.ParentSessionID
 	history.Inputs[0].ParentSessionID = &parent
 	if found {
-		refs, err := previous.SourceReferences()
-		if err != nil {
+		if err := freezeRetiredHistorySources(previous, final, history); err != nil {
 			return err
-		}
-		finalRefs, err := final.SourceReferences()
-		if err != nil {
-			return err
-		}
-		protected := map[archive.SourceReference]bool{}
-		for _, ref := range finalRefs {
-			protected[ref] = true
-		}
-		for _, ref := range refs {
-			if !protected[ref] {
-				history.Retired = append(history.Retired, state.RetiredSource{Reference: ref})
-			}
 		}
 	}
 	p.MetadataBytes, err = s.marshalRetained(final)
@@ -99,6 +85,28 @@ func (s *sessionScan) freezeRevisionPublication(p *state.PendingPublication) err
 		return err
 	}
 	p.History, p.Attempted = history, false
+	if found && previous.History == nil && final.History != nil {
+		priorBundle, _, ok := s.published.LastPublished()
+		if !ok {
+			return errors.New("ordinary migration prior bundle unavailable")
+		}
+		adapter, e := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
+		if e != nil {
+			return e
+		}
+		policy, e := s.publicationPolicy(p.Bundle)
+		if e != nil {
+			return e
+		}
+		proof, e := state.ValidateOrdinaryHistoryMigration(s.ctx, s.published.Metadata(), p.MetadataBytes, priorBundle, p.Bundle, s.reg, s.priorBinding, s.reg.CodexBinding, adapter, s.publicationAdmission(), policy, s.readBudget())
+		if e != nil {
+			return e
+		}
+		*p, e = p.WithOrdinaryMigration(proof)
+		if e != nil {
+			return e
+		}
+	}
 	return p.ValidateHistoryBudgeted(s.id(), s.readBudget())
 }
 
@@ -110,7 +118,11 @@ func (s *sessionScan) resumeHistory(ctx context.Context, p state.PendingPublicat
 	if err != nil {
 		return outcomeSkipped, err
 	}
-	if p.History.MaintenanceOwed || pendingSkillMode(p.SkillEvidence) != s.opts.skillEvidence() || p.Bundle.Capture.FilterVersion != archive.FilterVersion || p.Bundle.Capture.AdapterVersion != adapter.Version() {
+	filterVersion, adapterVersion := p.Bundle.Capture.FilterVersion, p.Bundle.Capture.AdapterVersion
+	if p.History.Preparing {
+		filterVersion, adapterVersion = p.History.FilterVersion, p.History.AdapterVersion
+	}
+	if p.History.MaintenanceOwed || pendingSkillMode(p.SkillEvidence) != s.opts.skillEvidence() || filterVersion != archive.FilterVersion || adapterVersion != adapter.Version() {
 		return s.resumeStricterHistory(p)
 	}
 	committed, err := s.checkFrozenHistoryMetadata(p)
@@ -133,7 +145,7 @@ func (s *sessionScan) resumeHistory(ctx context.Context, p state.PendingPublicat
 			return outcomeSkipped, state.ErrCatalogJournalFrozen
 		}
 		p.ReadyAt = latest
-		if err := s.local.SavePending(s.id(), p); err != nil {
+		if err := s.savePending(&p); err != nil {
 			return outcomeSkipped, err
 		}
 	}
@@ -244,17 +256,39 @@ func (s *sessionScan) freezePreservedHistoryInputs(final *archive.Metadata, hist
 		if len(bundle.ParentSessionID) > 4096 {
 			return state.ErrDurableStorageRecovery
 		}
-		if err := s.retainCharge(int64(len(bundle.ParentSessionID)+len(bundle.Capture.FilterVersion)) + 32); err != nil {
+		if err := s.retainCharge(int64(len(bundle.ParentSessionID)+len(bundle.Capture.FilterVersion)+len(bundle.Capture.AdapterVersion)) + 32); err != nil {
 			return err
 		}
-		parent := strings.Clone(bundle.ParentSessionID)
-		inputs[i].ParentSessionID = &parent
+		parent, marker := strings.Clone(bundle.ParentSessionID), bundle.NativeChild
+		inputs[i].ParentSessionID, inputs[i].NativeChild = &parent, &marker
+		inputs[i].AdapterVersion = strings.Clone(bundle.Capture.AdapterVersion)
 		if revision.FilterVersion == "" || revision.SourceSchemaVersion == 0 {
 			revision.FilterVersion, revision.SourceSchemaVersion = strings.Clone(bundle.Capture.FilterVersion), bundle.SchemaVersion
 		}
 		inputs[i].FilterVersion, inputs[i].SourceSchemaVersion = revision.FilterVersion, revision.SourceSchemaVersion
 		s.keepRetainedFrom(mark, keep)
 		history.Inputs = append(history.Inputs, inputs[i])
+	}
+	return nil
+}
+
+func freezeRetiredHistorySources(previous, final archive.Metadata, history *state.PendingHistory) error {
+	refs, err := previous.SourceReferences()
+	if err != nil {
+		return err
+	}
+	finalRefs, err := final.SourceReferences()
+	if err != nil {
+		return err
+	}
+	protected := map[archive.SourceReference]bool{}
+	for _, ref := range finalRefs {
+		protected[ref] = true
+	}
+	for _, ref := range refs {
+		if !protected[ref] {
+			history.Retired = append(history.Retired, state.RetiredSource{Reference: ref})
+		}
 	}
 	return nil
 }

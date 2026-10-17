@@ -3,6 +3,7 @@ package collector
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/evidence"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
@@ -78,7 +81,7 @@ func TestSkillPolicyLimitsPendingAndUploadedBytes(t *testing.T) {
 	}
 }
 
-func TestStricterPolicyRebuildsFrozenPendingSource(t *testing.T) {
+func TestStricterPolicyRetainsFrozenPendingEvidence(t *testing.T) {
 	t.Parallel()
 	project := t.TempDir()
 	skill := filepath.Join(project, ".agents", "skills", "sample", "SKILL.md")
@@ -109,29 +112,36 @@ func TestStricterPolicyRebuildsFrozenPendingSource(t *testing.T) {
 	if !strings.Contains(old.Bundle.SupplementalEvidence[len(old.Bundle.SupplementalEvidence)-1].Payload["snapshot"].(string), "private-skill-body") {
 		t.Fatal("body setup failed")
 	}
-	mode = config.SkillEvidenceNone
-	options.SkillEvidence = mode
-	_, _ = Run(context.Background(), local, remote, options)
-	next, found, err := local.LoadPending(reg.ArchiveSessionID)
-	if err != nil || !found {
-		t.Fatalf("new pending: %v %v", found, err)
-	}
-	if next.SourceSHA256 == old.SourceSHA256 {
-		t.Fatal("reused broader pending source")
-	}
-	for _, item := range next.Bundle.SupplementalEvidence {
-		if item.Kind == archive.EvidenceKindSkillInventory || item.Kind == archive.EvidenceKindSkillSnapshot {
-			t.Fatalf("new pending carried %s", item.Kind)
-		}
-	}
-	remote.failMetadata = false
-	if _, err := Run(context.Background(), local, remote, options); err != nil {
+	before, err := os.ReadFile(filepath.Join(local.Home(), "pending", reg.ArchiveSessionID+".json"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	meta := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
-	if meta.SourceBundle.Key != next.SourceKey {
-		t.Fatal("live metadata did not point to policy-limited source")
+	mode = config.SkillEvidenceNone
+	options.SkillEvidence = mode
+	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", options.Now()); err != nil {
+		t.Fatal(err)
 	}
+	remote.failMetadata = false
+	result, err := Run(t.Context(), local, remote, options)
+	if err != nil || result.Errors[reg.ArchiveSessionID] != nil || len(result.Published) != 0 {
+		t.Fatal("changed policy did not prepare retained pending work", result, err)
+	}
+	next, found, err := local.LoadPublicationPending(reg.ArchiveSessionID)
+	if err != nil || !found || next.Commit == nil || next.Commit.Purpose != state.PublicationPrivacyRewrite || next.Preparation == nil || len(next.Preparation.Inputs) != 1 || next.Preparation.Inputs[0].Reference != old.SourceReference() {
+		t.Fatal("changed policy lost exact retained input authority", found, err)
+	}
+	requireFrozenPublicationOriginal(t, local, reg.ArchiveSessionID, before)
+	if _, found, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || !found {
+		t.Fatal("obsolete-policy request completed prematurely", found, err)
+	}
+	work, err := local.Outstanding(reg, false)
+	if err != nil || !work.Upload || !work.Pending() || !work.DefersExpiry() {
+		t.Fatal("obsolete-policy evidence disappeared from work status", work, err)
+	}
+	if _, err := remote.Get(t.Context(), old.MetadataKey); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatal("obsolete source became authoritative", err)
+	}
+
 }
 
 func TestStricterPolicyReplacesPublishedSourceWithoutTranscriptChange(t *testing.T) {

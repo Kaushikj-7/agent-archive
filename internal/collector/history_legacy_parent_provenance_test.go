@@ -100,6 +100,8 @@ func TestLegacyPreparationDecodesOriginalParentBeforeApplyingResolvedParent(t *t
 	for _, originalParent := range []string{"", "conflicting-known-parent"} {
 		t.Run("original="+originalParent, func(t *testing.T) {
 			scan, p := privacyJournal(t)
+			p.JournalVersion, p.Phase = 0, ""
+			p.Commit, p.Preparation, p.Progress, p.Cleanup, p.Sources = nil, nil, nil, nil, nil
 			input := p.History.Inputs[1]
 			raw, err := scan.readRetainedInputBytes(input.Reference)
 			if err != nil {
@@ -139,7 +141,7 @@ func TestLegacyPreparationDecodesOriginalParentBeforeApplyingResolvedParent(t *t
 			if err != nil {
 				t.Fatal(err)
 			}
-			p.SourceSHA256, p.SourceBytes = current.SHA256, current.Bytes
+			p.SourceSHA256, p.SourceBytes, p.SourceSize = current.SHA256, current.Bytes, len(current.Bytes)
 			final.SourceBundle = p.SourceReference()
 			currentStage, err := scan.local.StagePendingSource(scan.id(), p.SourceReference(), current.Bytes)
 			if err != nil {
@@ -151,16 +153,17 @@ func TestLegacyPreparationDecodesOriginalParentBeforeApplyingResolvedParent(t *t
 			}
 			// A pre-provenance journal has no per-input parent. Its immutable
 			// source remains authoritative even after the output parent resolves.
-			input.Reference, input.ParentSessionID = ref, nil
-			p.History.Inputs = []state.HistoryInput{input}
+			input.Reference, input.ParentSessionID, input.NativeChild = ref, nil, nil
+			currentInput := state.HistoryInput{Reference: p.SourceReference(), RevisionID: final.History.CurrentRevision, CapturedAt: p.Bundle.Capture.CapturedAt, FilterVersion: p.Bundle.Capture.FilterVersion, SourceSchemaVersion: p.Bundle.SchemaVersion}
+			p.History.Inputs = []state.HistoryInput{currentInput, input}
 			p.History.Sources = []state.PendingSource{currentStage, stage}
-			p.History.Preparing, p.History.PrivacyCursor = true, 0
+			p.History.Preparing, p.History.PrivacyCursor = true, 1
 			err = scan.advanceHistoryPreparation(&p)
 			if originalParent != "" {
 				if err == nil {
 					t.Fatal("different known original parent was accepted")
 				}
-				if p.History.PrivacyCursor != 0 {
+				if p.History.PrivacyCursor != 1 {
 					t.Fatal("conflicting input advanced preparation")
 				}
 				return
@@ -168,7 +171,7 @@ func TestLegacyPreparationDecodesOriginalParentBeforeApplyingResolvedParent(t *t
 			if err != nil {
 				t.Fatal("unresolved original child could not be prepared", err)
 			}
-			if p.History.Preparing || p.History.PrivacyCursor != 1 {
+			if p.History.Preparing || p.History.PrivacyCursor != 2 {
 				t.Fatal("original input did not complete preparation")
 			}
 		})

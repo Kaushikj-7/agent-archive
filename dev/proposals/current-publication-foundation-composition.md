@@ -1,5 +1,39 @@
 # Current publication foundation composition
 
+## Current integration work (2026-10-16)
+
+The historical checkpoints below describe earlier source candidates. The current
+unpublished integration uses outer journal/publication version 5 with distinct
+`source_set_commit5` and the sticky configuration-17 source-set capability. It
+preserves ordinary ReadySelection2, staged3, Cursor4 and catalog authority. The
+inner source-set commit remains version 2; it does not reuse the existing outer
+protocols or their wire fields. The bounded encoder lives in `internal/jsonwire`;
+`agentmeta` retains its pure sizing API.
+
+The integrated replay fixes have focused positive and refusal coverage for legacy
+original-parent provenance, native-child preparation, exact ordinary and history
+privacy successors, request ownership, source verification and bounded listing
+repair. These results do not establish final runtime qualification. A measured
+idle-pass regression motivated explicit validation-cache work: settled SourceSet5
+peers initially required full source-state decoding on each pass. Raw leading summaries cannot replace that
+validation because retention, deletion and link maintenance consume their facts as
+authority. Any optimization must preserve closed-wire validation and exact bytes,
+owner and configuration binding, charge retained memory to the existing budgets,
+and report cold-process work and file bytes read as well as decode allocations.
+The composed cache now keeps a finite Store-owned validated summary projection,
+bound to exact closed-decoder or successful typed-writer bytes, root identity and
+configuration. Every lookup hashes the actual complete stable file, and each
+active read scope borrows all retained cache bytes from the existing budget;
+caller copies have separate ownership. Cold processes still decode in full.
+The focused eleven-session warm collector control reports zero full source-state
+decodes and zero writes, but hashes 108,848 wire bytes per idle pass. This removes
+repeated materialization; it does not restore constant-prefix I/O for large
+settled files. Full-size I/O and runtime performance qualification remain open.
+Final immutable-source review, complete required checks and the unfinished
+live-WAL/provider/deletion integrations remain separate gates.
+
+## Historical composition checkpoints
+
 Source preparation pinned actual main65917b84d396bce94dfe1b1c40e80fab920634e2 plus ROOT460 f8d6d773b6c226ddda860b89cd6bb302565b316c. Original352 f20f609f3a6458be25c0bdd7811d4ab5d6ae6c72; original35630d7de1fc2bce9671f22984c91bce124c6991e87. The initial design checkpoint is retained below. The current source candidate implements the bounded serializer plus ordinary-ready producer slice described at the end. It does not activate any configuration or qualify a runtime/native/provider gate. Original refs remain untouched.
 
 Two exact wire conflicts prevent a safe additive port:

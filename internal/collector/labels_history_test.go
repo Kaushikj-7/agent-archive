@@ -55,9 +55,7 @@ func TestRetainedContextLabelsExcludeHistorySourceSets(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := published.CacheMetadata(encoded); err != nil {
-				t.Fatal(err)
-			}
+			injectPublishedMetadata(t, local, reg.ArchiveSessionID, published.Metadata(), encoded)
 			calls := provider.calls
 			p.observeLabels(t.Context())
 			cache, err := local.LoadLabels()

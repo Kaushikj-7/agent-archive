@@ -196,9 +196,9 @@ Native asynchronous hooks are not the upload mechanism. They can be canceled at 
 5. Apply the privacy filter and validate its output. Build a source bundle containing filtered native records and separately labeled supplemental evidence. Derive the metadata summary from that bundle with a versioned parser. Do not persist a second full normalized transcript.
 6. Serialize and gzip the source bundle deterministically. Compute SHA-256 over the exact compressed bytes. Save it and its matching metadata as pending local files using atomic replacement.
 7. Upload the source bundle to its content-addressed key. Verify uploaded content integrity. Do not assume an object ETag is its SHA-256.
-8. Replace `metadata.json` only after verification succeeds. Metadata publication is the point at which readers discover the new snapshot.
-9. Mark the local request complete only after metadata publication succeeds. Requests received during processing remain pending.
-10. Remove eligible old snapshots later. Never delete the currently referenced source bundle.
+8. Replace `metadata.json` only after verification succeeds and its exact body matches the recorded predecessor (or is absent for a first publication). Read back the exact committed body before completing local state. Metadata publication is the point at which readers discover the new snapshot.
+9. Commit the full local reference set, then mark the local request complete only after exact metadata verification succeeds. Requests received during processing remain pending.
+10. Remove eligible old snapshots later. Never retire a source retained by the complete active and preserved reference set.
 
 Starting cadence: scan every minute, upload no more than once every three minutes per active session, and publish a stopped turn on the next collector pass when possible. Coalesce multiple requests. Upload only when retained content or meaningful metadata changes; a new scan timestamp alone must not trigger an upload.
 

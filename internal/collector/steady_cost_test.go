@@ -21,6 +21,8 @@ import (
 type passCost struct {
 	loads  int64
 	writes int
+	// SourceSet cache hits still read and hash the complete published wire.
+	summaryBytes int64
 }
 
 // measurePass runs one pass and counts its decodes of published state and
@@ -29,12 +31,14 @@ type passCost struct {
 func measurePass(t *testing.T, local *state.Store, remote storage.ObjectStore, opts Options) (Result, passCost) {
 	t.Helper()
 	before := snapshotMtimes(t, local.Home())
-	loads := state.PublishedStateLoads()
+	var beforeReads, afterReads state.PublishedReadObservation
+	loads := state.PublishedStateLoads(&beforeReads)
 	result, err := Run(context.Background(), local, remote, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cost := passCost{loads: state.PublishedStateLoads() - loads}
+	afterLoads := state.PublishedStateLoads(&afterReads)
+	cost := passCost{loads: afterLoads - loads, summaryBytes: afterReads.SummaryValidationBytes - beforeReads.SummaryValidationBytes}
 	for path, mtime := range snapshotMtimes(t, local.Home()) {
 		// status.json is the pass's own summary, rewritten every pass.
 		if was, ok := before[path]; (!ok || !was.Equal(mtime)) && filepath.Base(path) != "status.json" {
@@ -163,6 +167,16 @@ func TestSettledSubagentsCostNothingPerPass(t *testing.T) {
 	if err != nil || len(summary.LinkedPublished) != children {
 		t.Fatalf("parent links %d of %d children (%v)", len(summary.LinkedPublished), children, err)
 	}
+	// Exact in-memory projection reuse removes repeated bundle decoding, but
+	// validating these authority-bearing summaries still reads every wire byte.
+	var publishedBytes int64
+	for _, id := range append([]string{"parent"}, summary.LinkedPublished...) {
+		info, err := os.Stat(filepath.Join(local.Home(), "published", id+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		publishedBytes += info.Size()
+	}
 	for pass := range 2 {
 		now = now.Add(10 * time.Minute)
 		r, cost := measurePass(t, local, remote, opts)
@@ -172,6 +186,10 @@ func TestSettledSubagentsCostNothingPerPass(t *testing.T) {
 		if cost.loads != 0 || cost.writes != 0 {
 			t.Fatalf("pass %d over %d settled subagents: %d published-state decodes, %d writes; want none", pass, children, cost.loads, cost.writes)
 		}
+		if cost.summaryBytes < publishedBytes {
+			t.Fatalf("pass %d validated %d wire bytes, less than the %d-byte settled set", pass, cost.summaryBytes, publishedBytes)
+		}
+		t.Logf("pass %d: %d complete-wire bytes hashed; %d source-state decodes, %d writes", pass, cost.summaryBytes, cost.loads, cost.writes)
 	}
 }
 
@@ -184,6 +202,35 @@ func TestGapsAreSkippedOnlyWhileTheTranscriptIsUntouched(t *testing.T) {
 	local := newTestStore(t)
 	remote := storagetest.NewMemoryStore()
 	reg := settledSession(t, local, codexTranscript)
+	// The settled fixture published into its own temporary store. Seed this
+	// test's store with that exact committed body and source before mutation.
+	published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, _, found := published.LastPublished()
+	if !found {
+		t.Fatal("fixture has no publication")
+	}
+	compressed, err := archive.BuildCompressedSource(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, found := published.LastPublishedSource()
+	if !found || compressed.SHA256 != ref.SHA256 {
+		t.Fatal("fixture source differs")
+	}
+	if err := remote.Put(t.Context(), ref.Key, compressed.Bytes); err != nil {
+		t.Fatal(err)
+	}
+	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.Put(t.Context(), key, published.Metadata()); err != nil {
+		t.Fatal(err)
+	}
+
 	rewritten := strings.Replace(codexTranscript, "visible", "VISIBLE", 1)
 	if err := os.WriteFile(reg.TranscriptPath, []byte(rewritten), 0o600); err != nil {
 		t.Fatal(err)

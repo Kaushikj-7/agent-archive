@@ -102,7 +102,8 @@ func (q *StagedSelection) validateProofShape() error {
 	return nil
 }
 
-func (p PendingPublication) validateStagedShape() error {
+func (owned *PendingPublication) validateStagedShape() error {
+	p := *owned
 	if p.StagedProof() == nil {
 		return nil
 	}
@@ -475,7 +476,8 @@ func sameStagedSelection(a, b StagedSelection) bool {
 }
 
 // StagedProof selects one mandatory staged authority; validators reject mixed fields.
-func (p PendingPublication) StagedProof() *StagedSelection {
+func (owned *PendingPublication) StagedProof() *StagedSelection {
+	p := *owned
 	if p.CursorSelection != nil {
 		return p.CursorSelection
 	}

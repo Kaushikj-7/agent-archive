@@ -20,7 +20,7 @@ func (s *sessionScan) beginCatalogJournal(ctx context.Context, pending state.Pen
 		admitted, err := remote.BeginPublication(ctx, pending.Catalog.ID, pending.MetadataBytes)
 		return pending, admitted, false, err
 	}
-	journalRemote, ok := s.remote.(storage.CatalogJournalLifecycle)
+	journalRemote, ok := s.sourceSetProvider().(storage.CatalogJournalLifecycle)
 	if !ok {
 		return pending, ctx, false, state.ErrDurableStorageRecovery
 	}
@@ -63,6 +63,9 @@ func (s *sessionScan) prepareCatalogJournal(pending state.PendingPublication) (s
 }
 
 func (s *sessionScan) removeCompletedCatalogJournal(pending state.PendingPublication) error {
+	if pending.Catalog == nil && pending.JournalVersion == 5 && pending.Commit != nil {
+		return s.local.RemoveExactSourceSetPending(s.id(), pending)
+	}
 	if pending.Catalog == nil && pending.History == nil && pending.Bundle.History == nil && pending.Bundle.SchemaVersion == archive.SourceSchemaVersion {
 		return s.local.RemoveExactLegacyPending(s.id(), pending)
 	}
@@ -76,7 +79,7 @@ func (s *sessionScan) removeCompletedCatalogJournal(pending state.PendingPublica
 	if err := s.local.RemoveCatalogPending(s.id(), j, s.opts.CollectorGuard); err != nil {
 		return err
 	}
-	return acknowledgeCatalogRemoval(s.ctx, s.remote, s.opts.CollectorGuard, j)
+	return acknowledgeCatalogRemoval(s.ctx, s.sourceSetProvider(), s.opts.CollectorGuard, j)
 }
 
 func acknowledgeCatalogRemoval(ctx context.Context, remote storage.ObjectStore, guard *local.CollectorGuard, journal local.CatalogJournal) error {

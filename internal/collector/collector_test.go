@@ -819,6 +819,13 @@ func TestFilterUpgradeKeepsCaptureTimeOfUnchangedTranscript(t *testing.T) {
 	if err := cloud.Put(context.Background(), metaKey, oldMetaBytes); err != nil {
 		t.Fatal(err)
 	}
+	// An older producer had no protocol2 seal; create that legacy prior before
+	// using its real SavePublication path, rather than rewriting a sealed union.
+	editPublishedState(t, store, func(map[string]any) {})
+	published, err = store.LoadPublishedState("session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := published.SavePublication(oldBundle, t0, oldRef, oldMetaBytes); err != nil {
 		t.Fatal(err)
 	}

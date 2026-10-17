@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,34 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
+// injectPublishedMetadata preserves the leading protocol/summary and frozen
+// selecting proof while injecting the exact unsafe body a reader must refuse.
+// Production CacheMetadata cannot persist this deliberately invalid selection.
+func injectPublishedMetadata(t *testing.T, local *state.Store, id string, previous, next []byte) {
+	t.Helper()
+	path := publishedPath(local, id)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldToken, err := json.Marshal(previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newToken, err := json.Marshal(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldField := append([]byte(`"metadata_bytes":`), oldToken...)
+	newField := append([]byte(`"metadata_bytes":`), newToken...)
+	if bytes.Count(raw, oldField) != 1 {
+		t.Fatal("unsafe fixture did not find exact selecting metadata field")
+	}
+	if err := os.WriteFile(path, bytes.Replace(raw, oldField, newField, 1), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 const grownTranscript = codexTranscript + "\n" + `{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}` + "\n"
 
 // editPublishedState rewrites session-1's published state as raw JSON, to
@@ -31,6 +60,12 @@ func editPublishedState(t *testing.T, local *state.Store, edit func(state map[st
 	var state map[string]any
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatal(err)
+	}
+	// These fixtures model legacy published files, which had neither the new
+	// selecting source-set identity nor a source-set preparation projection.
+	// Malformed selecting controls are injected directly by their own tests.
+	for _, field := range []string{"publication_version", "source_set_commit5", "commit", "sources", "predecessor_unknown", "preparation", "payloads", "privacy_receipts", "settled_privacy", "cleanup"} {
+		delete(state, field)
 	}
 	edit(state)
 	if data, err = json.Marshal(state); err != nil {
@@ -131,20 +166,29 @@ func TestPublishWithOlderStateReadsSupersededKeyFromCachedMetadata(t *testing.T)
 	assertRepublishedSuperseding(t, local, store, t0.Add(time.Hour), []string{firstKey})
 }
 
-// With neither record, the previous key is unknown: the publication still
-// completes, and nothing is guessed into the superseded ledger.
-func TestPublishWithUnknownPreviousSourceStillCompletes(t *testing.T) {
+// With neither record, the exact predecessor is unknown: retain the readable
+// remote publication and pending work instead of guessing replacement authority.
+func TestPublishWithUnknownPreviousSourceRetainsPending(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)
 	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	publishThenGrow(t, local, store, t0)
+	first := publishThenGrow(t, local, store, t0)
 	editPublishedState(t, local, func(state map[string]any) {
 		olderSourceSchema(state)
 		withoutRecordedSource(state)
 		delete(state, "metadata_bytes")
 	})
-	assertRepublishedSuperseding(t, local, store, t0.Add(time.Hour), nil)
+	result, err := Run(t.Context(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return t0.Add(time.Hour) }})
+	if err != nil || !errors.Is(result.Errors["session-1"], storage.ErrPublicationConflict) || len(result.Published) != 0 {
+		t.Fatal(result, err)
+	}
+	if pending, err := local.HasPending("session-1"); err != nil || !pending {
+		t.Fatal("unknown predecessor lost pending work", pending, err)
+	}
+	if got := fetchMetadata(t, store, "codex", "session-1").SourceBundle.Key; got != first {
+		t.Fatal("unknown predecessor overwrote authority", got)
+	}
 }
 
 // A parser upgrade over a cached bundle this build cannot reproduce skips the
@@ -495,17 +539,29 @@ func TestRunRemovesStaleWriteTemporaries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"}); err != nil {
+	result, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"})
+	if !errors.Is(err, state.ErrDurableStorageRecovery) || !errors.Is(result.Errors["durable-storage"], state.ErrDurableStorageRecovery) || len(result.Published) != 0 {
+		t.Fatalf("young anonymous published remainder not retained as owed: %+v %v", result, err)
+	}
+	// Global census refuses before hygiene: none of these originals are lost.
+	for _, path := range []string{stale, fresh, nested} {
+		if raw, err := os.ReadFile(path); err != nil || string(raw) != "partial" {
+			t.Fatalf("owed temporary changed: %s %v", path, err)
+		}
+	}
+	// Resolve only the injected young obstruction, then exercise actual hygiene.
+	if err := os.Remove(fresh); err != nil {
 		t.Fatal(err)
+	}
+	if result, err := Run(t.Context(), local, storagetest.NewMemoryStore(), Options{Sources: testSources, Parsers: testParsers, MachineID: "m"}); err != nil || len(result.Errors) != 0 {
+		t.Fatal(result, err)
 	}
 	for _, path := range []string{stale, nested} {
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("stale temporary %s survived: %v", path, err)
 		}
 	}
-	if _, err := os.Stat(fresh); err != nil {
-		t.Fatalf("fresh temporary was removed: %v", err)
-	}
+
 }
 
 // A publication whose upload keeps failing is retried every pass, and its

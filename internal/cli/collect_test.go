@@ -159,10 +159,66 @@ func TestCollectPassSoftDeadlineStartsNoNewSession(t *testing.T) {
 	}
 }
 
-// Read-back verification checks the remote metadata against the source
-// reference recorded at upload, so a cached bundle this build can no longer
-// serialize (a source schema bump) still verifies.
+// Recorded references keep legitimate legacy cached bundles readable after a
+// source schema bump. The legacy persistence API validates this authority;
+// selecting protocol2 state cannot be modified into the same legacy premise.
 func TestReadBackUsesRecordedSourceAfterSchemaBump(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	producerHome, producerEnv, remote := collectFixture(t, now)
+	if result, err := runOnePass(producerEnv, false); err != nil || len(result.Published) != 1 {
+		t.Fatalf("%#v %v", result, err)
+	}
+	reg := theRegistration(t, producerHome)
+	produced, err := state.OpenReadOnly(producerHome).LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, at, found := produced.LastPublished()
+	if !found {
+		t.Fatal("missing actual producer publication")
+	}
+	source, sourceFound := produced.LastPublishedSource()
+	if !sourceFound {
+		t.Fatal("missing actual producer recorded reference")
+	}
+	metadata, err := state.OpenReadOnly(producerHome).PublishedMetadata(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := config.Load(producerHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := store.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle.SchemaVersion = 1
+	if err := legacy.SavePublication(bundle, at, source, metadata); err != nil {
+		t.Fatalf("complete legacy persistence: %v", err)
+	}
+	env := testEnv(t, home, now)
+	if summary, err := verifyPublications(home, cfg, env, store, remote); err != nil || summary.Verified != 1 {
+		t.Fatalf("summary = %#v %v", summary, err)
+	}
+}
+
+func TestReadBackRefusesSelectingCachedSchemaTampering(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	home, env, remote := collectFixture(t, now)
@@ -179,6 +235,10 @@ func TestReadBackUsesRecordedSourceAfterSchemaBump(t *testing.T) {
 	if err := local.Write(publishedPath, raw); err != nil {
 		t.Fatal(err)
 	}
+	before, err := os.ReadFile(publishedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(verificationPath(home, id)); err != nil {
 		t.Fatal(err)
 	}
@@ -190,8 +250,12 @@ func TestReadBackUsesRecordedSourceAfterSchemaBump(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary, err := verifyPublications(home, cfg, env, store, remote); err != nil || summary.Verified != 1 {
-		t.Fatalf("summary = %#v %v", summary, err)
+	if summary, err := verifyPublications(home, cfg, env, store, remote); !errors.Is(err, state.ErrDurableStorageRecovery) || summary.Verified != 0 {
+		t.Fatalf("tampered selecting summary = %#v %v", summary, err)
+	}
+	after, err := os.ReadFile(publishedPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("tampered authority changed: %v", err)
 	}
 }
 

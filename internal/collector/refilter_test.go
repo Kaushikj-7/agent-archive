@@ -239,7 +239,7 @@ func TestRefilterBundleFiltersCursorTextAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	bundle.NativeText[0].Content += "user: DB_PASSWORD=" + plantedSecret + "\n"
-	refiltered, err := refilterBundle(context.Background(), reg, adapter, bundle)
+	refiltered, err := refilterBundle(t, context.Background(), reg, adapter, bundle)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +383,7 @@ func TestRetainedRefilterPreservesCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = refilterBundle(ctx, archive.SessionRegistration{}, adapter, archive.SourceBundle{})
+	_, err = refilterBundle(t, ctx, archive.SessionRegistration{}, adapter, archive.SourceBundle{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("refilter lost cancellation: %v", err)
 	}

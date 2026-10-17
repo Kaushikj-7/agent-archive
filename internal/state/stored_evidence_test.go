@@ -32,7 +32,9 @@ func TestStoredEvidenceReadsPendingAndPublished(t *testing.T) {
 		t.Fatal(err)
 	}
 	bundle.SupplementalEvidence = evidence("hook:pending")
-	if err := store.SavePending("s1", PendingPublication{Bundle: bundle, SourceKey: "k", MetadataKey: "m", SourceSHA256: "h", SourceBytes: []byte("s"), MetadataBytes: []byte("{}")}); err != nil {
+	// This read-only partial-reader fixture deliberately contains invalid source
+	// facts. It never asserts selecting authority or a successful SavePending.
+	if err := local.Write(store.pendingPath("s1"), PendingPublication{Bundle: bundle, SourceKey: "k", MetadataKey: "m", SourceSHA256: "h", SourceBytes: []byte("s"), MetadataBytes: []byte("{}")}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.StoredEvidence("s1")

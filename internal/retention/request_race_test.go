@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -44,8 +43,9 @@ func finalResponse(t *testing.T, at time.Time) archive.SupplementalEvidence {
 // A hook writes a request after retention snapshotted the pending requests
 // and deleted the session's objects, but before it forgot the session. The
 // request and its evidence must survive, and the next collector pass must
-// publish that evidence rather than lose it.
-func TestHookRequestWrittenMidExpiryIsKeptAndPublished(t *testing.T) {
+// retain that evidence as pending rather than lose it. Exact replacement
+// authority for an intentionally deleted sidecar requires the deletion journal.
+func TestHookRequestWrittenMidExpiryRetainsPendingAfterRemoteDeletion(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	local := newTestStore(t)
@@ -76,28 +76,36 @@ func TestHookRequestWrittenMidExpiryIsKeptAndPublished(t *testing.T) {
 		t.Fatalf("the hook's request was lost: %#v %v", requests, err)
 	}
 
-	// The collector republishes the whole session with that evidence, so the
-	// remote deletion that already happened loses nothing.
-	if result := collect(t, local, memory, expiry); len(result.Published) != 1 {
-		t.Fatalf("the kept request was not published: %#v", result)
+	// A known-present predecessor becoming absent is a conflict, not permission
+	// to infer first publication. Keep the complete filtered snapshot and request
+	// for deletion-journal reconciliation in the maintenance milestone.
+	resultAfter := collect(t, local, memory, expiry)
+	if !errors.Is(resultAfter.Errors["s1"], storage.ErrPublicationConflict) || len(resultAfter.Published) != 0 {
+		t.Fatal("deleted predecessor was guessed absent", resultAfter.Errors)
 	}
-	meta := fetchMetadata(t, memory, "s1")
-	if !meta.CapturedAt.Equal(expiry) {
-		t.Fatalf("captured_at=%s, want the republication at %s", meta.CapturedAt, expiry)
+	pending, found, err := local.LoadPending("s1")
+	if err != nil || !found || pending.Commit == nil || pending.Commit.Predecessor != state.PredecessorPresent {
+		t.Fatal("publication evidence lost", found, err)
 	}
-	bundle, err := reader.LoadSource(context.Background(), memory, meta, reader.Limits{})
-	if err != nil {
-		t.Fatal(err)
+	if !pending.Bundle.Capture.CapturedAt.Equal(expiry) {
+		t.Fatal("new evidence lost its capture time")
 	}
-	found := false
-	for _, item := range bundle.SupplementalEvidence {
+	kept := false
+	for _, item := range pending.Bundle.SupplementalEvidence {
 		if item.Kind == archive.EvidenceKindFinalResponse && item.Payload["turn_id"] == "late-turn" {
-			found = true
+			kept = true
 		}
 	}
-	if !found {
-		t.Fatal("the mid-expiry final response is not in the republished bundle")
+	if !kept {
+		t.Fatal("mid-expiry final response lost")
 	}
+	if _, found, err := local.LoadRequest("s1"); err != nil || !found {
+		t.Fatal("uncommitted request acknowledged", found, err)
+	}
+	if _, err := memory.Get(t.Context(), "sessions/codex/s1/metadata.json"); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatal("sidecar republished without authority", err)
+	}
+
 }
 
 // Hooks and retention run in different processes with no ordering between

@@ -131,8 +131,10 @@ func TestBackfillNativeForkRetainsIndependentIdentityAndOwnEvidence(t *testing.T
 	loads = state.PublishedStateLoads()
 	settled, e := runOnePass(env, true)
 	must(t, e)
-	if state.PublishedStateLoads() != loads || len(settled.Errors) != 0 || len(settled.Published) != 0 {
-		t.Fatal("fork proof did not settle", settled)
+	// Each CLI invocation opens a new Store and validates its cold summary once.
+	// The upgraded native proof must still skip capture and publication.
+	if decoded := state.PublishedStateLoads() - loads; decoded != 1 || len(settled.Skipped) != 1 || len(settled.Errors) != 0 || len(settled.Published) != 0 {
+		t.Fatalf("settled fork cold validation decoded %d states: %+v", decoded, settled)
 	}
 	path := filepath.Join(native, "sessions", "rollout-"+fork+".jsonl")
 	original, e := os.ReadFile(path)

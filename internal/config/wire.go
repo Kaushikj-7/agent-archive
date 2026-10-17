@@ -23,6 +23,8 @@ const legacyCodexWriter configWriter = "codex-scope-v3"
 
 const codexWriter configWriter = "codex-scope-floor-v3"
 
+const sourceSetPublicationWriter configWriter = "source-set-publication-v17"
+
 const searchLifecycleWriter configWriter = "search-lifecycle-v16"
 
 const settledCursorSelectionWriter configWriter = "settled-cursor-selection-v15"
@@ -117,6 +119,9 @@ func (c Config) marshalBaseJSON() ([]byte, error) {
 	if c.SearchLifecycleProtection {
 		version = writerVersion{Version: 16, Writer: searchLifecycleWriter}
 	}
+	if c.SourceSetPublicationProtection {
+		version = writerVersion{Version: 17, Writer: sourceSetPublicationWriter}
+	}
 	return json.Marshal(struct {
 		SchemaVersion writerVersion `json:"schema_version"`
 		*configJSON
@@ -124,7 +129,7 @@ func (c Config) marshalBaseJSON() ([]byte, error) {
 }
 
 func (c Config) protectedWriterRequired() bool {
-	return c.SearchLifecycleProtection || c.ScopedPickerProtection || c.SettledCursorSelectionProtection || c.StagedSelectionProtection || c.PublicationCompositionProtection || c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 || c.HistoricalProjectProtection || c.Discovery != nil || c.ImportStagingProtection || c.RetentionProtection || c.CodexCapture != nil || c.GenerationProtection || c.CodexHistoryProtection || c.DurableStorageProtection
+	return c.SourceSetPublicationProtection || c.SearchLifecycleProtection || c.ScopedPickerProtection || c.SettledCursorSelectionProtection || c.StagedSelectionProtection || c.PublicationCompositionProtection || c.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 || c.HistoricalProjectProtection || c.Discovery != nil || c.ImportStagingProtection || c.RetentionProtection || c.CodexCapture != nil || c.GenerationProtection || c.CodexHistoryProtection || c.DurableStorageProtection
 }
 
 // UnmarshalJSON reads legacy numeric versions and the protected writer fence.
@@ -206,6 +211,10 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 
 func validateCompositionConfig(plain configJSON, fenced bool) error {
 	var err error
+	plain, err = sourceSetCompositionConfig(plain, fenced)
+	if err != nil {
+		return err
+	}
 	plain, err = searchCompositionConfig(plain, fenced)
 	if err != nil {
 		return err
@@ -229,6 +238,18 @@ func validateCompositionConfig(plain configJSON, fenced bool) error {
 		return errors.New("catalog format requires its supported forward writer fence")
 	}
 	return nil
+}
+
+func sourceSetCompositionConfig(plain configJSON, fenced bool) (configJSON, error) {
+	if plain.SourceSetPublicationProtection {
+		if !fenced || plain.SchemaVersion != 17 || !plain.DurableStorageProtection {
+			return plain, errors.New("source-set publication requires its permanent writer fence")
+		}
+		plain = configJSON(sourceSetUnderlyingConfig(Config(plain)))
+	} else if plain.SchemaVersion == 17 {
+		return plain, errors.New("source-set publication requires its permanent protection")
+	}
+	return plain, nil
 }
 
 func searchCompositionConfig(plain configJSON, fenced bool) (configJSON, error) {
@@ -267,7 +288,7 @@ func decodeConfigVersion(plain *configJSON, rawVersion json.RawMessage) (bool, e
 		}
 		// Prior protected writers also need canonical migration before identity
 		// mutation: they do not understand immutable generation floors.
-		fenced = version.Writer == searchLifecycleWriter || version.Writer == discoveryWriter || version.Writer == codexWriter || version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter || version.Writer == retentionWriter || version.Writer == importStagingWriter || version.Writer == historicalProjectWriter || version.Writer == catalogWriter || (version.Writer == publicationCompositionWriter || version.Writer == stagedSelectionWriter || version.Writer == scopedPickerWriter || version.Writer == settledCursorSelectionWriter)
+		fenced = version.Writer == sourceSetPublicationWriter || version.Writer == searchLifecycleWriter || version.Writer == discoveryWriter || version.Writer == codexWriter || version.Writer == generationWriter || version.Writer == codexHistoryWriter || version.Writer == durableStorageWriter || version.Writer == retentionWriter || version.Writer == importStagingWriter || version.Writer == historicalProjectWriter || version.Writer == catalogWriter || (version.Writer == publicationCompositionWriter || version.Writer == stagedSelectionWriter || version.Writer == scopedPickerWriter || version.Writer == settledCursorSelectionWriter)
 		plain.SchemaVersion = version.Version
 	} else if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &plain.SchemaVersion); err != nil {
@@ -285,6 +306,18 @@ func codexMarkerMatches(mode SkillEvidence, writer configWriter) bool {
 }
 
 func validateWriterVersion(c Config, version writerVersion) error {
+	if version.Writer == sourceSetPublicationWriter || version.Version == 17 {
+		if version.Writer != sourceSetPublicationWriter || version.Version != 17 || !c.SourceSetPublicationProtection || !c.DurableStorageProtection {
+			return errors.New("unsupported source-set publication writer")
+		}
+		if err := validateDiscoveryConfig(sourceSetUnderlyingConfig(c)); err != nil {
+			return err
+		}
+		return validateWriterFloors(c, version)
+	}
+	if c.SourceSetPublicationProtection {
+		return errors.New("source-set publication requires its permanent writer fence")
+	}
 	if version.Writer == searchLifecycleWriter || version.Version == 16 {
 		if version.Writer != searchLifecycleWriter || version.Version != 16 || !c.SearchLifecycleProtection {
 			return errors.New("unsupported search lifecycle writer")
@@ -367,18 +400,40 @@ func validateSupportedWriterVersion(version writerVersion) error {
 }
 
 func supportedWriterVersion(v writerVersion) bool {
-	return (v.Version == 16 && v.Writer == searchLifecycleWriter) || (v.Version == 2 && (v.Writer == discoveryWriter || v.Writer == legacyDiscoveryWriter)) ||
-		(v.Version == 3 && (v.Writer == codexWriter || v.Writer == legacyCodexWriter)) ||
-		(v.Version == 4 && v.Writer == generationWriter) ||
-		(v.Version == 5 && v.Writer == codexHistoryWriter) ||
-		(v.Version == 7 && v.Writer == durableStorageWriter) ||
-		(v.Version == 8 && v.Writer == retentionWriter) ||
-		(v.Version == 9 && v.Writer == importStagingWriter) ||
-		(v.Version == 10 && v.Writer == historicalProjectWriter) ||
-		(v.Version == 11 && v.Writer == catalogWriter) ||
-		(v.Version == 12 && v.Writer == publicationCompositionWriter) ||
-		(v.Version == 15 && v.Writer == settledCursorSelectionWriter) ||
-		(v.Version == 13 && v.Writer == stagedSelectionWriter) || (v.Version == 14 && v.Writer == scopedPickerWriter)
+	switch v.Version {
+	case 2:
+		return v.Writer == discoveryWriter || v.Writer == legacyDiscoveryWriter
+	case 3:
+		return v.Writer == codexWriter || v.Writer == legacyCodexWriter
+	case 4:
+		return v.Writer == generationWriter
+	case 5:
+		return v.Writer == codexHistoryWriter
+	case 7:
+		return v.Writer == durableStorageWriter
+	case 8:
+		return v.Writer == retentionWriter
+	case 9:
+		return v.Writer == importStagingWriter
+	case 10:
+		return v.Writer == historicalProjectWriter
+	case 11:
+		return v.Writer == catalogWriter
+	case 12:
+		return v.Writer == publicationCompositionWriter
+	case 13:
+		return v.Writer == stagedSelectionWriter
+	case 14:
+		return v.Writer == scopedPickerWriter
+	case 15:
+		return v.Writer == settledCursorSelectionWriter
+	case 16:
+		return v.Writer == searchLifecycleWriter
+	case 17:
+		return v.Writer == sourceSetPublicationWriter
+	default:
+		return false
+	}
 }
 
 func validateWriterFloors(c Config, version writerVersion) error {
@@ -408,7 +463,7 @@ func validateWriterFloors(c Config, version writerVersion) error {
 
 func writerHasPermissionFloors(writer configWriter) bool {
 	switch writer {
-	case searchLifecycleWriter, generationWriter, codexHistoryWriter, durableStorageWriter, retentionWriter, importStagingWriter, historicalProjectWriter, catalogWriter, publicationCompositionWriter, stagedSelectionWriter, settledCursorSelectionWriter, scopedPickerWriter:
+	case sourceSetPublicationWriter, searchLifecycleWriter, generationWriter, codexHistoryWriter, durableStorageWriter, retentionWriter, importStagingWriter, historicalProjectWriter, catalogWriter, publicationCompositionWriter, stagedSelectionWriter, settledCursorSelectionWriter, scopedPickerWriter:
 		return true
 	case legacyDiscoveryWriter, discoveryWriter, legacyCodexWriter, codexWriter, nativeAuthorityWriter:
 		return false

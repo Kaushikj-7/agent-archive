@@ -444,6 +444,10 @@ func testCachedLabelRefusalAndRecovery(t *testing.T, legacyOffset bool) {
 		if err := remote.Put(t.Context(), metadataKey, metadata); err != nil {
 			t.Fatal(err)
 		}
+		// This control intentionally exercises the older unsealed fast-path
+		// format. It cannot rewrite an existing selecting Commit2 through a
+		// generic setter while silently keeping that old sealed proof.
+		editPublishedState(t, local, func(map[string]any) {})
 		published, err := local.LoadPublishedState(reg.ArchiveSessionID)
 		if err != nil {
 			t.Fatal(err)

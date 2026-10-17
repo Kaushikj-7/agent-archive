@@ -30,15 +30,21 @@ func TestBlanketUnknownPhysicalProjectsPublishAndReadBackWithoutConfigGrowth(t *
 			if e := config.ReconcileDiscovery(&cfg, config.Config{}, at); e != nil {
 				t.Fatal(e)
 			}
+			// Establish the publication capabilities before measuring permission growth.
+			cfg.CodexHistoryProtection = true
+			cfg.DurableStorageProtection = true
+			cfg.PublicationCompositionProtection = true
 			if e := config.Save(store.Home(), cfg); e != nil {
+				t.Fatal(e)
+			}
+			if e := config.WithPublicationComposition(store.Home(), func(config.PublicationCompositionGuard) error { return nil }); e != nil {
 				t.Fatal(e)
 			}
 			beforeCfg, _, beforeErr := config.Load(store.Home())
 			if beforeErr != nil {
 				t.Fatal(beforeErr)
 			}
-			beforeCfg.CodexHistoryProtection = true
-			beforeCfg.DurableStorageProtection = true
+			cfg = beforeCfg
 			before, _ := json.Marshal(beforeCfg)
 			want := map[string]bool{}
 			for i := range 4 {
@@ -120,7 +126,7 @@ func TestBlanketUnknownPhysicalProjectsPublishAndReadBackWithoutConfigGrowth(t *
 			}
 			after, _ := json.Marshal(afterCfg)
 			if !bytes.Equal(before, after) {
-				t.Fatal("discovered projects wrote permissions")
+				t.Fatalf("discovered projects wrote permissions: before=%s after=%s", before, after)
 			}
 		})
 	}

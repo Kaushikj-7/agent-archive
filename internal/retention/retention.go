@@ -476,10 +476,11 @@ func (s *sweeper) remote(reg archive.SessionRegistration, summary state.Publishe
 		// request lock, because a hook waits for that lock on the user's
 		// turn. A hook that fired meanwhile has left a request, and the
 		// locked recheck keeps the session for it. The next collector pass
-		// then publishes a complete bundle carrying that evidence (every
-		// publication is the whole session, not a delta), or, if the request
-		// added nothing, acknowledges it and the next sweep finishes the
-		// expiry.
+		// retains a complete pending bundle carrying that evidence. Exact
+		// publication reconciliation refuses a formerly present sidecar that
+		// is now absent; a durable deletion journal must authorize restoration.
+		// If the request adds nothing, it is acknowledged and the next sweep
+		// finishes expiry.
 		return s.forget(reg, deferForWork, &s.result.DeletedSessions, "forget session")
 	}
 

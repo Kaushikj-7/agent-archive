@@ -85,7 +85,7 @@ func (s *sessionScan) recoverHistoryStages(p state.PendingPublication) error {
 		if _, err := s.decodeHistoryStage(metadata, p, stage.Reference, raw); err != nil {
 			return fmt.Errorf("verify recovered revision source: %w", err)
 		}
-		restored, err := s.local.StagePendingSource(s.id(), stage.Reference, raw)
+		restored, err := s.local.StagePublicationSource(s.id(), stage.Reference, raw)
 		if err != nil {
 			return err
 		}
@@ -155,6 +155,10 @@ func (s *sessionScan) verifyHistoryReadback(p state.PendingPublication) error {
 	if !bytes.Equal(current, p.MetadataBytes) {
 		return errHistoryMetadataConflict
 	}
+	if s.publicationAttempt != nil && p.Commit != nil && s.publicationAttempt.verifiedCommit != nil && *s.publicationAttempt.verifiedCommit == *p.Commit {
+		commit := *p.Commit
+		s.publicationAttempt.baselineCommit = &commit
+	}
 	return nil
 }
 
@@ -203,6 +207,9 @@ func (s *sessionScan) frozenHistoryMetadata(p state.PendingPublication) (archive
 // verifyHistoryReferences decodes each bounded immutable object before metadata
 // replacement as well as after readback; a valid checksum alone is insufficient.
 func (s *sessionScan) verifyHistoryReferences(p state.PendingPublication, metadata archive.Metadata) error {
+	if s.publicationAttempt != nil {
+		s.publicationAttempt.verifiedCommit = nil
+	}
 	mark := len(s.retainedReleases)
 	defer s.releaseRetainedAfter(mark)
 	refs, err := metadata.SourceReferences()
@@ -211,6 +218,16 @@ func (s *sessionScan) verifyHistoryReferences(p state.PendingPublication, metada
 	}
 	if err := boundFrozenReferences(metadata); err != nil {
 		return err
+	}
+	if p.Commit != nil {
+		if len(refs) != len(p.Sources) {
+			return state.ErrDurableStorageRecovery
+		}
+		for i, ref := range refs {
+			if ref != p.Sources[i].Reference {
+				return state.ErrDurableStorageRecovery
+			}
+		}
 	}
 	for _, ref := range refs {
 		mark := len(s.retainedReleases)
@@ -226,6 +243,11 @@ func (s *sessionScan) verifyHistoryReferences(p state.PendingPublication, metada
 			return errors.New("final reference disagrees with frozen all-reference privacy policy")
 		}
 		s.releaseRetainedAfter(mark)
+	}
+	if s.publicationAttempt != nil && p.Commit != nil && p.ValidatePublicationBudgeted(s.ctx, s.readBudget()) == nil {
+		commit := *p.Commit
+		s.publicationAttempt.verifiedCommit = &commit
+		s.publicationAttempt.verifiedKey = p.MetadataKey
 	}
 	return nil
 }

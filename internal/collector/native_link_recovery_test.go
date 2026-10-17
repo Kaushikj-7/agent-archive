@@ -75,7 +75,7 @@ func TestNativeLateParentLinkRefiltersRetainedHistory(t *testing.T) {
 		original.NativeRecords[len(original.NativeRecords)-1] = map[string]any{"type": "response_item", "payload": map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "visible DB_PASSWORD=" + plantedSecret}}}}
 		scan.reg.NativeChild = true
 		scan.reg.ParentSessionID = "late-parent"
-		out, err := refilterBundleBounded(t.Context(), scan.reg, codex.Filter{}, original, agentapi.ReadLimits{FilteredBytes: 16 << 20})
+		out, err := refilterBundleWithBudget(t, t.Context(), scan.reg, codex.Filter{}, original, agentapi.NewNativeReadBudget(16<<20))
 		if err != nil {
 			t.Fatal("late link blocked retained privacy maintenance", err)
 		}
@@ -91,12 +91,12 @@ func TestNativeLateParentLinkRefiltersRetainedHistory(t *testing.T) {
 		}
 		conflicted := original
 		conflicted.ParentSessionID = "different-parent"
-		if _, err := refilterBundle(t.Context(), scan.reg, codex.Filter{}, conflicted); err == nil {
+		if _, err := refilterBundle(t, t.Context(), scan.reg, codex.Filter{}, conflicted); err == nil {
 			t.Fatal("conflicting parent accepted")
 		}
 		unproven := original
 		unproven.NativeChild = false
-		if _, err := refilterBundle(t.Context(), scan.reg, codex.Filter{}, unproven); err == nil {
+		if _, err := refilterBundle(t, t.Context(), scan.reg, codex.Filter{}, unproven); err == nil {
 			t.Fatal("unproven historical child relaxed parent identity")
 		}
 	}

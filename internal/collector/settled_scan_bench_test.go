@@ -157,9 +157,16 @@ func TestOneChangedFileAmidSettledSessionsFiltersOnce(t *testing.T) {
 			t.Fatalf("changed session read a settled neighbour: %s", key)
 		}
 	}
-	// Only the changed session's prior sidecar and canonical confirmation are read. Cleanup uses
-	// headers, so no auxiliary, settled-neighbour or source body is fetched.
-	if remote.reads-reads != 2 || remote.metadataReads-metadataReads != 2 || remote.auxiliaryReads-auxiliaryReads != 0 || remote.sourceReads-sourceReads != 0 {
-		t.Fatalf("remote reads=%d metadata=%d auxiliary=%d source=%d; want 2/2/0/0", remote.reads-reads, remote.metadataReads-metadataReads, remote.auxiliaryReads-auxiliaryReads, remote.sourceReads-sourceReads)
+	// Only the changed session's sidecar is read: predecessor before source
+	// effects, fresh positioning before PUT, response-bound readback shared with
+	// listing, then closing confirmation after listing and retirement work.
+	// Cleanup uses headers; no auxiliary, neighbour or source body is fetched.
+	if remote.reads-reads != 4 || remote.metadataReads-metadataReads != 4 || remote.auxiliaryReads-auxiliaryReads != 0 || remote.sourceReads-sourceReads != 0 {
+		t.Fatalf("remote reads=%d metadata=%d auxiliary=%d source=%d; want 4/4/0/0", remote.reads-reads, remote.metadataReads-metadataReads, remote.auxiliaryReads-auxiliaryReads, remote.sourceReads-sourceReads)
 	}
+}
+
+func (s *settledReadStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	s.recordRead(key)
+	return s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
 }

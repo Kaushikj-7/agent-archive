@@ -140,7 +140,10 @@ func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchange
 		return false, signature, nil
 	}
 	id := reg.ArchiveSessionID
-	if err := checkDurableSessionRead(p.ctx, p.local, id, p.opts); err != nil {
+	if err := checkPublicationSessionRead(p.ctx, p.local, reg, p.opts); err != nil {
+		return false, signature, err
+	}
+	if pending, err := p.local.HasPending(id); err != nil || pending {
 		return false, signature, err
 	}
 	if owed, err := p.linkOwed(reg); err != nil || owed {

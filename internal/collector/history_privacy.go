@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,6 +21,11 @@ func (s *sessionScan) resumeStricterHistory(p state.PendingPublication) (session
 	if p.Catalog != nil {
 		return outcomeSkipped, state.ErrCatalogJournalFrozen
 	}
+	endAttempt, attemptErr := s.beginPublicationAttempt()
+	if attemptErr != nil {
+		return outcomeSkipped, attemptErr
+	}
+	defer endAttempt()
 	committed, err := s.checkFrozenHistoryMetadata(p)
 	if err != nil {
 		return outcomeSkipped, err
@@ -27,6 +33,18 @@ func (s *sessionScan) resumeStricterHistory(p state.PendingPublication) (session
 	if committed {
 		if p.History.Preparing {
 			return outcomeSkipped, errors.New("remote sidecar matches incomplete private preparation; refuse acknowledgement")
+		}
+		if p.JournalVersion != 5 {
+			legacyPolicy := (state.PublicationPolicy{FilterVersion: p.Bundle.Capture.FilterVersion, AdapterVersion: p.Bundle.Capture.AdapterVersion, SkillEvidence: pendingSkillMode(p.SkillEvidence)}).Context()
+			prior := s.published.PublicationPredecessor()
+			sealed, e := state.PreparePublicationV2(p, prior, s.reg.DestinationID, s.publicationAdmission(), legacyPolicy, state.PublicationCapture)
+			if e != nil {
+				return outcomeSkipped, e
+			}
+			if e = s.local.SavePending(s.id(), sealed); e != nil {
+				return outcomeSkipped, e
+			}
+			p = sealed
 		}
 		if err := s.verifyHistoryReadback(p); err != nil {
 			return outcomeSkipped, err
@@ -47,10 +65,13 @@ func (s *sessionScan) resumeStricterHistory(p state.PendingPublication) (session
 		// with neither an exact retry nor a durable maintenance obligation.
 		if !p.History.MaintenanceOwed {
 			p.History.MaintenanceOwed = true
-			if err := s.local.SavePending(s.id(), p); err != nil {
-				return outcomeSkipped, err
+			if p.JournalVersion == 5 {
+				if err := s.local.SavePending(s.id(), p); err != nil {
+					return outcomeSkipped, err
+				}
 			}
 		}
+
 		if _, err := s.acknowledgePublication(p, true); err != nil {
 			return outcomeSkipped, err
 		}
@@ -69,7 +90,7 @@ func (s *sessionScan) resumeStricterHistory(p state.PendingPublication) (session
 		return outcomeSkipped, errHistoryMetadataConflict
 	}
 	// Every retained input and stricter output is staged before replacement.
-	if err := s.local.SavePending(s.id(), successor); err != nil {
+	if err := s.savePending(&successor); err != nil {
 		return outcomeSkipped, err
 	}
 	return outcomeSkipped, archive.ErrHistoryMutationPending
@@ -88,42 +109,14 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 		return state.PendingPublication{}, err
 	}
 	inputs := append([]state.HistoryInput(nil), p.History.Inputs...)
-	acknowledged := archive.Metadata{}
-	expected := p.History.ExpectedMetadataSHA256
-	if committed {
-		expected = metadataSHA(p.MetadataBytes)
-		acknowledged = metadata
-	} else if expected != "" {
-		raw, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
-		if err != nil {
-			return state.PendingPublication{}, err
-		}
-		if metadataSHA(raw) != expected {
-			return state.PendingPublication{}, errHistoryMetadataConflict
-		}
-		if err := s.unmarshalRetained(raw, &acknowledged); err != nil {
-			return state.PendingPublication{}, err
-		}
-		if err := s.validateAuthorityIdentity(acknowledged); err != nil {
-			return state.PendingPublication{}, err
-		}
+	acknowledged, acknowledgedBody, expected, err := s.stricterAcknowledgedPredecessor(p, metadata, committed)
+	if err != nil {
+		return state.PendingPublication{}, err
 	}
 	var ackInputs []state.HistoryInput
-	if acknowledged.SessionID != "" {
-		ackInputs, err = s.retainedManifestInputs(acknowledged, nil)
-		if err != nil {
-			return state.PendingPublication{}, err
-		}
-		for _, input := range ackInputs {
-			if hasRevisionInput(inputs, input.RevisionID) {
-				continue
-			}
-			if len(metadata.History.Preserved) >= archive.MaxHistorySpans {
-				return state.PendingPublication{}, errors.New("stricter successor exceeds retained revision limit")
-			}
-			metadata.History.Preserved = append(metadata.History.Preserved, archive.RevisionReference{RevisionID: input.RevisionID, CapturedAt: input.CapturedAt, Source: input.Reference, FilterVersion: input.FilterVersion, SourceSchemaVersion: input.SourceSchemaVersion})
-			inputs = append(inputs, input)
-		}
+	inputs, ackInputs, err = s.addAcknowledgedHistoryInputs(&metadata, acknowledged, inputs)
+	if err != nil {
+		return state.PendingPublication{}, err
 	}
 	// Older ready journals may lack Inputs. Their bounded validated final bytes
 	// supply provenance individually; no active provenance is copied to siblings.
@@ -139,47 +132,56 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 	if len(inputs) > archive.MaxHistorySpans+1 {
 		return state.PendingPublication{}, errors.New("stricter successor exceeds input limit")
 	}
-	next := p
-	next.Catalog = nil
-	// A retained policy successor did not consume native input under this
-	// policy. Preserve its pending native-read obligation, never a settled proof.
-	next.ScanSignature = nil
-	next.History = &state.PendingHistory{Version: 1, Preparing: true, FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(), ExpectedMetadataSHA256: expected, Retired: append([]state.RetiredSource(nil), p.History.Retired...)}
-	next.Attempted = false
-	next.MetadataOnly = false
-	next.SkillEvidence = string(s.opts.skillEvidence())
-	if committed {
-		next.RequestToken = ""
-	}
-	var total int
-	for _, input := range inputs {
-		mark := len(s.retainedReleases)
-		filtered, ref, stage, err := s.prepareStricterHistoryInput(metadata, input, append(append([]state.HistoryInput(nil), finalInputs...), ackInputs...), adapter, pendingSkillMode(p.SkillEvidence), &total)
-		if err != nil {
-			return state.PendingPublication{}, err
-		}
+	next := newStricterPreparingPublication(p, adapter.Version(), expected)
 
-		// Use the chosen original's immutable capture provenance throughout.
-		if input.RevisionID == metadata.History.CurrentRevision {
-			metadata.SourceBundle, metadata.CapturedAt, metadata.FilterVersion = input.Reference, input.CapturedAt, input.FilterVersion
-		} else {
-			for i := range metadata.History.Preserved {
-				r := &metadata.History.Preserved[i]
-				if r.RevisionID == input.RevisionID {
-					r.Source, r.CapturedAt = input.Reference, input.CapturedAt
-				}
-			}
-		}
-		data, err := s.historyStage(stage)
+	nativeRelease, e := state.FreezePublicationNativeTarget(s.ctx, &next, s.reg, s.readBudget())
+	if e != nil {
+		return state.PendingPublication{}, e
+	}
+	s.retainedReleases = append(s.retainedReleases, nativeRelease)
+
+	finalMetadata := metadata
+	if err = s.retainCharge(int64(len(metadata.History.Preserved)+1) * 2048); err != nil {
+		return state.PendingPublication{}, err
+	}
+	originalHistory := *metadata.History
+	originalHistory.Preserved = append([]archive.RevisionReference(nil), metadata.History.Preserved...)
+	metadata.History = &originalHistory
+	finalBody := p.MetadataBytes
+	// Freeze the chosen original selection before transforming any output.
+	// The acknowledged body remains a distinct singleton predecessor authority.
+	next.History.Inputs = append([]state.HistoryInput(nil), inputs...)
+	if err := s.stageStricterOriginalInputs(&next, &metadata, inputs); err != nil {
+		return state.PendingPublication{}, err
+	}
+	next.SourceBytes = nil
+	next.MetadataBytes, err = s.marshalRetained(metadata)
+	if err != nil {
+		return state.PendingPublication{}, err
+	}
+	priorState := state.PredecessorAbsent
+	var priorBody []byte
+	var priorBundle archive.SourceBundle
+	if expected != "" {
+		priorState = state.PredecessorPresent
+		priorBody = acknowledgedBody
+		priorBundle, err = s.loadHistoryInput(acknowledged, ackInputs[0])
 		if err != nil {
 			return state.PendingPublication{}, err
 		}
-		if err := replacePreparedReference(&next, &metadata, input, filtered, ref, data); err != nil {
-			return state.PendingPublication{}, err
-		}
-		next.History.Sources = append(next.History.Sources, stage)
-		next.History.Inputs = append(next.History.Inputs, input)
-		s.releaseStricterAlternative(mark, input.RevisionID, metadata.History.CurrentRevision)
+	}
+	prior := state.PublicationPredecessor{State: priorState, Body: priorBody, Bundle: priorBundle}
+	hookObservations := ownedPublicationHookObservations(p.Bundle.SupplementalEvidence)
+	if err := s.freezePublicationHooks(&next, hookObservations, adapter.Version()); err != nil {
+		return state.PendingPublication{}, err
+	}
+	next, err = state.PreparePublicationV2(next, prior, s.reg.DestinationID, s.publicationAdmission(), storage.SHA256Hex([]byte(archive.FilterVersion+"\x00"+adapter.Version()+"\x00"+string(s.opts.skillEvidence()))), state.PublicationPrivacyRewrite)
+	if err != nil {
+		return state.PendingPublication{}, err
+	}
+	next.SkillEvidence = string(s.opts.skillEvidence())
+	if err := s.transformStricterHistoryInputs(&next, &metadata, inputs, finalMetadata, finalBody, finalInputs, acknowledged, acknowledgedBody, ackInputs, adapter, pendingSkillMode(p.SkillEvidence)); err != nil {
+		return state.PendingPublication{}, err
 	}
 	if err := retireStricterHistoryReferences(&next, metadata, append(append(append([]state.HistoryInput(nil), inputs...), finalInputs...), ackInputs...), s.now); err != nil {
 		return state.PendingPublication{}, err
@@ -197,22 +199,31 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 	if err := boundFrozenReferences(derived); err != nil {
 		return state.PendingPublication{}, err
 	}
-	return next, next.ValidateHistoryBudgeted(s.id(), s.readBudget())
+	next.JournalVersion = 5
+	next.Phase = state.PublicationReady
+	next, err = state.PreparePublicationV2(next, prior, s.reg.DestinationID, s.publicationAdmission(), next.Preparation.PolicyContext, state.PublicationPrivacyRewrite)
+	if err != nil {
+		return state.PendingPublication{}, err
+	}
+	err = next.ValidateHistoryBudgeted(s.id(), s.readBudget())
+	return next, err
 }
 
 // pendingManifestInputs upgrades original parent provenance before verifying the
 // mixed original/prepared manifest, without reading current native data.
 func (s *sessionScan) pendingManifestInputs(metadata archive.Metadata, p state.PendingPublication, acknowledged, inputs []state.HistoryInput) ([]state.HistoryInput, error) {
 	for i := range inputs {
-		if inputs[i].ParentSessionID != nil {
+		if inputs[i].ParentSessionID != nil && inputs[i].NativeChild != nil && inputs[i].AdapterVersion != "" {
 			continue
 		}
 		for _, original := range acknowledged {
 			if inputs[i].RevisionID == original.RevisionID && inputs[i].Reference == original.Reference {
 				inputs[i].ParentSessionID = original.ParentSessionID
+				inputs[i].NativeChild = original.NativeChild
+				inputs[i].AdapterVersion = original.AdapterVersion
 			}
 		}
-		if inputs[i].ParentSessionID != nil {
+		if inputs[i].ParentSessionID != nil && inputs[i].NativeChild != nil && inputs[i].AdapterVersion != "" {
 			continue
 		}
 		mark := len(s.retainedReleases)
@@ -221,11 +232,14 @@ func (s *sessionScan) pendingManifestInputs(metadata archive.Metadata, p state.P
 			return nil, err
 		}
 		keep := len(s.retainedReleases)
-		if err := s.retainCharge(int64(len(bundle.ParentSessionID))); err != nil {
+		if err := s.retainCharge(int64(len(bundle.ParentSessionID) + len(bundle.Capture.AdapterVersion))); err != nil {
 			return nil, err
 		}
 		parent := strings.Clone(bundle.ParentSessionID)
 		inputs[i].ParentSessionID = &parent
+		marker := bundle.NativeChild
+		inputs[i].NativeChild = &marker
+		inputs[i].AdapterVersion = strings.Clone(bundle.Capture.AdapterVersion)
 		s.keepRetainedFrom(mark, keep)
 	}
 	frozen := p
@@ -246,7 +260,12 @@ func hasRevisionInput(inputs []state.HistoryInput, id string) bool {
 
 func (s *sessionScan) retainedManifestInputs(metadata archive.Metadata, pending *state.PendingPublication) ([]state.HistoryInput, error) {
 	mark := len(s.retainedReleases)
-	defer s.releaseRetainedAfter(mark)
+	success := false
+	defer func() {
+		if !success {
+			s.releaseRetainedAfter(mark)
+		}
+	}()
 	if err := s.validateAuthorityIdentity(metadata); err != nil {
 		return nil, err
 	}
@@ -296,10 +315,16 @@ func (s *sessionScan) retainedManifestInputs(metadata archive.Metadata, pending 
 		if err != nil {
 			return nil, fmt.Errorf("validate retained successor input: %w", err)
 		}
-		parent := selected.ParentSessionID
-		inputs = append(inputs, state.HistoryInput{ParentSessionID: &parent, Reference: ref, RevisionID: id, CapturedAt: bundle.Capture.CapturedAt, FilterVersion: bundle.Capture.FilterVersion, SourceSchemaVersion: bundle.SchemaVersion})
-		s.releaseRetainedAfter(mark)
+		keep := len(s.retainedReleases)
+		if err := s.retainCharge(int64(len(selected.ParentSessionID)+len(bundle.Capture.FilterVersion)+len(bundle.Capture.AdapterVersion)) + 128); err != nil {
+			return nil, err
+		}
+		parent := strings.Clone(selected.ParentSessionID)
+		marker := bundle.NativeChild
+		inputs = append(inputs, state.HistoryInput{NativeChild: &marker, ParentSessionID: &parent, Reference: ref, RevisionID: id, CapturedAt: bundle.Capture.CapturedAt, FilterVersion: strings.Clone(bundle.Capture.FilterVersion), AdapterVersion: strings.Clone(bundle.Capture.AdapterVersion), SourceSchemaVersion: bundle.SchemaVersion})
+		s.keepRetainedFrom(mark, keep)
 	}
+	success = true
 	return inputs, nil
 }
 
@@ -327,7 +352,7 @@ func (s *sessionScan) prepareRetainedHistoryWork(ctx context.Context) (sessionOu
 	} else if err := s.local.GenerationCaptureAllowed(s.reg); err != nil {
 		return outcomeSkipped, true, err
 	}
-	if p, found, err := s.local.LoadPending(s.id()); err != nil {
+	if p, found, err := s.local.LoadPublicationPending(s.id()); err != nil {
 		return outcomeSkipped, true, err
 	} else if found {
 		if p.History == nil {
@@ -379,97 +404,62 @@ func (s *sessionScan) retainedHistoryMaintenanceNeeded(authority archive.Metadat
 	return projectRenamed || nativeParentResolved(s.reg, bundle) || nativeChildMarkerPending(s.reg, bundle) || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapterVersion || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) || authority.Parser.Version != s.parserVersion() || s.reg.RetainedOnly() && s.req.Token != "" || headFingerprint(s.reg.LastHead) != s.publishedLastHead()
 }
 
-func (s *sessionScan) prepareStricterHistoryInput(metadata archive.Metadata, input state.HistoryInput, others []state.HistoryInput, adapter agentapi.TranscriptFilter, ceiling config.SkillEvidence, total *int) (archive.SourceBundle, archive.SourceReference, state.PendingSource, error) {
-	scope := len(s.retainedReleases)
-	bundle, err := s.loadHistoryInput(metadata, input)
+func (s *sessionScan) prepareStricterHistoryInput(next *state.PendingPublication, index int, input state.HistoryInput, finalMetadata archive.Metadata, finalBody []byte, finalInputs []state.HistoryInput, acknowledged archive.Metadata, acknowledgedBody []byte, ackInputs []state.HistoryInput, adapter agentapi.TranscriptFilter, ceiling config.SkillEvidence, total *int) (archive.SourceBundle, archive.SourceReference, state.PendingSource, func(), error) {
+	frozen := next.Preparation.Inputs[index]
+	reader := publicationPrivacyReader{scan: s}
+	raw, closeBytes, err := reader.ReadPublicationPrivacySource(s.ctx, frozen)
 	if err != nil {
-		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
+		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, nil, err
 	}
-	originalBytes := len(s.retainedReleases)
-	original, err := s.readRetainedInputBytes(input.Reference)
-	if err != nil {
-		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
+	defer closeBytes()
+	if len(raw) > (128<<20)-*total {
+		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, nil, storage.ErrObjectTooLarge
 	}
-	if len(original) > (128<<20)-*total {
-		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, errors.New("stricter successor exceeds staged input limit")
-	}
-	*total += len(original)
-	if _, err := s.local.StagePendingSource(s.id(), input.Reference, original); err != nil {
-		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
-	}
-	s.releaseRetainedIndex(originalBytes)
-	// Retained originals preserve interrupted work, but a broader later policy
-	// cannot restore evidence the frozen policy already removed.
-	bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, ceiling)
-	bundle.SupplementalEvidence = limitSkillEvidence(bundle.SupplementalEvidence, s.opts.skillEvidence())
-	filtered, err := s.refilterRetained(adapter, bundle)
-	if err != nil {
-		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
-	}
-	// Final/acknowledged versions must add no evidence absent from the frozen
-	// original. Contradiction refuses replacement rather than guessing a union.
-	for _, other := range others {
-		if other.RevisionID != input.RevisionID || other.Reference == input.Reference {
-			continue
+	*total += len(raw)
+	var alternatives []state.PublicationPrivacyAlternative
+	add := func(owner archive.Metadata, body []byte, others []state.HistoryInput) {
+		for _, other := range others {
+			if other.RevisionID != input.RevisionID || other.Reference == input.Reference {
+				continue
+			}
+			alt := state.PreparationInput{ParentSessionID: other.ParentSessionID, NativeChild: other.NativeChild, Reference: other.Reference, Selection: state.PublicationSelection{Role: frozen.Selection.Role, RevisionID: other.RevisionID, CapturedAt: other.CapturedAt.UTC(), SourceSchemaVersion: other.SourceSchemaVersion}, FilterVersion: other.FilterVersion, AdapterVersion: other.AdapterVersion, SkillPolicy: string(ceiling)}
+			policy := state.PublicationPolicy{FilterVersion: alt.FilterVersion, AdapterVersion: alt.AdapterVersion, SkillEvidence: ceiling}
+			alternatives = append(alternatives, state.PublicationPrivacyAlternative{Metadata: owner, MetadataBody: body, Input: alt, Policy: policy})
 		}
-		otherMark := len(s.retainedReleases)
-		candidate, err := s.loadHistoryInput(metadata, other)
-		if err != nil {
-			return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
-		}
-		candidate.SupplementalEvidence = limitSkillEvidence(candidate.SupplementalEvidence, s.opts.skillEvidence())
-		candidate, err = s.refilterRetained(adapter, candidate)
-		if err != nil {
-			return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
-		}
-		if !ownedEvidenceCovered(adapter, candidate, filtered) {
-			return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, errors.New("frozen original does not cover acknowledged revision evidence")
-		}
-		filtered.SupplementalEvidence = archive.MergeSupplementalEvidence(filtered.SupplementalEvidence, candidate.SupplementalEvidence)
-		filtered.Capture.Gaps = mergeCaptureGaps(filtered.Capture.Gaps, candidate.Capture.Gaps)
-		// Merged supplemental/header values become an independently owned
-		// envelope before the discarded alternative ends its lifetime.
-		keep := len(s.retainedReleases)
-		filtered, err = s.detachRetainedEnvelope(filtered)
-		if err != nil {
-			return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
-		}
-		s.keepRetainedFrom(otherMark, keep)
 	}
-	returned := len(s.retainedReleases)
-	filtered, err = s.refilterRetained(adapter, filtered)
+	add(finalMetadata, finalBody, finalInputs)
+	add(acknowledged, acknowledgedBody, ackInputs)
+	var origin archive.Metadata
+	if err = s.unmarshalRetained(next.Preparation.OriginMetadata, &origin); err != nil {
+		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, nil, err
+	}
+	filtered, packed, ref, proof, closeFactory, err := state.RefilterCoveredPublicationInput(s.ctx, s.reg, adapter, origin, next.Preparation.OriginMetadata, frozen, index, raw, state.PublicationContext{NativeTarget: next.Preparation.NativeTarget, DestinationID: s.reg.DestinationID, AdmissionContext: s.publicationAdmission()}, state.PublicationPolicy{FilterVersion: frozen.FilterVersion, AdapterVersion: frozen.AdapterVersion, SkillEvidence: pendingSkillMode(frozen.SkillPolicy)}, state.PublicationPolicy{FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(), SkillEvidence: s.opts.skillEvidence()}, ceiling, s.readBudget(), reader, alternatives)
 	if err != nil {
-		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
+		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, nil, err
 	}
-	filtered, err = s.detachRetainedEnvelope(filtered)
-	if err != nil {
-		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
-	}
-	s.keepRetainedFrom(scope, returned)
-	packed, err := s.compressSource(filtered)
-	if err != nil {
-		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
-	}
-	if int64(len(packed.Bytes)) > historyCompressedLimit {
-		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, storage.ErrObjectTooLarge
-	}
+	// The caller promotes the actual factory output lease before ending input.
+	s.retainedReleases = append(s.retainedReleases, closeFactory)
 	if len(packed.Bytes) > (128<<20)-*total {
-		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, errors.New("stricter successor exceeds staged output limit")
+		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, nil, storage.ErrObjectTooLarge
 	}
 	*total += len(packed.Bytes)
-	key, err := archive.SourceObjectKey(filtered, packed.SHA256)
+	stage, err := s.local.StagePublicationSource(s.id(), ref, packed.Bytes)
 	if err != nil {
-		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
+		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, nil, err
 	}
-	ref := archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}
-	stage, err := s.local.StagePendingSource(s.id(), ref, packed.Bytes)
-	if err != nil {
-		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, err
+	receiptRelease, recordErr := next.RecordPrivacyOutput(proof)
+	if recordErr != nil {
+		err = recordErr
+		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, nil, err
 	}
-	return filtered, ref, stage, nil
+	return filtered, ref, stage, receiptRelease, nil
 }
 
 func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bundle archive.SourceBundle, adapterVersion string) (state.PendingPublication, error) {
+	// Header maintenance transforms the exact committed current input through
+	// the same frozen receipt factory as preserved inputs. Pre-freeze hook
+	// normalization must not replace that original reference.
+	headerMaintenance := nativeParentResolved(s.reg, bundle) || nativeChildMarkerPending(s.reg, bundle)
 	inputs, err := s.retainedManifestInputs(authority, nil)
 	if err != nil {
 		return state.PendingPublication{}, err
@@ -509,7 +499,7 @@ func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bund
 		if err != nil {
 			return state.PendingPublication{}, err
 		}
-		stage, err := s.local.StagePendingSource(s.id(), input.Reference, raw)
+		stage, err := s.local.StagePublicationSource(s.id(), input.Reference, raw)
 		if err != nil {
 			return state.PendingPublication{}, err
 		}
@@ -520,10 +510,59 @@ func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bund
 			s.releaseRetainedAfter(mark)
 		}
 	}
-	if err := s.local.SavePending(s.id(), p); err != nil {
+	// Same-policy observations are a new capture selection, normalized before
+	// the immutable preparation freezes its inputs. Privacy transformations keep
+	// the exact old input and require their factory-owned transformation receipt.
+	adapter, err := sourceAdapter(s.opts.Sources, s.reg.Harness.Name)
+	if err != nil {
+		return state.PendingPublication{}, err
+	}
+	if err := s.normalizeRetainedMaintenanceCurrent(&p, &authority, bundle, adapter, headerMaintenance); err != nil {
+		return state.PendingPublication{}, err
+	}
+	if headerMaintenance || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
+		if err := s.freezePublicationHooks(&p, observations, adapter.Version()); err != nil {
+			return state.PendingPublication{}, err
+		}
+	}
+	if err := s.savePending(&p); err != nil {
 		return state.PendingPublication{}, err
 	}
 	return p, nil
+}
+
+func (s *sessionScan) normalizeRetainedMaintenanceCurrent(p *state.PendingPublication, authority *archive.Metadata, bundle archive.SourceBundle, adapter agentapi.TranscriptFilter, headerMaintenance bool) error {
+	for i, input := range p.History.Inputs {
+		if input.RevisionID != authority.History.CurrentRevision {
+			continue
+		}
+		if headerMaintenance || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapter.Version() || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) {
+			break
+		}
+		if err := s.prepareHistoryInput(p, authority, input); err != nil {
+			return err
+		}
+		parent := p.Bundle.ParentSessionID
+		marker := p.Bundle.NativeChild
+		p.History.Inputs[i] = state.HistoryInput{ParentSessionID: &parent, NativeChild: &marker, Reference: authority.SourceBundle, RevisionID: input.RevisionID, CapturedAt: input.CapturedAt, FilterVersion: p.Bundle.Capture.FilterVersion, AdapterVersion: p.Bundle.Capture.AdapterVersion, SourceSchemaVersion: p.Bundle.SchemaVersion}
+		refs, err := authority.SourceReferences()
+		if err != nil {
+			return err
+		}
+		stages := p.History.Sources[:0]
+		for _, stage := range p.History.Sources {
+			if slices.Contains(refs, stage.Reference) {
+				stages = append(stages, stage)
+			}
+		}
+		p.History.Sources = stages
+		p.MetadataBytes, err = s.marshalRetained(*authority)
+		if err != nil {
+			return err
+		}
+		break
+	}
+	return nil
 }
 
 func retireStricterHistoryReferences(next *state.PendingPublication, metadata archive.Metadata, inputs []state.HistoryInput, at time.Time) error {
@@ -574,4 +613,164 @@ func (s *sessionScan) releaseStricterAlternative(mark int, revision, current str
 	if revision != current {
 		s.releaseRetainedAfter(mark)
 	}
+}
+
+// freezePublicationHooks consumes only the owned request/candidate facts before
+// the first preparation; later slices cannot consult newer request observations.
+func (s *sessionScan) freezePublicationHooks(p *state.PendingPublication, observations []archive.SupplementalEvidence, adapterVersion string) error {
+	if len(observations) == 0 {
+		return nil
+	}
+	raw, err := s.marshalRetained(observations)
+	if err != nil {
+		return err
+	}
+	policy := state.PublicationPolicy{FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion, SkillEvidence: s.opts.skillEvidence()}
+	return state.FreezePublicationHookObservations(s.ctx, p, raw, s.reg.DestinationID, s.publicationAdmission(), policy.Context(), s.readBudget())
+}
+
+func (s *sessionScan) stageStricterOriginalInputs(next *state.PendingPublication, metadata *archive.Metadata, inputs []state.HistoryInput) error {
+	for _, input := range inputs {
+		if input.RevisionID == metadata.History.CurrentRevision {
+			metadata.SourceBundle, metadata.CapturedAt, metadata.FilterVersion = input.Reference, input.CapturedAt, input.FilterVersion
+			var err error
+			next.Bundle, err = s.loadHistoryInput(*metadata, input)
+			if err != nil {
+				return err
+			}
+			next.SourceKey, next.SourceSHA256, next.SourceSize = input.Reference.Key, input.Reference.SHA256, input.Reference.CompressedBytes
+		} else {
+			for i := range metadata.History.Preserved {
+				r := &metadata.History.Preserved[i]
+				if r.RevisionID == input.RevisionID {
+					r.Source, r.CapturedAt, r.FilterVersion, r.SourceSchemaVersion = input.Reference, input.CapturedAt, input.FilterVersion, input.SourceSchemaVersion
+				}
+			}
+		}
+		mark := len(s.retainedReleases)
+		raw, e := s.readRetainedInputBytes(input.Reference)
+		if e != nil {
+			return e
+		}
+		_, e = s.local.StagePublicationSource(s.id(), input.Reference, raw)
+		s.releaseRetainedAfter(mark)
+		if e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+func (s *sessionScan) addAcknowledgedHistoryInputs(metadata *archive.Metadata, acknowledged archive.Metadata, inputs []state.HistoryInput) ([]state.HistoryInput, []state.HistoryInput, error) {
+	var ackInputs []state.HistoryInput
+	var err error
+	if acknowledged.SessionID != "" {
+		ackInputs, err = s.retainedManifestInputs(acknowledged, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, input := range ackInputs {
+			if hasRevisionInput(inputs, input.RevisionID) {
+				continue
+			}
+			if len(metadata.History.Preserved) >= archive.MaxHistorySpans {
+				return nil, nil, errors.New("stricter successor exceeds retained revision limit")
+			}
+			metadata.History.Preserved = append(metadata.History.Preserved, archive.RevisionReference{RevisionID: input.RevisionID, CapturedAt: input.CapturedAt, Source: input.Reference, FilterVersion: input.FilterVersion, SourceSchemaVersion: input.SourceSchemaVersion})
+			inputs = append(inputs, input)
+		}
+	}
+	return inputs, ackInputs, nil
+}
+
+func (s *sessionScan) stricterAcknowledgedPredecessor(p state.PendingPublication, metadata archive.Metadata, committed bool) (archive.Metadata, []byte, string, error) {
+	acknowledged := archive.Metadata{}
+	var acknowledgedBody []byte
+	expected := p.History.ExpectedMetadataSHA256
+	if committed {
+		expected = metadataSHA(p.MetadataBytes)
+		acknowledged = metadata
+		acknowledgedBody = p.MetadataBytes
+	} else if expected != "" {
+		raw, err := s.historyGet(p.MetadataKey, historyMetadataLimit)
+		if err != nil {
+			return archive.Metadata{}, nil, "", err
+		}
+		acknowledgedBody = raw
+		if metadataSHA(raw) != expected {
+			return archive.Metadata{}, nil, "", errHistoryMetadataConflict
+		}
+		if err := s.unmarshalRetained(raw, &acknowledged); err != nil {
+			return archive.Metadata{}, nil, "", err
+		}
+		if err := s.validateAuthorityIdentity(acknowledged); err != nil {
+			return archive.Metadata{}, nil, "", err
+		}
+	}
+	return acknowledged, acknowledgedBody, expected, nil
+}
+
+func ownedPublicationHookObservations(evidence []archive.SupplementalEvidence) []archive.SupplementalEvidence {
+	var hookObservations []archive.SupplementalEvidence
+	for _, item := range evidence {
+		if item.Kind == archive.EvidenceKindLinkedSession || item.Kind == archive.EvidenceKindExplicitFeedback {
+			hookObservations = append(hookObservations, item)
+		}
+	}
+	return hookObservations
+}
+
+func (s *sessionScan) transformStricterHistoryInputs(next *state.PendingPublication, metadata *archive.Metadata, inputs []state.HistoryInput, finalMetadata archive.Metadata, finalBody []byte, finalInputs []state.HistoryInput, acknowledged archive.Metadata, acknowledgedBody []byte, ackInputs []state.HistoryInput, adapter agentapi.TranscriptFilter, ceiling config.SkillEvidence) error {
+	var total int
+	for index, input := range inputs {
+		mark := len(s.retainedReleases)
+		filtered, ref, stage, receiptRelease, err := s.prepareStricterHistoryInput(next, index, input, finalMetadata, finalBody, finalInputs, acknowledged, acknowledgedBody, ackInputs, adapter, ceiling, &total)
+		if err != nil {
+			return err
+		}
+
+		// Use the chosen original's immutable capture provenance throughout.
+		if input.RevisionID == metadata.History.CurrentRevision {
+			metadata.SourceBundle, metadata.CapturedAt, metadata.FilterVersion = input.Reference, input.CapturedAt, input.FilterVersion
+		} else {
+			for i := range metadata.History.Preserved {
+				r := &metadata.History.Preserved[i]
+				if r.RevisionID == input.RevisionID {
+					r.Source, r.CapturedAt = input.Reference, input.CapturedAt
+				}
+			}
+		}
+		data, err := s.historyStage(stage)
+		if err != nil {
+			return err
+		}
+		if err := replacePreparedReference(next, metadata, input, filtered, ref, data); err != nil {
+			return err
+		}
+		next.History.Sources = append(next.History.Sources, stage)
+		s.releaseStricterAlternative(mark, input.RevisionID, metadata.History.CurrentRevision)
+		s.retainedReleases = append(s.retainedReleases, receiptRelease)
+	}
+	return nil
+}
+
+func newStricterPreparingPublication(p state.PendingPublication, adapterVersion, expected string) state.PendingPublication {
+	next := p
+	next.JournalVersion = 0
+	next.Phase = ""
+	next.Commit = nil
+	next.Preparation = nil
+	next.Progress = nil
+	next.Cleanup = nil
+	next.Sources = nil
+	// A retained policy successor did not consume native input under this
+	// policy. Preserve its pending native-read obligation, never a settled proof.
+	next.ScanSignature = nil
+	next.History = &state.PendingHistory{Version: 1, Preparing: true, FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion, ExpectedMetadataSHA256: expected, Retired: append([]state.RetiredSource(nil), p.History.Retired...)}
+	next.Attempted = false
+	next.MetadataOnly = false
+	next.SkillEvidence = p.SkillEvidence
+	// Keep the covered request owed until the stricter selecting successor.
+
+	return next
 }

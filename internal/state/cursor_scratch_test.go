@@ -63,7 +63,7 @@ func TestCursorScratchReservesBeforeCreateAndRetainsQuotaUntilCleanup(t *testing
 			return e
 		}
 		defer func() { _ = q.Close() }()
-		_, e = q.usage()
+		_, e = q.usageContext(t.Context())
 		return e
 	})
 	if !errors.Is(err, ErrDurableStorageRecovery) {
@@ -78,7 +78,7 @@ func TestCursorScratchReservesBeforeCreateAndRetainsQuotaUntilCleanup(t *testing
 			return e
 		}
 		defer func() { _ = q.Close() }()
-		_, e = q.usage()
+		_, e = q.usageContext(t.Context())
 		return e
 	})
 	if err != nil {

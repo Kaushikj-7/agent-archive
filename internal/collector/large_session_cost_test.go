@@ -21,7 +21,7 @@ import (
 )
 
 // countingStore counts the bytes a pass moves to and from storage: egress
-// includes both Get and response-bound GetVersioned reads.
+// includes Get, bounded GetLimited and response-bound GetVersioned reads.
 type countingStore struct {
 	*storagetest.MemoryStore
 	getBytes       atomic.Int64
@@ -229,9 +229,9 @@ func TestLargeGrowingSessionPassesStayFast(t *testing.T) {
 	// cleanup downloads no auxiliary bodies or unrelated sessions.
 	for name, cost := range map[string]largePassCost{"first publication": first, "republication": grown, "metadata refresh": refreshed} {
 		wantAux := int64(0)
-		wantMetadata := int64(2)
+		wantMetadata := int64(4)
 		if name == "first publication" {
-			wantMetadata = 3
+			wantMetadata = 5
 		}
 		if cost.sourceReads != 0 || cost.sourceBytes != 0 || cost.metadataReads != wantMetadata || cost.auxiliaryReads != wantAux {
 			t.Errorf("%s: source reads/bytes=%d/%d metadata reads=%d auxiliary reads=%d; want 0/0, %d, %d", name, cost.sourceReads, cost.sourceBytes, cost.metadataReads, cost.auxiliaryReads, wantMetadata, wantAux)
@@ -340,4 +340,10 @@ func TestLargeNativeGrowingSessionRetainsBudgetProgress(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func (s *countingStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	data, validator, err := s.MemoryStore.GetLimitedVersioned(ctx, key, limit)
+	s.recordRead(key, data)
+	return data, validator, err
 }
