@@ -125,6 +125,7 @@ func openReadOnlyStore(env readOnlyStoreDependencies) (storage.ObjectStore, conf
 // browse (stdin and stdout are both terminals).
 func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env listCommandDependencies) int {
 	fs := env.newCommandFlags("list", stderr)
+	source := fs.String("source", "archive", "session source: archive or bounded read-only local native sessions")
 	harness := fs.String("harness", "", "only sessions from this harness (codex, claude, cursor)")
 	model := fs.String("model", "", "only sessions that requested or observed this model")
 	skill := fs.String("skill", "", "only sessions involving this skill (see --skill-usage)")
@@ -153,6 +154,15 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	if *project != "" && *allProjects {
 		return fs.usageError("--project and --all-projects cannot be used together: --project lists one project, --all-projects lists every project")
+	}
+	if *source == "local" {
+		if err := localReadFlags(fs, "source", "harness", "limit", "json", "all-projects", "project", "no-pager"); err != nil {
+			return fs.usageError("%v", err)
+		}
+		return runLocalList(env, stdout, stderr, localReadOptions{harness: *harness, project: *project, allProjects: *allProjects, query: query, limit: *limit, json: *jsonOut})
+	}
+	if *source != "archive" {
+		return fs.usageError("--source must be archive or local")
 	}
 	opts, code := listOptionsFromFlags(fs, listFlagValues{
 		harness: *harness, model: *model, skill: *skill, skillSHA256: *skillSHA256,
@@ -630,6 +640,9 @@ func validLowerSHA256(value string) bool {
 // With no SESSION_ID on a TTY, it opens the same session browser as list.
 func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env showCommandDependencies) int {
 	fs := env.newCommandFlags("show", stderr)
+	source := fs.String("source", "archive", "session source: archive or bounded read-only local native sessions")
+	project := fs.String("project", "", "with --source local, search this existing checkout directory")
+	allProjects := fs.Bool("all-projects", false, "with --source local, search every native checkout")
 	harness := fs.String("harness", "", "the session's harness, if the same ID exists under more than one")
 	revisions := fs.Bool("revisions", false, "list validated active and preserved native revisions; with --json, print the inventory")
 	revision := fs.String("revision", "", "read this exact native revision ID from the parent only (see --revisions)")
@@ -661,6 +674,18 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	if code := checkShowMaxBytes(fs, *maxBytes, *transcript); code != 0 {
 		return code
+	}
+	if *source == "local" {
+		if err := localReadFlags(fs, "source", "harness", "project", "all-projects", "transcript", "full", "json", "no-pager", "max-bytes"); err != nil {
+			return fs.usageError("%v", err)
+		}
+		if sessionID == "" {
+			return fs.usageError("--source local needs a native session ID; use list --source local to find one")
+		}
+		return runLocalShow(env, stdout, stderr, localReadOptions{harness: *harness, project: *project, allProjects: *allProjects, query: sessionID, json: *jsonOut, transcript: *transcript, full: *full, maxBytes: *maxBytes})
+	}
+	if *source != "archive" || *project != "" || *allProjects {
+		return fs.usageError("--source must be archive or local; --project and --all-projects need --source local")
 	}
 	if *full && *jsonOut {
 		return fs.usageError("--full is for the readable transcript; --json always includes every retained tool result")

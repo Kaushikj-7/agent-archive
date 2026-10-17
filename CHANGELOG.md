@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `list --source local` and `show --source local` inspect bounded native sessions
+  before setup, including qualified Muse roots with `--harness muse`. Selected
+  sources receive complete privacy validation. These reads do not open storage,
+  enable capture or write archive state; partial discovery remains explicit.
+
 - Muse explicit-file and local handoff support the qualified approval-free
   committed file-read effect lane. A fixed start classification preserves its
   retained validation; private names, file subjects and outcomes remain omitted.
