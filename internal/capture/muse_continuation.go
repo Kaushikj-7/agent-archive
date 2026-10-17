@@ -46,10 +46,18 @@ func replayMuseOwnerIntents(ctx context.Context, home string, at time.Time, afte
 		}
 		path := filepath.Join(admissionIntentDir(home), entry.Name())
 		intent, readErr := readMuseIntent(path)
-		if readErr != nil || !RecognizedAdmissionIntent(intent) || intent.NativeMode != agentapi.NativeOwnerContinuation {
+		if readErr != nil || !RecognizedAdmissionIntent(intent) || intent.Version != 2 {
 			continue
 		}
-		if at.Sub(intent.ObservedAt) > maxAdmissionIntentAge || intent.ObservedAt.After(at.Add(time.Minute)) {
+		if at.Sub(intent.ObservedAt) > maxAdmissionIntentAge {
+			// Expiry removes only this exact recognized observation. It grants no
+			// ownership or effects and never interprets future private authority.
+			if err := ackMuseOwnerIntent(ctx, home, path, intent, nil); err != nil {
+				return err
+			}
+			continue
+		}
+		if intent.NativeMode != agentapi.NativeOwnerContinuation || intent.ObservedAt.After(at.Add(time.Minute)) {
 			continue
 		}
 		store, err := state.Open(home)

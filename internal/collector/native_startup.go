@@ -175,11 +175,17 @@ func (p *pass) admitStartupCandidate(candidate startupCandidate) (err error) {
 }
 
 func (p *pass) ackStartupCandidate(candidate startupCandidate) error {
+	if err := p.ctx.Err(); err != nil {
+		return err
+	}
 	unlock, err := local.NamedLockWait(p.local.Home(), "admission-intents.lock", time.Second)
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	if err := p.ctx.Err(); err != nil {
+		return err
+	}
 	file, err := os.Open(candidate.path)
 	if err != nil {
 		return err
@@ -201,6 +207,9 @@ func (p *pass) ackStartupCandidate(candidate startupCandidate) error {
 	b, _ := json.Marshal(agentapi.AdmissionIntent(candidate.intent))
 	if string(a) != string(b) || !capture.RecognizedAdmissionIntent(current) {
 		return errors.New("muse startup changed before acknowledgement")
+	}
+	if err := p.ctx.Err(); err != nil {
+		return err
 	}
 	return os.Remove(candidate.path)
 }

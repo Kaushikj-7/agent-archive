@@ -885,3 +885,12 @@ packed markers refuse before repair/fallback; authoritative physical overlays
 remain intact through a census. Explicitly obsolete known derived aggregates
 retain the existing bounded replacement lifecycle; PR6 adds no whole-obsolete-
 aggregate scan or claim about hypothetical future authority hidden there.
+
+The existing bounded native queue replay expires only fully recognized private
+v2 observations strictly older than 24 hours. The exact boundary, future clock
+observations and unsupported/malformed authority remain pending. Expiry uses the
+whole recognized record under the queue lock and caller cancellation, grants no
+owner or effects, and preserves a replaced observation. Startup acknowledgement
+after durable ownership also honors caller cancellation; the complete owner can
+remain for an ordinary exact retry. Startup proof failures expose only a fixed
+content-free diagnostic key and sanitized unavailable class/message.
