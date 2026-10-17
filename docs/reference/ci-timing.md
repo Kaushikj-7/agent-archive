@@ -806,6 +806,11 @@ identity fields are retained with the exact run, attempt and topology so offline
 history can replay the same checks. This has the same provenance boundary as
 retained API job snapshots; it does not replace the authenticated artifact path
 for an empty post-merge association or add a cryptographic authenticity claim.
+The diagnostic API request cap is 14, retaining its 20-second deadline: this
+covers ten worker-attempt inventories plus the enclosing run and two graph reads,
+or one inventory and the existing maximum approval pages plus those graph reads.
+This does not raise any test-cost budget or workflow timeout, and does not claim
+ten attempts plus maximum approval pages fit together in that request cap.
 
 Use `--experiment` on the implementation PR when it participates in the deliberate
 batch; reserved-prefix receipts already identify experiment siblings. Intentional

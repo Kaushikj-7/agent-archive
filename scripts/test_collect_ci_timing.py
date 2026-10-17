@@ -117,6 +117,14 @@ class CollectionTests(unittest.TestCase):
         self.assertIn('/repos/' + collector.REPOSITORY + '/git/commits/' + 'a'*40, api.paths)
         live = collector.collect(api, api.topology, 1, live=True)
         self.assertEqual(len(live['verified_tested_base_associations']), 2)
+        for value in api.runs.values():
+            value['run_attempt'] = 2
+        history = collector.collect(api, api.topology, 1, 2)
+        self.assertEqual({(p['run_id'], p['run_attempt'])
+                          for p in history['verified_tested_base_associations']},
+                         {(1, 1), (1, 2), (2, 1), (2, 2)})
+        self.assertTrue(all(sample['scope'] == 'auxiliary-campaign'
+                            for sample in history['input']['samples'][1:]))
 
     def test_tested_base_requires_exact_association_merge_and_ancestry(self):
         changes = [

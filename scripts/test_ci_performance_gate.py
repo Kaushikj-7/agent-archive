@@ -123,6 +123,37 @@ class GateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'ancestry'):
             gate.current_worker_attempts(api, api.topology, 1, 1)
 
+    def test_tested_base_ten_attempts_fit_actual_bounded_api(self):
+        api = PhysicalRetryAPI()
+        for number in range(3, 11):
+            rows = copy.deepcopy(api.attempt_jobs[number-1])
+            for job in rows:
+                job.update(id=job['id']+1000, run_attempt=number,
+                           created_at=f'2026-10-15T{number:02d}:00:01Z')
+            api.attempt_jobs[number] = rows
+        graph = TestedMergeAPI()
+        api.runs[1]['pull_requests'] = graph.runs[1]['pull_requests']
+        requests = []
+        def opener(request, timeout):
+            from test_collect_ci_timing import Response
+            path = request.full_url.removeprefix(collect_ci_timing.ORIGIN)
+            requests.append(path)
+            if '/git/commits/' in path or '/compare/' in path:
+                result = graph.get(path)
+            elif '/jobs?' in path:
+                result = api.pages(path, 'jobs')
+            else:
+                result = api.get(path)
+            return Response(result, request.full_url)
+        bounded = collect_ci_timing.API('synthetic', request_limit=gate.REQUEST_LIMIT, opener=opener)
+        self.assertEqual(gate.current_worker_attempts(bounded, graph.topology, 1, 10),
+                         {index: 2 if index == 5 else 1 for index in range(8)})
+        self.assertEqual(len(requests), 13)
+        self.assertEqual(bounded.remaining, 1)
+        bounded.get('/repos/' + collect_ci_timing.REPOSITORY + '/actions/runs/1')
+        with self.assertRaisesRegex(ValueError, 'budget exhausted'):
+            bounded.get('/repos/' + collect_ci_timing.REPOSITORY + '/actions/runs/1')
+
     def test_inherited_job_ids_do_not_change_physical_receipt_attempts(self):
         api = PhysicalRetryAPI()
         actual = gate.current_worker_attempts(api, receipt(), '1', '2')
@@ -614,6 +645,20 @@ class GateTests(unittest.TestCase):
         self.assertTrue(self.run_gate(bounded)['passed'])
         self.assertEqual(bounded.remaining, 0)
         self.assertEqual(len(api.paths), 12)
+        graph = TestedMergeAPI()
+        bounded = collect_ci_timing.API('synthetic', request_limit=gate.REQUEST_LIMIT, opener=opener)
+        bounded.get('/repos/' + collect_ci_timing.REPOSITORY + '/actions/runs/12')
+        bounded.get('/repos/' + collect_ci_timing.REPOSITORY + '/actions/runs/12/attempts/1/jobs')
+        # Two additional identity reads are charged by the same real API object.
+        original_opener = bounded.opener
+        def graph_opener(request, timeout):
+            from test_collect_ci_timing import Response
+            return Response(graph.get(request.full_url.removeprefix(collect_ci_timing.ORIGIN)), request.full_url)
+        bounded.opener = graph_opener
+        collect_ci_timing.validate_run(graph.runs[1], 'Test', graph.topology, api=bounded)
+        bounded.opener = original_opener
+        self.assertTrue(self.run_gate(bounded)['passed'])
+        self.assertEqual(bounded.remaining, 0)
         for field, rows in (('reviews', reviews), ('comments', comments)):
             for invalid in (rows + [dict(rows[-1], id=400)], rows[:100] + rows[:1]):
                 changes = {field: invalid}

@@ -301,7 +301,8 @@ def collect(api, topology, test_run_id, leven_run_id=None, *, live=False,
         for run in runs:
             for attempt in range(1, run['run_attempt']):
                 old = snapshot(api, run, attempt)
-                validate_run(old['run'], run['name'], topology, api=api, archives=identity_archives)
+                proof = validate_run(old['run'], run['name'], topology, api=api, archives=identity_archives)
+                identity_proofs.append(proof)
                 samples.append(dict(sample, id=f'usage-{run["id"]}-attempt-{attempt}',
                                     scope='auxiliary-campaign', required_jobs={run['name']: required[run['name']]},
                                     workflows=[old], event_at=None))
