@@ -27,7 +27,7 @@ func TestMuseNativeChildMetadataTreeRollupCountsEachOwnActivityOnce(t *testing.T
 	inputs := []archive.Metadata{grandchild, oldChild, root, sibling, child}
 	options := Options{Now: now, Days: 1, Location: time.UTC}
 	var expected Stats
-	for i := range len(inputs) {
+	for i := range inputs {
 		permuted := slices.Concat(inputs[i:], inputs[:i])
 		prepared := Prepare(permuted, PrepareOptions{Location: time.UTC})
 		for _, got := range []Stats{Compute(permuted, options), prepared.Compute(options)} {

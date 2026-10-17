@@ -100,6 +100,7 @@ func TestNativeChildLateParentPublicationRetryKeepsFrozenBytesAndNewRequest(t *t
 }
 
 func testChildLateParentPublicationRecovery(t *testing.T, mode childRecoveryRequestMode) {
+	t.Helper()
 	local := newTestStore(t)
 	nativeHome := t.TempDir()
 	sessions := filepath.Join(nativeHome, "sessions")
