@@ -627,7 +627,7 @@ func abandonRecovery(out io.Writer, env Env) error {
 	}
 	defer releaseSearch()
 	var journal setupjournal.Journal
-	err = local.Read(setupjournal.JournalPath(home), &journal)
+	err = setupjournal.Read(home, &journal)
 	if os.IsNotExist(err) {
 		terminal.Println(out, "No interrupted setup to discard. Nothing was changed.")
 		return nil

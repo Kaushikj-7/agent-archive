@@ -256,9 +256,12 @@ func (e *RecoveryBlockedError) Guidance() string {
 // files are restored.
 func Recover(home string, backends Backends, lockCollector func() (func(), error)) error {
 	var journal Journal
-	err := local.Read(JournalPath(home), &journal)
+	err := Read(home, &journal)
 	if os.IsNotExist(err) {
 		return nil
+	}
+	if errors.Is(err, ErrUnsupportedRecoveryAuthority) {
+		return err
 	}
 	if state.IsUndecodable(err) {
 		return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("its record %s could not be read (%v), so nothing in it can be put back", JournalPath(home), err)}
