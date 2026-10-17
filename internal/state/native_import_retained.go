@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"os"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
@@ -15,6 +16,15 @@ func (s *Store) NativeImportRetainedAuthority(ctx context.Context, reg archive.S
 		return err
 	}
 	return published.ValidateNativeImportAuthority(reg)
+}
+
+// NativeImportStageActive reads the same closed state used by collector scans.
+func (s *Store) NativeImportStageActive(ctx context.Context, reg archive.SessionRegistration) (bool, error) {
+	published, err := s.LoadPublishedStateContext(ctx, reg.ArchiveSessionID)
+	if err != nil {
+		return false, err
+	}
+	return published.NativeImportStageActive(reg)
 }
 
 // NativeImportStageActive reports payload selection independently of the
@@ -30,6 +40,13 @@ func (p *Published) NativeImportStageActive(reg archive.SessionRegistration) (bo
 	}
 	if reg.NativeImport == nil || !p.Summary().Published {
 		return true, nil
+	}
+	if p.TypedStagedPublished() {
+		release, err := p.store.loadStagedReleaseState(p.store.durableContext(), reg.ArchiveSessionID)
+		if err != nil {
+			return false, err
+		}
+		return !release.released, nil
 	}
 	return false, p.ValidateNativeImportAuthority(reg)
 }
@@ -101,6 +118,17 @@ func (s *Store) nativeImportReleasedSelection(ctx context.Context, reg archive.S
 	proof := *reg.NativeImport
 	proof.Membership.State = "attached"
 	original.NativeImport = &proof
+	current, found, err := s.LoadRegistration(id)
+	if err != nil || !found || current.ValidateNativeImport() != nil || current.StagedImportSHA256 != q.StageSHA256 || validateNativeImportSelectionAuthority(current, q.Core) != nil {
+		return q, errors.Join(ErrDurableStorageRecovery, err)
+	}
+	currentProof := *current.NativeImport
+	currentProof.Membership.State = "attached"
+	current.NativeImport = &currentProof
+	currentDigest, err := s.readyDigest(ctx, current)
+	if err != nil || currentDigest != q.Core.AdmissionContext {
+		return q, errors.Join(ErrDurableStorageRecovery, err)
+	}
 	digest, err := s.readyDigest(ctx, original)
 	if err != nil || digest != q.Core.AdmissionContext {
 		return q, errors.Join(ErrDurableStorageRecovery, err)
