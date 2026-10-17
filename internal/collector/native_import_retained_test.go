@@ -122,7 +122,7 @@ func newHistoricalNativeStage(t *testing.T) historicalNativeStage {
 	if err := config.Save(store.Home(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	scope := archive.NativeImportBatchScope{BatchID: reg.ImportBatch.Recorded(), StartedAtUTC: at.UTC().Format(time.RFC3339Nano), DestinationID: reg.DestinationID, Filters: archive.ImportBatchFilters{Harnesses: []string{"muse"}, ProjectIDs: []string{}}, ProjectIDs: []string{reg.ProjectID}, Selected: []archive.NativeImportBatchSelection{{Kind: "ordinary-root", NativeID: reg.NativeSessionID, OriginalTUTC: reg.SessionStartedAt.UTC().Format(time.RFC3339Nano), ProjectID: reg.ProjectID, RootFingerprint: reg.NativeImport.Confirmation.RootFingerprint, RootRevision: reg.NativeBinding.RootRevision, BindingSHA256: reg.NativeImport.Confirmation.SelectedBindingSHA256, Source: *reg.NativeBinding.Checkpoint}}}
+	scope := archive.NativeImportBatchScope{BatchID: reg.ImportBatch.Recorded(), StartedAtUTC: at.UTC().Format(time.RFC3339Nano), DestinationID: reg.DestinationID, Filters: archive.ImportBatchFilters{Harnesses: []string{"muse"}, ProjectIDs: []string{}}, ProjectIDs: []string{reg.ProjectID}, Selected: []archive.NativeImportBatchSelection{{Kind: archive.NativeImportOrdinaryRoot, NativeID: reg.NativeSessionID, OriginalTUTC: reg.SessionStartedAt.UTC().Format(time.RFC3339Nano), ProjectID: reg.ProjectID, RootFingerprint: reg.NativeImport.Confirmation.RootFingerprint, RootRevision: reg.NativeBinding.RootRevision, BindingSHA256: reg.NativeImport.Confirmation.SelectedBindingSHA256, Source: *reg.NativeBinding.Checkpoint}}}
 	reg.NativeImport.Confirmation.ScopeSHA256, err = archive.NativeImportBatchScopeDigest(t.Context(), scope)
 	if err != nil {
 		t.Fatal(err)

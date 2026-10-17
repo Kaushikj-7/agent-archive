@@ -27,7 +27,7 @@ func undoNativeImportOwner(t *testing.T, f *undoFixture, batch Batch) archive.Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt := &archive.NativeImport{Contract: "muse-historical-import-v1", Confirmation: archive.NativeImportConfirmation{BatchID: batch.ID, BatchInstance: strings.Repeat("a", 32), ScopeSHA256: strings.Repeat("b", 64), DestinationID: "dest", ProjectID: "project", RootFingerprint: strings.Repeat("c", 64), SelectedBindingSHA256: digest, SelectedSource: checkpoint}, Membership: archive.NativeImportMembership{ReceiptID: strings.Repeat("e", 32), State: "attached", Effects: []string{"registration"}}}
+	receipt := &archive.NativeImport{Contract: "muse-historical-import-v1", Confirmation: archive.NativeImportConfirmation{BatchID: batch.ID, BatchInstance: strings.Repeat("a", 32), ScopeSHA256: strings.Repeat("b", 64), DestinationID: "dest", ProjectID: "project", RootFingerprint: strings.Repeat("c", 64), SelectedBindingSHA256: digest, SelectedSource: checkpoint}, Membership: archive.NativeImportMembership{ReceiptID: strings.Repeat("e", 32), State: archive.NativeImportAttached, Effects: []string{"registration"}}}
 	reg := archive.SessionRegistration{NativeImport: receipt, NativeBinding: binding, ArchiveSessionID: strings.Repeat("1", 32), NativeSessionID: binding.NativeID, ProjectID: "project", ProjectRoot: "/work", Harness: archive.Harness{Name: "muse"}, TranscriptPath: binding.Path, SessionStartedAt: at, RegisteredAt: batch.StartedAt, AdmittedAt: batch.StartedAt, Origin: archive.SessionOriginImport, ImportBatch: archive.NewImportBatch(batch.ID), DestinationID: "dest"}
 	if err := reg.Validate(); err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ func TestNativeImportUndoPlansPreserveCurrentOwner(t *testing.T) {
 			reg := undoNativeImportOwner(t, f, batch)
 			path := filepath.Join(f.home, "registrations", reg.ArchiveSessionID+".json")
 			if mode == "detached" {
-				reg.NativeImport.Membership.State = "detached"
+				reg.NativeImport.Membership.State = archive.NativeImportDetached
 				if err := local.Write(path, reg); err != nil {
 					t.Fatal(err)
 				}

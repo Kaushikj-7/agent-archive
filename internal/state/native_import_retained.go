@@ -237,14 +237,14 @@ func (s *Store) nativeImportReleasedSelection(ctx context.Context, reg archive.S
 	// Only the supported membership state can differ from the original owner.
 	original := reg
 	proof := *reg.NativeImport
-	proof.Membership.State = "attached"
+	proof.Membership.State = archive.NativeImportAttached
 	original.NativeImport = &proof
 	current, found, err := s.LoadRegistration(id)
 	if err != nil || !found || current.ValidateNativeImport() != nil || current.StagedImportSHA256 != q.StageSHA256 || validateNativeImportSelectionAuthority(current, q.Core) != nil {
 		return q, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	currentProof := *current.NativeImport
-	currentProof.Membership.State = "attached"
+	currentProof.Membership.State = archive.NativeImportAttached
 	current.NativeImport = &currentProof
 	currentDigest, err := s.readyDigest(ctx, current)
 	if err != nil || currentDigest != q.Core.AdmissionContext {
