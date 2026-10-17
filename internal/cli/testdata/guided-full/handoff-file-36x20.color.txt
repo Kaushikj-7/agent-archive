@@ -1,7 +1,7 @@
 $ agent-archive handoff SESSION
 
   \e[1mFix the flaky widget test\e[0m
-  Codex · 59 minutes ago · 2 KB
+  Codex - 59 minutes ago - 2 KB
 
 ? Continue in
 

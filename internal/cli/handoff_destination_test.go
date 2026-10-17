@@ -112,6 +112,8 @@ func TestChooseDestinationAnswers(t *testing.T) {
 		{"one agent: q still quits", []handoffDestination{handoffDestinationClaude}, "q\n", handoffChoice{action: handoffQuit}},
 		{"one agent: print", []handoffDestination{handoffDestinationClaude}, "p\n", handoffChoice{action: handoffPrint}},
 		{"one agent: write", []handoffDestination{handoffDestinationClaude}, "w\n", handoffChoice{action: handoffWrite}},
+		{"one agent: a word's prefix", []handoffDestination{handoffDestinationClaude}, "qu\n", handoffChoice{action: handoffQuit}},
+		{"one agent: its name's prefix asks again", []handoffDestination{handoffDestinationClaude}, "cl\nn\n", handoffChoice{action: handoffQuit}},
 	} {
 		var out bytes.Buffer
 		def := defaultDestination(tc.installed, "claude", config.HandoffConfig{})
@@ -157,6 +159,19 @@ func TestChooseDestinationListsTheDefaultFirst(t *testing.T) {
 	}
 }
 
+// Without a clipboard, c is no answer: it must not abbreviate the one agent.
+func TestChooseDestinationOneAgentWithoutClipboard(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	got, err := chooseDestination(newPrompter(strings.NewReader("c\nn\n"), &out), []handoffDestination{handoffDestinationClaude}, handoffDestinationClaude, false, productionAgents.Catalog(), nil)
+	if err != nil || got != (handoffChoice{action: handoffQuit}) {
+		t.Fatalf("got %+v, %v\n%s", got, err, out.String())
+	}
+	if !strings.Contains(out.String(), "or [p] print  [w] write\n") || !strings.Contains(out.String(), "Enter one of the available choices.") {
+		t.Fatalf("prompt without a clipboard:\n%s", out.String())
+	}
+}
+
 func TestChooseDestinationNamesTheSessionAboveTheQuestion(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
@@ -177,15 +192,20 @@ func TestHandoffPromptHeaderNamesTitleAgentAgeAndSize(t *testing.T) {
 	active := now.Add(-2 * time.Hour)
 	h := archive.Handoff{Session: archive.HandoffSession{Harness: "codex", LastActivityAt: &active}}
 	target := handoffTarget{metadata: &archive.Metadata{Title: "fix the scroll bug"}}
-	got := handoffPromptHeader(target, h, 14*1024, now, productionAgents.Catalog())
+	got := handoffPromptHeader(target, h, 14000, now, productionAgents.Catalog(), false)
 	want := []string{"Fix the scroll bug", "Codex · 2 hours ago · 14 KB"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("header = %q, want %q", got, want)
 	}
 	// Without a title or activity time, the agent and size remain.
-	got = handoffPromptHeader(handoffTarget{}, archive.Handoff{Session: archive.HandoffSession{Harness: "claude"}}, 10, now, productionAgents.Catalog())
+	got = handoffPromptHeader(handoffTarget{}, archive.Handoff{Session: archive.HandoffSession{Harness: "claude"}}, 10, now, productionAgents.Catalog(), false)
 	if want := []string{"Claude Code · 1 KB"}; !slices.Equal(got, want) {
 		t.Fatalf("header = %q, want %q", got, want)
+	}
+	// An ASCII terminal gets ASCII separators.
+	got = handoffPromptHeader(target, h, 14000, now, productionAgents.Catalog(), true)
+	if want := []string{"Fix the scroll bug", "Codex - 2 hours ago - 14 KB"}; !slices.Equal(got, want) {
+		t.Fatalf("ASCII header = %q, want %q", got, want)
 	}
 }
 
