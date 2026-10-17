@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
@@ -27,7 +28,10 @@ import (
 // ListPage and ListRange would let large cohorts bypass a List-only assertion.
 type museAcceptanceStore struct {
 	*storagetest.MemoryStore
-	puts, lists, sourcePuts, metadataPuts atomic.Int64
+	puts         atomic.Int64
+	lists        atomic.Int64
+	sourcePuts   atomic.Int64
+	metadataPuts atomic.Int64
 }
 
 func (s *museAcceptanceStore) Put(ctx context.Context, key string, data []byte) error {
@@ -291,7 +295,10 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 	if err := config.Save(f.home, f.cfg); err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct{ name, content string }{
+	for _, tc := range []struct {
+		name    string
+		content string
+	}{
 		{"claude", `{"type":"assistant","sessionId":"synthetic-claude","message":{"role":"assistant","content":[{"type":"text","text":"visible"}]}}` + "\n"},
 		{"codex", `{"type":"turn_context","model":"synthetic"}` + "\n" + `{"type":"response_item","id":"m1","payload":{"type":"message","role":"assistant","content":"visible"}}` + "\n"},
 		{"cursor", `{"role":"user","message":{"content":[{"type":"text","text":"visible"}]}}` + "\n"},
@@ -334,8 +341,8 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 	for _, reg := range regs {
 		var row []byte
 		var marshalErr error
-		switch reg.Harness.Name {
-		case "muse":
+		switch agentmeta.ID(reg.Harness.Name) {
+		case agentmeta.Muse:
 			row, marshalErr = json.Marshal(map[string]any{
 				"schema_version": 1, "id": "00000000-0000-0000-0000-0000000003f2",
 				"stream":   map[string]any{"kind": "session", "id": reg.NativeSessionID},
@@ -345,13 +352,13 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 					"source_run_record_id": "77777777-7777-4777-8777-777777777777", "source_run_record_sequence": 3,
 					"event": map[string]any{"kind": "assistant_message_committed", "message_id": "synthetic-growth", "response_id": "synthetic-growth-response", "text": visible}},
 			})
-		case "claude":
+		case agentmeta.Claude:
 			row, marshalErr = json.Marshal(map[string]any{"type": "assistant", "sessionId": reg.NativeSessionID,
 				"message": map[string]any{"role": "assistant", "content": []map[string]any{{"type": "text", "text": visible}}}})
-		case "codex":
+		case agentmeta.Codex:
 			row, marshalErr = json.Marshal(map[string]any{"type": "response_item", "id": "growth",
 				"payload": map[string]any{"type": "message", "role": "assistant", "content": visible}})
-		case "cursor":
+		case agentmeta.Cursor:
 			row, marshalErr = json.Marshal(map[string]any{"role": "assistant", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": visible}}}})
 		default:
 			t.Fatalf("unexpected agent %s", reg.Harness.Name)
