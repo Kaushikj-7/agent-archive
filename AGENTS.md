@@ -79,16 +79,22 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow.
   go vet ./...
   golangci-lint run --disable=revive
   golangci-lint run --enable-only=revive --new-from-merge-base=origin/main
-  ../levenshtein/verify pre-merge --source .  # CI's verify job; needs Docker
   git diff --check
   ```
 
 - For a local diagnostic under load, `internal/cli` and `internal/collector`
   may need `-timeout 40m`; run long suites in the background. This does not
   replace the canonical 20-minute CI qualification commands in the testing guide.
-- Run Levenshtein at the commit pinned in `.github/workflows/levenshtein.yml`
-  (a detached `git -C ~/levenshtein worktree add`). It enforces rules that
-  local golangci-lint does not, such as `thelper` and `usetesting`.
+- Run CI's Levenshtein `verify` job (needs Docker) at the commit pinned in
+  `.github/workflows/levenshtein.yml`. It enforces rules that local
+  golangci-lint does not, such as `thelper` and `usetesting`:
+
+  ```sh
+  pin=$(sed -n 's/^ *ref: //p' .github/workflows/levenshtein.yml | head -n 1)
+  lev="${TMPDIR:-/tmp}/levenshtein-$pin"
+  [ -d "$lev" ] || git -C ~/levenshtein worktree add --detach "$lev" "$pin"
+  "$lev/verify" pre-merge --source .
+  ```
 - Tests of timeouts or budgets must not assert measured wall-clock time. Use
   `testing/synctest`, an injected clock, or clock readings taken inside a stub;
   see the testing guide.
