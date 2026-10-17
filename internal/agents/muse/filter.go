@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // Filter validates native authority before projecting any safe retained output.
@@ -46,18 +47,18 @@ func (Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 			release()
 		}
 	}()
-	if in.File == nil || in.Records != nil {
-		return out, release, errFormat
+	recordLimit, limitErr := nativeFilterRecordLimit(in, c.Limits)
+	if limitErr != nil {
+		return out, release, limitErr
 	}
-	rawLimit, recordLimit := boundedNativeLimits(c.Limits)
-	if in.File.Length() > rawLimit {
-		return out, release, archive.ErrRecordTooLarge
-	}
+
 	if !reservation.Reserve(4096) {
 		return out, release, errBudget
 	}
 	held += 4096
-	reader := bufio.NewReaderSize(io.NewSectionReader(in.File, 0, in.File.Length()), 4096)
+	countedInput, finishInput := trace.CountReads(io.NewSectionReader(in.File, 0, in.File.Length()), trace.FilterBytes)
+	defer finishInput()
+	reader := bufio.NewReaderSize(countedInput, 4096)
 	rows := []logicalRow{}
 	gaps := privacyGaps{}
 	line, encodedTotal := int64(0), int64(0)
@@ -617,4 +618,15 @@ func (s *nativeBodyJoins) decodeReserved(raw []byte, line int64, reservation *ag
 		*held += charge
 	}
 	return rows, nil
+}
+
+func nativeFilterRecordLimit(in agentapi.NativeInput, limits agentapi.ReadLimits) (int64, error) {
+	if in.File == nil || in.Records != nil {
+		return 0, errFormat
+	}
+	raw, record := boundedNativeLimits(limits)
+	if in.File.Length() > raw {
+		return 0, archive.ErrRecordTooLarge
+	}
+	return record, nil
 }

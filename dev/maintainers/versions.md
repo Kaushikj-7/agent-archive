@@ -402,3 +402,32 @@ closed startup validation lane, shared by headers, raw startup facts, filtering,
 retained parsing and refiltering. Existing accepted inputs retain identical bytes
 and metadata; field projection and metadata derivation are unchanged. No filter,
 adapter, parser, published schema or private writer version changes.
+
+Muse guarded root admission adds the closed `muse-root-admission` capability to
+native writer16's existing structural fence and journal fence1. The matching
+`native_admission_protection` flag is sticky. A committed window carries a random
+32-character lowercase hexadecimal generation, issuance time, and exact policy
+fingerprint; `muse_capture_last_issued_at` survives inactive windows. Only issuing
+a strictly later window can advance that floor. Pre-fencing setup carries sticky
+capability flags without activating a tentative window or time floor. Expected-byte
+rollback restores the prior committed window/floor while retaining protection.
+
+Private admission intents use version2 only for Muse startup candidates and exact
+owner continuation. Continuation retains the immutable birth proof and separately
+captures its current window generation. Existing v0/v1 fields and non-Muse event
+names remain unchanged. Unknown contracts, selectors and modes refuse before
+owned queue mutation. Optional status-v4 `native_startup` reports a deduplicated
+pending count, latest observation, and completeness; it conveys no local capture,
+publication or readback proof. There is no filter/parser/upload schema bump.
+Public setup excludes Muse until separately reviewed root-scoped native command,
+TUI/exec/serve and platform acceptance unlocks it.
+
+The optional qualified-index `native_reservation` marker is a closed comparable
+`muse-root-reservation-v1:` plus64lowercasehex digest, exactly89bytes by the
+prefix/sha256 sizes. Existing index version1 and native/config/journal numeric
+floors are unchanged. The existing sticky admission capability fences older
+writers before mutation. The marker binds the full original candidate and
+concrete binding; it is never sufficient source/admission authority by itself.
+Only exact fresh concrete preparation may reuse a pending reservation. Supported
+cleanup requires a complete matching durable Muse owner/proof/binding; missing,
+mismatched and unsupported pending authority is preserved/refused.
