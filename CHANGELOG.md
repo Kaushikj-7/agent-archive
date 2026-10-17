@@ -6,16 +6,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Read-path benchmarks now account for provider LIST pages and transferred
-  headers, including range overread. Content-free trace counts distinguish
-  local catalog validation and decoding from remote discovery costs.
-
 - `agent-archive handoff` names the session above `Continue in`: its title,
   agent, when it was last active, and the handoff's size. When only one other
   agent is installed, the question is yes or no (`Continue in Claude Code?
   [Y/n]`) instead of a one-item list; `n` quits, and print, copy, and write
   stay on the line below. With several agents, print, copy, write, and quit
   share one line.
+
+- Read-path benchmarks now account for provider LIST pages and transferred
+  headers, including range overread. Content-free trace counts distinguish
+  local catalog validation and decoding from remote discovery costs.
 
 - Muse local handoff previews now read only their reserved head/tail windows,
   avoiding whole-file hashes while browsing large histories. Selected sessions
