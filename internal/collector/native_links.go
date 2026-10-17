@@ -2,6 +2,9 @@ package collector
 
 import (
 	"errors"
+	"reflect"
+
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
@@ -9,11 +12,13 @@ import (
 // not enumerate native files or read published transcript state. Missing links
 // never prevent independently admitted children from publishing.
 type nativeLinkKey struct {
+	agent       string
 	native      string
 	project     string
 	root        string
 	destination string
 	home        string
+	revision    string
 }
 
 func nativeRegistrationHome(reg archive.SessionRegistration) string {
@@ -27,10 +32,46 @@ func nativeRegistrationHome(reg archive.SessionRegistration) string {
 }
 
 func nativeParentKey(reg archive.SessionRegistration, native string) nativeLinkKey {
-	return nativeLinkKey{native, reg.ProjectID, reg.ProjectRoot, reg.DestinationID, nativeRegistrationHome(reg)}
+	return nativeLinkKey{reg.Harness.Name, native, reg.ProjectID, reg.ProjectRoot, reg.DestinationID, nativeRegistrationHome(reg), nativeRegistrationRevision(reg)}
+}
+
+func nativeRegistrationRevision(reg archive.SessionRegistration) string {
+	if reg.NativeBinding != nil {
+		return reg.NativeBinding.RootRevision
+	}
+	return ""
 }
 
 func (p *pass) reconcileNativeLinks() {
+	children := 0
+	for _, reg := range p.registrations {
+		if reg.NativeChild && (p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)) {
+			children++
+		}
+	}
+	if children == 0 {
+		return
+	}
+	// Temporary relationship maps borrow the already loaded registrations and
+	// the existing source ledger. Include map buckets, traversal vectors and
+	// registration value copies before allocating; release before source scans.
+	perRegistration := 2*int64(reflect.TypeFor[archive.SessionRegistration]().Size()) + 2048
+	budget := (&sessionScan{opts: p.opts}).readBudget()
+	if int64(len(p.registrations)) > agentapi.PassReadBudget/perRegistration {
+		for range children {
+			p.nativeLinkPending("relationship_budget_pending")
+		}
+		return
+	}
+	charge := int64(len(p.registrations)) * perRegistration
+	if !budget.ReserveUnscoped(charge) {
+		for range children {
+			p.nativeLinkPending("relationship_budget_pending")
+		}
+		return
+	}
+	defer budget.ReleaseUnscoped(charge)
+	graph := newNativeChildGraph(p.registrations)
 	parents := make(map[nativeLinkKey]archive.SessionRegistration, len(p.registrations))
 	ambiguous := map[nativeLinkKey]bool{}
 	for _, reg := range p.registrations {
@@ -44,6 +85,13 @@ func (p *pass) reconcileNativeLinks() {
 		parents[key] = reg
 	}
 	for i, reg := range p.registrations {
+		if !reg.NativeChild || p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
+			continue
+		}
+		if !graph.accepts(reg) {
+			p.nativeLinkPending("parent_identity_conflict")
+			continue
+		}
 		p.reconcileNativeLink(i, reg, parents, ambiguous)
 	}
 
@@ -58,6 +106,9 @@ func (p *pass) nativeLinkPending(reason string) {
 }
 
 func (p *pass) markLegacyNativeComposite(parent, child archive.SessionRegistration) bool {
+	if parent.Harness.Name != "codex" || child.Harness.Name != "codex" {
+		return true
+	}
 	oldID, known, err := p.local.LegacyCodexCompositeReservation(parent.NativeSessionID, child.NativeSessionID)
 	if err != nil {
 		p.nativeLinkPending("legacy_link_lookup_pending")
@@ -90,6 +141,15 @@ func (p *pass) reconcileNativeLink(i int, reg archive.SessionRegistration, paren
 	if !reg.NativeChild || reg.ParentSessionID != "" && reg.NativeLinkVersion >= 1 {
 		return
 	}
+	if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
+		return
+	}
+	// Muse child creation/binding authority is not yet qualified. Generalized
+	// namespaces do not make an injected unvalidated child an admitted owner.
+	if reg.Harness.Name != "codex" {
+		p.nativeLinkPending("native_child_authority_unavailable")
+		return
+	}
 	// An admitted deletion freezes the source and relationship owner until
 	// exact restoration/cleanup removes its intent. Linking first would make the
 	// current registration unable to resume its own removal.
@@ -120,7 +180,7 @@ func (p *pass) reconcileNativeLink(i int, reg archive.SessionRegistration, paren
 		return
 	}
 	// Removal records are authoritative even during a partial retention/undo.
-	if _, removed, err := p.local.Removal("codex", parent.NativeSessionID); err != nil {
+	if _, removed, err := p.local.Removal(parent.Harness.Name, parent.NativeSessionID); err != nil {
 		p.nativeLinkPending("relationship_state_retry")
 		return
 	} else if removed {
