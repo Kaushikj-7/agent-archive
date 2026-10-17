@@ -460,6 +460,15 @@ func (s *Store) checkSelectingPendingWrite(ctx context.Context, id string, p Pen
 		if p.Selection != nil || p.StagedProof() != nil {
 			return nil
 		}
+		if p.JournalVersion == 5 && p.Preparation != nil && p.Bundle.Capture.Harness.Name == "muse" {
+			if err := p.ValidatePublicationBudgeted(ctx, s.resourceBudget); err != nil {
+				return errors.Join(ErrReadySelectionFrozen, err)
+			}
+			_, historical, err := read.nativeImportPublicationState(ctx, id, nativeImportPendingTarget(p))
+			if historical || err != nil {
+				return err
+			}
+		}
 		return ErrReadySelectionFrozen
 	}
 	if old.StagedProof() != nil && (p.StagedProof() == nil || !sameStagedSelection(*old.StagedProof(), *p.StagedProof())) {
