@@ -222,6 +222,9 @@ func (s *sweeper) orphans(keep map[string]bool) {
 var knownHarnesses = agentmeta.Names(agentmeta.Builtins())
 
 func (s *sweeper) orphan(id string) error {
+	if handled, err := s.local.RecoverDeletedLocalSession(id); handled || err != nil {
+		return err
+	}
 	if err := s.local.CheckDurableSessionRead(id); err != nil {
 		return err
 	}
@@ -274,6 +277,23 @@ type sweeper struct {
 // session sweeps one registered session.
 func (s *sweeper) session(reg archive.SessionRegistration) error {
 	id := reg.ArchiveSessionID
+	if j, found, err := s.local.LoadSessionDeletion(reg); err != nil {
+		return err
+	} else if found && j.Phase != state.DeletionRestored && j.Phase != state.DeletionCancelled && !j.LocalRemoved {
+		if s.opts.CurrentDestination != nil && !s.opts.CurrentDestination(reg) {
+			return state.ErrRemovalPending
+		}
+		if !s.clockAllowsDeletion() {
+			return nil
+		}
+		if err := DeleteOwnedSession(s.ctx, s.local, s.store, reg, j.Reason, s.now); err != nil {
+			if errors.Is(err, state.ErrDeletionWorkChanged) {
+				return nil
+			}
+			return err
+		}
+		return s.forget(reg, true, &s.result.DeletedSessions, "finish deleted session")
+	}
 	if err := s.local.CheckDurableSessionRead(id); err != nil {
 		return err
 	}
@@ -469,7 +489,10 @@ func (s *sweeper) remote(reg archive.SessionRegistration, summary state.Publishe
 		if err := s.local.CheckDurableSessionRead(id); err != nil {
 			return err
 		}
-		if err := DeleteWholeSession(s.ctx, s.store, reg.Harness.Name, id); err != nil {
+		if err := DeleteOwnedSession(s.ctx, s.local, s.store, reg, state.RemovalReasonRetention, s.now); err != nil {
+			if errors.Is(err, state.ErrDeletionWorkChanged) {
+				return nil
+			}
 			return fmt.Errorf("delete session: %w", err)
 		}
 		// The remote deletion takes network time and is not done under the
@@ -636,6 +659,9 @@ func (s *sweeper) forget(reg archive.SessionRegistration, deferForWork bool, int
 	}
 	forgotten, err := forgetExpired(s.local, reg, deferForWork, s.now)
 	if forgotten {
+		if cleanupErr := s.local.FinishDeletedSession(reg.ArchiveSessionID); cleanupErr != nil {
+			return cleanupErr
+		}
 		*into = append(*into, reg.ArchiveSessionID)
 	}
 	if err != nil {

@@ -363,6 +363,8 @@ func (s *Store) resumeGenerationRecoveryFile(ctx context.Context, id string, bud
 // registration/index/request write uses its existing request-lock staging;
 // membership renames therefore retain request -> membership lock order.
 func (s *Store) resumeGenerationRecovery(g config.DurableStorageGuard, ctx context.Context, id string) error {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -469,6 +471,8 @@ func (s *Store) freezeGenerationRecovery(r generationRecovery) error {
 }
 
 func (s *Store) registerGenerationRecovery(ctx context.Context, g config.DurableStorageGuard, r generationRecovery) error {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	reg := *r.Registration
 	if err := s.writeUnderRequestLock(r.Next, s.registrationPath(r.Next), nil, func(current fileSnapshot) (any, bool, error) {
 		if current.found {

@@ -1,7 +1,9 @@
 package retention
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -55,6 +58,10 @@ func TestHookRequestWrittenMidExpiryRetainsPendingAfterRemoteDeletion(t *testing
 		t.Fatal(err)
 	}
 	collect(t, local, memory, t0)
+	baseline, err := memory.Get(t.Context(), "sessions/codex/s1/metadata.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	expiry := t0.Add(91 * 24 * time.Hour)
 	var hookErr error
@@ -76,34 +83,65 @@ func TestHookRequestWrittenMidExpiryRetainsPendingAfterRemoteDeletion(t *testing
 		t.Fatalf("the hook's request was lost: %#v %v", requests, err)
 	}
 
-	// A known-present predecessor becoming absent is a conflict, not permission
-	// to infer first publication. Keep the complete filtered snapshot and request
-	// for deletion-journal reconciliation in the maintenance milestone.
-	resultAfter := collect(t, local, memory, expiry)
-	if !errors.Is(resultAfter.Errors["s1"], storage.ErrPublicationConflict) || len(resultAfter.Published) != 0 {
-		t.Fatal("deleted predecessor was guessed absent", resultAfter.Errors)
+	// The actual durable deletion intent grants one exact baseline restoration.
+	// Preparing and acknowledging it must leave the later hook evidence owed.
+	first := collect(t, local, memory, expiry)
+	if len(first.Errors) > 0 || len(first.Published) != 0 {
+		t.Fatal(first)
 	}
 	pending, found, err := local.LoadPending("s1")
-	if err != nil || !found || pending.Commit == nil || pending.Commit.Predecessor != state.PredecessorPresent {
-		t.Fatal("publication evidence lost", found, err)
+	if err != nil || !found || pending.Preparation == nil || pending.Preparation.Retention == nil || pending.Commit == nil || pending.Commit.Predecessor != state.PredecessorAbsent || !bytes.Equal(pending.MetadataBytes, baseline) {
+		t.Fatal("missing exact typed baseline restoration", found, err)
 	}
-	if !pending.Bundle.Capture.CapturedAt.Equal(expiry) {
+	if _, err := memory.Get(t.Context(), "sessions/codex/s1/metadata.json"); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatal("preparation published prematurely", err)
+	}
+	second := collect(t, local, memory, expiry)
+	if len(second.Errors) > 0 || len(second.Published) != 1 {
+		t.Fatal(second)
+	}
+	restored, err := memory.Get(t.Context(), "sessions/codex/s1/metadata.json")
+	if err != nil || !bytes.Equal(restored, baseline) {
+		t.Fatal("baseline wire changed", err)
+	}
+	request, found, err := local.LoadRequest("s1")
+	if err != nil || !found || len(request.HookEvidence) != 1 || request.HookEvidence[0].Payload["turn_id"] != "late-turn" {
+		t.Fatal("restoration acknowledged uncaptured hook", found, err)
+	}
+	third := collect(t, local, memory, expiry)
+	if len(third.Errors) > 0 || len(third.Published) != 1 {
+		t.Fatal(third)
+	}
+	if _, found, err := local.LoadRequest("s1"); err != nil || found {
+		t.Fatal("new publication did not acknowledge exact hook", found, err)
+	}
+	wire, err := memory.Get(t.Context(), "sessions/codex/s1/metadata.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata archive.Metadata
+	if err := json.Unmarshal(wire, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	source, err := memory.Get(t.Context(), metadata.SourceBundle.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := reader.DecodeReferencedSource(t.Context(), metadata, source, reader.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bundle.Capture.CapturedAt.Equal(expiry) || !metadata.CapturedAt.Equal(expiry) {
 		t.Fatal("new evidence lost its capture time")
 	}
 	kept := false
-	for _, item := range pending.Bundle.SupplementalEvidence {
+	for _, item := range bundle.SupplementalEvidence {
 		if item.Kind == archive.EvidenceKindFinalResponse && item.Payload["turn_id"] == "late-turn" {
 			kept = true
 		}
 	}
 	if !kept {
-		t.Fatal("mid-expiry final response lost")
-	}
-	if _, found, err := local.LoadRequest("s1"); err != nil || !found {
-		t.Fatal("uncommitted request acknowledged", found, err)
-	}
-	if _, err := memory.Get(t.Context(), "sessions/codex/s1/metadata.json"); !errors.Is(err, storage.ErrNotFound) {
-		t.Fatal("sidecar republished without authority", err)
+		t.Fatal("new remotely selected source lost mid-expiry final response")
 	}
 
 }

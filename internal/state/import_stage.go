@@ -270,6 +270,8 @@ func (s *Store) resumePreparedImport(ctx context.Context, stage ImportStage) err
 }
 
 func (s *Store) admitPreparedImport(ctx context.Context, stage ImportStage, reg archive.SessionRegistration, batchID string) error {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	return s.withImportStaging(ctx, func(g config.DurableStorageGuard) error {
 		current, present, e := s.loadConfig()
 		if e != nil || !present {
@@ -409,6 +411,8 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 }
 
 func (s *Store) savePreparedImportStage(ctx context.Context, reg archive.SessionRegistration, stage ImportStage) (string, error) {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	if reg.NativeBinding != nil {
 		if err := s.checkNativeRegistrationWrite(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
 			return "", err
@@ -620,6 +624,13 @@ func (s *Store) RemoveImportStage(id string) error {
 }
 
 func (s *Store) removeImportStage(ctx context.Context, id string) error {
+	if err := s.checkImportStageRemoval(ctx, id); err != nil {
+		return err
+	}
+	return s.removeImportFile(id, "stage.json")
+}
+
+func (s *Store) checkImportStageRemoval(ctx context.Context, id string) error {
 	stage, found, err := s.loadPreparedImportStage(ctx, id)
 	if err != nil {
 		return err
@@ -627,7 +638,7 @@ func (s *Store) removeImportStage(ctx context.Context, id string) error {
 	if found && stage.TypedSelection {
 		return ErrReadySelectionFrozen
 	}
-	return s.removeImportFile(id, "stage.json")
+	return nil
 }
 
 func (s *Store) removeImportFile(id, name string) (err error) {

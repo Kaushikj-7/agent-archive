@@ -15,6 +15,8 @@ type DurableStorageNamespace string
 const (
 	// PendingPublicationStorage holds selecting records and anonymous atomic copies.
 	PendingPublicationStorage DurableStorageNamespace = "pending-publication"
+	// SessionDeletionStorage holds exact removal or retained restoration work.
+	SessionDeletionStorage DurableStorageNamespace = "session-deletion"
 	// GenerationRecoveryStorage holds the existing generation recovery journal.
 	GenerationRecoveryStorage DurableStorageNamespace = "generation-recovery"
 	// PendingHistoryStorage holds current history stages, including source-only leftovers.
@@ -120,7 +122,7 @@ func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err
 		return append(out, DurableStorageObligation{Namespace: UnavailableStorage}), errors.Join(ErrDurableStorageRecovery, e)
 	}
 	remaining := durableEntryLimit - used
-	for _, base := range []string{"sessions", "publication-evidence"} {
+	for _, base := range []string{"sessions", "publication-evidence", deletionDirectory} {
 		dir, e := privateDirectory(home.Root, base, false)
 		if errors.Is(e, os.ErrNotExist) {
 			continue
@@ -164,6 +166,10 @@ func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err
 					err = errors.Join(err, ErrDurableStorageRecovery)
 					continue
 				}
+				if base == deletionDirectory {
+					out, err = s.appendDeletionObligation(out, err, entry.Name())
+					continue
+				}
 				out, err = appendImportStageObligation(out, err, home.Root, base, entry.Name())
 				path := filepath.Join(base, entry.Name())
 				namespace := PublicationEvidenceStorage
@@ -191,10 +197,14 @@ func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err
 			return out, errors.Join(err, ErrDurableStorageRecovery)
 		}
 	}
+	return s.finishDurableStorageObligations(home, &remaining, out, err)
+}
+
+func (s *Store) finishDurableStorageObligations(home *local.RootedHome, remaining *int, out []DurableStorageObligation, err error) ([]DurableStorageObligation, error) {
 	if e := s.durableContext().Err(); e != nil {
 		return out, errors.Join(ErrDurableStorageRecovery, err, e)
 	}
-	unavailable, e := unavailableStorageObligations(home.Root, &remaining)
+	unavailable, e := unavailableStorageObligations(home.Root, remaining)
 	out = append(out, unavailable...)
 	err = errors.Join(err, e)
 	if err != nil {
@@ -255,4 +265,12 @@ func importStageObligation(root *os.Root, base, id string) ([]DurableStorageObli
 func appendImportStageObligation(out []DurableStorageObligation, previous error, root *os.Root, base, id string) ([]DurableStorageObligation, error) {
 	next, err := importStageObligation(root, base, id)
 	return append(out, next...), errors.Join(previous, err)
+}
+
+func (s *Store) appendDeletionObligation(out []DurableStorageObligation, prior error, id string) ([]DurableStorageObligation, error) {
+	present, err := s.hasDeletionWork(id)
+	if present {
+		out = append(out, DurableStorageObligation{SessionID: id, Namespace: SessionDeletionStorage})
+	}
+	return out, errors.Join(prior, err)
 }

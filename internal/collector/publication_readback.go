@@ -160,6 +160,9 @@ type publicationClosingReadback struct {
 }
 
 func (s *sessionScan) closePublicationReadback(p state.PendingPublication) (*publicationClosingReadback, error) {
+	if err := s.local.ValidateRetentionRestoration(s.reg, p); err != nil {
+		return nil, err
+	}
 	if s.publicationAttempt == nil || p.Commit == nil || s.publicationAttempt.verifiedCommit == nil || *s.publicationAttempt.verifiedCommit != *p.Commit || s.publicationAttempt.verifiedKey != p.MetadataKey || p.Phase != state.PublicationReady || p.ValidatePublicationBudgeted(s.ctx, s.readBudget()) != nil {
 		return nil, state.ErrDurableStorageRecovery
 	}
@@ -192,6 +195,9 @@ func (r *publicationClosingReadback) consumeSelection(s *sessionScan, p state.Pe
 		return storage.ErrPublicationConflict
 	}
 	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.local.ValidateRetentionRestoration(s.reg, p); err != nil {
 		return err
 	}
 	if err := s.checkHistoryPublicationLocal(p); err != nil {
@@ -239,6 +245,9 @@ func (s publicationTransactionStore) ValidatePublicationPosition(ctx context.Con
 	}
 	if s.pending == nil || s.pending.MetadataKey != key {
 		return storage.ErrPublicationConflict
+	}
+	if err := s.scan.local.ValidateRetentionRestoration(s.scan.reg, *s.pending); err != nil {
+		return err
 	}
 	return s.scan.checkHistoryPublicationBody(*s.pending, raw)
 }

@@ -45,6 +45,18 @@ follow [Semantic Versioning](https://semver.org/).
   Rewritten metadata still prunes old cache versions, and bounded maintenance
   remains the backstop for concurrent writers.
 
+- Interrupted owned retention keeps the complete selecting source set and exact
+  metadata for recovery. A newer hook can restore that same baseline after native
+  files disappear; its new evidence stays queued. Explicit undo cannot restore
+  the removed session. Deletion preserves catalog snapshots and refuses changed
+  winners or unsafe local ownership.
+
+- Recover complete historical source-set publications from exact private retained evidence,
+  with one shared disk/memory budget and permanent source-set writer protection.
+  Stronger privacy replaces all selected revisions and retires obsolete private
+  proof bodies only after the full local selection is durable. Historical import
+  admission staging and additional native ancestor permission remain separate.
+
 - Interrupted history privacy preparation now reads each retained revision's
   original parent before applying a later resolved parent. Older pending
   journals can resume without replacing the original provenance.

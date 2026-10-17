@@ -140,6 +140,12 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 }
 
 func decodeConfig(data []byte, c *Config) (bool, error) {
+	var deletionProtected bool
+	var deletionErr error
+	data, deletionProtected, deletionErr = unwrapDeletionConfig(data)
+	if deletionErr != nil {
+		return false, deletionErr
+	}
 	var nativeProtected bool
 	var unwrapErr error
 	data, nativeProtected, unwrapErr = unwrapNativeConfig(data)
@@ -198,6 +204,12 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 	}
 	if (plain.NativeAuthorityProtection || len(plain.NativeRoots) > 0) && !nativeProtected {
 		return false, errors.New("native authority requires its permanent writer fence")
+	}
+	if plain.DeletionProtection && (!plain.SourceSetPublicationProtection || !plain.DurableStorageProtection) {
+		return false, errors.New("deletion protection requires source-set and durable-storage floors")
+	}
+	if plain.DeletionProtection != deletionProtected {
+		return false, errors.New("deletion protection requires its exact writer fence")
 	}
 	*c = Config(plain)
 	if c.RetentionDays == 0 {
@@ -465,7 +477,7 @@ func writerHasPermissionFloors(writer configWriter) bool {
 	switch writer {
 	case sourceSetPublicationWriter, searchLifecycleWriter, generationWriter, codexHistoryWriter, durableStorageWriter, retentionWriter, importStagingWriter, historicalProjectWriter, catalogWriter, publicationCompositionWriter, stagedSelectionWriter, settledCursorSelectionWriter, scopedPickerWriter:
 		return true
-	case legacyDiscoveryWriter, discoveryWriter, legacyCodexWriter, codexWriter, nativeAuthorityWriter:
+	case legacyDiscoveryWriter, discoveryWriter, legacyCodexWriter, codexWriter, nativeAuthorityWriter, deletionWriter:
 		return false
 	default:
 		return false

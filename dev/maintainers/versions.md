@@ -360,6 +360,17 @@ leaves Source2/metadata1 and private configuration/state formats unchanged. Othe
 change. Parser refresh and full export rederive the summary from retained evidence
 after native loss. Real billing/cache/completeness gates remain unqualified.
 
+
+Owned deletion adds the sticky outer `{version: 18, writer: owned-deletion-v18,
+base: ...}` configuration capability. Its exact base remains independently
+validated (SourceSet17, and native/search/selection/catalog floors). The private
+canonical deletion journal is version 1, including its explicit pre-metadata
+`preparing` phase; ready restoration stays SourceSet5 with
+an immutable retention receipt and checksum-bound deletion stage namespace.
+Source/metadata schemas and filter/adapter/parser versions do not change: baseline
+restoration preserves the original selecting bytes. See
+[owned session deletion](../specs/owned-session-deletion.md) for phases, exact
+request ownership, local cleanup, budget and compatibility constraints.
 Muse committed call identity and retained result joins allocate filter28/global
 adapter0.28.0/Muse filter0.28.0 and Muse parser0.5.0. Legacy filter24 event-only
 tool rows remain readable with unavailable counts; exact older retained schemas
