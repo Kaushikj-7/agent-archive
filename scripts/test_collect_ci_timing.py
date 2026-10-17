@@ -53,6 +53,27 @@ class FakeAPI:
         return {'total_count': len(rows), key: rows}
 
 
+class TestedMergeAPI(FakeAPI):
+    """GitHub's association moved to the guarded merge's newer first parent."""
+    def __init__(self):
+        super().__init__()
+        self.topology = dict(receipt(), tested_base='e'*40, parents=['e'*40, 'c'*40])
+        self.commit = {'sha': 'a'*40, 'tree': {'sha': 'd'*40},
+                       'parents': [{'sha': 'e'*40}, {'sha': 'c'*40}]}
+        self.compare = {'status': 'ahead', 'merge_base_commit': {'sha': 'b'*40}}
+        self.paths = []
+        for value in self.runs.values():
+            value['pull_requests'][0]['base'] = {'sha': 'e'*40, 'ref': 'main'}
+
+    def get(self, path):
+        self.paths.append(path)
+        if '/git/commits/' in path:
+            return copy.deepcopy(self.commit)
+        if '/compare/' in path:
+            return copy.deepcopy(self.compare)
+        return super().get(path)
+
+
 class Response(io.BytesIO):
     def __init__(self, value, url):
         super().__init__(json.dumps(value).encode())
@@ -77,6 +98,73 @@ class CollectionTests(unittest.TestCase):
         api.runs[2]['pull_requests'][0]['base']['sha'] = 'e'*40
         with self.assertRaises(ValueError):
             collector.collect(api, proof, 1, 2)
+
+    def test_exact_tested_base_association_retains_independent_proof_and_event(self):
+        api = TestedMergeAPI()
+        result = collector.collect(api, api.topology, 1, 2)
+        self.assertEqual(result['snapshot_status'], 'terminal')
+        self.assertEqual(result['topology']['event_base'], 'b'*40)
+        proofs = result['verified_tested_base_associations']
+        self.assertEqual(len(proofs), 2)
+        self.assertEqual(result['authenticated_retained_identities'], [])
+        for name, ident, proof in zip(('Test', 'Levenshtein'), (1, 2), proofs):
+            self.assertEqual(proof['run_id'], ident)
+            self.assertEqual(proof['commit'], api.commit)
+            self.assertEqual(proof['compare'], api.compare)
+            self.assertEqual(collector.validate_run(api.runs[ident], name, api.topology,
+                             tested_base_proofs=proofs), proof)
+        self.assertIn('/repos/' + collector.REPOSITORY + '/compare/' + 'b'*40 + '...' + 'e'*40, api.paths)
+        self.assertIn('/repos/' + collector.REPOSITORY + '/git/commits/' + 'a'*40, api.paths)
+        live = collector.collect(api, api.topology, 1, live=True)
+        self.assertEqual(len(live['verified_tested_base_associations']), 2)
+
+    def test_tested_base_requires_exact_association_merge_and_ancestry(self):
+        changes = [
+            lambda a: a.commit.update(sha='f'*40),
+            lambda a: a.commit.update(tree={'sha': 'f'*40}),
+            lambda a: a.commit['parents'].reverse(),
+            lambda a: a.commit['parents'][0].update(sha='f'*40),
+            lambda a: a.compare.update(status='behind'),
+            lambda a: a.compare.update(merge_base_commit={'sha': 'f'*40}),
+            lambda a: a.runs[1]['pull_requests'][0]['base'].update(sha='f'*40),
+            lambda a: a.runs[1]['pull_requests'][0]['base'].update(ref='another-base'),
+            lambda a: a.runs[1]['pull_requests'][0].update(number=13),
+            lambda a: a.runs[1]['pull_requests'][0]['head'].update(sha='f'*40),
+            lambda a: a.topology.update(workflow_source='f'*40),
+        ]
+        for index, change in enumerate(changes):
+            api = TestedMergeAPI()
+            change(api)
+            with self.subTest(change=index), self.assertRaises(ValueError):
+                collector.collect(api, api.topology, 1, 2)
+        api = TestedMergeAPI()
+        with self.assertRaises(ValueError):
+            collector.validate_run(api.runs[1], 'Test', api.topology)
+        with mock.patch.object(api, 'get', side_effect=ValueError('diagnostic request budget exhausted')):
+            with self.assertRaisesRegex(ValueError, 'budget exhausted'):
+                collector.validate_run(api.runs[1], 'Test', api.topology, api=api)
+
+    def test_offline_tested_base_proof_cannot_relabel_context_or_omit_evidence(self):
+        api = TestedMergeAPI()
+        proof = collector.validate_run(api.runs[1], 'Test', api.topology, api=api)
+        mutations = [lambda p: p.update(run_id=2), lambda p: p.update(run_attempt=2),
+                     lambda p: p.update(workflow='Levenshtein'),
+                     lambda p: p.update(run_id=True), lambda p: p.update(run_attempt=True),
+                     lambda p: p.update(commit=None), lambda p: p.update(compare=None),
+                     lambda p: p['topology'].update(tree='f'*40),
+                     lambda p: p['topology'].update(event_base='f'*40),
+                     lambda p: p['association'].update(base_ref='another-base'),
+                     lambda p: p['commit']['parents'].reverse(),
+                     lambda p: p['compare'].update(status='diverged'),
+                     lambda p: p.pop('compare')]
+        for index, change in enumerate(mutations):
+            altered = copy.deepcopy(proof)
+            change(altered)
+            with self.subTest(change=index), self.assertRaises(ValueError):
+                collector.validate_run(api.runs[1], 'Test', api.topology, tested_base_proofs=[altered])
+        for proofs in ([], [proof, proof], [proof]*21):
+            with self.assertRaises(ValueError):
+                collector.validate_run(api.runs[1], 'Test', api.topology, tested_base_proofs=proofs)
 
     def test_p1_malformed_rows_and_nonterminal_inventory_remain_diagnostic(self):
         api = FakeAPI()

@@ -296,7 +296,7 @@ def current_worker_attempts(api, topology, run_id, attempt):
     run = api.get(path)
     if run.get('id') != int(run_id) or run.get('run_attempt') != int(attempt):
         raise ValueError('API enclosing workflow attempt mismatch')
-    collect_ci_timing.validate_run(run, 'Test', topology)
+    collect_ci_timing.validate_run(run, 'Test', topology, api=api)
     # At most ten inventories plus this run read, within the existing API
     # request/deadline budget. Missing pages or history still fail closed.
     inventories = {number: api.pages(

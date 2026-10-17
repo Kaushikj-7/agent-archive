@@ -11,7 +11,7 @@ from unittest import mock
 import ci_performance_gate as gate
 import admit_ci_performance_baseline as admission
 import collect_ci_timing
-from test_collect_ci_timing import FakeAPI
+from test_collect_ci_timing import FakeAPI, TestedMergeAPI
 import normalize_ci_timing as norm
 from test_ci_worker_topology import receipt
 
@@ -115,6 +115,14 @@ class PhysicalRetryAPI(FakeAPI):
 
 
 class GateTests(unittest.TestCase):
+    def test_current_workers_accept_independently_proven_exact_tested_base(self):
+        api = TestedMergeAPI()
+        actual = gate.current_worker_attempts(api, api.topology, 1, 1)
+        self.assertEqual(actual, {index: 1 for index in range(8)})
+        api.compare['merge_base_commit']['sha'] = 'f'*40
+        with self.assertRaisesRegex(ValueError, 'ancestry'):
+            gate.current_worker_attempts(api, api.topology, 1, 1)
+
     def test_inherited_job_ids_do_not_change_physical_receipt_attempts(self):
         api = PhysicalRetryAPI()
         actual = gate.current_worker_attempts(api, receipt(), '1', '2')
