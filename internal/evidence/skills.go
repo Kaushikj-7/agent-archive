@@ -149,20 +149,11 @@ func skillRoots(options SkillOptions) []skillRoot {
 }
 
 func validSkillScope(value string) bool {
-	if len(value) == 0 || len(value) > 160 {
-		return false
-	}
-	for _, c := range []byte(value) {
-		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.' || c == ':' {
-			continue
-		}
-		return false
-	}
-	return true
+	return (archive.SkillDeclarationIdentity{Scope: value, ID: "skill"}).Valid()
 }
 
 func validSkillDeclaration(file agentapi.SkillFile) bool {
-	if len(file.ID) == 0 || len(file.ID) > 80 || len(file.Path) == 0 || len(file.Path) > 4096 || !utf8.ValidString(file.Path) || filepath.IsAbs(file.Path) || strings.ContainsAny(file.Path, "\\:\x00") {
+	if !(archive.SkillDeclarationIdentity{Scope: "skill", ID: file.ID}).Valid() || len(file.Path) == 0 || len(file.Path) > 4096 || !utf8.ValidString(file.Path) || filepath.IsAbs(file.Path) || strings.ContainsAny(file.Path, "\\:\x00") {
 		return false
 	}
 	for _, c := range []byte(file.Path) {
@@ -175,12 +166,7 @@ func validSkillDeclaration(file agentapi.SkillFile) bool {
 			return false
 		}
 	}
-	for i, c := range []byte(file.ID) {
-		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || i > 0 && (c == '.' || c == '_' || c == '-') {
-			continue
-		}
-		return false
-	}
+
 	return true
 }
 
@@ -341,9 +327,6 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *s
 		if entry.id != "" {
 			installed["id"] = entry.id
 			payload["id"] = entry.id
-			// Distinct logical declarations sharing bytes must survive snapshot
-			// history identity without leaking their relative filesystem paths.
-			payload["scope"] = root.scope + ":" + entry.id
 		}
 		inventory = append(inventory, installed)
 		if mode == config.SkillEvidenceMetadata {

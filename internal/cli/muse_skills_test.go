@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	skillevidence "github.com/wangjohn/agent-archive/internal/evidence"
 )
 
 func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *testing.T) {
@@ -65,6 +67,26 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 	if len(calls) != 3 || calls["XDG_CONFIG_HOME"] != 1 || calls["CODEX_HOME"] != 1 || calls["XDG_DATA_HOME"] != 1 {
 		t.Fatalf("environment snapshot reads: %v", calls)
 	}
+	// Real typed declaration observer feeds the existing native Source/Filter
+	// bundle and analysis path; this is synthetic caller-qualified input, not
+	// a claim that the held native plugin catalog producer has been implemented.
+	var declaredRoots []agentapi.SkillRoot
+	for index, ids := range [][]string{{"first", "second"}, {"first"}} {
+		root := t.TempDir()
+		must(t, os.WriteFile(filepath.Join(root, "body.md"), body, 0600))
+		files := make([]agentapi.SkillFile, 0, len(ids))
+		for _, id := range ids {
+			files = append(files, agentapi.SkillFile{ID: id, Path: "body.md"})
+		}
+		scope := "package-one"
+		if index == 1 {
+			scope = "package-two"
+		}
+		declaredRoots = append(declaredRoots, agentapi.SkillRoot{Path: root, UserBoundary: root, Scope: scope, Layout: agentapi.SkillDeclaredFiles, Files: files})
+	}
+	declared, declaredErr := skillevidence.ObserveSkills(skillevidence.SkillOptions{Harness: "muse", ObservedAt: env.Now(), Mode: config.SkillEvidenceBody, Locations: declaredRoots})
+	must(t, declaredErr)
+	evidence = append(evidence, declared...)
 	bundle, err := archive.NewSourceBundle(reg, counter.TranscriptFilter, selected, env.Now(), evidence)
 	must(t, err)
 	encoded, err := json.Marshal(bundle)
@@ -90,7 +112,7 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 			}
 		}
 	}
-	if snapshots != 8 {
+	if snapshots != 11 {
 		t.Fatalf("snapshot count %d", snapshots)
 	}
 	analysis, err := analyzeSource(t.Context(), env.Agents, bundle)
@@ -101,6 +123,29 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 	if len(metadata.SkillsAvailable) == 0 || len(metadata.SkillsUsed) != 0 || metadata.SkillDetection != archive.SkillDetectionUnavailable {
 		t.Fatal("inventory became eligibility or use")
 	}
+	encodedMetadata, encodeErr := json.Marshal(metadata)
+	must(t, encodeErr)
+	var identityJSON struct {
+		SkillsAvailable []struct {
+			InstalledIdentities []struct {
+				Scope string `json:"scope"`
+				ID    string `json:"id"`
+			} `json:"installed_identities"`
+		} `json:"skills_available"`
+	}
+	must(t, json.Unmarshal(encodedMetadata, &identityJSON))
+	if len(identityJSON.SkillsAvailable) != 1 || len(identityJSON.SkillsAvailable[0].InstalledIdentities) != 3 {
+		t.Fatalf("real pipeline lost declared installed_identities JSON: %s", encodedMetadata)
+	}
+	wantIdentities := []string{"package-one:first", "package-one:second", "package-two:first"}
+	for i, identity := range identityJSON.SkillsAvailable[0].InstalledIdentities {
+		if identity.Scope+":"+identity.ID != wantIdentities[i] {
+			t.Fatal("real pipeline identity JSON was not sorted unique")
+		}
+	}
+	if metadata.Parser.Version != "0.7.0" {
+		t.Fatal("wrong installed-identity parser stamp")
+	}
 	for _, skill := range metadata.SkillsAvailable {
 		if skill.Coverage != archive.SkillCoverageInstalledOnly || skill.SHA256 == "" {
 			t.Fatal("inventory coverage/hash changed")
@@ -110,6 +155,9 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 		observer := skillObserver(env, mode)
 		items, err := observer(reg, env.Now())
 		must(t, err)
+		declaredMode, declaredModeErr := skillevidence.ObserveSkills(skillevidence.SkillOptions{Harness: "muse", ObservedAt: env.Now(), Mode: mode, Locations: declaredRoots})
+		must(t, declaredModeErr)
+		items = append(items, declaredMode...)
 		raw, err := json.Marshal(items)
 		must(t, err)
 		if mode == config.SkillEvidenceNone && len(items) != 0 {

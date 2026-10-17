@@ -192,10 +192,13 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   project is skipped. The shared observer also supports finite caller-qualified
   manifest file declarations: only the declared regular files inside that exact
   package can be read, with no recursive search or undeclared neighbors. This
-  does not supply missing native plugin installation provenance. All roots and
-  physical file aliases share the same 4 MB observation allowance; one file is
-  limited to 1 MB and an archived body to 16 KB. Sessions imported with `backfill`
-  carry no skill evidence.
+  does not supply missing native plugin installation provenance. User roots share
+  one 4 MB allowance and physical-file cache per observation; each project's roots
+  have a separate 4 MB allowance and cache. One file is limited to 1 MB and an
+  archived body to 16 KB. Sessions imported with `backfill`
+  carry no skill evidence. Muse metadata can retain bounded logical installed
+  declaration IDs/scopes for skills sharing the same name and content hash; they
+  contain no package paths and do not establish eligibility or use.
 
   Change the mode in setup. The change limits subsequent uploads, including
   pending work rebuilt under the new mode, but does not remove copies already

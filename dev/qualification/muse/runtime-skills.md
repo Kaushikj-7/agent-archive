@@ -43,7 +43,11 @@ byte/declaration allowance. This is infrastructure for qualified provenance, not
 a test-only claim of production plugin coverage. Production observation never
 executes native CLI commands.
 Inventory proves installation; it does not prove eligibility, invocation or a
-read. Unknown coverage must remain unavailable, never observed-no-use. Invocation
+read. Unknown coverage must remain unavailable, never observed-no-use. Optional metadata installed declaration identities preserve logical scope/id
+provenance when multiple declarations share a name and filtered content hash.
+They remain attached to the existing content group and do not create duplicate
+legacy rows, eligible coverage or use. Muse parser0.7.0 stamps this derivation;
+other agent/default parser versions are unchanged. Invocation
 and read attribution additionally require exact owning conversation and skill
 identity/hash qualification.
 

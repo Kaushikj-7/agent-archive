@@ -41,8 +41,8 @@ func TestDeclaredSkillsConfineFilesAndPreserveLogicalIdentity(t *testing.T) {
 	if len(items) != 3 || items[0].Payload["inventory_complete"] != true {
 		t.Fatalf("items %+v", items)
 	}
-	if items[1].Payload["scope"] == items[2].Payload["scope"] {
-		t.Fatal("distinct declarations share snapshot identity")
+	if items[1].Payload["scope"] != items[2].Payload["scope"] || items[1].Payload["id"] == items[2].Payload["id"] {
+		t.Fatal("declarations lost stable package scope or distinct IDs")
 	}
 	merged := archive.MergeSupplementalEvidence(nil, items)
 	if len(merged) != 3 {

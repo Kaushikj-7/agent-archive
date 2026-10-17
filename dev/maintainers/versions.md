@@ -405,14 +405,21 @@ adapter, parser, published schema or private writer version changes.
 
 Muse supplemental skill inventories/snapshots allocate filter31 and global/Muse
 adapter0.31.0. Existing shared bounds, secret redaction, mode selection and
-installed-only interpretation apply. No native invocation/eligibility or parser
-semantics change; Muse parser remains0.6.0 and other parsers/configuration/source/
+installed-only interpretation apply. Native transcript invocation/eligibility
+semantics stay unchanged. Muse parser0.7.0 separately preserves optional installed declaration
+identities; default0.21.0 and other parsers/configuration/source/
 metadata schemas remain unchanged. Installation deduplicates the shared root.
 The same unreleased31 allocation includes exact qualified DataHome builtin
 inventory and bounded declared-file infrastructure for original PR10 installed
 plugin scope; production plugin catalog wiring still requires native provenance.
-One shared observation budget, no extra native process path, and existing
-Body/Metadata/None policy apply. No derived eligibility or use is introduced.
+Each user observation and each project observation retains its separate4MiB
+allowance/cache, with no extra native process path and existing Body/Metadata/None
+policy. No derived eligibility or use is introduced. Muse-only installed declaration
+provenance adds optional installed_identities to each metadata skill content group:
+sorted unique bounded logical scope/id pairs, omitted on overflow with a fixed gap.
+Source2/Metadata1/history2 remain additive-compatible: old typed readers ignore the
+optional collection and keep one existing content row; old strict skill schemas
+refuse the new field. No private writer/configuration version changes.
 Installed application version inspection is local and creates no capture proof.
 
 Muse guarded root admission adds the closed `muse-root-admission` capability to

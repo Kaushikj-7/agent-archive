@@ -474,3 +474,14 @@ These sources establish integration capabilities, not a promise of identical cov
 
 - [R2 S3 setup](https://developers.cloudflare.com/r2/get-started/s3/)
 - [AWS credential providers](https://docs.aws.amazon.com/sdkref/latest/guide/standardized-credentials.html)
+
+
+Muse installed skill content groups may include optional `installed_identities`
+with at most256 unique logical `{scope,id}` declarations, sorted by scope then id.
+These are installed provenance, not paths, eligibility or invocation. Missing
+identity collections are unknown. Overflow omits the complete collection and
+records one bounded `installed_skill_identity_incomplete` gap; malformed identity
+tokens are omitted with that same bounded gap. Existing name/hash/coverage rows
+remain readable by older typed readers without duplicate indistinguishable rows.
+The metadata schema remains1 (history2); older strict JSON skill schemas reject
+the additional optional field.

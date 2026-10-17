@@ -14,7 +14,7 @@ import (
 type Parser struct{}
 
 // Version identifies the Muse retained analysis policy.
-func (Parser) Version() string { return "0.6.0" }
+func (Parser) Version() string { return "0.7.0" }
 
 // Parse interprets the complete validated Muse ordinary/omission union.
 func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {

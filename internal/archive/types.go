@@ -729,9 +729,12 @@ type ModelSummary struct {
 // SkillSnapshot is a skill reported available to a session, with the SHA-256
 // of its content when known and why it counts as available.
 type SkillSnapshot struct {
-	Name     string        `json:"name"`
-	SHA256   string        `json:"sha256,omitempty"`
-	Coverage SkillCoverage `json:"coverage,omitempty"`
+	// InstalledIdentities preserves distinct installed declarations sharing the
+	// same display name/content. Absence is unknown, never observed no installs.
+	InstalledIdentities []SkillDeclarationIdentity `json:"installed_identities,omitempty"`
+	Name                string                     `json:"name"`
+	SHA256              string                     `json:"sha256,omitempty"`
+	Coverage            SkillCoverage              `json:"coverage,omitempty"`
 }
 
 // SkillUse is a skill the session used and the evidence for that use.
