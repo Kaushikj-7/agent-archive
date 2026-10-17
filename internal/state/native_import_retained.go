@@ -3,7 +3,6 @@ package state
 import (
 	"context"
 	"errors"
-	"os"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
