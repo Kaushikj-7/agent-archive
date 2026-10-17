@@ -625,6 +625,7 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 | `--skill` | a value | — |
 | `--skill-sha256` | a value | — |
 | `--skill-usage` | a value | `used` |
+| `--source` | a value | `archive` |
 | `--verbose` | no value | — |
 
 ## agent-archive search
@@ -756,14 +757,17 @@ Example: agent-archive show SESSION_ID --transcript
 
 | Flag | Takes | Default |
 | --- | --- | --- |
+| `--all-projects` | no value | — |
 | `--full` | no value | — |
 | `--harness` | a value | — |
 | `--json` | no value | — |
 | `--max-bytes` | a value | `120000` |
 | `--no-pager` | no value | — |
 | `--normalized` | no value | — |
+| `--project` | a value | — |
 | `--revision` | a value | — |
 | `--revisions` | no value | — |
+| `--source` | a value | `archive` |
 | `--transcript` | no value | — |
 
 ## agent-archive stats

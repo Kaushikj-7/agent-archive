@@ -23,6 +23,23 @@ type localReadOptions struct {
 	limit, maxBytes         int
 }
 
+const localReadSchemaVersion = 1
+
+type localReadCoverage struct {
+	Enumerated       int    `json:"enumerated"`
+	Inspected        int    `json:"inspected"`
+	InScope          int    `json:"in_scope"`
+	Skipped          int    `json:"skipped"`
+	IdentityComplete bool   `json:"identity_complete"`
+	Reason           string `json:"reason,omitempty"`
+	ReservedBytes    int64  `json:"reserved_bytes"`
+	ReadBytes        int64  `json:"read_bytes"`
+}
+
+func localCoverage(c nativesessions.Coverage) localReadCoverage {
+	return localReadCoverage{c.Enumerated, c.Inspected, c.InScope, c.Skipped, c.IdentityComplete, c.Reason, c.ReservedBytes, c.ReadBytes}
+}
+
 func localReadFlags(fs *commandFlags, allowed ...string) (err error) {
 	fs.Visit(func(f *flag.Flag) {
 		if err == nil && !slices.Contains(allowed, f.Name) {
@@ -75,7 +92,7 @@ func discoverLocalRead(ctx context.Context, env nativeHandoffDependencies, o loc
 }
 
 type localReadRow struct {
-	NativeID  string               `json:"native_id"`
+	NativeID  string               `json:"native_session_id"`
 	Harness   string               `json:"harness"`
 	Project   string               `json:"project"`
 	StartedAt time.Time            `json:"started_at"`
@@ -143,11 +160,13 @@ func runLocalList(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 	}
 	if o.json {
 		out := struct {
-			Source         string                  `json:"source"`
-			Coverage       nativesessions.Coverage `json:"coverage"`
-			PreviewLimited bool                    `json:"preview_limited"`
-			Sessions       []localReadRow          `json:"sessions"`
-		}{"local", result.Coverage, more || catalog.exhausted, rows}
+			SchemaVersion  int               `json:"schema_version"`
+			Domain         string            `json:"domain"`
+			Source         string            `json:"source"`
+			Coverage       localReadCoverage `json:"coverage"`
+			PreviewLimited bool              `json:"preview_limited"`
+			Sessions       []localReadRow    `json:"sessions"`
+		}{localReadSchemaVersion, "local-read-list", "local", localCoverage(result.Coverage), more || catalog.exhausted, rows}
 		if err := json.NewEncoder(stdout).Encode(out); err != nil {
 			return localReadFailure(stderr, "list", err)
 		}
@@ -189,13 +208,29 @@ func runLocalShow(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 	row.Name, row.Gaps = target.analysis.Facts.Name, target.bundle.Capture.Gaps
 	if o.json {
 		out := struct {
-			Source   string                  `json:"source"`
-			Session  localReadRow            `json:"session"`
-			Coverage nativesessions.Coverage `json:"coverage"`
-			View     *archive.NormalizedView `json:"view,omitempty"`
-		}{Source: "local", Session: row, Coverage: result.Coverage}
+			SchemaVersion     int                              `json:"schema_version"`
+			Domain            string                           `json:"domain"`
+			Source            string                           `json:"source"`
+			Session           localReadRow                     `json:"session"`
+			Coverage          localReadCoverage                `json:"coverage"`
+			View              *normalizedOutput                `json:"view,omitempty"`
+			TokenObservations *archive.TokenObservationSummary `json:"token_observations,omitempty"`
+			Observability     map[string]archive.Availability  `json:"observability"`
+		}{SchemaVersion: localReadSchemaVersion, Domain: "local-read-show", Source: "local", Session: row, Coverage: localCoverage(result.Coverage), TokenObservations: target.analysis.TokenObservations}
+		observed := target.analysis.Observability
+		out.Observability = map[string]archive.Availability{"structured_counts": observed.StructuredCounts, "tool_calls": observed.ToolCalls, "files_touched": observed.FilesTouched, "git_activity": observed.GitActivity, "compactions": observed.Compactions, "tool_errors": observed.ToolErrors, "tool_results": observed.ToolResults}
+		for key, value := range out.Observability {
+			if value.State == "" {
+				delete(out.Observability, key)
+			}
+		}
 		if o.transcript {
-			out.View = &target.analysis.View
+			view := target.analysis.View
+			turns := make([]normalizedTurn, len(view.Turns))
+			for i, turn := range view.Turns {
+				turns[i] = normalizedTurn{NormalizedTurn: turn}
+			}
+			out.View = &normalizedOutput{Turns: turns, ToolCalls: view.ToolCalls, ToolResults: view.ToolResults, HookFinals: view.HookFinals}
 		}
 		raw, err := json.Marshal(out)
 		if err == nil && o.transcript && o.maxBytes > 0 && len(raw) > o.maxBytes {
@@ -210,9 +245,15 @@ func runLocalShow(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 		}
 		return returnCode
 	}
-	terminal.Printf(stdout, "%s (%s)\n%s\nStarted: %s\n", archive.DisplayLine(row.NativeID), archive.DisplayLine(row.Harness), archive.DisplayLine(row.Name), row.StartedAt.Format(time.RFC3339))
+	if !o.transcript {
+		terminal.Printf(stdout, "%s (%s)\n%s\nStarted: %s\n", archive.DisplayLine(row.NativeID), archive.DisplayLine(row.Harness), archive.DisplayLine(row.Name), row.StartedAt.Format(time.RFC3339))
+	}
+	gapOutput := stdout
+	if o.transcript {
+		gapOutput = stderr
+	}
 	for _, gap := range row.Gaps {
-		terminal.Printf(stdout, "Coverage gap: %s\n", archive.DisplayLine(gap.Code))
+		terminal.Printf(gapOutput, "Coverage gap: %s\n", archive.DisplayLine(gap.Code))
 	}
 	if !result.Coverage.IdentityComplete {
 		terminal.Printf(stderr, "show: local discovery incomplete (%s); this explicit identity was verified\n", archive.DisplayLine(result.Coverage.Reason))
@@ -222,12 +263,18 @@ func runLocalShow(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 		if err != nil {
 			return localReadFailure(stderr, "show", err)
 		}
-		view := sessionView{Metadata: archive.Metadata{SessionID: selected.NativeID, Harness: target.bundle.Capture.Harness, StartedAt: selected.StartedAt}}
+		view := sessionView{Metadata: archive.Metadata{SessionID: selected.NativeID, NativeSessionID: selected.NativeID, Name: row.Name, Harness: target.bundle.Capture.Harness, StartedAt: selected.StartedAt}}
 		render := transcriptOptions{summaryOptions: summaryOptions{Now: env.now(), Style: styleFor(stdout)}, Full: o.full}
 		if o.maxBytes > 0 {
-			t, _ = archive.FitTranscript(t, o.maxBytes, o.full, func(t archive.Transcript) int { return len(renderTranscriptBytes(view, t, render)) })
+			var fits bool
+			t, fits = archive.FitTranscript(t, o.maxBytes, o.full, func(t archive.Transcript) int { return len(renderTranscriptBytes(view, t, render)) })
+			if !fits {
+				return localReadFailure(stderr, "show", errors.New("local transcript exceeds --max-bytes after trimming; raise the explicit output limit"))
+			}
 		}
-		renderTranscript(stdout, view, t, render)
+		if err := writeOutput(stdout, renderTranscriptBytes(view, t, render)); err != nil {
+			return localReadFailure(stderr, "show", err)
+		}
 	}
 	return 0
 }

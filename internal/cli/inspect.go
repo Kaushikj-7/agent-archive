@@ -159,6 +159,14 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		if err := localReadFlags(fs, "source", "harness", "limit", "json", "all-projects", "project", "no-pager"); err != nil {
 			return fs.usageError("%v", err)
 		}
+		canonical, ok := harnessFlagWithCatalog(catalogFor(env), *harness)
+		if !ok {
+			return fs.usageError("%s", harnessFlagError(*harness))
+		}
+		if *limit < 0 {
+			return fs.usageError("--limit cannot be negative")
+		}
+		*harness = canonical
 		return runLocalList(env, stdout, stderr, localReadOptions{harness: *harness, project: *project, allProjects: *allProjects, query: query, limit: *limit, json: *jsonOut})
 	}
 	if *source != "archive" {
@@ -675,6 +683,9 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if code := checkShowMaxBytes(fs, *maxBytes, *transcript); code != 0 {
 		return code
 	}
+	if *full && *jsonOut {
+		return fs.usageError("--full is for the readable transcript; --json always includes every retained tool result")
+	}
 	if *source == "local" {
 		if err := localReadFlags(fs, "source", "harness", "project", "all-projects", "transcript", "full", "json", "no-pager", "max-bytes"); err != nil {
 			return fs.usageError("%v", err)
@@ -682,13 +693,13 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		if sessionID == "" {
 			return fs.usageError("--source local needs a native session ID; use list --source local to find one")
 		}
+		if *project != "" && *allProjects {
+			return fs.usageError("--project and --all-projects cannot be used together")
+		}
 		return runLocalShow(env, stdout, stderr, localReadOptions{harness: *harness, project: *project, allProjects: *allProjects, query: sessionID, json: *jsonOut, transcript: *transcript, full: *full, maxBytes: *maxBytes})
 	}
 	if *source != "archive" || *project != "" || *allProjects {
 		return fs.usageError("--source must be archive or local; --project and --all-projects need --source local")
-	}
-	if *full && *jsonOut {
-		return fs.usageError("--full is for the readable transcript; --json always includes every retained tool result")
 	}
 
 	if sessionID == "" && !browseInteractive(env, stdin, stdout) {

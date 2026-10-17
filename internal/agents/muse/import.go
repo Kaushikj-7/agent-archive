@@ -27,6 +27,9 @@ func (importInspector) InspectImport(ctx context.Context, r agentapi.ImportInspe
 		return agentapi.ImportInspection{}, err
 	}
 	f := r.Filtered
+	if r.Header.SubagentOnly || r.Header.CapturePending != "" {
+		return agentapi.ImportInspection{}, errFormat
+	}
 	if r.Session.Agent != agentmeta.Muse || f.Format != "muse-jsonl" || len(f.Text) != 0 || f.History != nil || !f.NativeStartComplete || f.NativeStartAt.IsZero() || len(f.SessionIDs) != 1 || f.SessionIDs[0] == "" {
 		return agentapi.ImportInspection{}, errFormat
 	}

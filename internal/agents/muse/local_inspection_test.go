@@ -107,6 +107,20 @@ func TestImportInspectionRefusesPartialAndForeignEvidence(t *testing.T) {
 	}
 }
 
+func TestImportInspectionRejectsHeaderSourceConflicts(t *testing.T) {
+	t.Parallel()
+	f, err := filterBytes(t, readSynthetic(t, "synthetic-exec-conversation.jsonl"), agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, header := range []agentapi.NativeHeader{{Directory: "/different/checkout"}, {StartedAt: f.NativeStartAt.AddDate(0, 0, 1)}, {SubagentOnly: true}, {CapturePending: "unsupported native history"}} {
+		r := agentapi.ImportInspectionRequest{Session: agentapi.NativeSession{Agent: agentmeta.Muse, NativeID: f.SessionIDs[0]}, Filtered: f, Header: header}
+		if _, err := Imports().InspectImport(t.Context(), r); err == nil {
+			t.Fatalf("accepted incompatible header %+v", header)
+		}
+	}
+}
+
 func TestImportDiscoveryRetainsRefusalsAndHonorsBudgets(t *testing.T) {
 	t.Parallel()
 	data := t.TempDir()
