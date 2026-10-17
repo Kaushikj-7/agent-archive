@@ -1,8 +1,10 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
@@ -61,30 +63,62 @@ func (p *Published) ValidateNativeImportReadAuthority(reg archive.SessionRegistr
 		return p.ValidateNativeImportAuthority(reg)
 	}
 	ctx := p.store.durableContext()
-	lifecycle, err := p.store.loadStagedReleaseState(ctx, p.id)
+	read, closeRead := p.store.WithReadBudget(ctx, p.store.resourceBudget)
+	defer closeRead()
+	current, err := read.LoadPublishedStateContext(ctx, p.id)
 	if err != nil {
 		return err
 	}
-	if lifecycle.released {
-		return p.ValidateNativeImportAuthority(reg)
-	}
 	q := p.state.LastPublished.StagedProof()
-	if p.state.PublicationVersion != 3 || q.Version != 3 || lifecycle.selection == nil || !sameStagedSelection(*q, *lifecycle.selection) {
+	if current.state.PublicationVersion != 3 || q.Version != 3 || !current.TypedStagedPublished() || !sameStagedSelection(*q, *current.state.LastPublished.StagedProof()) || !bytes.Equal(p.state.MetadataBytes, current.state.MetadataBytes) {
 		return ErrDurableStorageRecovery
 	}
-	stage, found, err := p.store.LoadImportStage(ctx, reg)
+	released, err := read.nativeImportReadReleaseState(p.id, q)
+	if err != nil {
+		return err
+	}
+	if released {
+		return current.ValidateNativeImportAuthority(reg)
+	}
+	stage, found, err := read.LoadImportStage(ctx, reg)
 	if err != nil || !found || stage.Version != 2 || !stage.TypedSelection || stage.SHA256 != q.StageSHA256 {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	owner, err := p.store.readyDigest(ctx, reg)
+	owner, err := read.readyDigest(ctx, reg)
 	if err != nil || owner != q.Core.AdmissionContext {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	bundle, err := p.store.readyDigest(ctx, stage.Bundle)
+	bundle, err := read.readyDigest(ctx, stage.Bundle)
 	if err != nil || bundle != q.Core.BundleSHA256 {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	return nil
+}
+
+// This read-only coherence check uses the existing closed codecs and exact
+// selection equality. A pending publication's mutation policy is irrelevant to
+// reading the already acknowledged source. Present controls never fall back.
+func (s *Store) nativeImportReadReleaseState(id string, q *StagedSelection) (bool, error) {
+	var receipt stagedReleaseReceipt
+	err := s.readStagedControl(id, stagedReleaseReceiptName, &receipt)
+	receiptFound := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if receiptFound && !sameStagedSelection(receipt.Selection, *q) {
+		return false, ErrDurableStorageRecovery
+	}
+	var progress stagedReleaseProgress
+	if err := s.readStagedControl(id, stagedReleaseProgressName, &progress); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !receiptFound || progress.Version != q.Version || progress.ReceiptSHA256 != receipt.SHA256 {
+		return false, ErrDurableStorageRecovery
+	}
+	return progress.Phase == stagedReleaseReleased, nil
 }
 
 // ValidateNativeImportAuthority is read-only: a receipt never substitutes for

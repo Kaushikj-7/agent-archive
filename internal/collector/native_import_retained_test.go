@@ -312,12 +312,30 @@ func assertInterruptedNativeImportLocalRead(t *testing.T, f historicalNativeStag
 	if err != nil {
 		t.Fatal(err)
 	}
+	originalConfig := cfg
+	cfg.Paused = true
 	cfg.NativeRoots = nil
 	if err := config.Save(f.store.Home(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ReadLocalBundle(t.Context(), f.store.Home(), f.reg, f.at, "", f.opts.Sources); err != nil {
-		t.Fatal("ACK local read required removed native root", err)
+		t.Fatal("paused ACK local read required removed native root", err)
+	}
+	stageDirectory := filepath.Join(f.store.Home(), "sessions", f.reg.ArchiveSessionID, "import-stage")
+	for _, name := range []string{"release.json", "release-progress.json"} {
+		path := filepath.Join(stageDirectory, name)
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("unexpected existing release control", err)
+		}
+		if err := os.WriteFile(path, []byte(`{"version":999}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadLocalBundle(t.Context(), f.store.Home(), f.reg, f.at, "", f.opts.Sources); err == nil {
+			t.Fatal("typed ACK excused future release control", name)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
 	}
 	changed := f.reg
 	receipt := *changed.NativeImport
@@ -344,6 +362,9 @@ func assertInterruptedNativeImportLocalRead(t *testing.T, f historicalNativeStag
 		t.Fatal("typed ACK excused missing held stage without released lineage")
 	}
 	if err := os.WriteFile(stagePath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(f.store.Home(), originalConfig); err != nil {
 		t.Fatal(err)
 	}
 }
