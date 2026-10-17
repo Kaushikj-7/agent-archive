@@ -20,6 +20,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // The old derivation delegates all native interpretation to the builtin parser.
@@ -64,7 +65,7 @@ func (s *museRefreshStore) Put(ctx context.Context, key string, raw []byte) erro
 // This exercises admitted root publication and real retained regeneration, not
 // a consumer-only sidecar edit. All files, identity and storage are synthetic.
 func TestMuseRetainedMetadataRefreshReachesWarmConsumers(t *testing.T) {
-	t.Parallel()
+	// Sequential because trace measures the process-wide native Filter counter.
 	f := newMuseRootCaptureFixture(t)
 	// Use the already supported automatic-name record shape in synthetic data.
 	// Replacing the final row preserves native identity/order without creating
@@ -79,7 +80,7 @@ func TestMuseRetainedMetadataRefreshReachesWarmConsumers(t *testing.T) {
 	lines[len(lines)-1], err = json.Marshal(named)
 	must(t, err)
 	must(t, os.WriteFile(f.path, append(bytes.Join(lines, []byte("\n")), '\n'), 0600))
-	registry, filter := museCountingRegistry(t)
+	registry := f.registry
 	cloud := &museRefreshStore{MemoryStore: storagetest.NewMemoryStore()}
 	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return cloud, nil }
 	f.env.Agents = registry
@@ -138,11 +139,14 @@ func TestMuseRetainedMetadataRefreshReachesWarmConsumers(t *testing.T) {
 	must(t, err)
 	must(t, os.Remove(f.path))
 	cloud.keys = nil
-	filter.calls.Store(0)
 	now = now.Add(time.Hour)
 	opts.Parsers = registry
+	disableTrace := trace.Enable()
+	defer disableTrace()
 	collect()
-	if filter.calls.Load() != 0 {
+	var measured bytes.Buffer
+	trace.Write(&measured)
+	if museTraceFilterInput(t, measured.String()) != 0 {
 		t.Fatal("retained refresh filtered native data")
 	}
 	next, err := reader.ReadMetadata(t.Context(), cloud, key)
