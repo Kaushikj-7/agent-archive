@@ -200,7 +200,7 @@ func TestGenerationRecoveryReplayRefusesChangedAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.onIndexStep = nil
-	journal, found, err := readJSON[generationRecovery](s.generationRecoveryPath(original.ArchiveSessionID))
+	journal, found, err := readJSON[generationRecovery](s, s.generationRecoveryPath(original.ArchiveSessionID))
 	if err != nil || !found {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestGenerationRecoveryReplayRefusesChangedPublication(t *testing.T) {
 				t.Fatal(err)
 			}
 			s.onIndexStep = nil
-			journal, _, err := readJSON[generationRecovery](s.generationRecoveryPath(original.ArchiveSessionID))
+			journal, _, err := readJSON[generationRecovery](s, s.generationRecoveryPath(original.ArchiveSessionID))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -376,7 +376,7 @@ func TestFrozenGenerationRefusesUnsupportedNodeVersion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			node, found, err := readJSON[generationNode](s.generationNodePath(original.ArchiveSessionID))
+			node, found, err := readJSON[generationNode](s, s.generationNodePath(original.ArchiveSessionID))
 			if err != nil || !found {
 				t.Fatalf("generation node: %v %v", found, err)
 			}

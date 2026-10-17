@@ -16,6 +16,9 @@ import (
 // resumeSourceSetPrivacy replaces only ordinary retained work. Ready selections,
 // staged imports, Cursor ownership and catalog journals keep their own protocols.
 func (s *sessionScan) resumeSourceSetPrivacy(p state.PendingPublication) (sessionOutcome, bool, error) {
+	if err := s.validateNativeImportRetained(); err != nil {
+		return outcomeSkipped, true, err
+	}
 	if p.History != nil || s.usesExistingPublicationProtocol(&p) || p.Bundle.SchemaVersion != archive.SourceSchemaVersion {
 		return outcomeSkipped, false, nil
 	}

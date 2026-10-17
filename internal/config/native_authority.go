@@ -77,10 +77,11 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	if c.NativeAdmissionProtection {
 		admission = MuseAdmissionWriterSelector(c.NativeReplayProtection)
 	}
-	fence := nativeAuthorityVersion{Version: 16, Writer: nativeAuthorityWriter, Base: base, Admission: admission}
+	var importCapability string
 	if c.NativeImportProtection {
-		fence.Import = "muse-historical-import"
+		importCapability = "muse-historical-import"
 	}
+	fence := nativeAuthorityVersion{Version: 16, Writer: nativeAuthorityWriter, Base: base, Admission: admission, Import: importCapability}
 	version, err := json.Marshal(fence)
 	if err != nil {
 		return nil, err
@@ -123,25 +124,11 @@ func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {
 	if peek.Version != 16 && peek.Writer != nativeAuthorityWriter {
 		return raw, false, nil
 	}
-	names := []string{"version", "writer", "base"}
-	replayProtected := bytes.Equal(bytes.TrimSpace(doc["native_replay_protection"]), []byte("true"))
-	if doc["native_replay_protection"] != nil && !replayProtected {
-		return nil, false, errors.New("native replay requires sticky protection")
+	names, protection, err := nativeConfigProtectionFields(doc)
+	if err != nil {
+		return nil, false, err
 	}
-	admissionProtected := bytes.Equal(bytes.TrimSpace(doc["native_admission_protection"]), []byte("true"))
-	importProtected := bytes.Equal(bytes.TrimSpace(doc["native_import_protection"]), []byte("true"))
-	if importProtected {
-		names = append(names, "import")
-	}
-	if doc["native_import_protection"] != nil && !importProtected {
-		return nil, false, errors.New("native import requires sticky protection")
-	}
-	if admissionProtected {
-		names = append(names, "admission")
-	}
-	if doc["native_admission_protection"] != nil && !admissionProtected || (doc["muse_capture"] != nil || doc["muse_capture_last_issued_at"] != nil) && !admissionProtected {
-		return nil, false, errors.New("native admission requires sticky protection")
-	}
+	replayProtected, admissionProtected, importProtected := protection.replay, protection.admission, protection.imported
 	if err := exactAuthorityObject(versionRaw, names); err != nil {
 		return nil, false, err
 	}
@@ -173,6 +160,37 @@ func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {
 	doc["schema_version"] = base
 	unwrapped, err := json.Marshal(doc)
 	return unwrapped, true, err
+}
+
+type nativeConfigProtection struct {
+	replay    bool
+	admission bool
+	imported  bool
+}
+
+// nativeConfigProtectionFields validates sticky capability fields before the
+// exact enclosing fence is decoded, preserving the original refusal order.
+func nativeConfigProtectionFields(doc map[string]json.RawMessage) ([]string, nativeConfigProtection, error) {
+	names := []string{"version", "writer", "base"}
+	replayProtected := bytes.Equal(bytes.TrimSpace(doc["native_replay_protection"]), []byte("true"))
+	if doc["native_replay_protection"] != nil && !replayProtected {
+		return nil, nativeConfigProtection{}, errors.New("native replay requires sticky protection")
+	}
+	admissionProtected := bytes.Equal(bytes.TrimSpace(doc["native_admission_protection"]), []byte("true"))
+	importProtected := bytes.Equal(bytes.TrimSpace(doc["native_import_protection"]), []byte("true"))
+	if importProtected {
+		names = append(names, "import")
+	}
+	if doc["native_import_protection"] != nil && !importProtected {
+		return nil, nativeConfigProtection{}, errors.New("native import requires sticky protection")
+	}
+	if admissionProtected {
+		names = append(names, "admission")
+	}
+	if doc["native_admission_protection"] != nil && !admissionProtected || (doc["muse_capture"] != nil || doc["muse_capture_last_issued_at"] != nil) && !admissionProtected {
+		return nil, nativeConfigProtection{}, errors.New("native admission requires sticky protection")
+	}
+	return names, nativeConfigProtection{replay: replayProtected, admission: admissionProtected, imported: importProtected}, nil
 }
 
 // validateNativeBase is shared by encoding and decoding so a writer cannot

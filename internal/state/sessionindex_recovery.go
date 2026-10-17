@@ -339,7 +339,7 @@ func readRecoveryRegistration(path string, data *bytes.Buffer, reg *archive.Sess
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data.Bytes(), reg)
+	return archive.DecodeSessionRegistration(data.Bytes(), reg)
 }
 
 func (s *Store) recoverRegistrationOwners(key agentmeta.SessionKey, owners []string) error {
@@ -459,7 +459,7 @@ func (s *Store) recoverCandidateIndex(ctx context.Context, candidate SubagentCan
 	next := indexEntry(key, candidate.ArchiveSessionID)
 	next.Reservation = owner
 	if err := s.writeIndexUnderRequestLock(candidate.ArchiveSessionID, qualifiedSessionIndexPath(s.home, key), func() error {
-		current, present, err := readJSON[SubagentCandidate](s.subagentCandidatePath(candidate.ArchiveSessionID))
+		current, present, err := readJSON[SubagentCandidate](s, s.subagentCandidatePath(candidate.ArchiveSessionID))
 		if err != nil {
 			return err
 		}

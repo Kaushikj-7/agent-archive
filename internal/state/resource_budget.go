@@ -68,7 +68,7 @@ func (s *Store) readBudgetedContext(ctx context.Context, path string, value any,
 	reservation := s.readReservation()
 	if s.resourceBudget == nil {
 		if _, published := value.(*publishedState); !published {
-			return local.Read(path, value)
+			return s.readRegistrationJSON(path, value)
 		}
 	}
 	if s.resourceBudget != nil {
@@ -347,10 +347,10 @@ func (s *Store) decodePublicationOwned(ctx context.Context, data []byte, value a
 		err = decodePendingPublication(data, p, ctx, s.resourceBudget, s.readReservation())
 	default:
 		// Protected state types took the explicit-context branches above.
-		return json.Unmarshal(data, value)
+		return decodeRegistrationJSON(data, value)
 	}
 	if err != nil && !json.Valid(data) {
-		return json.Unmarshal(data, value)
+		return decodeRegistrationJSON(data, value)
 	}
 	if _, published := value.(*publishedState); published && err == nil && s.publishedReadDigest != nil {
 		*s.publishedReadDigest = sha256.Sum256(data)

@@ -81,7 +81,7 @@ func (c *jsonWireCounter) value(v reflect.Value, depth int) error {
 	if !v.IsValid() {
 		return c.add(4)
 	}
-	if handled, err := c.special(v); handled {
+	if handled, err := c.special(v, depth); handled {
 		return err
 	}
 	switch v.Kind() {
@@ -111,7 +111,7 @@ func (c *jsonWireCounter) value(v reflect.Value, depth int) error {
 	}
 }
 
-func (c *jsonWireCounter) special(v reflect.Value) (bool, error) {
+func (c *jsonWireCounter) special(v reflect.Value, depth int) (bool, error) {
 	// ImportBatch is the archive's one bounded string wrapper. Keep this helper
 	// standard-library-only and size its recorded field without invoking its
 	// marshaler (or accepting arbitrary custom encoding behavior).
@@ -132,6 +132,24 @@ func (c *jsonWireCounter) special(v reflect.Value) (bool, error) {
 			return true, ErrJSONWireUnsupported
 		}
 		return true, c.text(id.String())
+	}
+
+	// Keep the exact closed receipt structural: its codec's plain alias uses
+	// these same fields. Count before any complete JSON document is allocated.
+	if typ.PkgPath() == "github.com/wangjohn/agent-archive/internal/archive" && typ.Name() == "NativeImport" {
+		if !batch.IsValid() {
+			return true, c.add(4)
+		}
+		validated := reflect.New(typ)
+		validated.Elem().Set(batch)
+		if err := validated.Interface().(interface{ Validate() error }).Validate(); err != nil {
+			return true, errors.Join(ErrJSONWireUnsupported, err)
+		}
+		bounded := jsonWireCounter{ctx: c.ctx, left: 16 * 1024}
+		if err := bounded.structure(batch, depth); err != nil {
+			return true, err
+		}
+		return true, c.add(16*1024 - bounded.left)
 	}
 
 	if v.CanInterface() {

@@ -78,12 +78,15 @@ func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]Dura
 		}
 		stamps[i].info = info
 	}
-	if cache.valid && cache.legacy == legacy && os.SameFile(cache.home, homeInfo) && sameDurableStamp(cache.stamps[0].info, stamps[0].info) && sameDurableStamp(cache.stamps[1].info, stamps[1].info) && sameDurableStamp(cache.stamps[2].info, stamps[2].info) {
+	if s.atomicWitness == nil && cache.valid && cache.legacy == legacy && os.SameFile(cache.home, homeInfo) && sameDurableStamp(cache.stamps[0].info, stamps[0].info) && sameDurableStamp(cache.stamps[1].info, stamps[1].info) && sameDurableStamp(cache.stamps[2].info, stamps[2].info) {
 		return append([]DurableStorageObligation(nil), cache.obligations...), cache.anonymous, cache.entries, home.Check()
 	}
-	cache.valid = false
-	cache.legacyTemps = false
+	if s.atomicWitness == nil {
+		cache.valid = false
+		cache.legacyTemps = false
+	}
 	cache.scans++
+	matchedWitness := false
 	remaining := durableEntryLimit
 	var out []DurableStorageObligation
 	anonymous := false
@@ -91,7 +94,7 @@ func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]Dura
 		if stamps[i].info == nil {
 			continue
 		}
-		entries, unknown, e := s.inspectPendingRoot(home, name, &remaining, legacy)
+		entries, unknown, e := s.inspectPendingRootWitnessed(home, name, &remaining, legacy, &matchedWitness)
 		if e != nil {
 			return out, true, durableEntryLimit - remaining, e
 		}
@@ -111,6 +114,15 @@ func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]Dura
 	if err := errors.Join(ctx.Err(), home.Check()); err != nil {
 		return out, true, durableEntryLimit - remaining, err
 	}
+	if s.atomicWitness != nil {
+		if !matchedWitness {
+			return out, true, durableEntryLimit - remaining, ErrDurableStorageRecovery
+		}
+		if err := s.atomicWitness.Check(home.Root); err != nil {
+			return out, true, durableEntryLimit - remaining, errors.Join(ErrDurableStorageRecovery, err)
+		}
+		return out, anonymous, durableEntryLimit - remaining, nil
+	}
 	cache.entries = durableEntryLimit - remaining
 	cache.legacy = legacy
 	cache.home = homeInfo
@@ -121,7 +133,12 @@ func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]Dura
 	return append([]DurableStorageObligation(nil), out...), anonymous, cache.entries, nil
 }
 
-func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remaining *int, legacy bool) (out []DurableStorageObligation, unknown bool, err error) {
+func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remaining *int, legacy bool) ([]DurableStorageObligation, bool, error) {
+	matched := false
+	return s.inspectPendingRootWitnessed(home, name, remaining, legacy, &matched)
+}
+
+func (s *Store) inspectPendingRootWitnessed(home *local.RootedHome, name string, remaining *int, legacy bool, matchedWitness *bool) (out []DurableStorageObligation, unknown bool, err error) {
 	root, err := privateDirectory(home.Root, name, false)
 	if err != nil {
 		return nil, true, err
@@ -153,7 +170,14 @@ func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remainin
 			if e != nil {
 				return out, true, e
 			}
-			if legacy && strings.HasPrefix(entry.Name(), ".pending-") {
+			matched, e := s.matchInspectionAtomicWitness(home, name, entry.Name(), info, matchedWitness)
+			if e != nil {
+				return out, true, e
+			}
+			if matched {
+				continue
+			}
+			if s.atomicWitness == nil && legacy && strings.HasPrefix(entry.Name(), ".pending-") {
 				s.durableInspection.legacyTemps = true
 			}
 			if legacy && info.Mode().IsRegular() && (acknowledgedLegacyQuarantine(entry.Name()) || strings.HasPrefix(entry.Name(), ".pending-") && info.ModTime().Before(time.Now().Add(-staleTempAge))) {
@@ -176,6 +200,20 @@ func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remainin
 		out = append(out, DurableStorageObligation{Namespace: namespace})
 	}
 	return out, unknown, nil
+}
+
+func (s *Store) matchInspectionAtomicWitness(home *local.RootedHome, name, entry string, info os.FileInfo, matchedWitness *bool) (bool, error) {
+	if s.atomicWitness == nil {
+		return false, nil
+	}
+	matched, err := s.atomicWitness.Match(home.Root, filepath.Join(name, entry), info)
+	if err != nil || matched && *matchedWitness {
+		return false, errors.Join(ErrDurableStorageRecovery, err)
+	}
+	if matched {
+		*matchedWitness = true
+	}
+	return matched, nil
 }
 
 func (s *Store) loadDurableInspectionConfig(home *local.RootedHome) (cfg config.Config, found bool, err error) {
@@ -253,6 +291,10 @@ func (s *Store) inspectHeldDurableReadRoots(home *local.RootedHome) (cfg config.
 	if anonymous || err != nil || !found && entries > 0 {
 		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
 	}
+	remaining := durableEntryLimit - entries
+	if err := inspectImportLocks(s.durableContext(), home, &remaining); err != nil {
+		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
+	}
 	return cfg, found, nil
 }
 
@@ -274,7 +316,7 @@ func acknowledgedLegacyQuarantine(name string) bool {
 // CheckDurableSessionRead refuses unknown session obligations before preview
 // opens a provider. It shares the root/config cache and bounded local probes.
 func (s *Store) CheckDurableSessionRead(id string) error {
-	return s.checkDurableSessionRead(id, nil)
+	return s.checkDurableSessionRead(id, nil, nil)
 }
 
 type publicationReadOwner struct {
@@ -286,10 +328,10 @@ type publicationReadOwner struct {
 // CheckPublicationSessionRead validates owned publication replay only. Generic
 // preview, naming and fresh native eligibility retain CheckDurableSessionRead.
 func (s *Store) CheckPublicationSessionRead(reg archive.SessionRegistration, machine, admission string) error {
-	return s.checkDurableSessionRead(reg.ArchiveSessionID, &publicationReadOwner{reg, machine, admission})
+	return s.checkDurableSessionRead(reg.ArchiveSessionID, &publicationReadOwner{reg, machine, admission}, nil)
 }
 
-func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner) (err error) {
+func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner, nativeImportACK *StagedSelection) (err error) {
 	if unsafeDurableSessionID(id) {
 		return ErrDurableStorageRecovery
 	}
@@ -339,7 +381,7 @@ func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner) 
 	}
 
 	if history || present || evidence {
-		if err := s.validateDurableReadPending(id, history, owner); err != nil {
+		if err := s.validateDurableReadPendingSelection(id, history, owner, nativeImportACK); err != nil {
 			return err
 		}
 	}
@@ -355,13 +397,19 @@ func publicationReadOwnerChanged(metadata archive.Metadata, reg archive.SessionR
 }
 
 func (s *Store) validateDurableReadPending(id string, history bool, owner *publicationReadOwner) error {
+	return s.validateDurableReadPendingSelection(id, history, owner, nil)
+}
+
+func (s *Store) validateDurableReadPendingSelection(id string, history bool, owner *publicationReadOwner, nativeImportACK *StagedSelection) error {
 	// This guard discards the validated transaction; its decoded inputs
 	// must not accumulate on the caller's existing ledger.
 	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
 	var pending PendingPublication
 	var readable bool
 	var readErr error
-	if owner != nil {
+	if nativeImportACK != nil {
+		pending, readable, readErr = scratch.loadNativeImportReadPending(id, nativeImportACK)
+	} else if owner != nil {
 		pending, readable, readErr = scratch.LoadPublicationPending(id)
 		if readErr == nil && readable && pending.JournalVersion == 5 {
 			var metadata archive.Metadata

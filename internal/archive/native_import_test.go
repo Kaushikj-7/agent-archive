@@ -9,17 +9,17 @@ import (
 )
 
 func nativeImportFixture() NativeImport {
-	return NativeImport{Contract: "muse-historical-import-v1", Confirmation: NativeImportConfirmation{BatchID: "2026-10-17-1", BatchInstance: strings.Repeat("a", 32), ScopeSHA256: strings.Repeat("b", 64), DestinationID: "destination", ProjectID: "project", RootFingerprint: strings.Repeat("c", 64), SelectedSource: NativeCheckpoint{Version: 1, Domain: "muse-ordinary", Algorithm: "sha256", Boundary: 1234, SHA256: strings.Repeat("d", 64)}}, Membership: NativeImportMembership{ReceiptID: strings.Repeat("e", 32), State: "attached", Effects: []string{"registration"}}}
+	return NativeImport{Contract: "muse-historical-import-v1", Confirmation: NativeImportConfirmation{BatchID: "2026-10-17-1", BatchInstance: strings.Repeat("a", 32), ScopeSHA256: strings.Repeat("b", 64), DestinationID: "destination", ProjectID: "project", RootFingerprint: strings.Repeat("c", 64), SelectedBindingSHA256: strings.Repeat("f", 64), SelectedSource: NativeCheckpoint{Version: 1, Domain: "muse-ordinary", Algorithm: "sha256", Boundary: 1234, SHA256: strings.Repeat("d", 64)}}, Membership: NativeImportMembership{ReceiptID: strings.Repeat("e", 32), State: "attached", Effects: []string{"registration"}}}
 }
 
 func TestNativeImportReceiptIdentitySurvivesDetachment(t *testing.T) {
 	t.Parallel()
 	value := nativeImportFixture()
-	identity, err := value.IdentityDigest()
+	identity, err := NativeImportIdentityDigest(&value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, state := range []string{"attached", "detached"} {
+	for _, state := range []NativeImportMembershipState{NativeImportAttached, NativeImportDetached} {
 		value.Membership.State = state
 		raw, err := json.Marshal(value)
 		if err != nil {
@@ -29,13 +29,13 @@ func TestNativeImportReceiptIdentitySurvivesDetachment(t *testing.T) {
 		if err := json.Unmarshal(raw, &decoded); err != nil {
 			t.Fatal(err)
 		}
-		got, err := decoded.IdentityDigest()
+		got, err := NativeImportIdentityDigest(&decoded)
 		if err != nil || got != identity || decoded.Membership.State != state {
 			t.Fatalf("receipt state %s: %s %v", state, got, err)
 		}
 	}
 	value.Membership.ReceiptID = strings.Repeat("f", 32)
-	got, err := value.IdentityDigest()
+	got, err := NativeImportIdentityDigest(&value)
 	if err != nil || got == identity {
 		t.Fatal("replacement receipt reused the old identity")
 	}
@@ -68,12 +68,13 @@ func TestNativeImportRefusesUnsupportedNestedAuthority(t *testing.T) {
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			value := nativeImportFixture()
-			before, _ := value.IdentityDigest()
+			before, _ := NativeImportIdentityDigest(&value)
 			if err := value.UnmarshalJSON(raw); !errors.Is(err, ErrUnsupportedNativeImport) {
 				t.Fatalf("unsupported receipt returned %v", err)
 			}
-			after, _ := value.IdentityDigest()
+			after, _ := NativeImportIdentityDigest(&value)
 			if before != after || value.Membership.State != "attached" {
 				t.Fatal("failed decode replaced current authority")
 			}
@@ -120,4 +121,47 @@ func FuzzNativeImportAuthority(f *testing.F) {
 			t.Fatal(err)
 		}
 	})
+}
+
+func TestNativeImportCodecAndDigestCompatibility(t *testing.T) {
+	t.Parallel()
+	value := nativeImportFixture()
+	// Frozen pre-repair field order and bytes, including the original digest domain.
+	const expectedWire = `{"contract":"muse-historical-import-v1","confirmation":{"batch_id":"2026-10-17-1","batch_instance":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","scope_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","destination_id":"destination","project_id":"project","root_fingerprint":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","selected_binding_sha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","selected_source":{"version":1,"domain":"muse-ordinary","algorithm":"sha256","boundary":1234,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}},"membership":{"receipt_id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","state":"attached","effects":["registration"]}}`
+	const expectedDigest = "81f76cf0e69b8d2a61864b532200784c2e5d01301e062c48af442a882f71cc89"
+	for _, input := range []any{value, &value} {
+		encoded, err := json.Marshal(input)
+		if err != nil || string(encoded) != expectedWire {
+			t.Fatalf("%T wire changed: %s %v", input, encoded, err)
+		}
+	}
+	got, err := NativeImportIdentityDigest(&value)
+	if err != nil || got != expectedDigest {
+		t.Fatalf("digest changed: %s %v", got, err)
+	}
+	value.Membership.State = NativeImportDetached
+	got, err = NativeImportIdentityDigest(&value)
+	if err != nil || got != expectedDigest {
+		t.Fatalf("detached digest changed: %s %v", got, err)
+	}
+	if !errors.Is(validateNativeImport(nil), ErrUnsupportedNativeImport) {
+		t.Fatal("nil receipt validated")
+	}
+	if _, err := NativeImportIdentityDigest(nil); !errors.Is(err, ErrUnsupportedNativeImport) {
+		t.Fatal("nil digest accepted", err)
+	}
+	var absent *NativeImport
+	encoded, err := json.Marshal(absent)
+	if err != nil || string(encoded) != "null" {
+		t.Fatal("nil codec changed", string(encoded), err)
+	}
+	value.Contract = "future"
+	for _, input := range []any{value, &value} {
+		if _, err := json.Marshal(input); !errors.Is(err, ErrUnsupportedNativeImport) {
+			t.Fatalf("%T future codec accepted: %v", input, err)
+		}
+	}
+	if _, err := NativeImportIdentityDigest(&value); !errors.Is(err, ErrUnsupportedNativeImport) {
+		t.Fatal("future digest accepted", err)
+	}
 }

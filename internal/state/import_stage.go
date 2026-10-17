@@ -249,6 +249,9 @@ func (s *Store) resumePreparedImport(ctx context.Context, stage ImportStage) err
 	if !cfg.ImportStagingProtection || !cfg.AcceptSession(reg) || cfg.DestinationID() != reg.DestinationID {
 		return nil
 	}
+	if reg.NativeImport != nil {
+		return s.resumeOwnedNativeImport(ctx, stage, reg, cfg)
+	}
 	var batch struct {
 		ID            string     `json:"id"`
 		DestinationID string     `json:"destination_id"`
@@ -316,6 +319,10 @@ func (s *Store) admitPreparedImport(ctx context.Context, stage ImportStage, reg 
 
 // Validate checks the bounded journal digest, identity and selected source set.
 func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistration) error {
+	if p.invalidNativeImportShape(reg) {
+		return ErrReadySelectionFrozen
+	}
+
 	if p.TypedSelection {
 		if len(p.Children) > 64 {
 			return ErrDurableStorageCapacity
@@ -348,6 +355,10 @@ func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistrati
 		return err
 	}
 	return p.validateOwner(reg)
+}
+
+func (p ImportStage) invalidNativeImportShape(reg archive.SessionRegistration) bool {
+	return reg.NativeImport != nil && (reg.ValidateNativeImport() != nil || !p.TypedSelection || p.Version != 2 || len(p.Preserved) != 0 || len(p.Children) != 0 || p.Bundle.History != nil)
 }
 
 func (p ImportStage) validateOwner(reg archive.SessionRegistration) error {
@@ -913,7 +924,7 @@ func (s *Store) preparedImportChildren(ctx context.Context, stage ImportStage) (
 func sameImportStageOwner(staged, current archive.SessionRegistration) bool {
 	return staged.ArchiveSessionID == current.ArchiveSessionID && staged.NativeSessionID == current.NativeSessionID &&
 		staged.Harness.Name == current.Harness.Name && staged.ProjectID == current.ProjectID && staged.ProjectRoot == current.ProjectRoot &&
-		sameHistoricalProjectProof(staged, current) && sameImportParentProof(staged, current) &&
+		sameHistoricalProjectProof(staged, current) && sameNativeImportReceipt(staged.NativeImport, current.NativeImport) && sameImportParentProof(staged, current) &&
 		sameNativeImportBinding(staged.NativeBinding, current.NativeBinding) && staged.DestinationID == current.DestinationID && staged.InBatch(current.ImportBatch.Recorded())
 }
 
@@ -1045,6 +1056,16 @@ func (s *Store) classifyReleasedImportOwner(ctx context.Context, id string, rece
 	q := receipt.Selection
 	if reg.Validate() != nil || reg.ArchiveSessionID != id || reg.Origin != archive.SessionOriginImport || reg.ImportBatch.Recorded() == "" || reg.StagedImportSHA256 != q.StageSHA256 || reg.DestinationID != q.Core.DestinationID {
 		return reg, ErrReadySelectionFrozen
+	}
+	if err := validateNativeImportSelectionAuthority(reg, q.Core); err != nil {
+		return reg, err
+	}
+	if reg.NativeImport != nil && reg.NativeImport.Membership.State == "detached" {
+		original, err := s.nativeImportReleasedSelection(ctx, reg)
+		if err != nil || !sameStagedSelection(original, q) {
+			return reg, errors.Join(ErrReadySelectionFrozen, err)
+		}
+		return reg, nil
 	}
 	digest, err := s.readyDigest(ctx, reg)
 	if err != nil || digest != q.Core.AdmissionContext {

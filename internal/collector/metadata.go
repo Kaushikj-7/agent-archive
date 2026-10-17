@@ -131,7 +131,7 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 		return outcomeSkipped, false, err
 	}
 	pending := state.PendingPublication{ImportExpectedMetadataSHA256: func() string {
-		if s.reg.StagedImportSHA256 != "" {
+		if s.importStageActive() {
 			return metadataSHA(last.encoded)
 		}
 		return ""
@@ -279,7 +279,7 @@ type refreshSource struct {
 // (rotated, oversize, unsafe) reports no change: regeneration is then the
 // only way the summary can move.
 func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) bool {
-	if s.reg.CaptureFrozen || s.reg.HistoricalProject != nil {
+	if s.reg.RetainedOnly() {
 		return false
 	}
 	source, ok := newSourceReader(s.reg, s.opts)

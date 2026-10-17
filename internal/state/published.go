@@ -19,6 +19,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // CacheStatus distinguishes why a bundle sits in the local published cache,
@@ -486,7 +487,9 @@ func (s *Store) loadPublishedStateContext(ctx context.Context, archiveSessionID 
 	return p, nil
 }
 
-func (p *Published) write(next publishedState) error {
+func (p *Published) write(next publishedState) error { return p.writeWithStaged(next, nil) }
+
+func (p *Published) writeWithStaged(next publishedState, staged *PendingPublication) error {
 	if err := p.preserveStagedPublished(p.store.durableContext(), &next); err != nil {
 		return err
 	}
@@ -524,8 +527,16 @@ func (p *Published) write(next publishedState) error {
 					return e
 				}
 			}
+			var guard func(*local.AtomicWriteWitness, func() error) error
+			if next.Bundle.Capture.Harness.Name == "muse" && next.Commit != nil {
+				var e error
+				guard, e = p.store.nativeImportPublicationCommit(p.store.durableContext(), p.id, nativeImportPublicationTarget{Admission: next.Commit.AdmissionContext, Destination: next.Commit.DestinationID, Policy: next.Commit.PolicyContext, Adapter: next.Bundle.Capture.AdapterVersion, Predecessor: next.Commit.PredecessorSHA256, Metadata: next.Commit.MetadataSHA256, Preparation: next.Commit.PreparationSHA256})
+				if e != nil {
+					return e
+				}
+			}
 			path := filepath.Join("published", p.id+".json")
-			sum, n, e := p.store.writeDurableGuardDigest(p.store.durableContext(), storage, path, next)
+			sum, n, e := p.store.writeDurableGuardDigestChecked(p.store.durableContext(), storage, path, next, guard)
 			if e != nil {
 				return e
 			}
@@ -543,6 +554,14 @@ func (p *Published) write(next publishedState) error {
 			}
 			return nil
 		})
+	} else if nativeImportTypedPublished(next) {
+		guard, err := p.store.nativeImportStagedCommit(p.store.durableContext(), p.id, staged, &next)
+		if err != nil {
+			return err
+		}
+		writeErr = config.WithDurableStorage(p.store.home, func(g config.DurableStorageGuard) error {
+			return p.store.writeDurableGuardWitnessed(p.store.durableContext(), g, filepath.Join("published", p.id+".json"), next, guard)
+		})
 	} else {
 		writeErr = p.store.writeCompact(p.store.publishedPath(p.id), next)
 	}
@@ -559,6 +578,10 @@ func (p *Published) write(next publishedState) error {
 		p.store.cacheSavedSummary(p.id, summary, savedDigest)
 	}
 	return nil
+}
+
+func nativeImportTypedPublished(next publishedState) bool {
+	return next.PublicationVersion == 3 && next.LastPublished != nil && next.LastPublished.StagedProof() != nil && next.LastPublished.StagedProof().Core.NativeImportAuthority != ""
 }
 
 // Found reports whether anything has been saved for the session.
