@@ -189,6 +189,9 @@ func (h *ConfirmedNativeImportBatch) finishCloseLocked() func() {
 	}
 	closeRead := h.closeRead
 	h.closeRead = nil
+	h.control = archive.NativeImportBatchControl{}
+	h.identity = ""
+	h.read = nil
 	return closeRead
 }
 

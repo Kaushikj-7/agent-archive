@@ -98,7 +98,13 @@ func TestNativeImportConfirmationHandleLifetimeAndStoreBinding(t *testing.T) {
 	if budget.Available() == 8<<20 {
 		t.Fatal("in-flight borrowed input released early")
 	}
+	if h.control.NativeImport == nil || h.read == nil {
+		t.Fatal("in-flight input cleared early")
+	}
 	release()
+	if h.control.NativeImport != nil || h.identity != "" || h.read != nil {
+		t.Fatal("closed handle retained uncharged input")
+	}
 	release()
 	if err := h.Close(); err != nil {
 		t.Fatal(err)
