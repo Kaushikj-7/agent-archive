@@ -182,6 +182,7 @@ func TestNativeImportTypedACKReleaseRetainedParserAndRestart(t *testing.T) {
 	if _, found, err := f.store.LoadImportStage(t.Context(), f.reg); err != nil || !found {
 		t.Fatal("interrupted release lost selected payload", err)
 	}
+	assertInterruptedNativeImportLocalRead(t, f)
 	f.remote.failRelease = false
 	result, err = Run(t.Context(), f.store, f.remote, f.opts)
 	closeStagedControlResult(result)
@@ -282,5 +283,67 @@ func TestNativeImportReleasedPrivacySuccessorUsesOnlyRetainedSource(t *testing.T
 	closeStagedControlResult(result)
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatal("privacy successor restart", err, result.Errors)
+	}
+}
+
+func assertInterruptedNativeImportLocalRead(t *testing.T, f historicalNativeStage) {
+	t.Helper()
+	// The fixture removed native input before its first publication, and its
+	// Sources lookup fails the test if any provider OpenPass is attempted.
+	for range 2 {
+		bundle, err := ReadLocalBundle(t.Context(), f.store.Home(), f.reg, f.at.Add(time.Hour), "", f.opts.Sources)
+		if err != nil {
+			t.Fatal("typed ACK local read before release retry", err)
+		}
+		if bundle.ArchiveSessionID != f.reg.ArchiveSessionID || bundle.NativeSessionID != f.reg.NativeSessionID || !bundle.Capture.CapturedAt.Equal(f.at) {
+			t.Fatal("interrupted ACK local read changed retained identity")
+		}
+	}
+	published, err := f.store.LoadPublishedState(f.reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := published.ValidateNativeImportAuthority(f.reg); err == nil {
+		t.Fatal("local-read exception granted released publication authority")
+	}
+	// Exact persisted ACK reads retain their authority when the configured
+	// native root disappears. Stage decoding still checks the strong flags.
+	cfg, _, err := config.Load(f.store.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.NativeRoots = nil
+	if err := config.Save(f.store.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadLocalBundle(t.Context(), f.store.Home(), f.reg, f.at, "", f.opts.Sources); err != nil {
+		t.Fatal("ACK local read required removed native root", err)
+	}
+	changed := f.reg
+	receipt := *changed.NativeImport
+	receipt.Membership.ReceiptID = strings.Repeat("9", 32)
+	changed.NativeImport = &receipt
+	if _, err := ReadLocalBundle(t.Context(), f.store.Home(), changed, f.at, "", f.opts.Sources); err == nil {
+		t.Fatal("typed ACK excused another receipt")
+	}
+	stagePath := filepath.Join(f.store.Home(), "sessions", f.reg.ArchiveSessionID, "import-stage", "stage.json")
+	raw, err := os.ReadFile(stagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stagePath, []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadLocalBundle(t.Context(), f.store.Home(), f.reg, f.at, "", f.opts.Sources); err == nil {
+		t.Fatal("typed ACK excused corrupt held stage")
+	}
+	if err := os.Remove(stagePath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadLocalBundle(t.Context(), f.store.Home(), f.reg, f.at, "", f.opts.Sources); err == nil {
+		t.Fatal("typed ACK excused missing held stage without released lineage")
+	}
+	if err := os.WriteFile(stagePath, raw, 0600); err != nil {
+		t.Fatal(err)
 	}
 }

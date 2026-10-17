@@ -50,6 +50,43 @@ func (p *Published) NativeImportStageActive(reg archive.SessionRegistration) (bo
 	return false, p.ValidateNativeImportAuthority(reg)
 }
 
+// ValidateNativeImportReadAuthority accepts only the exact initial typed ACK
+// with its matching durable stage, or the verified released selecting lineage.
+// It grants no publication, maintenance, native-source or cleanup permission.
+func (p *Published) ValidateNativeImportReadAuthority(reg archive.SessionRegistration) error {
+	if p == nil || p.store == nil || p.id != reg.ArchiveSessionID || reg.ValidateNativeImport() != nil {
+		return ErrDurableStorageRecovery
+	}
+	if !p.TypedStagedPublished() {
+		return p.ValidateNativeImportAuthority(reg)
+	}
+	ctx := p.store.durableContext()
+	lifecycle, err := p.store.loadStagedReleaseState(ctx, p.id)
+	if err != nil {
+		return err
+	}
+	if lifecycle.released {
+		return p.ValidateNativeImportAuthority(reg)
+	}
+	q := p.state.LastPublished.StagedProof()
+	if p.state.PublicationVersion != 3 || q.Version != 3 || lifecycle.selection == nil || !sameStagedSelection(*q, *lifecycle.selection) {
+		return ErrDurableStorageRecovery
+	}
+	stage, found, err := p.store.LoadImportStage(ctx, reg)
+	if err != nil || !found || stage.Version != 2 || !stage.TypedSelection || stage.SHA256 != q.StageSHA256 {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	owner, err := p.store.readyDigest(ctx, reg)
+	if err != nil || owner != q.Core.AdmissionContext {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	bundle, err := p.store.readyDigest(ctx, stage.Bundle)
+	if err != nil || bundle != q.Core.BundleSHA256 {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	return nil
+}
+
 // ValidateNativeImportAuthority is read-only: a receipt never substitutes for
 // an acknowledged selecting publication and its exact original release proof.
 func (p *Published) ValidateNativeImportAuthority(reg archive.SessionRegistration) error {

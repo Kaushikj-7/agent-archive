@@ -46,7 +46,7 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 		return archive.SourceBundle{}, publishedErr
 	}
 	if reg.NativeImport != nil && publishedErr == nil && published.Summary().Published {
-		if err := published.ValidateNativeImportAuthority(reg); err != nil {
+		if err := published.ValidateNativeImportReadAuthority(reg); err != nil {
 			return archive.SourceBundle{}, err
 		}
 	}
