@@ -405,6 +405,14 @@ Example: agent-archive uninstall
 `,
 	"list": `Usage: agent-archive list [WORDS] [options]
 
+With --source local, find bounded native sessions before setup without opening
+storage or changing archive state. Use --harness muse for Muse Code. Only the
+first 50 bounded previews are searched; incomplete discovery and unavailable
+labels are reported. --project needs an existing checkout directory; use
+--all-projects to broaden the scope. Local output is a separate read-only view.
+Archive is the default source; the following options describe archive reads.
+  --source archive|local Archive metadata (default) or bounded native reads
+
 Find sessions using metadata; does not download conversation content.
 With WORDS (quote them: one argument), list only the sessions they match.
 Every word must appear, in any case, in some field of a session: its name,
@@ -522,6 +530,16 @@ On a terminal, the summary and transcript are paged; in the default less,
 scroll with the mouse wheel, arrows, or space, search with /, and quit with
 q. Nothing is asked when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside
 coding agents: give a SESSION_ID.
+  --source archive|local Select archive (default) or read-only native sessions
+                        before setup; local reads validate the entire selected
+                        source and never enable archiving or write archive state
+  --project DIRECTORY  With --source local, search an existing checkout
+  --all-projects       With --source local, search every native checkout
+                        Example: show NATIVE_ID --source local --harness muse
+                        Local reads have bounded discovery; archive revisions
+                        and stored metadata are unavailable. Local JSON is a
+                        separate view; --transcript includes its conversation.
+                        No full-transcript artifact is saved for local reads.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --revisions           List active and preserved native revision IDs, capture

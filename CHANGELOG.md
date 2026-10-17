@@ -12,6 +12,11 @@ follow [Semantic Versioning](https://semver.org/).
   replay marker so the new conversation is not mistaken for a replay. Native
   Muse replay forwarding remains unqualified.
 
+- `list --source local` and `show --source local` inspect bounded native sessions
+  before setup, including qualified Muse roots with `--harness muse`. Selected
+  sources receive complete privacy validation. These reads do not open storage,
+  enable capture or write archive state; partial discovery remains explicit.
+
 - Prepare guarded capture of newly started Muse sessions, with explicit home,
   project and capture-window checks before ownership. Public setup remains
   disabled pending native acceptance; existing Muse local reading is unchanged.

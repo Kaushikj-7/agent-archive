@@ -436,8 +436,18 @@ Muse child facts map to existing `SessionRegistration` fields:
 | Stream identity, original creation, root revision and locator | `NativeSourceBinding`, persisted as the new `native_binding` |
 | Delegated, workflow or observer role, and child coverage | No field yet; add versioned role and coverage fields only if existing outputs cannot represent them, and never as a consent shortcut |
 
-`native_binding` is the only new registration field; `codex_binding` keeps its
-current shape and Codex keeps writing it. Today `validateNativeChild` rejects
+`native_binding` preserves native identity and source continuity. Live root
+admission additionally carries the independent closed `native_admission` proof.
+Explicit historical imports instead carry `native_import`, contract
+`muse-historical-import-v1`: one creating-batch receipt for the confirmed durable
+batch instance, resolved scope and exact selected source checkpoint. Its singular
+membership is attached or detached; duplicate batches cannot claim an existing
+owner. Confirmation is historical authority only and cannot manufacture a live
+window. Exact receipt CAS undo detaches only batch-owned effects and preserves
+independent ownership, frozen publication, retained evidence and native files.
+Configuration and both recovery-journal forms preserve the sticky exact import
+capability described in [versions](../maintainers/versions.md). `codex_binding`
+keeps its current shape and Codex keeps writing it. Today `validateNativeChild` rejects
 `NativeChild` on any agent but Codex; relaxing it belongs with qualified child
 admission. Validation alone does not protect every old mutation or maintenance
 entrypoint: registration loads do not validate. An older JSON writer can drop
