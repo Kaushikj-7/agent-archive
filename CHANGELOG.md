@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Pending Muse inventory queries recover when an unfinished date directory is
+  removed or renamed between passes, while retaining complete uniqueness checks.
+
 - Codex multi-agent subagents are named after the task their parent gave them
   (`/root/fix_upload_retry` reads "fix upload retry") instead of showing only
   their session ID. Their task text is encrypted, so they have no prompt to
