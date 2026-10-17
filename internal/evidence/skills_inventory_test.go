@@ -186,6 +186,36 @@ func TestInstalledSkillsRefuseChangedUnconfinedAndOversizedFiles(t *testing.T) {
 			if bytes.Contains(raw, []byte("FOREIGN_SENTINEL")) {
 				t.Fatal("foreign data retained")
 			}
+			if name == "body-budget" {
+				if budget.remaining != 0 || bytes.Contains(raw, []byte(`"sha256"`)) {
+					t.Fatal("exhausted body allowance produced hashes or replenished bytes")
+				}
+				found := 0
+				for _, item := range got {
+					if item.Payload["scope"] != "muse-plugin:synthetic" {
+						continue
+					}
+					found++
+					if item.Payload["inventory_complete"] != true || item.Payload["snapshot_omitted_count"] != float64(2) {
+						t.Fatal("enumerated installation/snapshot omission distinction lost")
+					}
+					skills, ok := item.Payload["skills"].([]any)
+					if !ok || len(skills) != 2 {
+						t.Fatal("budget omitted installed declaration names")
+					}
+					for index, value := range skills {
+						entry, ok := value.(map[string]any)
+						id := []string{"first", "second"}[index]
+						if !ok || len(entry) != 2 || entry["id"] != id || entry["name"] != id {
+							t.Fatal("budget changed enumerated IDs or retained unobserved hashes")
+						}
+					}
+				}
+				if found != 1 {
+					t.Fatal("missing exact installed package inventory")
+				}
+				return
+			}
 			gap := false
 			for _, item := range got {
 				if item.Payload["inventory_complete"] == false {
