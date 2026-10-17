@@ -9,7 +9,7 @@ import (
 )
 
 func nativeImportFixture() NativeImport {
-	return NativeImport{Contract: "muse-historical-import-v1", Confirmation: NativeImportConfirmation{BatchID: "2026-10-17-1", BatchInstance: strings.Repeat("a", 32), ScopeSHA256: strings.Repeat("b", 64), DestinationID: "destination", ProjectID: "project", RootFingerprint: strings.Repeat("c", 64), SelectedBindingSHA256: strings.Repeat("f", 64), SelectedSource: NativeCheckpoint{Version: 1, Domain: "muse-ordinary", Algorithm: "sha256", Boundary: 1234, SHA256: strings.Repeat("d", 64)}}, Membership: NativeImportMembership{ReceiptID: strings.Repeat("e", 32), State: "attached", Effects: []string{"registration"}}}
+	return NativeImport{Contract: "muse-historical-import-v1", Confirmation: NativeImportConfirmation{BatchID: "2026-10-17-1", BatchInstance: strings.Repeat("a", 32), ScopeSHA256: strings.Repeat("b", 64), DestinationID: "destination", ProjectID: "project", RootFingerprint: strings.Repeat("c", 64), SelectedBindingSHA256: strings.Repeat("f", 64), SelectedSource: NativeCheckpoint{Version: 1, Domain: "muse-ordinary", Algorithm: "sha256", Boundary: 1234, SHA256: strings.Repeat("d", 64)}}, Membership: NativeImportMembership{ReceiptID: strings.Repeat("e", 32), State: NativeImportAttached, Effects: []string{"registration"}}}
 }
 
 func TestNativeImportReceiptIdentitySurvivesDetachment(t *testing.T) {
@@ -75,7 +75,7 @@ func TestNativeImportRefusesUnsupportedNestedAuthority(t *testing.T) {
 				t.Fatalf("unsupported receipt returned %v", err)
 			}
 			after, _ := NativeImportIdentityDigest(&value)
-			if before != after || value.Membership.State != "attached" {
+			if before != after || value.Membership.State != NativeImportAttached {
 				t.Fatal("failed decode replaced current authority")
 			}
 		})

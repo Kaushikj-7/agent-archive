@@ -18,7 +18,7 @@ func confirmedNativeBatchFixture(t *testing.T) Batch {
 	t.Helper()
 	at := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 	b := Batch{ID: "2026-10-17-1", StartedAt: at, DestinationID: "destination", Filters: BatchFilters{Harnesses: []string{"muse"}, ProjectIDs: []string{}}}
-	scope := archive.NativeImportBatchScope{BatchID: b.ID, StartedAtUTC: at.Format(time.RFC3339Nano), DestinationID: b.DestinationID, Filters: archive.ImportBatchFilters(b.Filters), ProjectIDs: []string{"project"}, Selected: []archive.NativeImportBatchSelection{{Kind: "ordinary-root", NativeID: "session", OriginalTUTC: at.Add(-time.Hour).Format(time.RFC3339Nano), ProjectID: "project", RootFingerprint: strings.Repeat("a", 64), RootRevision: "one", BindingSHA256: strings.Repeat("b", 64), Source: archive.NativeCheckpoint{Version: 1, Domain: "muse-ordinary", Algorithm: "sha256", Boundary: 1234, SHA256: strings.Repeat("d", 64)}}}}
+	scope := archive.NativeImportBatchScope{BatchID: b.ID, StartedAtUTC: at.Format(time.RFC3339Nano), DestinationID: b.DestinationID, Filters: archive.ImportBatchFilters(b.Filters), ProjectIDs: []string{"project"}, Selected: []archive.NativeImportBatchSelection{{Kind: archive.NativeImportOrdinaryRoot, NativeID: "session", OriginalTUTC: at.Add(-time.Hour).Format(time.RFC3339Nano), ProjectID: "project", RootFingerprint: strings.Repeat("a", 64), RootRevision: "one", BindingSHA256: strings.Repeat("b", 64), Source: archive.NativeCheckpoint{Version: 1, Domain: "muse-ordinary", Algorithm: "sha256", Boundary: 1234, SHA256: strings.Repeat("d", 64)}}}}
 	digest, err := archive.NativeImportBatchScopeDigest(t.Context(), scope)
 	if err != nil {
 		t.Fatal(err)

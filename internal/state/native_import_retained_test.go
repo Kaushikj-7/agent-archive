@@ -235,7 +235,7 @@ func TestNativeImportReleasedDetachIgnoresRemovedRootAndPreservesIndependentRequ
 	}
 	// Arrange only the supported closed membership transition; production undo
 	// authority remains a separate port, not this fixture's local write.
-	reg.NativeImport.Membership.State = "detached"
+	reg.NativeImport.Membership.State = archive.NativeImportDetached
 	if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
 		t.Fatal(err)
 	}

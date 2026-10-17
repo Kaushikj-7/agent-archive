@@ -39,7 +39,7 @@ func TestNativeImportRegistrationPreservesRetainedProofAfterStageCleanupAndDetac
 		if err := json.Unmarshal(raw, &got); err != nil {
 			t.Fatal(err)
 		}
-		if !got.RetainedOnly() || got.InBatch(reg.ImportBatch.Recorded()) != (state == "attached") || got.CaptureFrozen || got.ValidateNativeImport() != nil {
+		if !got.RetainedOnly() || got.InBatch(reg.ImportBatch.Recorded()) != (state == NativeImportAttached) || got.CaptureFrozen || got.ValidateNativeImport() != nil {
 			t.Fatal("stage cleanup/detach changed original retained proof")
 		}
 	}

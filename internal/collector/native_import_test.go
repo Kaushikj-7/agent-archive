@@ -29,7 +29,7 @@ func historicalNativeRegistration(t *testing.T) archive.SessionRegistration {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt := &archive.NativeImport{Contract: "muse-historical-import-v1", Confirmation: archive.NativeImportConfirmation{BatchID: "2026-10-17-1", BatchInstance: strings.Repeat("b", 32), ScopeSHA256: strings.Repeat("c", 64), DestinationID: "destination", ProjectID: "project", RootFingerprint: strings.Repeat("d", 64), SelectedBindingSHA256: digest, SelectedSource: cp}, Membership: archive.NativeImportMembership{ReceiptID: strings.Repeat("e", 32), State: "attached", Effects: []string{"registration"}}}
+	receipt := &archive.NativeImport{Contract: "muse-historical-import-v1", Confirmation: archive.NativeImportConfirmation{BatchID: "2026-10-17-1", BatchInstance: strings.Repeat("b", 32), ScopeSHA256: strings.Repeat("c", 64), DestinationID: "destination", ProjectID: "project", RootFingerprint: strings.Repeat("d", 64), SelectedBindingSHA256: digest, SelectedSource: cp}, Membership: archive.NativeImportMembership{ReceiptID: strings.Repeat("e", 32), State: archive.NativeImportAttached, Effects: []string{"registration"}}}
 	reg := archive.SessionRegistration{NativeImport: receipt, NativeBinding: b, ArchiveSessionID: strings.Repeat("1", 32), NativeSessionID: b.NativeID, ProjectID: "project", ProjectRoot: "/work", DestinationID: "destination", Harness: archive.Harness{Name: "muse"}, TranscriptPath: b.Path, SessionStartedAt: at, AdmittedAt: at.Add(time.Hour), RegisteredAt: at.Add(time.Hour), Origin: archive.SessionOriginImport, ImportBatch: archive.NewImportBatch(receipt.Confirmation.BatchID)}
 	if err := reg.Validate(); err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestNativeImportPublicationContextRetainsImmutableReceiptAcrossUndo(t *test
 	reg := historicalNativeRegistration(t)
 	scan := sessionScan{reg: reg}
 	original := scan.publicationAdmission()
-	scan.reg.NativeImport.Membership.State = "detached"
+	scan.reg.NativeImport.Membership.State = archive.NativeImportDetached
 	scan.reg.StagedImportSHA256 = ""
 	if scan.publicationAdmission() != original {
 		t.Fatal("undo/stage cleanup changed selecting publication lineage")

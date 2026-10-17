@@ -90,7 +90,7 @@ func (b NativeImportBatchControl) MatchesRegistration(ctx context.Context, reg S
 	if err := b.Validate(ctx); err != nil {
 		return err
 	}
-	if reg.ValidateNativeImport() != nil || reg.NativeImport.Membership.State != "attached" || b.UndoneAt != nil {
+	if reg.ValidateNativeImport() != nil || reg.NativeImport.Membership.State != NativeImportAttached || b.UndoneAt != nil {
 		return ErrUnsupportedNativeImport
 	}
 	c := reg.NativeImport.Confirmation

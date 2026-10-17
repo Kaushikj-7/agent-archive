@@ -14,7 +14,7 @@ import (
 
 func nativeImportBatchFixture(t *testing.T) NativeImportBatchConfirmation {
 	t.Helper()
-	scope := NativeImportBatchScope{BatchID: "2026-10-17-1", StartedAtUTC: "2026-10-17T12:00:00Z", DestinationID: "destination", Filters: ImportBatchFilters{Harnesses: []string{"muse"}, ProjectIDs: []string{}}, ProjectIDs: []string{"project"}, Selected: []NativeImportBatchSelection{{Kind: "ordinary-root", NativeID: "session", OriginalTUTC: "2026-10-16T12:00:00Z", ProjectID: "project", RootFingerprint: strings.Repeat("a", 64), RootRevision: "one", BindingSHA256: strings.Repeat("b", 64), Source: nativeImportFixture().Confirmation.SelectedSource}}}
+	scope := NativeImportBatchScope{BatchID: "2026-10-17-1", StartedAtUTC: "2026-10-17T12:00:00Z", DestinationID: "destination", Filters: ImportBatchFilters{Harnesses: []string{"muse"}, ProjectIDs: []string{}}, ProjectIDs: []string{"project"}, Selected: []NativeImportBatchSelection{{Kind: NativeImportOrdinaryRoot, NativeID: "session", OriginalTUTC: "2026-10-16T12:00:00Z", ProjectID: "project", RootFingerprint: strings.Repeat("a", 64), RootRevision: "one", BindingSHA256: strings.Repeat("b", 64), Source: nativeImportFixture().Confirmation.SelectedSource}}}
 	digest, err := NativeImportBatchScopeDigest(t.Context(), scope)
 	if err != nil {
 		t.Fatal(err)

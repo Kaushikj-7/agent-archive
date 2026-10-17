@@ -456,7 +456,7 @@ func (p *Published) validateStagedPublished(ctx context.Context, next *published
 			return err
 		}
 	}
-	if reg.NativeImport != nil && reg.NativeImport.Membership.State == "detached" {
+	if reg.NativeImport != nil && reg.NativeImport.Membership.State == archive.NativeImportDetached {
 		original, err := p.store.nativeImportReleasedSelection(ctx, reg)
 		if err != nil || !sameStagedSelection(original, *q) {
 			return errors.Join(ErrDurableStorageRecovery, err)
