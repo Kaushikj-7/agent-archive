@@ -106,7 +106,7 @@ func (p *pass) admitStartupCandidate(candidate startupCandidate) (err error) {
 		if err != nil {
 			return err
 		}
-		if found && reg.NativeAdmission != nil && *reg.NativeAdmission == *candidate.intent.NativeAdmission && reg.NativeBinding != nil && reg.NativeBinding.Version == 2 && reg.NativeBinding.Validate() == nil && !candidate.intent.ObservedAt.Before(reg.NativeBinding.NativeCreatedAt) {
+		if found && startupOwnerMatches(cfg, id, reg, candidate) {
 			return p.ackStartupCandidate(candidate)
 		}
 		return errors.New("muse startup conflicts with existing owner")
@@ -172,6 +172,19 @@ func (p *pass) admitStartupCandidate(candidate startupCandidate) (err error) {
 	defer func() { p.opts.preparedStartup = nil }()
 	p.scan(p.ctx, reg)
 	return nil
+}
+
+// A duplicate startup may have a later hook timestamp or another cwd within the
+// same project. It may retire only its observation; the durable owner remains
+// authoritative and no continuation effects are synthesized here.
+func startupOwnerMatches(cfg config.Config, id string, reg archive.SessionRegistration, candidate startupCandidate) bool {
+	i, b := candidate.intent, reg.NativeBinding
+	if reg.Validate() != nil || reg.ArchiveSessionID != id || reg.Harness.Name != "muse" || reg.NativeSessionID != i.NativeSessionID || reg.NativeAdmission == nil || i.NativeAdmission == nil || *reg.NativeAdmission != *i.NativeAdmission || b == nil || b.Version != 2 || b.Agent != "muse" || b.NativeID != i.NativeSessionID || b.RootRevision != candidate.root.Revision || reg.ProjectRoot != i.ProjectRoot || reg.ProjectID != candidate.projectID || reg.DestinationID != i.DestinationID || i.ObservedAt.Before(b.NativeCreatedAt) {
+		return false
+	}
+	observed, observedOK := capture.ConfiguredProjectActivationFor(cfg, i.ObservedCwd)
+	native, nativeOK := capture.ConfiguredProjectActivationFor(cfg, b.Cwd)
+	return observedOK && nativeOK && observed.Included && native.Included && observed.Root == reg.ProjectRoot && native.Root == reg.ProjectRoot && observed.ProjectID == reg.ProjectID && native.ProjectID == reg.ProjectID && !native.ActivatedAt.IsZero() && !b.NativeCreatedAt.Before(native.ActivatedAt)
 }
 
 func (p *pass) ackStartupCandidate(candidate startupCandidate) error {

@@ -1173,7 +1173,11 @@ func (p *pass) recordInitialErrors(generation, recovery, replay error) {
 	if recovery != nil {
 		p.result.Errors["session-index"] = recovery
 	}
-	if replay != nil {
+	// Pure pass interruption leaves queued work pending. Joined local failures
+	// must still reach diagnostics even when they also wrap cancellation.
+	_, joined := replay.(interface{ Unwrap() []error })
+	interrupted := !joined && errors.Unwrap(replay) == nil && (errors.Is(replay, context.Canceled) || errors.Is(replay, context.DeadlineExceeded))
+	if replay != nil && !interrupted {
 		p.result.Errors["admission-intents"] = replay
 	}
 }

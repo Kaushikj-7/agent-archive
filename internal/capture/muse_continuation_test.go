@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -161,5 +162,71 @@ func TestMuseIntentExpiryCancellationPreservesQueue(t *testing.T) {
 	after, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("canceled expiry mutated queue", err)
+	}
+}
+
+func TestMuseAmbiguousNestedIntentsStayPendingAcrossQueueOperations(t *testing.T) {
+	t.Parallel()
+	for _, mutation := range []struct {
+		name   string
+		before string
+		after  string
+	}{
+		{"effect_duplicate", `"Event":{`, `"Event":{},"Event":{`},
+		{"effect_alias", `"Event":{`, `"event":{},"Event":{`},
+		{"event_conflict", `"Kind":4`, `"Kind":255,"Kind":4`},
+		{"event_alias", `"Kind":4`, `"kind":255,"Kind":4`},
+		{"session_conflict", `"Agent":"muse"`, `"Agent":"future","Agent":"muse"`},
+		{"session_alias", `"NativeID":"opaque-root"`, `"nativeid":"future","NativeID":"opaque-root"`},
+		{"source_duplicate", `"Source":{"Kind":""`, `"Source":{"Kind":"future","Kind":""`},
+		{"source_alias", `"Source":{"Kind":""`, `"Source":{"kind":"future","Kind":""`},
+		{"start_duplicate", `"Start":{"Kind":0`, `"Start":{"Kind":255,"Kind":0`},
+		{"start_alias", `"Start":{"Kind":0`, `"Start":{"kind":255,"Kind":0`},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			t.Parallel()
+			home, project := t.TempDir(), t.TempDir()
+			now := time.Now().UTC()
+			setUpTestConfig(t, home, project, now.Add(-48*time.Hour))
+			intent := museContinuationIntentFixture()
+			intent.ObservedAt = now.Add(-25 * time.Hour)
+			original, err := json.Marshal(intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := bytes.Replace(original, []byte(mutation.before), []byte(mutation.after), 1)
+			if bytes.Equal(raw, original) {
+				t.Fatal("mutation did not match fixture")
+			}
+			path := filepath.Join(admissionIntentDir(home), "ambiguous.json")
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			for _, operation := range []struct {
+				name string
+				run  func() error
+			}{
+				{"replay", func() error { return ReplayAdmissionIntentsWithin(t.Context(), home, now) }},
+				{"expiry", func() error {
+					return replayMuseOwnerIntents(t.Context(), home, now, func(effectName) error { t.Fatal("unsupported effect executed"); return nil })
+				}},
+				{"clear", func() error { return ClearAdmissionIntents(home) }},
+				{"prune", func() error { return PruneAdmissionIntents(home, config.Config{}) }},
+			} {
+				if err := os.WriteFile(path, raw, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := operation.run(); err != nil && operation.name != "replay" {
+					t.Fatal(operation.name, err)
+				}
+				current, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(current, raw) {
+					t.Error(operation.name, "changed ambiguous intent", err)
+				}
+			}
+		})
 	}
 }
