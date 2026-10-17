@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Muse local handoff recognizes the exact startup sequence with one route-facts
+  record between metadata and the original session opening. Workspace, ownership,
+  causation and complete-file validation remain required.
+
 - Pending Muse inventory queries recover when an unfinished date directory is
   removed or renamed between passes, while retaining complete uniqueness checks.
 

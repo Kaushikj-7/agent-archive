@@ -375,3 +375,10 @@ omitted bodies changes: equivalent old and new bodies yield byte-identical
 retained rows and the same analysis. Subject/reason strings and outcome tags are
 not retained or interpreted as result/error facts. This validation-only change allocates no additional filter, adapter or parser
 version; inherited retained schemas and metadata algorithms do not change. No source recapture or richer metadata is implied.
+
+Muse single-metadata startup compatibility accepts exactly one existing schema-2
+route-facts row immediately before the original opening. It changes only the
+closed startup validation lane, shared by headers, raw startup facts, filtering,
+retained parsing and refiltering. Existing accepted inputs retain identical bytes
+and metadata; field projection and metadata derivation are unchanged. No filter,
+adapter, parser, published schema or private writer version changes.
