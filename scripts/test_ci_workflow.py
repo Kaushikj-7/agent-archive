@@ -441,7 +441,7 @@ class CadenceTest(unittest.TestCase):
         self.assertIn('name: ci-tier-plan', found['linux-full'])
         self.assertIn('--verify-plan', found['linux-race'])
         self.assertIn('--verify-native-plan', found['linux-race'])
-        for script in ('test_release_candidate.py','test_ci_workflow.py','test_stage_native_verify.py','test_scope_native_verify.py','test_go_shards.py','test_ci_tiers.py'):
+        for script in ('test_release_candidate.py','test_ci_workflow.py','test_stage_native_verify.py','test_scope_native_verify.py','test_go_shards.py','test_ci_tiers.py','test_muse_final_acceptance.py'):
             step=next(step for step in steps(found['script-static']) if script in step)
             self.assertIsNone(step_key(step,'if'))
 

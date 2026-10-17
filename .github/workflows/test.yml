@@ -239,6 +239,7 @@ jobs:
       - run: python3 -B scripts/test_stage_release_vulnerability_scan.py
       - run: python3 scripts/test_measure_hook.py
       - run: python3 -B scripts/test_muse_qualification.py
+      - run: python3 -B scripts/test_muse_final_acceptance.py
       # Static and fake-Docker checks of the Linux live acceptance scripts;
       # the live run itself needs privileged Docker and is not run in CI.
       - run: python3 scripts/test_linux_acceptance.py
