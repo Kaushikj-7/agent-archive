@@ -185,3 +185,30 @@ not evidence of feature support. Root-scoped qualification must review which row
 are applicable to its actual claim; this reusable inventory does not decide a
 release scope or waive a missing platform. Full parity must retain all original
 acceptance, including detailed scenarios within each broad catalog case.
+
+## Local resource acceptance controls
+
+`internal/cli/muse_final_acceptance_test.go` reuses the root-capture fixture,
+synthetic native fixture encoder, real hook queue, builtin Filter and shared
+inventory. It does not manufacture admission or replace the concrete leased
+source objects. The warm test selects one owner in ordinary CI; its 128- and
+512-owner children require `AGENT_ARCHIVE_PERF=1` in a separately bounded
+campaign. An ordinary skipped child supplies no qualification evidence.
+
+The warm assertions cover three settled ticks with zero native Filter input
+bytes, zero storage PUTs, zero calls through all three listing entry points,
+unchanged published files and released shared charges. Initial publication and
+forced signature-removal reread are positive controls. The four-agent control
+uses real Muse admission alongside ordinary Claude/Codex/Cursor file sessions,
+occupies the existing shared pass ledger, checks named shared-pressure deferrals
+without replacing prior publication, then releases that pressure and retries.
+It adds no reserve or production test port.
+
+These controls report the existing ledger peak separately from process memory.
+They cannot observe exact Filter invocation counts, full-record visits, physical
+disk reads or child-process RSS. Zero Filter input bytes does not assign zero to
+those unavailable counters. Direct process RSS remains the external pinned
+`measure_picker_process.py` measurement. Full boundary fixtures, native mode and
+platform runs, provider evidence, child entity coverage and exact-candidate final
+integration remain separate required gates. These local controls alone cannot
+qualify or unlock Muse capture.
