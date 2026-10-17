@@ -1,9 +1,11 @@
 package nativecodec
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // codexSpawnedChildMeta is a synthetic Codex multi-agent child's session_meta.
@@ -108,4 +110,38 @@ func FuzzCodexSpawnedTaskName(f *testing.F) {
 			t.Fatalf("header %q named %q", text, name)
 		}
 	})
+}
+
+// Ordinary follow-ups and body text cannot replace the latest assignment.
+func TestCodexSpawnedNameIgnoresFollowupAndPayloadTaskNames(t *testing.T) {
+	t.Parallel()
+	inherited := codexTaskMessage(`"Message Type: NEW_TASK\nTask name: /root/parent_task\nSender: /root\nPayload:\n"`)
+	own := codexTaskMessage(`"Message Type: NEW_TASK\nTask name: /root/parent_task/child_task\nSender: /root/parent_task\nPayload:\nTask name: /root/body_name\n"`)
+	followup := codexTaskMessage(`"Message Type: MESSAGE\nTask name: /root/incorrect_followup\nSender: /root\nPayload:\n"`)
+	m := parserTestMetadata(t, codexSpawnedBundle(t, true, codexSpawnedChildMeta, inherited, own, followup, codexChildReply))
+	if m.Name != "child task" {
+		t.Fatalf("name = %q, want child task", m.Name)
+	}
+}
+
+// Names retain Unicode, collapse whitespace, and use the common display bound.
+func TestCodexSpawnedNameHasCommonUnicodeDisplayBound(t *testing.T) {
+	t.Parallel()
+	task := strings.Repeat("界", 140) + "_ignored-tail"
+	header, err := json.Marshal("Message Type: NEW_TASK\nTask name: /root/" + task + "\nSender: /root\nPayload:\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := codexSpawnedChildMetadata(t, string(header), true)
+	want := strings.Repeat("界", 128) + "…"
+	if m.Name != want || !utf8.ValidString(m.Name) {
+		t.Fatalf("name = %q, want bounded Unicode name", m.Name)
+	}
+	spaced, err := json.Marshal("Message Type: NEW_TASK\nTask name: /root/修复_上传--重试\t计划\nSender: /root\nPayload:\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := codexSpawnedChildMetadata(t, string(spaced), true).Name; got != "修复 上传 重试 计划" {
+		t.Fatalf("normalized name = %q", got)
+	}
 }
