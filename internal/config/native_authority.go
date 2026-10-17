@@ -43,6 +43,9 @@ func (c Config) validateNativeRoots() error {
 // MarshalJSON preserves every preexisting writer constraint beneath the sticky
 // native-authority fence, including configs with no roots after removal.
 func (c Config) MarshalJSON() ([]byte, error) {
+	if c.NativeReplayProtection {
+		c.NativeAdmissionProtection = true
+	}
 	if c.NativeAdmissionProtection || c.NativeImportProtection || c.MuseCapture != nil {
 		c.NativeAuthorityProtection = true
 	}
@@ -72,7 +75,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	}
 	var admission string
 	if c.NativeAdmissionProtection {
-		admission = "muse-root-admission"
+		admission = MuseAdmissionWriterSelector(c.NativeReplayProtection)
 	}
 	fence := nativeAuthorityVersion{Version: 16, Writer: nativeAuthorityWriter, Base: base, Admission: admission}
 	if c.NativeImportProtection {
@@ -121,6 +124,10 @@ func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {
 		return raw, false, nil
 	}
 	names := []string{"version", "writer", "base"}
+	replayProtected := bytes.Equal(bytes.TrimSpace(doc["native_replay_protection"]), []byte("true"))
+	if doc["native_replay_protection"] != nil && !replayProtected {
+		return nil, false, errors.New("native replay requires sticky protection")
+	}
 	admissionProtected := bytes.Equal(bytes.TrimSpace(doc["native_admission_protection"]), []byte("true"))
 	importProtected := bytes.Equal(bytes.TrimSpace(doc["native_import_protection"]), []byte("true"))
 	if importProtected {
@@ -150,7 +157,10 @@ func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {
 	if version.Version != 16 || version.Writer != nativeAuthorityWriter || !bytes.Equal(bytes.TrimSpace(doc["native_authority_protection"]), []byte("true")) {
 		return nil, false, errors.New("native authority requires its exact permanent writer fence")
 	}
-	if admissionProtected && version.Admission != "muse-root-admission" {
+	if replayProtected && !admissionProtected {
+		return nil, false, errors.New("native replay requires admission protection")
+	}
+	if admissionProtected && version.Admission != MuseAdmissionWriterSelector(replayProtected) {
 		return nil, false, errors.New("unsupported native admission capability")
 	}
 	if importProtected && version.Import != "muse-historical-import" {
@@ -226,6 +236,7 @@ const (
 	nativeProtectionSelector nativeConfigSelector = "native_authority_protection"
 	nativeRootsSelector      nativeConfigSelector = "native_roots"
 	nativeAdmissionSelector  nativeConfigSelector = "native_admission_protection"
+	nativeReplaySelector     nativeConfigSelector = "native_replay_protection"
 	nativeImportSelector     nativeConfigSelector = "native_import_protection"
 	museCaptureSelector      nativeConfigSelector = "muse_capture"
 	museIssuedSelector       nativeConfigSelector = "muse_capture_last_issued_at"
@@ -257,11 +268,11 @@ func checkNativeConfigSelectors(raw []byte) error {
 		if err = d.Decode(&value); err != nil {
 			return err
 		}
-		for _, name := range []nativeConfigSelector{nativeSchemaSelector, nativeProtectionSelector, nativeRootsSelector, nativeAdmissionSelector, nativeImportSelector, museCaptureSelector, museIssuedSelector, nativeStagedSelector, nativeSettledSelector, nativeScopedSelector, nativeSearchSelector} {
+		for _, name := range []nativeConfigSelector{nativeSchemaSelector, nativeProtectionSelector, nativeRootsSelector, nativeAdmissionSelector, nativeReplaySelector, nativeImportSelector, museCaptureSelector, museIssuedSelector, nativeStagedSelector, nativeSettledSelector, nativeScopedSelector, nativeSearchSelector} {
 			if strings.EqualFold(key, string(name)) {
 				seen[name]++
 				exact = exact && key == string(name) && seen[name] == 1
-				if name == nativeProtectionSelector || name == nativeRootsSelector || name == nativeAdmissionSelector || name == nativeImportSelector || name == museCaptureSelector || name == museIssuedSelector {
+				if name == nativeProtectionSelector || name == nativeRootsSelector || name == nativeAdmissionSelector || name == nativeReplaySelector || name == nativeImportSelector || name == museCaptureSelector || name == museIssuedSelector {
 					native = true
 					exact = exact && !bytes.Equal(bytes.TrimSpace(value), []byte("null"))
 				}
@@ -296,5 +307,5 @@ func (c Config) NativeValidationInCurrentDestination(owner archive.SessionRegist
 }
 
 func nativeAuthorityMembersPresent(doc map[string]json.RawMessage) bool {
-	return doc["native_roots"] != nil || doc["native_authority_protection"] != nil || doc["native_admission_protection"] != nil || doc["native_import_protection"] != nil || doc["muse_capture"] != nil || doc["muse_capture_last_issued_at"] != nil
+	return doc["native_roots"] != nil || doc["native_authority_protection"] != nil || doc["native_admission_protection"] != nil || doc["native_import_protection"] != nil || doc["native_replay_protection"] != nil || doc["muse_capture"] != nil || doc["muse_capture_last_issued_at"] != nil
 }

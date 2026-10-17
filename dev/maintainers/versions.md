@@ -314,6 +314,18 @@ These strings grant only confirmed historical staging and retained maintenance;
 they establish no live capture window. No numeric version, filter, adapter,
 parser or uploaded schema allocation accompanies this private contract.
 
+Native replay classification protection is independently opt-in through sticky
+`native_replay_protection`. It requires admission protection and the exact
+native16 admission selector `muse-root-admission-replay`; both setup journal
+forms require that selector and preserve the flag across rollback snapshots.
+The independent historical import selector and lower/deletion floors compose
+unchanged. Ordinary protection does not enable this capability. Native owner
+classification distinguishes nil, an empty replay marker and an exact normalized
+run ID, and ordinary writers cannot relabel an owner. This extends existing
+registration provenance and `ApplyReplay` semantics without changing source
+filtering, parsing, Analysis or old-owner classification, so it allocates no
+filter, adapter, parser or numeric schema version.
+
 Muse parser 0.2.0 corrects unavailable tool/file/Git counts and full export file
 presence without losing qualified prompt/message counts. Cursor parser 0.22.0
 corrects unavailable tool-result counts and omits full export files for
