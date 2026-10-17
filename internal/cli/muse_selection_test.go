@@ -26,23 +26,22 @@ func TestMuseViewsPreserveRootChildReplayAndDateSelection(t *testing.T) {
 	old := statsFetchFrom(statsNow, time.UTC, 1).Add(-24 * time.Hour)
 	var metadata []archive.Metadata
 	for _, row := range []struct {
-		id, parent, name string
-		at               time.Time
-		input            int64
-		replay           bool
+		id     string
+		parent string
+		name   string
+		at     time.Time
+		input  int64
+		replay *archive.Replay
 	}{
-		{rootID, "", "ROOT_VIEW_MARKER", statsNow, 10, false},
-		{childID, rootID, "CHILD_VIEW_MARKER", old, 20, false},
-		{grandID, childID, "GRANDCHILD_VIEW_MARKER", old.Add(-24 * time.Hour), 30, false},
-		{orphanID, "00000000000000000000000000000099", "ORPHAN_VIEW_MARKER", statsNow, 40, false},
-		{replayID, "", "REPLAY_VIEW_MARKER", statsNow, 50, true},
+		{rootID, "", "ROOT_VIEW_MARKER", statsNow, 10, nil},
+		{childID, rootID, "CHILD_VIEW_MARKER", old, 20, nil},
+		{grandID, childID, "GRANDCHILD_VIEW_MARKER", old.Add(-24 * time.Hour), 30, nil},
+		{orphanID, "00000000000000000000000000000099", "ORPHAN_VIEW_MARKER", statsNow, 40, nil},
+		{replayID, "", "REPLAY_VIEW_MARKER", statsNow, 50, &archive.Replay{RunID: "synthetic-replay"}},
 	} {
 		var observations archive.ObservationAccumulator
 		must(t, observations.Add("synthetic-model", row.input, 1))
-		m := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SessionID: row.id, NativeSessionID: row.id, MachineID: "synthetic-machine", ProjectID: "synthetic", ProjectName: "synthetic", Name: row.name, Harness: archive.Harness{Name: "muse"}, CapturedAt: row.at, StartedAt: row.at, MetadataDerivedAt: row.at, ParentSessionID: row.parent, NativeChild: row.parent != "", Parser: archive.ParserInfo{Name: "muse", Version: "synthetic-projection", Status: archive.ParserStatusPartial}, FilterVersion: archive.FilterVersion, Counts: archive.Counts{Turns: new(1)}, TokenObservations: observations.Summary(), CaptureGaps: []archive.CaptureGap{{Code: "child_coverage_unavailable"}}, SourceBundle: archive.SourceReference{Key: "sessions/muse/" + row.id + "/source.jsonl.gz", SHA256: strings.Repeat("a", 64), CompressedBytes: 1}}
-		if row.replay {
-			m.Replay = &archive.Replay{RunID: "synthetic-replay"}
-		}
+		m := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SessionID: row.id, NativeSessionID: row.id, MachineID: "synthetic-machine", ProjectID: "synthetic", ProjectName: "synthetic", Name: row.name, Harness: archive.Harness{Name: "muse"}, CapturedAt: row.at, StartedAt: row.at, MetadataDerivedAt: row.at, ParentSessionID: row.parent, NativeChild: row.parent != "", Replay: row.replay, Parser: archive.ParserInfo{Name: "muse", Version: "synthetic-projection", Status: archive.ParserStatusPartial}, FilterVersion: archive.FilterVersion, Counts: archive.Counts{Turns: new(1)}, TokenObservations: observations.Summary(), CaptureGaps: []archive.CaptureGap{{Code: "child_coverage_unavailable"}}, SourceBundle: archive.SourceReference{Key: "sessions/muse/" + row.id + "/source.jsonl.gz", SHA256: strings.Repeat("a", 64), CompressedBytes: 1}}
 		metadata = append(metadata, m)
 		raw, err := json.Marshal(m)
 		must(t, err)
@@ -78,14 +77,14 @@ func TestMuseViewsPreserveRootChildReplayAndDateSelection(t *testing.T) {
 			}
 		}
 		for _, tc := range []struct {
-			mode string
+			mode replaysFlag
 			want []string
 		}{
-			{"hide", []string{rootID, childID, grandID, orphanID}},
-			{"include", []string{rootID, childID, grandID, orphanID, replayID}},
-			{"only", []string{replayID}},
+			{replaysHide, []string{rootID, childID, grandID, orphanID}},
+			{replaysInclude, []string{rootID, childID, grandID, orphanID, replayID}},
+			{replaysOnly, []string{replayID}},
 		} {
-			_, doc := list("--json", "--replays", tc.mode)
+			_, doc := list("--json", "--replays", string(tc.mode))
 			var ids []string
 			for _, m := range doc.Sessions {
 				ids = append(ids, m.SessionID)
@@ -101,15 +100,16 @@ func TestMuseViewsPreserveRootChildReplayAndDateSelection(t *testing.T) {
 			t.Fatal("explicit child search stayed hidden")
 		}
 		for _, tc := range []struct {
-			mode              string
-			sessions, orphans int
-			input             int64
+			mode     replaysFlag
+			sessions int
+			orphans  int
+			input    int64
 		}{
-			{"hide", 2, 1, 100},
-			{"include", 3, 1, 150},
-			{"only", 1, 0, 50},
+			{replaysHide, 2, 1, 100},
+			{replaysInclude, 3, 1, 150},
+			{replaysOnly, 1, 0, 50},
 		} {
-			args := []string{"--harness", "muse", "--days", "1", "--replays", tc.mode, "--no-cache"}
+			args := []string{"--harness", "muse", "--days", "1", "--replays", string(tc.mode), "--no-cache"}
 			var doc statsDocument
 			must(t, json.Unmarshal([]byte(mustRunStats(t, env, 0, append(args, "--json")...)), &doc))
 			if doc.Coverage.Sessions != tc.sessions || doc.Coverage.OrphanSubagents != tc.orphans || doc.TokenObservations == nil || doc.TokenObservations.Input == nil || *doc.TokenObservations.Input != tc.input || doc.Overview.Cost.Value != nil || doc.Overview.Tokens.Value != nil {
