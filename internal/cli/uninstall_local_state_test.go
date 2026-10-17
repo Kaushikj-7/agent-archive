@@ -105,7 +105,7 @@ func TestDeleteLocalDataRemovesEveryLocalStoreEntry(t *testing.T) {
 var handListedLocalState = []string{
 	"session-membership.json", "session-membership.lock", "session-index-recovery.json", "session-index-absence.json",
 	"config.json", "setup-draft.json", "setup-transaction.json",
-	"registrations", "requests", "request-locks", "published", "pending", "sessions", "sessions-v1", "sessions-packed-v1", "superseded", "pending-scans", "scan-signatures", "subagent-candidates", "forgotten", "refresh-skips", "listing-repairs", "imports",
+	"registrations", "requests", "request-locks", "import-locks", "published", "pending", "sessions", "sessions-v1", "sessions-packed-v1", "superseded", "pending-scans", "scan-signatures", "subagent-candidates", "forgotten", "refresh-skips", "listing-repairs", "imports",
 	"generation-heads", "generation-nodes", "generation-recovery",
 	// Shared durable storage owns this local quota lock namespace.
 	"temporary-quota", "session-deletions",

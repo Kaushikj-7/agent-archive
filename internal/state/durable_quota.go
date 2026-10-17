@@ -151,6 +151,9 @@ func privateDirectoryWithParentSync(root *os.Root, path string, create bool, syn
 
 func (q *durableQuota) usageContext(ctx context.Context) (u durableUsage, err error) {
 	remaining := durableEntryLimit
+	if err := inspectImportLocks(ctx, q.home, &remaining); err != nil {
+		return u, errors.Join(ErrDurableStorageRecovery, err)
+	}
 	if err := q.scanPublished(ctx, &remaining, &u); err != nil {
 		return u, errors.Join(ErrDurableStorageRecovery, err)
 	}

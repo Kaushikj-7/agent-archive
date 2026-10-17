@@ -93,6 +93,7 @@ var corruptionPolicies = map[string]corruption{
 	"status.json":             replacedByNextPass,
 	storageClockFile:          readAsAbsent,
 	"request-locks":           holdsNoContent,
+	importLocksDirectory:      holdsNoContent,
 	"temporary-quota":         holdsNoContent,
 }
 

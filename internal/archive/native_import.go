@@ -157,7 +157,15 @@ func (m *NativeImportMembership) UnmarshalJSON(raw []byte) error {
 }
 
 func nativeImportObject(raw []byte, names ...string) error {
-	if len(raw) > MaxNativeImportBytes {
+	return nativeImportClosedObject(raw, MaxNativeImportBytes, names, nil)
+}
+
+func nativeImportClosedObject(raw []byte, limit int, required, optional []string) error {
+	return nativeImportClosedObjectNulls(raw, limit, required, optional, nil)
+}
+
+func nativeImportClosedObjectNulls(raw []byte, limit int, required, optional, nullable []string) error {
+	if len(raw) > limit {
 		return ErrUnsupportedNativeImport
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
@@ -165,21 +173,23 @@ func nativeImportObject(raw []byte, names ...string) error {
 	if err != nil || token != json.Delim('{') {
 		return ErrUnsupportedNativeImport
 	}
-	seen := make(map[string]bool, len(names))
+	seen := make(map[string]bool, len(required)+len(optional))
 	for d.More() {
 		token, err := d.Token()
 		key, ok := token.(string)
-		if err != nil || !ok || seen[key] || !slices.Contains(names, key) {
+		if err != nil || !ok || seen[key] || !slices.Contains(required, key) && !slices.Contains(optional, key) {
 			return ErrUnsupportedNativeImport
 		}
 		seen[key] = true
 		var value json.RawMessage
-		if err := d.Decode(&value); err != nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+		if err := d.Decode(&value); err != nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) && !slices.Contains(nullable, key) {
 			return ErrUnsupportedNativeImport
 		}
 	}
-	if len(seen) != len(names) {
-		return ErrUnsupportedNativeImport
+	for _, name := range required {
+		if !seen[name] {
+			return ErrUnsupportedNativeImport
+		}
 	}
 	if _, err := d.Token(); err != nil {
 		return ErrUnsupportedNativeImport
