@@ -3,6 +3,7 @@ package storagetest
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -124,4 +125,127 @@ func TestMeasuredStoreForwardsAtomicCapabilitiesAndCountsBoundedReads(t *testing
 	if _, err = replacement.Get(t.Context(), "replacement"); err != nil {
 		t.Fatal("legacy fixture replacement lost", err)
 	}
+}
+
+func TestMeasuredListingCostsCaptureIsOptionalPrivateAndReset(t *testing.T) {
+	t.Parallel()
+	mem := NewMemoryStore()
+	if err := mem.Put(t.Context(), "sessions/a", []byte("body")); err != nil {
+		t.Fatal(err)
+	}
+	measured := NewMeasuredStore(mem, 0)
+	measured.ListingModel = &ListingLatencyModel{}
+	if _, err := measured.List(t.Context(), "sessions/"); err != nil {
+		t.Fatal(err)
+	}
+	if len(measured.ListingCosts()) != 0 {
+		t.Fatal("timed default retained allocating request records")
+	}
+	measured.Reset()
+	measured.CaptureListingCosts = true
+	if _, err := measured.ListRange(t.Context(), "sessions/", "", "sessions/a"); err != nil {
+		t.Fatal(err)
+	}
+	costs := measured.ListingCosts()
+	if len(costs) != 1 || costs[0].Prefix != "sessions/" || costs[0].Through != "sessions/a" || costs[0].Cost.Pages != 1 || costs[0].Cost.Keys != 1 || measured.Metrics().Lists != 1 {
+		t.Fatal("incorrect recorded service", costs, measured.Metrics())
+	}
+	costs[0].Cost.Pages = 100
+	if measured.ListingCosts()[0].Cost.Pages != 1 {
+		t.Fatal("caller changed recorded service")
+	}
+	measured.Reset()
+	if len(measured.ListingCosts()) != 0 || measured.Metrics() != (ReadMetrics{}) {
+		t.Fatal("reset retained request costs")
+	}
+	if costs[0].Cost.Pages != 100 {
+		t.Fatal("reset changed prior private snapshot")
+	}
+}
+
+func TestMeasuredSuccessfulGETKeysAreOptionalPrivateAndReset(t *testing.T) {
+	t.Parallel()
+	mem := NewMemoryStore()
+	for _, key := range []string{"ordinary", "versioned", "bounded"} {
+		if err := mem.Put(t.Context(), key, []byte("body")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	measured := NewMeasuredStore(mem, 0)
+	if _, err := measured.Get(t.Context(), "ordinary"); err != nil {
+		t.Fatal(err)
+	}
+	if len(measured.SuccessfulGETKeys()) != 0 {
+		t.Fatal("timed default retained body identities")
+	}
+	measured.Reset()
+	measured.CaptureGETKeys = true
+	if _, err := measured.Get(t.Context(), "ordinary"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := measured.GetVersioned(t.Context(), "versioned"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := measured.GetLimited(t.Context(), "bounded", 4); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := measured.Get(t.Context(), "ordinary"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := measured.Get(t.Context(), "missing"); err == nil {
+		t.Fatal("missing fixture read unexpectedly succeeded")
+	}
+	if _, err := measured.GetLimited(t.Context(), "bounded", 1); err == nil {
+		t.Fatal("oversized fixture read unexpectedly succeeded")
+	}
+	keys := measured.SuccessfulGETKeys()
+	if !slices.Equal(keys, []string{"ordinary", "versioned", "bounded", "ordinary"}) {
+		t.Fatal("successful variant/duplicate capture incorrect", keys)
+	}
+	keys[0] = "caller-owned"
+	if measured.SuccessfulGETKeys()[0] != "ordinary" {
+		t.Fatal("caller changed captured body identities")
+	}
+	measured.Reset()
+	if len(measured.SuccessfulGETKeys()) != 0 || measured.Metrics() != (ReadMetrics{}) {
+		t.Fatal("reset retained body capture")
+	}
+	if keys[0] != "caller-owned" {
+		t.Fatal("reset changed prior snapshot")
+	}
+}
+
+type partialErrorGETStore struct{ *MemoryStore }
+
+var errSyntheticPartialGET = errors.New("synthetic incomplete GET")
+
+func (*partialErrorGETStore) Get(context.Context, string) ([]byte, error) {
+	return []byte("partial"), errSyntheticPartialGET
+}
+
+func (*partialErrorGETStore) GetVersioned(context.Context, string) ([]byte, string, error) {
+	return []byte("partial"), "synthetic-etag", errSyntheticPartialGET
+}
+
+func (*partialErrorGETStore) GetLimited(context.Context, string, int64) ([]byte, error) {
+	return []byte("partial"), errSyntheticPartialGET
+}
+
+func TestMeasuredSuccessfulGETBytesExcludePartialFailures(t *testing.T) {
+	t.Parallel()
+	measured := NewMeasuredStore(&partialErrorGETStore{NewMemoryStore()}, 0)
+	measured.CaptureGETKeys = true
+	if data, err := measured.Get(t.Context(), "ordinary"); len(data) == 0 || !errors.Is(err, errSyntheticPartialGET) {
+		t.Fatal("invalid partial ordinary fixture", len(data), err)
+	}
+	if data, _, err := measured.GetVersioned(t.Context(), "versioned"); len(data) == 0 || !errors.Is(err, errSyntheticPartialGET) {
+		t.Fatal("invalid partial versioned fixture", len(data), err)
+	}
+	if data, err := measured.GetLimited(t.Context(), "bounded", 100); len(data) == 0 || !errors.Is(err, errSyntheticPartialGET) {
+		t.Fatal("invalid partial bounded fixture", len(data), err)
+	}
+	if got := measured.Metrics(); got.Gets != 3 || got.Bytes != 0 || len(measured.SuccessfulGETKeys()) != 0 {
+		t.Fatal("partial failures counted as successful bodies", got, measured.SuccessfulGETKeys())
+	}
+	measured.Reset() // Every failed read must release its active lease.
 }

@@ -1,7 +1,8 @@
 # Read paths at realistic scale: implementation plan
 
 Status: proposed 2026-10-15, revised 2026-10-16 after real-command
-measurements and design review; nothing implemented. This plan takes the
+measurements and design review. PR 6 measurement infrastructure is implemented;
+the optimization and provider-activation work remains pending. This plan takes the
 remaining read-path work from [CLI performance](cli-performance.md) PRs 7 and 9 and
 [archive listing at scale](listing-at-scale.md) phase 4 down to per-PR scope
 and acceptance gates. It does not change any output, search rule, retention
@@ -399,6 +400,28 @@ Pass:
   measured end-to-end command acceptance, including remaining local work.
 
 ## PR 6: Latency-modeled command benchmarks and operation-count gates
+
+Initial measurement code revision: `b441ed88`. Review follow-ups repair the
+legacy-versus-post-PR1 scheduling labels, eviction timing, picker result oracle,
+synthetic registration inventory/counters and output-visible changed handoffs.
+Command/state discovery ceilings follow independent legacy/post-PR1 fixture
+plans, with captured modeled service schedules and explicit duplicate-work
+and excess-wave negative controls. Required empty-prefix services, successful
+GET byte ceilings, unique required metadata reads, complete JSON envelopes and
+actual checksum-hash work have
+separate regression controls. The current first-session source uses a canonical
+Codex message record so the known prompt appears in its handoff; historical
+measurements retain their original fixture/source pins.
+The original observed-size 20-case command matrix passed with exact Go 1.27.2,
+alongside synthetic S3 provider-page conformance. The current matrix adds four
+scoped late-match cases (24 total), with ordinary 1,800-session operation/output
+gates for every applicable cold, warm, changed and no-cache state. Historical
+20-case logs describe the original matrix rather than this expansion. Independent source
+and documentation review found no unresolved blockers. Historical controls
+remain unchanged. Local row counts describe application-level validated and
+decoded candidates, not SQLite engine scan or exact-count work. Qualified
+catalog root/delta scale accounting accompanies PR 5b; mixed/maximum-body RSS
+trials remain conditional PR 4b work. No live-provider latency is qualified.
 
 Land this first. Extend `storagetest.MeasuredStore`, `historicalListingModel`
 and the existing command benchmarks rather than adding a harness. Preserve

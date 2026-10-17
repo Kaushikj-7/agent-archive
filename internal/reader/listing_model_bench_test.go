@@ -283,3 +283,202 @@ func TestHistoricalListingModelPagesAndFixture(t *testing.T) {
 		t.Fatalf("cancel=%v", err)
 	}
 }
+
+// BenchmarkReadPathListingPolicies compares explicitly named legacy and post-PR1
+// topologies. Legacy auxiliary prefixes start independently of the canonical
+// sixteen-slot pool and retain strict-beyond boundary overread. Post-PR1 policies
+// share sixteen slots and stop at an exact inclusive boundary. These projections
+// do not change the historical benchmark or claim calibrated provider timings.
+func BenchmarkReadPathListingPolicies(b *testing.B) {
+	for _, n := range storagetest.ReadPathSizes() {
+		mem := storagetest.NewMemoryStore()
+		storagetest.SeedReadPathArchive(b, mem, n, 0)
+		for _, policy := range []struct {
+			name   string
+			ranges int
+			legacy bool
+		}{
+			{"legacy-independent-aux-strict-boundary", 0, true},
+			{"post-PR1-shared16-inclusive/ranges=1", 1, false},
+			{"post-PR1-shared16-inclusive/ranges=8", 8, false},
+			{"post-PR1-shared16-inclusive/ranges=16", 16, false},
+			{"post-PR1-shared16-inclusive/page-sized", 0, false},
+		} {
+			b.Run(fmt.Sprintf("sessions=%d/%s", n, policy.name), func(b *testing.B) {
+				groups := make([][]storage.Object, 3)
+				for i, prefix := range []string{"sessions/", listingindex.V2Prefix, listingindex.V3Prefix} {
+					var err error
+					groups[i], err = mem.List(context.Background(), prefix)
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				var work readPathListingWork
+				for range b.N {
+					if policy.legacy {
+						work = readPathLegacyListingWork(groups)
+					} else {
+						work = readPathListingWork{costs: readPathPolicyCosts(groups, policy.ranges, storagetest.ListingLatencyModel{StopAtBoundary: true})}
+					}
+				}
+				b.StopTimer()
+				var pages, keys, bytes, discarded int64
+				waves := make([]int64, 0, len(work.costs))
+				for _, cost := range work.costs {
+					pages += cost.Pages
+					keys += cost.Keys
+					bytes += cost.Bytes
+					discarded += cost.DiscardedBytes
+					waves = append(waves, cost.Pages)
+				}
+				b.ReportMetric(float64(pages), "provider-pages/op")
+				b.ReportMetric(float64(keys), "transferred-keys/op")
+				b.ReportMetric(float64(bytes), "transferred-header-B/op")
+				b.ReportMetric(float64(discarded), "discarded-header-B/op")
+				b.ReportMetric(float64(work.schedule(waves)), "critical-page-waves/op")
+				for _, overhead := range []time.Duration{100 * time.Millisecond, 400 * time.Millisecond} {
+					services := make([]int64, 0, len(work.costs))
+					perKey := (600*time.Millisecond - overhead) / 1000
+					for _, cost := range work.costs {
+						services = append(services, int64(time.Duration(cost.Pages)*overhead+time.Duration(cost.Keys)*perKey))
+					}
+					b.ReportMetric(float64(work.schedule(services))/float64(time.Millisecond), fmt.Sprintf("modeled-%dms-overhead-ms/op", overhead.Milliseconds()))
+				}
+			})
+		}
+	}
+}
+
+type readPathListingWork struct {
+	costs           []storagetest.ListingPageCost
+	canonicalRanges int
+	independentAux  bool
+}
+
+func (work readPathListingWork) schedule(services []int64) int64 {
+	if !work.independentAux {
+		return storagetest.ListingSchedule(services, 16)
+	}
+	// v2/v3 are each a sequential listing dispatched alongside the canonical
+	// pool, so neither waits behind queued canonical ranges or the other prefix.
+	return max(storagetest.ListingSchedule(services[:work.canonicalRanges], 16), services[work.canonicalRanges], services[work.canonicalRanges+1])
+}
+
+// The legacy comparison supplies the full warm sidecar inventory as hints.
+func readPathLegacyListingWork(groups [][]storage.Object) readPathListingWork {
+	var known []string
+	for _, header := range groups[0] {
+		if strings.HasSuffix(header.Key, "/metadata.json") {
+			known = append(known, header.Key)
+		}
+	}
+	bounds := planRanges(known)
+	var costs []storagetest.ListingPageCost
+	after := ""
+	for i := range len(bounds) + 1 {
+		through := ""
+		if i < len(bounds) {
+			through = bounds[i]
+		}
+		_, cost := storagetest.ModelListingRange(groups[0], after, through, storagetest.ListingLatencyModel{})
+		costs = append(costs, cost)
+		after = through
+	}
+	canonicalRanges := len(costs)
+	for _, headers := range groups[1:] {
+		_, cost := storagetest.ModelListingRange(headers, "", "", storagetest.ListingLatencyModel{})
+		costs = append(costs, cost)
+	}
+	return readPathListingWork{costs: costs, canonicalRanges: canonicalRanges, independentAux: true}
+}
+
+func readPathPolicyCosts(groups [][]storage.Object, ranges int, model storagetest.ListingLatencyModel) []storagetest.ListingPageCost {
+	var costs []storagetest.ListingPageCost
+	for _, headers := range groups {
+		count := ranges
+		if count == 0 {
+			count = max(1, (len(headers)+999)/1000)
+		}
+		if len(headers) <= 1000 {
+			count = 1
+		}
+		after := ""
+		for i := range count {
+			through := ""
+			if i+1 < count {
+				if ranges == 0 {
+					through = headers[(i+1)*1000-1].Key
+				} else {
+					through = headers[(i+1)*len(headers)/count-1].Key
+				}
+			}
+			_, cost := storagetest.ModelListingRange(headers, after, through, model)
+			costs = append(costs, cost)
+			after = through
+		}
+	}
+	return costs
+}
+
+func TestReadPathListingPolicySharedBudget(t *testing.T) {
+	t.Parallel()
+	groups := make([][]storage.Object, 3)
+	for group, n := range []int{5040, 0, 1800} {
+		for i := range n {
+			groups[group] = append(groups[group], storage.Object{Key: fmt.Sprintf("prefix-%d/%05d", group, i)})
+		}
+	}
+	for _, tc := range []struct {
+		ranges int
+		pages  int64
+		keys   int64
+		waves  int64
+	}{{0, 9, 6840, 1}, {16, 33, 26942, 3}} {
+		costs := readPathPolicyCosts(groups, tc.ranges, storagetest.ListingLatencyModel{StopAtBoundary: true})
+		var pages, keys int64
+		var counts []int64
+		for _, cost := range costs {
+			pages += cost.Pages
+			keys += cost.Keys
+			counts = append(counts, cost.Pages)
+		}
+		waves := storagetest.ListingSchedule(counts, 16)
+		if pages != tc.pages || keys != tc.keys || waves != tc.waves {
+			t.Fatalf("ranges=%d pages=%d keys=%d waves=%d", tc.ranges, pages, keys, waves)
+		}
+	}
+}
+
+func TestReadPathListingIndependentAuxBudget(t *testing.T) {
+	t.Parallel()
+	services := make([]int64, 19)
+	for i := range 17 {
+		services[i] = 1
+	}
+	services[17], services[18] = 20, 3
+	legacy := readPathListingWork{canonicalRanges: 17, independentAux: true}
+	shared := readPathListingWork{}
+	if legacy.schedule(services) != 20 || shared.schedule(services) != 21 {
+		t.Fatal("auxiliary prefixes were queued behind canonical ranges")
+	}
+}
+
+func TestReadPathLegacyListingKeepsSidecarRangesAndUnrangedAux(t *testing.T) {
+	t.Parallel()
+	mem := storagetest.NewMemoryStore()
+	storagetest.SeedReadPathArchive(t, mem, 1800, 0)
+	var groups [][]storage.Object
+	for _, prefix := range []string{"sessions/", listingindex.V2Prefix, listingindex.V3Prefix} {
+		headers, err := mem.List(t.Context(), prefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		groups = append(groups, headers)
+	}
+	work := readPathLegacyListingWork(groups)
+	if work.canonicalRanges != 9 || len(work.costs) != 11 || work.costs[9].Pages != 1 || work.costs[10].Pages != 2 {
+		t.Fatalf("legacy work=%+v", work)
+	}
+}

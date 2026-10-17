@@ -525,6 +525,8 @@ func prepareCanonicalCatalog(ctx context.Context, tx *sql.Tx, canonicalNamespace
 
 // canonicalCatalogRows closes its cursor before the caller uses the single connection again.
 func canonicalCatalogRows(ctx context.Context, tx *sql.Tx) (map[string]string, map[string]bool, error) {
+	span := trace.Start("catalog refresh validation")
+	defer span.End()
 	rows, err := tx.QueryContext(ctx, "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions")
 	if err != nil {
 		return nil, nil, err
@@ -536,6 +538,10 @@ func canonicalCatalogRows(ctx context.Context, tx *sql.Tx) (map[string]string, m
 		var record catalogRecord
 		if err = record.scan(rows); err != nil {
 			return nil, nil, err
+		}
+		span.Count("rows-scanned", 1)
+		if record.checksum != "" {
+			span.Count("summary-B-hashed", len(record.summary))
 		}
 		prior[record.key] = record.etag
 		validSummary[record.key] = record.valid()
@@ -762,6 +768,8 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 // fillCatalogPage validates candidates before applying final typed filtering.
 // Root-child queries require the complete non-date inventory before trimming.
 func fillCatalogPage(rows *sql.Rows, q CatalogQuery, offset int, filterSummaries bool, page *CatalogPage) error {
+	span := trace.Start("catalog candidate decoding")
+	defer span.End()
 	filter := q.Metadata.Filter
 	if q.Metadata.IncludeRootChildren {
 		filter.From, filter.To = time.Time{}, time.Time{}
@@ -773,6 +781,10 @@ func fillCatalogPage(rows *sql.Rows, q CatalogQuery, offset int, filterSummaries
 		if err := record.scan(rows); err != nil {
 			return err
 		}
+		span.Count("rows-scanned", 1)
+		if record.checksum != "" {
+			span.Count("summary-B-hashed", len(record.summary))
+		}
 		if !record.valid() {
 			return errors.New("invalid session catalog summary checksum")
 		}
@@ -780,6 +792,7 @@ func fillCatalogPage(rows *sql.Rows, q CatalogQuery, offset int, filterSummaries
 		if err := json.Unmarshal(record.summary, &row.Summary); err != nil {
 			return fmt.Errorf("invalid session catalog: %w", err)
 		}
+		span.Count("summaries-decoded", 1)
 		m := row.Summary.Metadata()
 		if !matches(m, filter) || q.Metadata.TopLevelOnly && m.IsChild() {
 			continue

@@ -3,6 +3,7 @@ package storagetest
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
@@ -14,22 +15,37 @@ import (
 // bodies; ListBytes estimates header payload as key/ETag bytes plus 16 bytes for
 // size/time. It is not an estimate of provider XML, HTTP, or TLS overhead.
 type ReadMetrics struct {
-	Lists     int64
-	Gets      int64
-	Bytes     int64
-	ListBytes int64
-	PeakReads int64
+	Lists              int64
+	Gets               int64
+	Bytes              int64
+	ListBytes          int64
+	PeakReads          int64
+	ListPages          int64
+	ListKeys           int64
+	DiscardedListBytes int64
+	LongestListPages   int64
 }
 
 // MeasuredStore preserves MemoryStore's reader extensions while measuring each
 // LIST/GET once. Delay applies to both request kinds and honors cancellation.
 type MeasuredStore struct {
 	*MemoryStore
-	Store   storage.ObjectStore
-	Delay   time.Duration
-	mu      sync.Mutex
-	metrics ReadMetrics
-	active  int64
+	Store storage.ObjectStore
+	Delay time.Duration
+	// ListingModel optionally models provider pagination instead of per-call LIST delay.
+	ListingModel *ListingLatencyModel
+	// CaptureListingCosts retains request services for untimed observations or
+	// deterministic gates; leave false during benchmark timing.
+	CaptureListingCosts bool
+	// CaptureGETKeys retains successful body identities outside benchmark timing.
+	CaptureGETKeys bool
+	// GetDelay overrides Delay for body requests when nonzero.
+	GetDelay time.Duration
+	mu       sync.Mutex
+	metrics  ReadMetrics
+	listings []ListingRequestCost
+	getKeys  []string
+	active   int64
 }
 
 // NewMeasuredStore wraps a synthetic store without recording fixture writes.
@@ -89,6 +105,8 @@ func (s *MeasuredStore) Reset() {
 		panic("reset with active benchmark reads")
 	}
 	s.metrics = ReadMetrics{}
+	s.listings = nil
+	s.getKeys = nil
 }
 
 // Metrics returns a concurrency-safe snapshot.
@@ -96,6 +114,35 @@ func (s *MeasuredStore) Metrics() ReadMetrics {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.metrics
+}
+
+// ListingCosts returns a private snapshot of modeled List/ListRange services.
+// These page services support an explicit analytical dispatch model; they do
+// not measure elapsed critical-path time or infer production slot ownership.
+func (s *MeasuredStore) ListingCosts() []ListingRequestCost {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.listings)
+}
+
+// SuccessfulGETKeys returns a private snapshot of successful Get, GetVersioned
+// and GetLimited identities, including duplicates. Failed attempts are excluded.
+func (s *MeasuredStore) SuccessfulGETKeys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.getKeys)
+}
+
+func (s *MeasuredStore) endGET(key string, data []byte, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.active--
+	if err == nil {
+		s.metrics.Bytes += int64(len(data))
+		if s.CaptureGETKeys {
+			s.getKeys = append(s.getKeys, key)
+		}
+	}
 }
 
 func (s *MeasuredStore) begin(ctx context.Context, list bool) error {
@@ -108,10 +155,21 @@ func (s *MeasuredStore) begin(ctx context.Context, list bool) error {
 	s.active++
 	s.metrics.PeakReads = max(s.metrics.PeakReads, s.active)
 	s.mu.Unlock()
-	if s.Delay == 0 {
+	delay := s.Delay
+	if !list && s.GetDelay != 0 {
+		delay = s.GetDelay
+	}
+	if list && s.ListingModel != nil {
+		delay = 0
+	}
+	return waitMeasuredDelay(ctx, delay)
+}
+
+func waitMeasuredDelay(ctx context.Context, delay time.Duration) error {
+	if delay == 0 {
 		return ctx.Err()
 	}
-	timer := time.NewTimer(s.Delay)
+	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-timer.C:
@@ -133,7 +191,7 @@ func (s *MeasuredStore) end(data []byte, objects []storage.Object) {
 
 // Get measures an ordinary body read.
 func (s *MeasuredStore) Get(ctx context.Context, key string) (data []byte, err error) {
-	defer func() { s.end(data, nil) }()
+	defer func() { s.endGET(key, data, err) }()
 	if err = s.begin(ctx, false); err != nil {
 		return
 	}
@@ -142,7 +200,7 @@ func (s *MeasuredStore) Get(ctx context.Context, key string) (data []byte, err e
 
 // GetVersioned measures one atomic body-and-validator read.
 func (s *MeasuredStore) GetVersioned(ctx context.Context, key string) (data []byte, etag string, err error) {
-	defer func() { s.end(data, nil) }()
+	defer func() { s.endGET(key, data, err) }()
 	if err = s.begin(ctx, false); err != nil {
 		return
 	}
@@ -154,7 +212,7 @@ func (s *MeasuredStore) GetVersioned(ctx context.Context, key string) (data []by
 
 // GetLimited measures a size-bounded body read.
 func (s *MeasuredStore) GetLimited(ctx context.Context, key string, limit int64) (data []byte, err error) {
-	defer func() { s.end(data, nil) }()
+	defer func() { s.endGET(key, data, err) }()
 	if err = s.begin(ctx, false); err != nil {
 		return
 	}
@@ -170,6 +228,9 @@ func (s *MeasuredStore) List(ctx context.Context, prefix string) (objects []stor
 	if err = s.begin(ctx, true); err != nil {
 		return
 	}
+	if s.ListingModel != nil {
+		return s.modeledListing(ctx, prefix, "", "")
+	}
 	return s.base().List(ctx, prefix)
 }
 
@@ -178,6 +239,9 @@ func (s *MeasuredStore) ListRange(ctx context.Context, prefix, after, through st
 	defer func() { s.end(nil, objects) }()
 	if err = s.begin(ctx, true); err != nil {
 		return
+	}
+	if s.ListingModel != nil {
+		return s.modeledListing(ctx, prefix, after, through)
 	}
 	if p, ok := s.base().(storage.RangeLister); ok {
 		return p.ListRange(ctx, prefix, after, through)
@@ -192,7 +256,16 @@ func (s *MeasuredStore) ListPage(ctx context.Context, prefix, continuation strin
 		return
 	}
 	if p, ok := s.base().(storage.PageLister); ok {
-		return p.ListPage(ctx, prefix, continuation, limit)
+		page, err = p.ListPage(ctx, prefix, continuation, limit)
+		if err == nil && s.ListingModel != nil {
+			s.mu.Lock()
+			s.metrics.ListPages++
+			s.metrics.ListKeys += int64(len(page.Objects))
+			s.metrics.LongestListPages = max(s.metrics.LongestListPages, 1)
+			s.mu.Unlock()
+			err = waitMeasuredDelay(ctx, s.ListingModel.ListPageDelay+time.Duration(len(page.Objects))*s.ListingModel.ListKeyDelay)
+		}
+		return page, err
 	}
 	return storage.ObjectPage{}, errors.New("underlying store has no page listing capability")
 }
