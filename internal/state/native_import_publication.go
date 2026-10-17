@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -62,7 +63,7 @@ func (s *Store) nativeImportPublicationState(ctx context.Context, id string, tar
 	defer closeRead()
 	reg, found, err := read.LoadRegistration(id)
 	if err != nil {
-		return result, false, err
+		return result, false, fmt.Errorf("read historical publication owner: %w", err)
 	}
 	if !found || reg.NativeImport == nil {
 		var released stagedReleaseReceipt
@@ -80,32 +81,32 @@ func (s *Store) nativeImportPublicationState(ctx context.Context, id string, tar
 	}
 	cfg, found, err := config.Load(s.home)
 	if err != nil || !found || !cfg.NativeImportProtection || cfg.Paused || !cfg.Archive.Enabled || !cfg.AcceptSession(reg) || cfg.DestinationID() != target.Destination || reg.DestinationID != target.Destination {
-		return fail(err)
+		return fail(errors.Join(errors.New("historical publication policy changed"), err))
 	}
 	expected, err := archive.NativeImportAdmissionContext(reg)
 	if err != nil || expected != target.Admission {
-		return fail(err)
+		return fail(errors.Join(errors.New("historical publication admission changed"), err))
 	}
 	expectedPolicy := readySHA([]byte(archive.FilterVersion + "\x00" + target.Adapter + "\x00" + string(cfg.EffectiveSkillEvidence())))
 	if target.Policy != expectedPolicy {
-		return fail(nil)
+		return fail(errors.New("historical publication filter policy changed"))
 	}
 	published, err := read.LoadPublishedStateContext(ctx, id)
 	if err != nil {
-		return fail(err)
+		return fail(fmt.Errorf("load historical selecting publication: %w", err))
 	}
 	if err := published.ValidateNativeImportAuthority(reg); err != nil {
-		return fail(err)
+		return fail(fmt.Errorf("validate historical released lineage: %w", err))
 	}
 	currentMetadata := readySHA(published.state.MetadataBytes)
 	if currentMetadata != target.Predecessor {
 		if currentMetadata != target.Metadata || published.state.Commit == nil || published.state.Commit.PreparationSHA256 != target.Preparation {
-			return fail(nil)
+			return fail(errors.New("historical publication predecessor changed"))
 		}
 	}
 	original, err := read.nativeImportReleasedSelection(ctx, reg)
 	if err != nil {
-		return fail(err)
+		return fail(fmt.Errorf("read historical original selection: %w", err))
 	}
 	result.Owner, err = read.readyDigest(ctx, reg)
 	if err != nil {
