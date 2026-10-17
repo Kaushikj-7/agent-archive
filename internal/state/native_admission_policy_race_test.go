@@ -120,10 +120,18 @@ func TestPreparedNativeAdmissionCompetingAbsentOwnerCAS(t *testing.T) {
 	fixture.assertReleased(t)
 }
 
+type nativeAdmissionRevocation string
+
+const (
+	nativePauseResumeRevocation  nativeAdmissionRevocation = "pause_resume_ABA"
+	nativeSetupPendingRevocation nativeAdmissionRevocation = "setup_pending"
+	nativeRemovalRevocation      nativeAdmissionRevocation = "removed"
+)
+
 func TestPreparedNativeAdmissionRevocationAtRegistrationStage(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"pause_resume_ABA", "setup_pending", "removed"} {
-		t.Run(name, func(t *testing.T) {
+	for _, name := range []nativeAdmissionRevocation{nativePauseResumeRevocation, nativeSetupPendingRevocation, nativeRemovalRevocation} {
+		t.Run(string(name), func(t *testing.T) {
 			t.Parallel()
 			fixture := newNativeAdmissionFixture(t)
 			prepared, err := fixture.prepare(t.Context())
@@ -137,7 +145,7 @@ func TestPreparedNativeAdmissionRevocationAtRegistrationStage(t *testing.T) {
 				}
 				called = true
 				switch name {
-				case "pause_resume_ABA":
+				case nativePauseResumeRevocation:
 					original, found, err := config.Load(fixture.store.home)
 					if err != nil || !found {
 						t.Fatal(err)
@@ -161,11 +169,11 @@ func TestPreparedNativeAdmissionRevocationAtRegistrationStage(t *testing.T) {
 					if err := config.Save(fixture.store.home, resumed); err != nil {
 						t.Fatal(err)
 					}
-				case "setup_pending":
+				case nativeSetupPendingRevocation:
 					if err := os.WriteFile(filepath.Join(fixture.store.home, "setup-transaction.json"), []byte(`{"pending":true}`), 0600); err != nil {
 						t.Fatal(err)
 					}
-				case "removed":
+				case nativeRemovalRevocation:
 					if err := fixture.store.RecordRemoval("muse", fixture.candidate.Intent.NativeSessionID, RemovalReasonUndo, time.Now().UTC()); err != nil {
 						t.Fatal(err)
 					}
