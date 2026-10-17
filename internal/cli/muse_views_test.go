@@ -13,7 +13,7 @@ import (
 
 // Build the archived fixture through the same builtin source, filter and parser
 // as local handoff. No consumer test interprets Muse's native records itself.
-func museViewsFixture(t *testing.T) (handoffFixture, archive.Metadata, string) {
+func museViewsFixture(t *testing.T) (handoffFixture, archive.Metadata) {
 	t.Helper()
 	env, data, workspace, counter := museNativeEnv(t)
 	path := writeMuseNative(t, data, museSyntheticID, museNativeFixtureBytes(t, "synthetic-own-tools.jsonl", museSyntheticID, workspace))
@@ -39,7 +39,7 @@ func museViewsFixture(t *testing.T) (handoffFixture, archive.Metadata, string) {
 	must(t, err)
 	putMuseViewsMetadata(t, f, m)
 	must(t, os.Remove(path))
-	return f, m, path
+	return f, m
 }
 
 func putMuseViewsMetadata(t *testing.T, f handoffFixture, m archive.Metadata) {
@@ -53,7 +53,7 @@ func putMuseViewsMetadata(t *testing.T, f handoffFixture, m archive.Metadata) {
 
 func TestMuseArchivedViewsAgreeAfterNativeLoss(t *testing.T) {
 	t.Parallel()
-	f, m, _ := museViewsFixture(t)
+	f, m := museViewsFixture(t)
 	f.env.Now = func() time.Time { return m.CapturedAt }
 	shown, stderr, code := runShow(t, f.env, f.id, "--harness", "muse", "--transcript", "--json", "--max-bytes", "0")
 	if code != 0 {
@@ -102,7 +102,7 @@ func TestMuseArchivedViewsAgreeAfterNativeLoss(t *testing.T) {
 // its verified source pointer and capture timestamp have not changed.
 func TestMuseMetadataOnlyRefreshUpdatesArchivedSearch(t *testing.T) {
 	t.Parallel()
-	f, m, _ := museViewsFixture(t)
+	f, m := museViewsFixture(t)
 	m.Name, m.Title = "Initial generated name", "Initial prompt title"
 	putMuseViewsMetadata(t, f, m)
 	for _, query := range []string{m.Name, m.Title} {
@@ -153,7 +153,7 @@ func TestMuseMetadataOnlyRefreshUpdatesArchivedSearch(t *testing.T) {
 
 func TestMuseMissingArchivedSourceKeepsMetadataReadable(t *testing.T) {
 	t.Parallel()
-	f, m, _ := museViewsFixture(t)
+	f, m := museViewsFixture(t)
 	must(t, f.mem.Delete(t.Context(), m.SourceBundle.Key))
 	out, stderr, code := runShow(t, f.env, f.id, "--harness", "muse", "--json")
 	if code != 0 || !strings.Contains(out, m.NativeSessionID) {
