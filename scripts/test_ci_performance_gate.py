@@ -117,6 +117,9 @@ class PhysicalRetryAPI(FakeAPI):
 class GateTests(unittest.TestCase):
     def test_current_workers_accept_independently_proven_exact_tested_base(self):
         api = TestedMergeAPI()
+        for job in api.jobs[1]:
+            job['created_at'] = '2026-10-15T00:00:01Z'
+            job['steps'][0]['number'] = 1
         actual = gate.current_worker_attempts(api, api.topology, 1, 1)
         self.assertEqual(actual, {index: 1 for index in range(8)})
         api.compare['merge_base_commit']['sha'] = 'f'*40
