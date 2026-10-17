@@ -48,6 +48,11 @@ func (i *AdmissionIntent) UnmarshalJSON(raw []byte) error {
 		if err := d.Decode(&value); err != nil {
 			return err
 		}
+		if peek.Version == 2 && key == "effects" {
+			if err := nativeIntentEffectsWire(value); err != nil {
+				return err
+			}
+		}
 	}
 	var next AdmissionIntent
 	d = json.NewDecoder(bytes.NewReader(raw))
@@ -60,4 +65,84 @@ func (i *AdmissionIntent) UnmarshalJSON(raw []byte) error {
 	}
 	*i = AdmissionIntent(next)
 	return nil
+}
+
+// nativeIntentEffectsWire checks nested selectors before encoding/json can merge
+// duplicate objects or accept case aliases. Legacy effects keep their wire rules.
+func nativeIntentEffectsWire(raw []byte) error {
+	nested := map[string][]string{
+		"Session": {"Agent", "NativeID", "Version", "Mode"},
+		"Source":  {"Kind", "Path", "Key"},
+		"Start":   {"Kind", "Reason", "Path"},
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	token, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if token == nil {
+		return nil
+	}
+	if token != json.Delim('[') {
+		return errors.New("invalid native intent effects")
+	}
+	count := 0
+	for d.More() {
+		count++
+		if count > 1 {
+			return errors.New("unsupported native intent effects")
+		}
+		var effect json.RawMessage
+		if err := d.Decode(&effect); err != nil {
+			return err
+		}
+
+		if err := nativeIntentObjectWire(effect, []string{"Event"}, func(name string, value json.RawMessage) error {
+			return nativeIntentObjectWire(value, []string{"NativeHookContract", "CodexProjectRoot", "CodexCwd", "CodexPolicyToken", "Kind", "Session", "ProjectRoot", "Source", "Locator", "Start", "NewOnly", "Deferred", "Reason", "NativeEvent", "Evidence", "Child"}, func(name string, value json.RawMessage) error {
+				if names, known := nested[name]; known {
+					return nativeIntentObjectWire(value, names, nil)
+				}
+				return nil
+			})
+		}); err != nil {
+			return err
+		}
+	}
+	_, err = d.Token()
+	return err
+}
+
+func nativeIntentObjectWire(raw []byte, names []string, nested func(string, json.RawMessage) error) error {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	token, err := d.Token()
+	if err != nil || token != json.Delim('{') {
+		return errors.New("invalid native intent object")
+	}
+	seen := make(map[string]bool, len(names))
+	for d.More() {
+		token, err := d.Token()
+		if err != nil {
+			return err
+		}
+		name, ok := token.(string)
+		known := false
+		for _, allowed := range names {
+			known = known || name == allowed
+		}
+		if !ok || !known || seen[name] {
+			return errors.New("ambiguous native intent object")
+		}
+		seen[name] = true
+		var value json.RawMessage
+		if err := d.Decode(&value); err != nil {
+			return err
+		}
+		if nested != nil {
+			if err := nested(name, value); err != nil {
+				return err
+			}
+		}
+	}
+	_, err = d.Token()
+	return err
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
@@ -79,12 +80,43 @@ func TestNativeIntentShapeAndWireBoundsPreserveLegacy(t *testing.T) {
 	}
 }
 
+func TestLegacyIntentNestedSelectorsKeepExistingDecoding(t *testing.T) {
+	t.Parallel()
+	for _, version := range []int{0, 1} {
+		raw := []byte(`{"version":0,"harness":"claude","effects":[{"Event":{"Kind":1,"kind":4,"Session":{"Agent":"future","Agent":"claude"}}}]}`)
+		if version == 1 {
+			raw = bytes.Replace(raw, []byte(`"version":0`), []byte(`"version":1`), 1)
+		}
+		var intent AdmissionIntent
+		if err := json.Unmarshal(raw, &intent); err != nil {
+			t.Fatal("legacy decoder changed", err)
+		}
+		if intent.Version != version || len(intent.Effects) != 1 || intent.Effects[0].Event.Kind != EventStop || intent.Effects[0].Event.Session.Agent != agentmeta.Claude {
+			t.Fatal("legacy normalization changed")
+		}
+	}
+}
+
+func nativeContinuationShapeFixture() AdmissionIntent {
+	i := nativeIntentShapeFixture()
+	i.NativeMode, i.NativeOwnerID, i.NativeWindowGeneration, i.Event = NativeOwnerContinuation, strings.Repeat("e", 32), strings.Repeat("f", 32), "Stop"
+	i.Effects = []ReplayEffect{{Event: LifecycleEvent{Kind: EventStop, Session: NativeSession{Agent: agentmeta.Muse, NativeID: i.NativeSessionID}, ProjectRoot: i.ObservedCwd, NativeHookContract: "muse-root-hooks-v1", NativeEvent: "Stop", Reason: "native_root_observation"}}}
+	return i
+}
+
 func FuzzNativeAdmissionIntentWire(f *testing.F) {
 	raw, err := json.Marshal(nativeIntentShapeFixture())
 	if err != nil {
 		f.Fatal(err)
 	}
 	f.Add(raw)
+	continuation, err := json.Marshal(nativeContinuationShapeFixture())
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(continuation)
+	f.Add(bytes.Replace(continuation, []byte(`"Kind":4`), []byte(`"Kind":255,"Kind":4`), 1))
+	f.Add(bytes.Replace(continuation, []byte(`"Agent":"muse"`), []byte(`"agent":"future","Agent":"muse"`), 1))
 	f.Add([]byte(`{"version":2,"native_mode":"future"}`))
 	f.Add([]byte(`{"version":2,"Version":1}`))
 	f.Fuzz(func(t *testing.T, raw []byte) {

@@ -42,9 +42,11 @@ func TestMuseCaptureIssuanceFloorSurvivesInactiveWindows(t *testing.T) {
 			if off.MuseCapture != nil || !off.MuseCaptureLastIssuedAt.Equal(at) {
 				t.Fatal("inactive window lost issuance floor")
 			}
-			if err := json.Unmarshal(raw, &off); err != nil {
+			var decoded Config
+			if err := json.Unmarshal(raw, &decoded); err != nil {
 				t.Fatal(err)
 			}
+			off = decoded
 			for _, nextTime := range []time.Time{time.Time{}, at.Add(-time.Second), at} {
 				on := off
 				on.Paused = false
