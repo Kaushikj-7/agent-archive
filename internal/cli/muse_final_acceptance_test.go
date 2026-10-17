@@ -106,9 +106,17 @@ func (s *museAcceptanceStore) reset() {
 	s.metadataPuts.Store(0)
 }
 
-func museAcceptanceQueue(t *testing.T, f museRootCaptureFixture, owners int) {
+func museAcceptanceQueue(t *testing.T, f museRootCaptureFixture, first, owners int) {
 	t.Helper()
-	for i := range owners {
+	before, err := f.store.LoadRegistrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior := map[string]string{}
+	for _, reg := range before {
+		prior[reg.ArchiveSessionID] = reg.NativeSessionID
+	}
+	for i := first; i < first+owners; i++ {
 		id := fmt.Sprintf("00000000-0000-7000-8000-%012x", i+1)
 		path := filepath.Join(f.root, "2026", "10", "15", id, "session.jsonl")
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -136,8 +144,13 @@ func museAcceptanceQueue(t *testing.T, f museRootCaptureFixture, owners int) {
 		}
 	}
 	regs, err := f.store.LoadRegistrations()
-	if err != nil || len(regs) != 0 {
-		t.Fatalf("hooks created owners before admission: %d %v", len(regs), err)
+	if err != nil || len(regs) != len(prior) {
+		t.Fatalf("hooks changed owner set before admission: before=%d after=%d %v", len(prior), len(regs), err)
+	}
+	for _, reg := range regs {
+		if nativeID, ok := prior[reg.ArchiveSessionID]; !ok || nativeID != reg.NativeSessionID {
+			t.Fatal("hook created or replaced owner before admission")
+		}
 	}
 }
 
@@ -174,23 +187,22 @@ func museAcceptanceReleased(t *testing.T, ledgers []*agentapi.NativeReadBudget) 
 	return peak
 }
 
-func museAcceptanceCollect(t *testing.T, f museRootCaptureFixture, remote *museAcceptanceStore, opts collector.Options, want int) {
+func museAcceptanceCollect(t *testing.T, f museRootCaptureFixture, remote *museAcceptanceStore, opts collector.Options, want int, published map[string]bool, ticks *int) {
 	t.Helper()
-	published := map[string]bool{}
-	for tick := 0; tick < 128 && len(published) < want; tick++ {
+	for ; *ticks < 128 && len(published) < want; (*ticks)++ {
 		result, err := collector.Run(t.Context(), f.store, remote, opts)
 		result.CloseStagedResults()
 		if err != nil {
-			t.Fatalf("tick%d result=%+v run=%v", tick, result, err)
+			t.Fatalf("tick%d result=%+v run=%v", *ticks, result, err)
 		}
 		for key, failure := range result.Errors {
 			// Bounded discovery may require more than one inventory tick.
 			// This is not successful per-owner evidence: the final union must
 			// still contain every actual publication before the loop ends.
 			if key != "muse-startup" || agentapi.Failure(failure) != agentapi.Unavailable {
-				t.Fatalf("tick%d unexpected %s: %v", tick, key, failure)
+				t.Fatalf("tick%d unexpected %s: %v", *ticks, key, failure)
 			}
-			t.Logf("cold tick%d pending startup proof: %v", tick, failure)
+			t.Logf("cold tick%d pending startup proof: %v", *ticks, failure)
 		}
 		for _, id := range result.Published {
 			published[id] = true
@@ -211,13 +223,26 @@ func TestMuseWarmUnchangedCohortsConsumeNoFilterInputUploadOrStorageListing(t *t
 	for _, owners := range cohorts {
 		t.Run(fmt.Sprintf("owners%d", owners), func(t *testing.T) {
 			f := newMuseRootCaptureFixture(t)
-			museAcceptanceQueue(t, f, owners)
 			remote := &museAcceptanceStore{MemoryStore: storagetest.NewMemoryStore()}
 			var ledgers []*agentapi.NativeReadBudget
 			opts := museAcceptanceOptions(t, f, &ledgers)
 			disable := trace.Enable()
 			defer disable()
-			museAcceptanceCollect(t, f, remote, opts, owners)
+			published := map[string]bool{}
+			admissionTicks := 0
+			expectedNative := map[string]bool{}
+			// Match the existing bounded intent queue: drain every chunk
+			// through real admission/publication before staging more hooks.
+			const admissionChunk = 128
+			for first := 0; first < owners; first += admissionChunk {
+				end := min(first+admissionChunk, owners)
+				for i := first; i < end; i++ {
+					expectedNative[fmt.Sprintf("00000000-0000-7000-8000-%012x", i+1)] = true
+				}
+				museAcceptanceQueue(t, f, first, end-first)
+				museAcceptanceCollect(t, f, remote, opts, end, published, &admissionTicks)
+				t.Logf("admission chunk first=%d end=%d published_union=%d", first, end, len(published))
+			}
 			var first bytes.Buffer
 			trace.Write(&first)
 			disable()
@@ -228,7 +253,12 @@ func TestMuseWarmUnchangedCohortsConsumeNoFilterInputUploadOrStorageListing(t *t
 			if err != nil || len(regs) != owners {
 				t.Fatalf("admitted owner count=%d want=%d: %v", len(regs), owners, err)
 			}
+			seenNative := map[string]bool{}
 			for _, reg := range regs {
+				if !expectedNative[reg.NativeSessionID] || seenNative[reg.NativeSessionID] || !published[reg.ArchiveSessionID] {
+					t.Fatalf("admitted/publication union differs from exact native owner set: %+v", reg)
+				}
+				seenNative[reg.NativeSessionID] = true
 				if reg.NativeAdmission == nil || reg.NativeBinding == nil || reg.NativeBinding.Checkpoint == nil {
 					t.Fatal("publication bypassed root admission or source checkpoint")
 				}
@@ -276,7 +306,7 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 	// Sequential: use the same real Muse root admission as the cohort test,
 	// with ordinary legacy file registrations for the three existing agents.
 	f := newMuseRootCaptureFixture(t)
-	museAcceptanceQueue(t, f, 1)
+	museAcceptanceQueue(t, f, 0, 1)
 	// This pressure scenario grows an active synthetic root. Remove the
 	// fixture's known final session.end row before its first admission,
 	// rather than assuming an ended producer can emit another turn.
@@ -318,7 +348,7 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 	remote := &museAcceptanceStore{MemoryStore: storagetest.NewMemoryStore()}
 	var ledgers []*agentapi.NativeReadBudget
 	opts := museAcceptanceOptions(t, f, &ledgers)
-	museAcceptanceCollect(t, f, remote, opts, 4)
+	museAcceptanceCollect(t, f, remote, opts, 4, map[string]bool{}, new(int))
 	regs, err := f.store.LoadRegistrations()
 	if err != nil || len(regs) != 4 {
 		t.Fatalf("four concrete agents were not admitted: %d %v", len(regs), err)

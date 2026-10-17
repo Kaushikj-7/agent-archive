@@ -197,6 +197,14 @@ campaign. Full acceptance must require all three exact children (`owners1`,
 `owners128`, `owners512`) in the raw test evidence; absent children remain
 UNVERIFIED. Ordinary CI selects only `owners1` and does not invent skips.
 
+Cohort setup stages at most 128 unique hook intents at once, matching the
+existing queue bound, and drains each chunk through the real collector before
+staging the next. Each hook chunk must leave the preexisting owner set unchanged
+until admission. One publication union and one 128-tick bound span all chunks;
+every final native ID must match the expected cohort exactly and have a durable
+admission, source binding and checkpoint. This keeps the 512-owner setup within
+the real queue rather than enlarging it.
+
 The warm assertions cover three settled ticks with zero native Filter input
 bytes, zero storage PUTs, zero calls through all three listing entry points,
 unchanged published files and released shared charges. Initial publication and
