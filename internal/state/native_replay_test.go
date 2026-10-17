@@ -10,17 +10,6 @@ import (
 )
 
 func TestNativeReplayClassificationImmutableAcrossOrdinaryWriters(t *testing.T) {
-	for _, before := range []*archive.Replay{nil, {}, {RunID: "run-one"}} {
-		for _, after := range []*archive.Replay{nil, {}, {RunID: "run-one"}, {RunID: "run-two"}} {
-			previous := archive.SessionRegistration{NativeBinding: &archive.NativeSourceBinding{}, Replay: before}
-			next := previous
-			next.Replay = after
-			err := preserveNativeRegistrationAuthority(previous, next, true, nil, nil)
-			if !sameNativeReplay(before, after) && err == nil {
-				t.Fatal("generic native write relabeled owner", before, after)
-			}
-		}
-	}
 	fixture := newNativeAdmissionFixture(t)
 	prepared, err := fixture.prepare(t.Context())
 	if err != nil {
@@ -32,6 +21,21 @@ func TestNativeReplayClassificationImmutableAcrossOrdinaryWriters(t *testing.T) 
 	}
 	if err := prepared.Close(); err != nil {
 		t.Fatal(err)
+	}
+	for _, before := range []*archive.Replay{nil, {}, {RunID: "run-one"}} {
+		for _, after := range []*archive.Replay{nil, {}, {RunID: "run-one"}, {RunID: "run-two"}} {
+			previous := owner
+			previous.Replay = before
+			next := previous
+			next.Replay = after
+			err := preserveNativeRegistrationAuthority(previous, next, true, nil, nil)
+			if sameNativeReplay(before, after) && err != nil {
+				t.Fatal("unchanged replay classification refused", before, err)
+			}
+			if !sameNativeReplay(before, after) && err == nil {
+				t.Fatal("generic native write relabeled owner", before, after)
+			}
+		}
 	}
 	next := owner
 	next.Replay = &archive.Replay{RunID: "run-one"}
