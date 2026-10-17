@@ -33,7 +33,7 @@ func inspectConfinedSkill(root *os.Root, relative string) (*confinedSkillInspect
 	}
 	out := &confinedSkillInspection{root: root, relative: relative, ancestors: map[string]os.FileInfo{}}
 	parts := strings.Split(relative, "/")
-	for i := 0; i < len(parts); i++ {
+	for i := range len(parts) {
 		name := strings.Join(parts[:i+1], "/")
 		info, err := root.Lstat(name)
 		if err != nil {
@@ -114,7 +114,7 @@ func inventoryFile(budget *skillReadBudget, root *os.Root, path string) ([]byte,
 // Raw registry/manifests and private locator digests die with this observation.
 func observeInstalledSkills(options SkillOptions, budget *skillReadBudget) []archive.SupplementalEvidence {
 	gap := func(status string, complete bool) []archive.SupplementalEvidence {
-		return []archive.SupplementalEvidence{inventoryObservation(options.Harness, "user_muse_plugins", status, nil, complete, options.ObservedAt)}
+		return []archive.SupplementalEvidence{inventoryObservation(options.Harness, "user_muse_plugins", status, complete, options.ObservedAt)}
 	}
 	input := options.InventoryInput
 	if !filepath.IsAbs(input.Boundary) || input.Registry != "plugins/installed.json" {
@@ -150,45 +150,8 @@ func observeInstalledSkills(options SkillOptions, budget *skillReadBudget) []arc
 	complete := !catalog.Incomplete
 	var observations []archive.SupplementalEvidence
 	for _, pkg := range catalog.Packages {
-		if !validSkillDeclaration(agentapi.SkillFile{ID: pkg.ID, Path: pkg.Directory}) {
-			complete = false
-			continue
-		}
-		manifest, inspected, readErr := inventoryFile(budget, base, pkg.Directory+"/.muse-plugin/plugin.json")
-		if readErr != nil {
-			complete = false
-			continue
-		}
-		declared, parseErr := options.Inventory.InterpretManifest(input, pkg, manifest)
-		expected := filepath.Join(input.Boundary, filepath.FromSlash(pkg.Directory))
-		if parseErr != nil || declared.Layout != agentapi.SkillDeclaredFiles || declared.Path != expected || declared.UserBoundary != input.Boundary || declared.ProjectBoundary != "" || !validSkillScope(declared.Scope) {
-			complete = false
-			continue
-		}
-		// The package descriptor is derived from the validated installed record;
-		// source.path and arbitrary cache_path values are never read targets.
-		packageRoot, openErr := base.OpenRoot(pkg.Directory)
-		if openErr != nil {
-			complete = false
-			continue
-		}
-		packageInfo, statErr := packageRoot.Stat(".")
-		namedInfo, nameErr := base.Lstat(pkg.Directory)
-		if statErr != nil || nameErr != nil || !sameSkillEntry(namedInfo, packageInfo) {
-			_ = packageRoot.Close()
-			complete = false
-			continue
-		}
-		beforeComplete := len(declared.Files) <= budget.declarations
-		observed, observeErr := observeRoot(options.Harness, skillRoot{layout: declared.Layout, files: declared.Files, path: declared.Path, scope: declared.Scope, user: declared.UserBoundary, confined: packageRoot}, options.ObservedAt, budget, options.Mode)
-		afterPackage, afterErr := base.Lstat(pkg.Directory)
-		stable := afterErr == nil && sameSkillEntry(packageInfo, afterPackage) && inspected.stable()
-		_ = packageRoot.Close()
-		if observeErr != nil || !stable {
-			complete = false
-			continue
-		}
-		if !beforeComplete {
+		observed, packageComplete := observeInstalledSkillPackage(options, budget, base, pkg)
+		if !packageComplete {
 			complete = false
 		}
 		observations = append(observations, observed...)
@@ -201,4 +164,42 @@ func observeInstalledSkills(options SkillOptions, budget *skillReadBudget) []arc
 	}
 	observations = append(observations, gap("present", complete)...)
 	return observations
+}
+
+func observeInstalledSkillPackage(options SkillOptions, budget *skillReadBudget, base *os.Root, pkg agentapi.SkillInstalledPackage) ([]archive.SupplementalEvidence, bool) {
+	input := options.InventoryInput
+
+	if !validSkillDeclaration(agentapi.SkillFile{ID: pkg.ID, Path: pkg.Directory}) {
+		return nil, false
+	}
+	manifest, inspected, readErr := inventoryFile(budget, base, pkg.Directory+"/.muse-plugin/plugin.json")
+	if readErr != nil {
+		return nil, false
+	}
+	declared, parseErr := options.Inventory.InterpretManifest(input, pkg, manifest)
+	expected := filepath.Join(input.Boundary, filepath.FromSlash(pkg.Directory))
+	if parseErr != nil || declared.Layout != agentapi.SkillDeclaredFiles || declared.Path != expected || declared.UserBoundary != input.Boundary || declared.ProjectBoundary != "" || !validSkillScope(declared.Scope) {
+		return nil, false
+	}
+	// The package descriptor is derived from the validated installed record;
+	// source.path and arbitrary cache_path values are never read targets.
+	packageRoot, openErr := base.OpenRoot(pkg.Directory)
+	if openErr != nil {
+		return nil, false
+	}
+	packageInfo, statErr := packageRoot.Stat(".")
+	namedInfo, nameErr := base.Lstat(pkg.Directory)
+	if statErr != nil || nameErr != nil || !sameSkillEntry(namedInfo, packageInfo) {
+		_ = packageRoot.Close()
+		return nil, false
+	}
+	beforeComplete := len(declared.Files) <= budget.declarations
+	observed, observeErr := observeRoot(options.Harness, skillRoot{layout: declared.Layout, files: declared.Files, path: declared.Path, scope: declared.Scope, user: declared.UserBoundary, confined: packageRoot}, options.ObservedAt, budget, options.Mode)
+	afterPackage, afterErr := base.Lstat(pkg.Directory)
+	stable := afterErr == nil && sameSkillEntry(packageInfo, afterPackage) && inspected.stable()
+	_ = packageRoot.Close()
+	if observeErr != nil || !stable {
+		return nil, false
+	}
+	return observed, beforeComplete
 }

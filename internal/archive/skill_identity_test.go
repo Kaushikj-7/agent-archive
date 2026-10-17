@@ -67,7 +67,7 @@ func TestMuseInstalledIdentityContentGroupingAndHistory(t *testing.T) {
 func TestMuseInstalledIdentityOverflowIsStickyAndMalformedIsBounded(t *testing.T) {
 	t.Parallel()
 	items := make([]SupplementalEvidence, 0, 300)
-	for i := 0; i < 257; i++ {
+	for i := range 257 {
 		items = append(items, installedIdentityEvidence("package", fmt.Sprintf("skill-%03d", i)))
 	}
 	// Repeat a previously valid identity after overflow: collection stays omitted.

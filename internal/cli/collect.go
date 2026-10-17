@@ -607,15 +607,18 @@ func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegis
 				dataHome = museDataHome
 			}
 			locations := agentapi.SkillLocations{UserHome: userHome, DataHome: dataHome, Environment: museEnvironment}
-			options := evidence.SkillOptions{Harness: harness, UserHome: userHome, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, harness, locations)}
+			roots := skillEvidenceRoots(env, harness, locations)
+			var inventory agentapi.SkillInventoryInterpreter
+			var inventoryInput agentapi.SkillInventoryInput
 			if provider, found := env.agentRegistry().LookupSkills(harness); found {
 				if interpreter, implemented := provider.(agentapi.SkillInventoryInterpreter); implemented {
 					if input, available := interpreter.InventoryInput(locations); available {
-						options.Inventory = interpreter
-						options.InventoryInput = input
+						inventory = interpreter
+						inventoryInput = input
 					}
 				}
 			}
+			options := evidence.SkillOptions{Harness: harness, UserHome: userHome, ObservedAt: at, Mode: mode, Locations: roots, Inventory: inventory, InventoryInput: inventoryInput}
 			userScope, err = evidence.ObserveSkills(options)
 			if err != nil {
 				return nil, err
@@ -641,6 +644,7 @@ type skillEnvironmentKey string
 const (
 	skillXDGConfigHome skillEnvironmentKey = "XDG_CONFIG_HOME"
 	skillCodexHome     skillEnvironmentKey = "CODEX_HOME"
+	skillXDGDataHome   skillEnvironmentKey = "XDG_DATA_HOME"
 )
 
 // skillRootEnvironment snapshots only the two configurable skill-root variables.

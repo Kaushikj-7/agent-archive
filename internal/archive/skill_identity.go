@@ -52,3 +52,22 @@ func (set *installedSkillIdentitySet) add(identity SkillDeclarationIdentity) boo
 	set.values[identity] = true
 	return true
 }
+
+func recordInstalledSkillIdentity(identities map[string]*installedSkillIdentitySet, harness, key string, evidence SupplementalEvidence, payload map[string]any, coverage SkillCoverage) bool {
+	if CanonicalHarness(harness) != "muse" || coverage != SkillCoverageInstalledOnly || (evidence.Kind != EvidenceKindSkillInventory && evidence.Kind != EvidenceKindSkillSnapshot) || evidence.Provenance != "filesystem:muse" {
+		return false
+	}
+	if _, present := payload["id"]; !present {
+		return false
+	} // Legacy evidence is unchanged.
+	declared := SkillDeclarationIdentity{Scope: firstString(evidence.Payload, "scope"), ID: firstString(payload, "id")}
+	if !declared.Valid() {
+		return true
+	}
+	set := identities[key]
+	if set == nil {
+		set = &installedSkillIdentitySet{}
+		identities[key] = set
+	}
+	return !set.add(declared)
+}

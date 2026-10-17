@@ -8,7 +8,10 @@ import (
 )
 
 func FuzzSkillDeclarationPaths(f *testing.F) {
-	for _, seed := range []struct{ path, id string }{{"nested/body.md", "review"}, {"../outside.md", "review"}, {"/outside.md", "review"}, {"a\\b", "review"}, {"a//b", "review"}, {"a\x00b", "review"}, {"a\nb", "review"}, {"body.md", "../private"}, {"body.md", "review:secret"}, {"body.md", ""}} {
+	for _, seed := range []struct {
+		path string
+		id   string
+	}{{"nested/body.md", "review"}, {"../outside.md", "review"}, {"/outside.md", "review"}, {"a\\b", "review"}, {"a//b", "review"}, {"a\x00b", "review"}, {"a\nb", "review"}, {"body.md", "../private"}, {"body.md", "review:secret"}, {"body.md", ""}} {
 		f.Add(seed.path, seed.id)
 	}
 	f.Fuzz(func(t *testing.T, path, id string) {

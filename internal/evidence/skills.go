@@ -169,8 +169,9 @@ func validSkillDeclaration(file agentapi.SkillFile) bool {
 			return false
 		}
 	}
-	for _, part := range strings.Split(file.Path, "/") {
-		if part == "" || part == "." || part == ".." {
+	for part := range strings.SplitSeq(file.Path, "/") {
+		switch skillPathPart(part) {
+		case skillPathEmpty, skillPathCurrent, skillPathParent:
 			return false
 		}
 	}
@@ -246,12 +247,12 @@ func boundedSkillEntries(entries []os.DirEntry) ([]os.DirEntry, int) {
 
 func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *skillReadBudget, mode config.SkillEvidence) ([]archive.SupplementalEvidence, error) {
 	if root.layout == agentapi.SkillDeclaredFiles && !validSkillScope(root.scope) {
-		return []archive.SupplementalEvidence{inventoryObservation(harness, "declared_skills", "unreadable", nil, false, observedAt)}, nil
+		return []archive.SupplementalEvidence{inventoryObservation(harness, "declared_skills", "unreadable", false, observedAt)}, nil
 	}
 	bounds := newSkillBounds(root)
 	if root.user != "" && bounds.root == "" {
 		if _, err := os.Lstat(root.path); err == nil {
-			return []archive.SupplementalEvidence{inventoryObservation(harness, root.scope, "unreadable", nil, false, observedAt)}, nil
+			return []archive.SupplementalEvidence{inventoryObservation(harness, root.scope, "unreadable", false, observedAt)}, nil
 		}
 	}
 	entries, omittedEntries, err := rootCandidates(root, budget)
@@ -267,7 +268,7 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *s
 			// harness discovered or invoked.
 			rootStatus, complete = "absent", true
 		}
-		return []archive.SupplementalEvidence{inventoryObservation(harness, root.scope, rootStatus, nil, complete, observedAt)}, nil
+		return []archive.SupplementalEvidence{inventoryObservation(harness, root.scope, rootStatus, complete, observedAt)}, nil
 	}
 	provenance := "filesystem:" + strings.ToLower(strings.TrimSpace(harness))
 	var inventory []any
@@ -279,48 +280,14 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *s
 			uninspectedEntries++
 			continue
 		}
-		// Symlinks are resolved first, and the SKILL.md actually read is the
-		// resolved file, which must be a regular file inside the root's bounds.
-		path := entry.path
-		var info os.FileInfo
-		var err error
-		var strict *confinedSkillInspection
-		if root.confined != nil {
-			relative, relErr := filepath.Rel(root.path, path)
-			if relErr == nil {
-				strict, err = inspectConfinedSkill(root.confined, filepath.ToSlash(relative))
-				if err == nil {
-					info = strict.info
-				}
-			} else {
-				err = relErr
-			}
-		} else {
-			path, err = filepath.EvalSymlinks(entry.path)
-			if errors.Is(err, os.ErrNotExist) {
-				// Some legacy/configured roots contain grouped or plugin-managed
-				// subtrees. We do not recursively walk them; record the coverage gap.
-				if entry.directory || root.layout == agentapi.SkillDeclaredFiles {
-					uninspectedEntries++
-				}
-				continue
-			}
-			if err != nil || (root.layout == agentapi.SkillDirectory && !bounds.allow(path)) || (root.layout == agentapi.SkillDeclaredFiles && !bounds.allowDeclared(path)) {
-				// Permission denied on the entry or its SKILL.md, or a SKILL.md that
-				// resolves outside the root's bounds: coverage gap.
+		file, uninspected := inspectSkillCandidate(root, bounds, entry)
+		if file == nil {
+			if uninspected {
 				uninspectedEntries++
-				continue
 			}
-			info, err = os.Lstat(path)
-			if err != nil || !info.Mode().IsRegular() {
-				uninspectedEntries++
-				continue
-			}
-		}
-		if err != nil || info == nil || !info.Mode().IsRegular() {
-			uninspectedEntries++
 			continue
 		}
+		info := file.info
 		name := entry.name
 		payload := map[string]any{
 			"name": name, "coverage": string(archive.SkillCoverageInstalledOnly), "scope": root.scope,
@@ -335,15 +302,7 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *s
 			omittedSnapshots++
 			continue
 		}
-		var original []byte
-		if strict != nil {
-			original, err = budget.readUsing(info, false, func() ([]byte, error) { return strict.read() })
-		} else {
-			original, err = budget.read(path, info)
-		}
-		if strict != nil && !strict.stable() {
-			err = errSkillInventoryFile
-		}
+		original, err := file.read(budget)
 		if err != nil {
 			if errors.Is(err, errSkillBudget) {
 				inventory = append(inventory, installedName)
@@ -545,17 +504,14 @@ func sameDirectory(a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
 }
 
-func inventoryObservation(harness, scope, rootStatus string, skills []any, complete bool, observedAt time.Time) archive.SupplementalEvidence {
-	if skills == nil {
-		skills = []any{}
-	}
+func inventoryObservation(harness, scope, rootStatus string, complete bool, observedAt time.Time) archive.SupplementalEvidence {
 	return archive.SupplementalEvidence{
 		Kind: archive.EvidenceKindSkillInventory, ObservedAt: observedAt,
 		Provenance: "filesystem:" + strings.ToLower(strings.TrimSpace(harness)),
 		Payload: map[string]any{
 			"coverage":           string(archive.SkillCoverageInstalledOnly),
 			"scope":              scope,
-			"skills":             skills,
+			"skills":             []any{},
 			"inventory_complete": complete,
 			"root_status":        rootStatus,
 			"uncertainty":        "root-local filesystem inventory does not prove discovery, eligibility, or invocation; other roots and plugin-managed inventories may not have been inspected",
@@ -610,4 +566,58 @@ func frontmatterName(content []byte) string {
 		}
 	}
 	return ""
+}
+
+type skillPathPart string
+
+const (
+	skillPathEmpty   skillPathPart = ""
+	skillPathCurrent skillPathPart = "."
+	skillPathParent  skillPathPart = ".."
+)
+
+type observedSkillFile struct {
+	path     string
+	info     os.FileInfo
+	confined *confinedSkillInspection
+}
+
+func inspectSkillCandidate(root skillRoot, bounds skillBounds, entry skillCandidate) (*observedSkillFile, bool) {
+	path := entry.path
+	if root.confined != nil {
+		relative, err := filepath.Rel(root.path, path)
+		if err != nil {
+			return nil, true
+		}
+		inspected, err := inspectConfinedSkill(root.confined, filepath.ToSlash(relative))
+		if err != nil {
+			return nil, true
+		}
+		return &observedSkillFile{path: path, info: inspected.info, confined: inspected}, false
+	}
+	// Directory roots retain their existing documented symlink policy. Native
+	// installed declarations take the anchored nofollow branch above instead.
+	path, err := filepath.EvalSymlinks(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, entry.directory || root.layout == agentapi.SkillDeclaredFiles
+	}
+	if err != nil || (root.layout == agentapi.SkillDirectory && !bounds.allow(path)) || (root.layout == agentapi.SkillDeclaredFiles && !bounds.allowDeclared(path)) {
+		return nil, true
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, true
+	}
+	return &observedSkillFile{path: path, info: info}, false
+}
+
+func (file *observedSkillFile) read(budget *skillReadBudget) ([]byte, error) {
+	if file.confined == nil {
+		return budget.read(file.path, file.info)
+	}
+	original, err := budget.readUsing(file.info, false, file.confined.read)
+	if !file.confined.stable() {
+		err = errSkillInventoryFile
+	}
+	return original, err
 }

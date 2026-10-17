@@ -12,23 +12,23 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 )
 
-func skillWire(t testing.TB) (map[string]any, map[string]any) {
-	t.Helper()
+func skillWire(tb testing.TB) (map[string]any, map[string]any) {
+	tb.Helper()
 	manifest := map[string]any{"schemaVersion": 1, "name": "synthetic", "version": "0.1.0", "compat": map[string]any{"source": "native", "manifestDir": ".muse-plugin"}, "capabilities": map[string]any{"skills": []any{map[string]any{"id": "first", "path": "skills/body.md", "enabledDefault": false}, map[string]any{"id": "second", "path": "skills/body.md", "enabledDefault": true}}, "commands": []any{map[string]any{"command": "NEVER_EXECUTE"}}, "hooks": []any{}, "mcpServers": []any{}, "reminders": []any{}}}
 	raw, err := json.Marshal(manifest)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	sum := sha256.Sum256(raw)
 	record := map[string]any{"id": "synthetic", "version": "0.1.0", "manifest_family": "muse", "enabled": true, "trust": "user-local", "source": map[string]any{"provenance": "native-local", "path": "/PRIVATE_SOURCE_MUST_NOT_BE_READ"}, "manifest_sha256": "sha256:" + hex.EncodeToString(sum[:]), "package_sha256": "sha256:" + strings.Repeat("a", 64), "cache_path": "plugins/cache/local/synthetic/" + strings.Repeat("a", 64) + "/package"}
 	return map[string]any{"version": 1, "plugins": map[string]any{"synthetic": record}}, manifest
 }
 
-func skillWireJSON(t testing.TB, v any) []byte {
-	t.Helper()
+func skillWireJSON(tb testing.TB, v any) []byte {
+	tb.Helper()
 	raw, err := json.Marshal(v)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return raw
 }
@@ -56,42 +56,43 @@ func TestInstalledSkillCatalogUsesOnlyQualifiedWireLocators(t *testing.T) {
 
 func TestInstalledSkillCatalogRejectsAmbiguousAndUnsupportedAuthority(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"version", "duplicate", "case-alias", "trailing", "absolute-cache", "other-id", "digest", "family", "provenance", "unknown-selector", "null-enabled", "depth", "candidate-cap", "bytes"} {
-		t.Run(name, func(t *testing.T) {
+	for _, name := range []inventoryCase{inventoryCaseVersion, inventoryCaseDuplicate, inventoryCaseCaseAlias, inventoryCaseTrailing, inventoryCaseAbsoluteCache, inventoryCaseOtherId, inventoryCaseDigest, inventoryCaseFamily, inventoryCaseProvenance, inventoryCaseUnknownSelector, inventoryCaseNullEnabled, inventoryCaseDepth, inventoryCaseCandidateCap, inventoryCaseBytes} {
+		t.Run(string(name), func(t *testing.T) {
+			t.Parallel()
 			registry, _ := skillWire(t)
 			records := object(registry["plugins"])
 			record := object(records["synthetic"])
 			var raw []byte
 			switch name {
-			case "version":
+			case inventoryCaseVersion:
 				registry["version"] = 2
-			case "duplicate":
+			case inventoryCaseDuplicate:
 				raw = []byte(`{"version":1,"version":1,"plugins":{}}`)
-			case "case-alias":
+			case inventoryCaseCaseAlias:
 				registry["Version"] = 1
-			case "trailing":
+			case inventoryCaseTrailing:
 				raw = append(skillWireJSON(t, registry), []byte(` {}`)...)
-			case "absolute-cache":
+			case inventoryCaseAbsoluteCache:
 				record["cache_path"] = "/private/forbidden/package"
-			case "other-id":
+			case inventoryCaseOtherId:
 				record["id"] = "different"
-			case "digest":
+			case inventoryCaseDigest:
 				record["package_sha256"] = "sha256:" + strings.Repeat("A", 64)
-			case "family":
+			case inventoryCaseFamily:
 				record["manifest_family"] = "native"
-			case "provenance":
+			case inventoryCaseProvenance:
 				object(record["source"])["provenance"] = "remote"
-			case "unknown-selector":
+			case inventoryCaseUnknownSelector:
 				record["Cache_Path"] = record["cache_path"]
-			case "null-enabled":
+			case inventoryCaseNullEnabled:
 				record["enabled"] = nil
-			case "depth":
+			case inventoryCaseDepth:
 				record["description"] = json.RawMessage(strings.Repeat("[", 34) + "0" + strings.Repeat("]", 34))
-			case "candidate-cap":
-				for i := 0; i < 257; i++ {
+			case inventoryCaseCandidateCap:
+				for i := range 257 {
 					records[fmt.Sprintf("candidate-%d", i)] = nil
 				}
-			case "bytes":
+			case inventoryCaseBytes:
 				raw = bytes.Repeat([]byte(" "), maxSkillCatalogBytes+1)
 			}
 			if raw == nil {
@@ -117,8 +118,9 @@ func TestInstalledSkillCatalogRejectsAmbiguousAndUnsupportedAuthority(t *testing
 
 func TestInstalledSkillManifestChecksHashIdentityAndFiniteDeclarations(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"hash", "name", "version", "compat", "schema", "duplicate-id", "parent", "absolute", "backslash", "case-alias", "unknown-capability", "defaults-type", "declaration-cap", "duplicate-json"} {
-		t.Run(name, func(t *testing.T) {
+	for _, name := range []inventoryCase{inventoryCaseHash, inventoryCaseName, inventoryCaseVersion, inventoryCaseCompat, inventoryCaseSchema, inventoryCaseDuplicateId, inventoryCaseParent, inventoryCaseAbsolute, inventoryCaseBackslash, inventoryCaseCaseAlias, inventoryCaseUnknownCapability, inventoryCaseDefaultsType, inventoryCaseDeclarationCap, inventoryCaseDuplicateJson} {
+		t.Run(string(name), func(t *testing.T) {
+			t.Parallel()
 			registry, manifest := skillWire(t)
 			provider := skillProvider{}
 			input, _ := provider.InventoryInput(agentapi.SkillLocations{DataHome: t.TempDir()})
@@ -130,36 +132,36 @@ func TestInstalledSkillManifestChecksHashIdentityAndFiniteDeclarations(t *testin
 			entries := object(manifest["capabilities"])["skills"].([]any)
 			entry := object(entries[0])
 			switch name {
-			case "name":
+			case inventoryCaseName:
 				manifest["name"] = "other"
-			case "version":
+			case inventoryCaseVersion:
 				manifest["version"] = "other"
-			case "compat":
+			case inventoryCaseCompat:
 				object(manifest["compat"])["source"] = "foreign"
-			case "schema":
+			case inventoryCaseSchema:
 				manifest["schemaVersion"] = 2
-			case "duplicate-id":
+			case inventoryCaseDuplicateId:
 				object(entries[1])["id"] = "first"
-			case "parent":
+			case inventoryCaseParent:
 				entry["path"] = "../outside.md"
-			case "absolute":
+			case inventoryCaseAbsolute:
 				entry["path"] = "/outside.md"
-			case "backslash":
+			case inventoryCaseBackslash:
 				entry["path"] = `skills\body.md`
-			case "case-alias":
+			case inventoryCaseCaseAlias:
 				entry["Path"] = "other.md"
-			case "unknown-capability":
+			case inventoryCaseUnknownCapability:
 				object(manifest["capabilities"])["unknown"] = []any{}
-			case "defaults-type":
+			case inventoryCaseDefaultsType:
 				entry["enabledDefault"] = "true"
-			case "declaration-cap":
+			case inventoryCaseDeclarationCap:
 				object(manifest["capabilities"])["skills"] = make([]any, 257)
 			}
 			raw := skillWireJSON(t, manifest)
-			if name == "duplicate-json" {
+			if name == inventoryCaseDuplicateJson {
 				raw = []byte(`{"schemaVersion":1,"schemaVersion":1}`)
 			}
-			if name != "hash" {
+			if name != inventoryCaseHash {
 				sum := sha256.Sum256(raw)
 				pkg.ManifestSHA256 = hex.EncodeToString(sum[:])
 			} else {
@@ -211,7 +213,7 @@ func TestInstalledSkillCatalogAdmitsExactByteAndCandidateBounds(t *testing.T) {
 		t.Fatal("over byte bound admitted")
 	}
 	records := map[string]any{}
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		records[fmt.Sprintf("candidate-%d", i)] = nil
 	}
 	if got, err := (skillProvider{}).InterpretInventory(skillWireJSON(t, map[string]any{"version": 1, "plugins": records})); err != nil || !got.Incomplete || len(got.Packages) != 0 {
@@ -254,3 +256,34 @@ func FuzzInstalledSkillManifest(f *testing.F) {
 		}
 	})
 }
+
+type inventoryCase string
+
+const (
+	inventoryCaseVersion           inventoryCase = "version"
+	inventoryCaseDuplicate         inventoryCase = "duplicate"
+	inventoryCaseCaseAlias         inventoryCase = "case-alias"
+	inventoryCaseTrailing          inventoryCase = "trailing"
+	inventoryCaseAbsoluteCache     inventoryCase = "absolute-cache"
+	inventoryCaseOtherId           inventoryCase = "other-id"
+	inventoryCaseDigest            inventoryCase = "digest"
+	inventoryCaseFamily            inventoryCase = "family"
+	inventoryCaseProvenance        inventoryCase = "provenance"
+	inventoryCaseUnknownSelector   inventoryCase = "unknown-selector"
+	inventoryCaseNullEnabled       inventoryCase = "null-enabled"
+	inventoryCaseDepth             inventoryCase = "depth"
+	inventoryCaseCandidateCap      inventoryCase = "candidate-cap"
+	inventoryCaseBytes             inventoryCase = "bytes"
+	inventoryCaseHash              inventoryCase = "hash"
+	inventoryCaseName              inventoryCase = "name"
+	inventoryCaseCompat            inventoryCase = "compat"
+	inventoryCaseSchema            inventoryCase = "schema"
+	inventoryCaseDuplicateId       inventoryCase = "duplicate-id"
+	inventoryCaseParent            inventoryCase = "parent"
+	inventoryCaseAbsolute          inventoryCase = "absolute"
+	inventoryCaseBackslash         inventoryCase = "backslash"
+	inventoryCaseUnknownCapability inventoryCase = "unknown-capability"
+	inventoryCaseDefaultsType      inventoryCase = "defaults-type"
+	inventoryCaseDeclarationCap    inventoryCase = "declaration-cap"
+	inventoryCaseDuplicateJson     inventoryCase = "duplicate-json"
+)

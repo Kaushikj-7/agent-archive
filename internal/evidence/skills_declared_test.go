@@ -84,8 +84,13 @@ func TestDeclaredSkillsRejectEscapesMalformedAndUndeclaredFiles(t *testing.T) {
 	if err := os.WriteFile(outside, []byte("OUTSIDE_SENTINEL"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, test := range []struct{ name, path, id string }{{"parent", "../outside.md", "ok"}, {"absolute", outside, "ok"}, {"backslash", "nested\\body.md", "ok"}, {"empty-component", "a//b.md", "ok"}, {"nul", "bad\x00.md", "ok"}, {"invalid-utf8", "bad\xff.md", "ok"}, {"id-path", "x.md", "../bad"}, {"directory", "directory", "ok"}} {
+	for _, test := range []struct {
+		name string
+		path string
+		id   string
+	}{{"parent", "../outside.md", "ok"}, {"absolute", outside, "ok"}, {"backslash", "nested\\body.md", "ok"}, {"empty-component", "a//b.md", "ok"}, {"nul", "bad\x00.md", "ok"}, {"invalid-utf8", "bad\xff.md", "ok"}, {"id-path", "x.md", "../bad"}, {"directory", "directory", "ok"}} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			got, err := ObserveSkills(SkillOptions{Harness: "muse", ObservedAt: time.Now(), Mode: config.SkillEvidenceBody, Locations: []agentapi.SkillRoot{{Path: root, ProjectBoundary: project, Scope: "project_muse_test", Layout: agentapi.SkillDeclaredFiles, Files: []agentapi.SkillFile{{Path: test.path, ID: test.id}}}}})
 			if err != nil {
 				t.Fatal(err)
@@ -97,6 +102,7 @@ func TestDeclaredSkillsRejectEscapesMalformedAndUndeclaredFiles(t *testing.T) {
 		})
 	}
 	t.Run("package-symlink", func(t *testing.T) {
+		t.Parallel()
 		if err := os.Symlink(outside, filepath.Join(root, "link.md")); err != nil {
 			t.Skip(err)
 		}
@@ -106,6 +112,7 @@ func TestDeclaredSkillsRejectEscapesMalformedAndUndeclaredFiles(t *testing.T) {
 		}
 	})
 	t.Run("private-scope", func(t *testing.T) {
+		t.Parallel()
 		got, err := ObserveSkills(SkillOptions{Harness: "muse", ObservedAt: time.Now(), Locations: []agentapi.SkillRoot{{Path: root, Scope: root, Layout: agentapi.SkillDeclaredFiles}}})
 		raw, _ := json.Marshal(got)
 		if err != nil || bytes.Contains(raw, []byte(root)) || got[0].Payload["inventory_complete"] != false {

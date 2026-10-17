@@ -111,24 +111,25 @@ func TestInstalledSkillsShareCatalogManifestAndBodyBudget(t *testing.T) {
 
 func TestInstalledSkillsRefuseChangedUnconfinedAndOversizedFiles(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"manifest-hash", "registry-symlink", "manifest-symlink", "body-symlink", "ancestor-symlink", "nonregular", "public-mode", "oversize-registry", "oversize-manifest", "catalog-budget", "body-budget"} {
-		t.Run(name, func(t *testing.T) {
+	for _, name := range []installedRefusalCase{installedRefusalManifestHash, installedRefusalRegistrySymlink, installedRefusalManifestSymlink, installedRefusalBodySymlink, installedRefusalAncestorSymlink, installedRefusalNonregular, installedRefusalPublicMode, installedRefusalOversizeRegistry, installedRefusalOversizeManifest, installedRefusalCatalogBudget, installedRefusalBodyBudget} {
+		t.Run(string(name), func(t *testing.T) {
+			t.Parallel()
 			options, boundary, directory := installedSkillFixture(t)
-			registry := filepath.Join(boundary, "plugins/installed.json")
-			manifest := filepath.Join(boundary, directory, ".muse-plugin/plugin.json")
-			body := filepath.Join(boundary, directory, "skills/body.md")
+			registry := filepath.Join(boundary, "plugins", "installed.json")
+			manifest := filepath.Join(boundary, directory, ".muse-plugin", "plugin.json")
+			body := filepath.Join(boundary, directory, "skills", "body.md")
 			budget := skillReadBudget{remaining: maxSnapshotBytes, catalogRemaining: 1 << 20, declarations: maxSkillsPerRoot}
 			switch name {
-			case "manifest-hash":
+			case installedRefusalManifestHash:
 				if err := os.WriteFile(manifest, []byte("{}"), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "registry-symlink", "manifest-symlink", "body-symlink":
+			case installedRefusalRegistrySymlink, installedRefusalManifestSymlink, installedRefusalBodySymlink:
 				path := registry
-				if name == "manifest-symlink" {
+				if name == installedRefusalManifestSymlink {
 					path = manifest
 				}
-				if name == "body-symlink" {
+				if name == installedRefusalBodySymlink {
 					path = body
 				}
 				outside := filepath.Join(t.TempDir(), "outside")
@@ -141,7 +142,7 @@ func TestInstalledSkillsRefuseChangedUnconfinedAndOversizedFiles(t *testing.T) {
 				if err := os.Symlink(outside, path); err != nil {
 					t.Fatal(err)
 				}
-			case "ancestor-symlink":
+			case installedRefusalAncestorSymlink:
 				skills := filepath.Dir(body)
 				moved := skills + "-old"
 				if err := os.Rename(skills, moved); err != nil {
@@ -150,28 +151,28 @@ func TestInstalledSkillsRefuseChangedUnconfinedAndOversizedFiles(t *testing.T) {
 				if err := os.Symlink(moved, skills); err != nil {
 					t.Fatal(err)
 				}
-			case "nonregular":
+			case installedRefusalNonregular:
 				if err := os.Remove(body); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Mkdir(body, 0700); err != nil {
 					t.Fatal(err)
 				}
-			case "public-mode":
+			case installedRefusalPublicMode:
 				if err := os.Chmod(manifest, 0644); err != nil {
 					t.Fatal(err)
 				}
-			case "oversize-registry":
+			case installedRefusalOversizeRegistry:
 				if err := os.WriteFile(registry, bytes.Repeat([]byte(" "), maxSkillInventoryBytes+1), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "oversize-manifest":
+			case installedRefusalOversizeManifest:
 				if err := os.WriteFile(manifest, bytes.Repeat([]byte(" "), maxSkillInventoryBytes+1), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "catalog-budget":
+			case installedRefusalCatalogBudget:
 				budget.catalogRemaining = 1
-			case "body-budget":
+			case installedRefusalBodyBudget:
 				a, _ := os.Stat(registry)
 				b, _ := os.Stat(manifest)
 				budget.remaining = a.Size() + b.Size()
@@ -186,7 +187,7 @@ func TestInstalledSkillsRefuseChangedUnconfinedAndOversizedFiles(t *testing.T) {
 			if bytes.Contains(raw, []byte("FOREIGN_SENTINEL")) {
 				t.Fatal("foreign data retained")
 			}
-			if name == "body-budget" {
+			if name == installedRefusalBodyBudget {
 				if budget.remaining != 0 || bytes.Contains(raw, []byte(`"sha256"`)) {
 					t.Fatal("exhausted body allowance produced hashes or replenished bytes")
 				}
@@ -297,7 +298,7 @@ func TestInstalledSkillMetadataUsesExistingAllowanceAndFailedReadReservations(t 
 		t.Fatal("same physical metadata charged twice")
 	}
 	failed := skillReadBudget{remaining: 2 * size, catalogRemaining: 2 * size, declarations: 256}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if _, err = failed.readUsing(inspection.info, true, func() ([]byte, error) { return nil, errSkillInventoryFile }); err == nil {
 			t.Fatal("failed read succeeded")
 		}
@@ -309,3 +310,19 @@ func TestInstalledSkillMetadataUsesExistingAllowanceAndFailedReadReservations(t 
 		t.Fatal("exhausted budget reset")
 	}
 }
+
+type installedRefusalCase string
+
+const (
+	installedRefusalManifestHash     installedRefusalCase = "manifest-hash"
+	installedRefusalRegistrySymlink  installedRefusalCase = "registry-symlink"
+	installedRefusalManifestSymlink  installedRefusalCase = "manifest-symlink"
+	installedRefusalBodySymlink      installedRefusalCase = "body-symlink"
+	installedRefusalAncestorSymlink  installedRefusalCase = "ancestor-symlink"
+	installedRefusalNonregular       installedRefusalCase = "nonregular"
+	installedRefusalPublicMode       installedRefusalCase = "public-mode"
+	installedRefusalOversizeRegistry installedRefusalCase = "oversize-registry"
+	installedRefusalOversizeManifest installedRefusalCase = "oversize-manifest"
+	installedRefusalCatalogBudget    installedRefusalCase = "catalog-budget"
+	installedRefusalBodyBudget       installedRefusalCase = "body-budget"
+)

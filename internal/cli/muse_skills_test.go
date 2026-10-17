@@ -38,13 +38,13 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 			return xdg, true
 		case skillCodexHome:
 			return codexHome, true
-		case "XDG_DATA_HOME":
+		case skillXDGDataHome:
 			return skillData, true
 		}
 		t.Fatalf("unexpected environment read %s", key)
 		return "", false
 	}
-	roots := []string{filepath.Join(xdg, "muse", "skills"), filepath.Join(userHome, ".agents", "skills"), filepath.Join(userHome, ".claude", "skills"), filepath.Join(codexHome, "skills"), filepath.Join(workspace, ".agents", "skills"), filepath.Join(workspace, ".codex", "skills"), filepath.Join(workspace, ".claude", "skills"), filepath.Join(skillData, "muse/skills/bundled/muse-core/skills")}
+	roots := []string{filepath.Join(xdg, "muse", "skills"), filepath.Join(userHome, ".agents", "skills"), filepath.Join(userHome, ".claude", "skills"), filepath.Join(codexHome, "skills"), filepath.Join(workspace, ".agents", "skills"), filepath.Join(workspace, ".codex", "skills"), filepath.Join(workspace, ".claude", "skills"), filepath.Join(skillData, "muse", "skills", "bundled", "muse-core", "skills")}
 	body := []byte("---\nname: synthetic-review\n---\nuse token=synthetic-secret-value\n")
 	for _, root := range roots {
 		dir := filepath.Join(root, "synthetic-review")
@@ -181,7 +181,7 @@ func TestMuseSkillEnvironmentSnapshotBoundsAndAlias(t *testing.T) {
 	dir := filepath.Join(xdg, "muse", "skills", "synthetic-review")
 	must(t, os.MkdirAll(dir, 0700))
 	must(t, os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: synthetic-review\n---\nsynthetic"), 0600))
-	builtinDir := filepath.Join(data, "muse/skills/bundled/muse-core/skills/synthetic-builtin")
+	builtinDir := filepath.Join(data, "muse", "skills", "bundled", "muse-core", "skills", "synthetic-builtin")
 	must(t, os.MkdirAll(builtinDir, 0700))
 	must(t, os.WriteFile(filepath.Join(builtinDir, "SKILL.md"), []byte("BUILTIN_ONLY_SENTINEL"), 0600))
 	reads := 0
@@ -194,7 +194,7 @@ func TestMuseSkillEnvironmentSnapshotBoundsAndAlias(t *testing.T) {
 			return xdg, true
 		case skillCodexHome:
 			return strings.Repeat("x", 4097), true
-		case "XDG_DATA_HOME":
+		case skillXDGDataHome:
 			return data, true
 		}
 		t.Fatalf("unexpected key %s", key)

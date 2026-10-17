@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -56,14 +57,7 @@ func skillAllowedKeys(m map[string]any, allowed ...string) bool {
 		return false
 	}
 	for key := range m {
-		found := false
-		for _, name := range allowed {
-			if key == name {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !slices.Contains(allowed, key) {
 			return false
 		}
 	}
@@ -79,7 +73,7 @@ func skillDigest(value string) (string, bool) {
 		return "", false
 	}
 	for _, c := range value[7:] {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return "", false
 		}
 	}
@@ -152,17 +146,9 @@ func (skillProvider) InterpretManifest(input agentapi.SkillInventoryInput, pkg a
 	if err != nil {
 		return empty, err
 	}
-	compat := object(m["compat"])
-	caps := object(m["capabilities"])
-	if !skillAllowedKeys(m, "schemaVersion", "name", "displayName", "version", "description", "compat", "capabilities") || num(m["schemaVersion"]) != 1 || str(m["name"]) != pkg.ID || str(m["version"]) != pkg.Version || !keys(compat, "source", "manifestDir") || str(compat["source"]) != "native" || str(compat["manifestDir"]) != ".muse-plugin" || !skillAllowedKeys(caps, "skills", "commands", "hooks", "mcpServers", "reminders") {
-		return empty, errSkillInventory
-	}
-	for key, value := range caps {
-		if key != "skills" {
-			if _, ok := value.([]any); !ok {
-				return empty, errSkillInventory
-			}
-		}
+	caps, err := skillManifestCapabilities(m, pkg)
+	if err != nil {
+		return empty, err
 	}
 	declarations, ok := caps["skills"].([]any)
 	if !ok {
@@ -196,10 +182,35 @@ func skillManifestPath(path string) bool {
 			return false
 		}
 	}
-	for _, part := range strings.Split(path, "/") {
-		if part == "" || part == "." || part == ".." {
+	for part := range strings.SplitSeq(path, "/") {
+		switch skillPathPart(part) {
+		case skillPathEmpty, skillPathCurrent, skillPathParent:
 			return false
 		}
 	}
 	return true
 }
+
+func skillManifestCapabilities(m map[string]any, pkg agentapi.SkillInstalledPackage) (map[string]any, error) {
+	compat := object(m["compat"])
+	caps := object(m["capabilities"])
+	if !skillAllowedKeys(m, "schemaVersion", "name", "displayName", "version", "description", "compat", "capabilities") || num(m["schemaVersion"]) != 1 || str(m["name"]) != pkg.ID || str(m["version"]) != pkg.Version || !keys(compat, "source", "manifestDir") || str(compat["source"]) != "native" || str(compat["manifestDir"]) != ".muse-plugin" || !skillAllowedKeys(caps, "skills", "commands", "hooks", "mcpServers", "reminders") {
+		return nil, errSkillInventory
+	}
+	for key, value := range caps {
+		if key != "skills" {
+			if _, ok := value.([]any); !ok {
+				return nil, errSkillInventory
+			}
+		}
+	}
+	return caps, nil
+}
+
+type skillPathPart string
+
+const (
+	skillPathEmpty   skillPathPart = ""
+	skillPathCurrent skillPathPart = "."
+	skillPathParent  skillPathPart = ".."
+)

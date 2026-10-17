@@ -45,7 +45,7 @@ func writeMusePluginInventory(t *testing.T, data string) []string {
 	}
 	registry, err := json.Marshal(map[string]any{"version": 1, "plugins": records})
 	must(t, err)
-	must(t, os.WriteFile(filepath.Join(data, "muse/plugins/installed.json"), registry, 0600))
+	must(t, os.WriteFile(filepath.Join(data, "muse", "plugins", "installed.json"), registry, 0600))
 	return private
 }
 
@@ -63,12 +63,12 @@ func TestMuseInstalledPluginsFlowThroughSourceBundleMetadataAndPassCache(t *test
 	home, skillData := t.TempDir(), t.TempDir()
 	env.UserHomeDir = func() (string, error) { return home, nil }
 	env.LookupEnv = func(key string) (string, bool) {
-		switch key {
-		case "XDG_DATA_HOME":
+		switch skillEnvironmentKey(key) {
+		case skillXDGDataHome:
 			return skillData, true
-		case "XDG_CONFIG_HOME":
+		case skillXDGConfigHome:
 			return filepath.Join(home, "config"), true
-		case "CODEX_HOME":
+		case skillCodexHome:
 			return filepath.Join(home, "codex"), true
 		}
 		t.Fatalf("unexpected env read %s", key)
@@ -116,7 +116,7 @@ func TestMuseInstalledPluginsFlowThroughSourceBundleMetadataAndPassCache(t *test
 	}
 	// A later alias/project reuses FILTERED user evidence without reopening a
 	// removed catalog or resnapshotting the environment in this pass.
-	must(t, os.RemoveAll(filepath.Join(skillData, "muse/plugins")))
+	must(t, os.RemoveAll(filepath.Join(skillData, "muse", "plugins")))
 	env.LookupEnv = func(string) (string, bool) { t.Fatal("cached pass reopened environment"); return "", false }
 	reg.Harness.Name = "muse-code"
 	reg.ProjectRoot = t.TempDir()
