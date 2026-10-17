@@ -371,10 +371,10 @@ type Agent struct {
 	CacheHitRate *float64 `json:"cache_hit_rate"`
 }
 
-// ModelRow is the cost and tokens of one model family.
+// ModelRow is the cost and tokens of one model.
 type ModelRow struct {
-	// Label is the price entry's family ("opus"), or the model id itself
-	// when the model is unpriced.
+	// Label is the price entry's label ("opus-5.5", "gpt-6.1-sol"), or the
+	// model id itself when the model is unpriced.
 	Label string `json:"label"`
 	// Models are the distinct model ids grouped under the label.
 	Models   []string `json:"models"`
@@ -472,7 +472,7 @@ type BusiestDay struct {
 	Sessions int    `json:"sessions"`
 }
 
-// FavoriteModel is the model family at the top of cost by model, or, when no
+// FavoriteModel is the model at the top of cost by model, or, when no
 // model in the window could be priced, of tokens.
 type FavoriteModel struct {
 	Label string `json:"label"`

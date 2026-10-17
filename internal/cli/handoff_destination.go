@@ -29,17 +29,6 @@ const (
 	handoffQuit
 )
 
-// handoffConfirmation names the yes/no aliases of a single-agent prompt.
-type handoffConfirmation string
-
-const (
-	handoffConfirmYesKey  handoffConfirmation = "y"
-	handoffConfirmYesWord handoffConfirmation = "yes"
-	handoffConfirmNoKey   handoffConfirmation = "n"
-	handoffConfirmNoWord  handoffConfirmation = "no"
-	handoffConfirmQuitKey handoffConfirmation = "q"
-)
-
 // handoffChoice is an answer to the destination prompt: an agent to launch,
 // or what to do with the handoff instead.
 type handoffChoice struct {
@@ -132,7 +121,7 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 	}
 	secondary := []actionOption{}
 	for _, l := range handoffLetters {
-		if l.action == handoffCopy && !canCopy || l.action == handoffQuit && confirm {
+		if l.action == handoffCopy && !canCopy {
 			continue
 		}
 		// Beside an agent the actions share one line, so each is its word.
@@ -157,22 +146,9 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 	question := "Continue in"
 	if confirm {
 		question = "Continue in " + primary[0].Label + "?"
-		aliases = append(aliases, option{"y", ""}, option{"yes", ""}, option{"n", ""}, option{"no", ""}, option{"q", ""}, option{"quit", ""})
 	}
-	// resolve turns an answer into an agent or a handoffLetters word.
-	resolve := func(key string) string {
-		if confirm {
-			switch handoffConfirmation(key) {
-			case handoffConfirmYesKey, handoffConfirmYesWord:
-				return string(agents[0])
-			case handoffConfirmNoKey, handoffConfirmNoWord, handoffConfirmQuitKey:
-				return "quit"
-			}
-		}
-		return agentmeta.Canonical(c, key)
-	}
-	answer, err := p.guidedChoice(promptModel{Context: header, Question: question, Primary: primary, Secondary: secondary, Default: defaultKey, Aliases: aliases, Confirm: confirm, InlineSecondary: len(agents) > 0, Receipt: "Handoff", ResolveReceipt: func(key string) string {
-		key = resolve(key)
+	answer, err := p.guidedChoice(promptModel{Context: header, Question: question, Primary: primary, Secondary: secondary, Default: defaultKey, Aliases: aliases, Confirm: confirm, No: "quit", InlineSecondary: len(agents) > 0, Receipt: "Handoff", ResolveReceipt: func(key string) string {
+		key = agentmeta.Canonical(c, key)
 		if d, ok := c.Lookup(key); ok {
 			return d.DisplayName
 		}
@@ -183,7 +159,7 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 		}
 		return key
 	}})
-	answer = resolve(answer)
+	answer = agentmeta.Canonical(c, answer)
 	if errors.Is(err, io.EOF) {
 		return handoffChoice{action: handoffQuit}, nil
 	}
@@ -203,8 +179,8 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 
 // handoffPromptHeader names the session a handoff continues above the
 // destination prompt: its title, then its agent, when it was last active,
-// and the handoff's size.
-func handoffPromptHeader(target handoffTarget, h archive.Handoff, size int, now time.Time, c agentmeta.Catalog) []string {
+// and the handoff's size. An ASCII terminal gets ASCII separators.
+func handoffPromptHeader(target handoffTarget, h archive.Handoff, size int, now time.Time, c agentmeta.Catalog, ascii bool) []string {
 	var header []string
 	var title string
 	if target.metadata != nil {
@@ -227,8 +203,12 @@ func handoffPromptHeader(target handoffTarget, h archive.Handoff, size int, now 
 	if t := h.Session.LastActivityAt; t != nil && !t.IsZero() {
 		facts = append(facts, longWhen(now, *t))
 	}
-	facts = append(facts, fmt.Sprintf("%d KB", (size+1023)/1024))
-	return append(header, strings.Join(facts, " · "))
+	facts = append(facts, formatKilobytes(int64(size)))
+	separator := " · "
+	if ascii {
+		separator = " - "
+	}
+	return append(header, strings.Join(facts, separator))
 }
 
 // askHandoffDestination offers the agents installed here, defaulting by the
