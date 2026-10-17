@@ -544,7 +544,7 @@ func TestMuseSelectedSourceChangesCloseAllHandlesAndCreateNoArtifact(t *testing.
 	}
 }
 
-func TestMuseAutomaticHandoffSupportedDestinationAndMuseRefusal(t *testing.T) {
+func TestMuseAutomaticHandoffToSupportedDestinations(t *testing.T) {
 	t.Parallel()
 	env, data, workspace, counter := museNativeEnv(t)
 	writeMuseNative(t, data, museSyntheticID, museNativeBytes(t, "exec", museSyntheticID, workspace))
@@ -559,8 +559,8 @@ func TestMuseAutomaticHandoffSupportedDestinationAndMuseRefusal(t *testing.T) {
 		t.Fatalf("launch %d %s", code, errOut)
 	}
 	_, errOut, code = runHandoff(t, env, museSyntheticID, "--harness", "muse", "--to", "muse")
-	if code == 0 || counter.calls.Load() != 1 {
-		t.Fatalf("unsupported launch %d %s", code, errOut)
+	if code != 0 || counter.calls.Load() != 2 || len(spec.Argv) != 4 || spec.Argv[0] != "/opt/bin/muse" || spec.Argv[1] != "--workspace" || spec.Argv[2] != workspace || spec.Dir != workspace {
+		t.Fatalf("Muse launch %d %s spec=%+v", code, errOut, spec)
 	}
 }
 
