@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"reflect"
@@ -67,7 +68,7 @@ func settledPrivacySHA(p SettledPrivacyPreparation) string {
 
 func (s *Store) mintSettledPrivacy(p publishedState) (publishedState, error) {
 	reservation := s.readReservation()
-	release, err := s.publicationValidationLoan(p)
+	release, err := s.publicationValidationLoan(s.durableContext(), p)
 	if err != nil {
 		return p, err
 	}
@@ -174,9 +175,9 @@ func sameOptionalTime(a, b *time.Time) bool {
 // publicationValidationLoan covers metadata decode views, binding slices/maps,
 // and overlapping encoder buffers before any selecting validation allocates.
 // Source payload bytes remain borrowed; validation hashes them without cloning.
-func (s *Store) publicationValidationLoan(p publishedState) (func(), error) {
+func (s *Store) publicationValidationLoan(ctx context.Context, p publishedState) (func(), error) {
 	reservation := s.readReservation()
-	if err := s.durableContext().Err(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if s.resourceBudget == nil {
@@ -224,8 +225,8 @@ func (s *Store) publicationValidationLoan(p publishedState) (func(), error) {
 	return func() { reservation.Release(n) }, nil
 }
 
-func (s *Store) validateSelectingPublishedBudgeted(p publishedState) error {
-	release, err := s.publicationValidationLoan(p)
+func (s *Store) validateSelectingPublishedBudgeted(ctx context.Context, p publishedState) error {
+	release, err := s.publicationValidationLoan(ctx, p)
 	if err != nil {
 		return err
 	}
@@ -234,12 +235,15 @@ func (s *Store) validateSelectingPublishedBudgeted(p publishedState) error {
 	if p.Preparation != nil {
 		count += len(p.Preparation.Inputs)
 	}
-	facts, end, e := newPayloadDigestFacts(s.durableContext(), s.resourceBudget, count)
+	facts, end, e := newPayloadDigestFacts(ctx, s.resourceBudget, count)
 	if e != nil {
 		return e
 	}
 	defer end()
-	return p.validateSelectingPublishedWithFacts(facts)
+	if err := p.validateSelectingPublishedWithFacts(facts); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func settledPrivacyOwnerChanged(p SettledPrivacyPreparation, next archive.Metadata) bool {

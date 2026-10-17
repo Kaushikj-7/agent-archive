@@ -16,7 +16,7 @@ func (s *Store) NativeImportRetainedAuthority(ctx context.Context, reg archive.S
 	if err != nil {
 		return err
 	}
-	return published.ValidateNativeImportAuthority(reg)
+	return published.ValidateNativeImportAuthority(ctx, reg)
 }
 
 // NativeImportStageActive reads the same closed state used by collector scans.
@@ -25,12 +25,20 @@ func (s *Store) NativeImportStageActive(ctx context.Context, reg archive.Session
 	if err != nil {
 		return false, err
 	}
-	return published.NativeImportStageActive(reg)
+	return published.NativeImportStageActive(ctx, reg)
 }
 
 // NativeImportStageActive reports payload selection independently of the
 // permanent stage attribution. Released historical state is verified here.
-func (p *Published) NativeImportStageActive(reg archive.SessionRegistration) (bool, error) {
+func (p *Published) NativeImportStageActive(ctx context.Context, reg archive.SessionRegistration) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	boundStore := *p.store
+	boundStore.resourceContext = ctx
+	bound := *p
+	bound.store = &boundStore
+	p = &bound
 	if reg.NativeImport != nil {
 		if err := reg.ValidateNativeImport(); err != nil {
 			return false, err
@@ -43,13 +51,13 @@ func (p *Published) NativeImportStageActive(reg archive.SessionRegistration) (bo
 		return true, nil
 	}
 	if p.TypedStagedPublished() {
-		release, err := p.store.loadStagedReleaseState(p.store.durableContext(), reg.ArchiveSessionID)
+		release, err := p.store.loadStagedReleaseState(ctx, reg.ArchiveSessionID)
 		if err != nil {
 			return false, err
 		}
 		return !release.released, nil
 	}
-	return false, p.ValidateNativeImportAuthority(reg)
+	return false, p.ValidateNativeImportAuthority(ctx, reg)
 }
 
 // ValidateNativeImportReadAuthority accepts only the exact initial typed ACK
@@ -96,7 +104,8 @@ func (p *Published) ValidateNativeImportReadAuthority(reg archive.SessionRegistr
 }
 
 func (p *Published) validateNativeImportReleasedRead(reg archive.SessionRegistration) error {
-	if err := p.ValidateNativeImportAuthority(reg); err != nil {
+	ctx := p.store.durableContext()
+	if err := p.ValidateNativeImportAuthority(ctx, reg); err != nil {
 		return err
 	}
 	return p.store.CheckDurableSessionRead(reg.ArchiveSessionID)
@@ -131,51 +140,60 @@ func (s *Store) nativeImportReadReleaseState(id string, q *StagedSelection) (boo
 // The caller has already validated this exact current ACK, its owner and held
 // stage. Reuse pending's pure wire/source/proof checks, without granting the
 // paused collector or a changed admission policy permission to mutate it.
-func (s *Store) loadNativeImportReadPending(id string, q *StagedSelection) (pending PendingPublication, found bool, err error) {
+func (s *Store) loadNativeImportReadPending(id string, q *StagedSelection) (pending PendingPublication, err error) {
 	if err := s.checkPendingHistoryVersion(id); err != nil {
-		return pending, true, err
+		return pending, err
 	}
 	if err := s.readBudgeted(s.pendingPath(id), &pending, true); err != nil {
-		return pending, true, err
+		return pending, err
 	}
 	if err := pending.ValidateReadySlot(id); err != nil {
-		return pending, true, err
+		return pending, err
 	}
 	if err := pending.validateStagedShape(); err != nil {
-		return pending, true, err
+		return pending, err
 	}
 	if q.Version != 3 || pending.StagedProof() == nil || !sameStagedSelection(*pending.StagedProof(), *q) {
-		return pending, true, ErrDurableStorageRecovery
+		return pending, ErrDurableStorageRecovery
 	}
 	if err := pending.validateComplete(); err != nil {
-		return pending, true, err
+		return pending, err
 	}
 	if err := validateReadySourceKeys(pending); err != nil {
-		return pending, true, err
+		return pending, err
 	}
 	ctx := s.durableContext()
 	bundle, err := s.readyDigest(ctx, pending.Bundle)
 	if err != nil || bundle != q.Core.BundleSHA256 {
-		return pending, true, errors.Join(ErrDurableStorageRecovery, err)
+		return pending, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	policy, err := s.readyDigest(ctx, readyPolicy(pending))
 	if err != nil || policy != q.Core.PolicyContext {
-		return pending, true, errors.Join(ErrDurableStorageRecovery, err)
+		return pending, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	binding, err := s.readyBinding(ctx, pending)
 	if err != nil || binding != q.Core.BindingSHA256 || readySHA(pending.MetadataBytes) != q.Core.MetadataSHA256 {
-		return pending, true, errors.Join(ErrDurableStorageRecovery, err)
+		return pending, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	if err := s.validateStagedPendingMetadata(ctx, pending, q); err != nil {
-		return pending, true, err
+		return pending, err
 	}
-	return pending, true, pending.ValidateHistoryBudgeted(id, s.resourceBudget)
+	err = pending.ValidateHistoryBudgeted(id, s.resourceBudget)
+	return pending, err
 }
 
 // ValidateNativeImportAuthority is read-only: a receipt never substitutes for
 // an acknowledged selecting publication and its exact original release proof.
-func (p *Published) ValidateNativeImportAuthority(reg archive.SessionRegistration) error {
-	original, err := p.store.nativeImportReleasedSelection(p.store.durableContext(), reg)
+func (p *Published) ValidateNativeImportAuthority(ctx context.Context, reg archive.SessionRegistration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	boundStore := *p.store
+	boundStore.resourceContext = ctx
+	bound := *p
+	bound.store = &boundStore
+	p = &bound
+	original, err := p.store.nativeImportReleasedSelection(ctx, reg)
 	if err != nil {
 		return err
 	}
@@ -200,13 +218,13 @@ func (p *Published) ValidateNativeImportAuthority(reg archive.SessionRegistratio
 		if p.state.Commit.DestinationID != reg.DestinationID || p.state.Commit.AdmissionContext != admission {
 			return ErrDurableStorageRecovery
 		}
-		return p.store.validateSelectingPublishedBudgeted(p.state)
+		return p.store.validateSelectingPublishedBudgeted(ctx, p.state)
 	}
 	if current := p.state.LastPublished.Selection; current != nil {
 		if validateNativeImportSelectionAuthority(reg, *current) != nil || current.AdmissionContext != admission || current.DestinationID != reg.DestinationID {
 			return ErrDurableStorageRecovery
 		}
-		return p.validateReadyPublished(p.store.durableContext(), &p.state)
+		return p.validateReadyPublished(ctx, &p.state)
 	}
 	return ErrDurableStorageRecovery
 }
@@ -267,7 +285,7 @@ func (p *Published) nativeImportSelectingSuccessor(ctx context.Context, next *pu
 	if reg.NativeImport == nil {
 		return false, nil
 	}
-	if err := p.ValidateNativeImportAuthority(reg); err != nil {
+	if err := p.ValidateNativeImportAuthority(ctx, reg); err != nil {
 		return false, err
 	}
 	if next.LastPublished == nil {
@@ -293,7 +311,7 @@ func (p *Published) nativeImportSelectingSuccessor(ctx context.Context, next *pu
 			return false, err
 		}
 		candidate.Summary = &summary
-		return true, p.store.validateSelectingPublishedBudgeted(candidate)
+		return true, p.store.validateSelectingPublishedBudgeted(ctx, candidate)
 	}
 	if q := next.LastPublished.Selection; q != nil {
 		if validateNativeImportSelectionAuthority(reg, *q) != nil || q.AdmissionContext != admission || q.DestinationID != reg.DestinationID || q.Predecessor != ReadyPredecessorPresent || q.PredecessorSHA256 != predecessor {

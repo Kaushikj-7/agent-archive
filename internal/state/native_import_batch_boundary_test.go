@@ -15,10 +15,10 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-func mutateNativeImportBatch(t *testing.T, s *Store, reg archive.SessionRegistration, mode string) {
+func mutateNativeImportBatch(t *testing.T, s *Store, reg archive.SessionRegistration, mode nativeImportTestMode) {
 	t.Helper()
 	path := filepath.Join(s.Home(), "imports", reg.ImportBatch.Recorded()+".json")
-	if mode == "missing" {
+	if mode == nativeImportTestMissing {
 		if err := os.Remove(path); err != nil {
 			t.Fatal(err)
 		}
@@ -33,18 +33,18 @@ func mutateNativeImportBatch(t *testing.T, s *Store, reg archive.SessionRegistra
 		t.Fatal(err)
 	}
 	switch mode {
-	case "undone":
+	case nativeImportTestUndone:
 		at := reg.AdmittedAt.Add(time.Hour)
 		control.UndoneAt = &at
-	case "instance":
+	case nativeImportTestInstance:
 		control.NativeImport.Instance = strings.Repeat("f", 32)
-	case "scope":
+	case nativeImportTestScope:
 		control.NativeImport.Scope.Selected[0].Source.Boundary++
 		control.NativeImport.ScopeSHA256, err = archive.NativeImportBatchScopeDigest(t.Context(), control.NativeImport.Scope)
 		if err != nil {
 			t.Fatal(err)
 		}
-	case "future":
+	case nativeImportTestFuture:
 		raw = bytes.Replace(raw, []byte("muse-historical-import-v1"), []byte("muse-historical-import-v2"), 1)
 		if err := os.WriteFile(path, raw, 0600); err != nil {
 			t.Fatal(err)
@@ -62,8 +62,8 @@ func mutateNativeImportBatch(t *testing.T, s *Store, reg archive.SessionRegistra
 
 func TestNativeImportBatchInitialGuardAndExactACKCleanup(t *testing.T) {
 	for _, acknowledged := range []bool{false, true} {
-		for _, mode := range []string{"missing", "undone", "instance", "scope", "future"} {
-			name := mode
+		for _, mode := range []nativeImportTestMode{nativeImportTestMissing, nativeImportTestUndone, nativeImportTestInstance, nativeImportTestScope, nativeImportTestFuture} {
+			name := string(mode)
 			if acknowledged {
 				name += "-ack"
 			}
@@ -127,8 +127,8 @@ func TestNativeImportBatchInitialGuardAndExactACKCleanup(t *testing.T) {
 
 func TestNativeImportBatchFinalPendingAndSelectingCAS(t *testing.T) {
 	for _, selecting := range []bool{false, true} {
-		for _, mode := range []string{"valid", "undone", "owner", "request", "config", "candidate"} {
-			name := mode
+		for _, mode := range []nativeImportTestMode{nativeImportTestValid, nativeImportTestUndone, nativeImportTestOwner, nativeImportTestRequest, nativeImportTestConfig, nativeImportTestCandidate} {
+			name := string(mode)
 			if selecting {
 				name += "-selecting"
 			}
@@ -170,27 +170,31 @@ func TestNativeImportBatchFinalPendingAndSelectingCAS(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer held.Close()
+				defer func() {
+					if err := held.Close(); err != nil {
+						t.Error(err)
+					}
+				}()
 				before, readErr := os.ReadFile(filepath.Join(s.Home(), target))
 				if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
 					t.Fatal(readErr)
 				}
 				err = local.RootedAtomicWriteWitnessed(t.Context(), held.Root, target, func(w io.Writer) error { return json.NewEncoder(w).Encode(value) }, make([]byte, 4096), func(witness *local.AtomicWriteWitness, rename func() error) error {
 					switch mode {
-					case "undone":
+					case nativeImportTestUndone:
 						mutateNativeImportBatch(t, s, reg, "undone")
-					case "owner":
+					case nativeImportTestOwner:
 						reg.RegisteredAt = reg.RegisteredAt.Add(time.Second)
 						if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
 							t.Fatal(err)
 						}
-					case "request":
+					case nativeImportTestRequest:
 						if err := s.SaveRequest(reg.ArchiveSessionID, "later-request", reg.AdmittedAt.Add(time.Second)); err != nil {
 							t.Fatal(err)
 						}
-					case "config":
+					case nativeImportTestConfig:
 						changeNativeImportInitialConfig(t, s, reg, "project")
-					case "candidate":
+					case nativeImportTestCandidate:
 						// Change only mutable wire bookkeeping after encoding. A fully valid
 						// proof does not authorize bytes from a different candidate snapshot.
 						pending.Attempted = !pending.Attempted
@@ -200,10 +204,10 @@ func TestNativeImportBatchFinalPendingAndSelectingCAS(t *testing.T) {
 					}
 					return check(witness, rename)
 				})
-				if (err == nil) != (mode == "valid") {
+				if (err == nil) != (mode == nativeImportTestValid) {
 					t.Fatal("final CAS accepted changed authority or refused valid own temp", err)
 				}
-				if mode != "valid" {
+				if mode != nativeImportTestValid {
 					after, err := os.ReadFile(filepath.Join(s.Home(), target))
 					if errors.Is(readErr, os.ErrNotExist) {
 						if !errors.Is(err, os.ErrNotExist) {

@@ -74,8 +74,8 @@ func TestNativeImportAtomicInspectionNeverLeaksWitness(t *testing.T) {
 }
 
 func TestNativeImportAtomicCommitRechecksCurrentAuthority(t *testing.T) {
-	for _, mode := range []string{"valid", "owner", "receipt", "progress", "predecessor", "config", "sibling", "request"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []nativeImportTestMode{nativeImportTestValid, nativeImportTestOwner, nativeImportTestReceipt, nativeImportTestProgress, nativeImportTestPredecessor, nativeImportTestConfig, nativeImportTestSibling, nativeImportTestRequest} {
+		t.Run(string(mode), func(t *testing.T) {
 			s, reg, next := releasedNativeImportFixture(t)
 			check, err := s.nativeImportPublicationCommit(t.Context(), reg.ArchiveSessionID, nativeImportPendingTarget(next))
 			if err != nil || check == nil {
@@ -94,8 +94,8 @@ func TestNativeImportAtomicCommitRechecksCurrentAuthority(t *testing.T) {
 			var preservedPath string
 			err = local.RootedAtomicWriteWitnessed(t.Context(), held.Root, "pending/selected.json", func(w io.Writer) error { _, e := w.Write([]byte(`{"selected":true}`)); return e }, make([]byte, 1024), func(witness *local.AtomicWriteWitness, rename func() error) error {
 				switch mode {
-				case "owner", "receipt":
-					if mode == "owner" {
+				case nativeImportTestOwner, nativeImportTestReceipt:
+					if mode == nativeImportTestOwner {
 						reg.RegisteredAt = reg.RegisteredAt.Add(time.Second)
 					} else {
 						reg.NativeImport.Membership.ReceiptID = "dddddddddddddddddddddddddddddddd"
@@ -104,12 +104,12 @@ func TestNativeImportAtomicCommitRechecksCurrentAuthority(t *testing.T) {
 					if err := local.Write(preservedPath, reg); err != nil {
 						t.Fatal(err)
 					}
-				case "progress":
+				case nativeImportTestProgress:
 					preservedPath = filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseProgressName))
 					if err := os.WriteFile(preservedPath, []byte(`{"future":true}`), 0600); err != nil {
 						t.Fatal(err)
 					}
-				case "predecessor":
+				case nativeImportTestPredecessor:
 					preservedPath = s.publishedPath(reg.ArchiveSessionID)
 					raw, err := os.ReadFile(preservedPath)
 					if err != nil {
@@ -118,7 +118,7 @@ func TestNativeImportAtomicCommitRechecksCurrentAuthority(t *testing.T) {
 					if err := os.WriteFile(preservedPath, append(raw, 'x'), 0600); err != nil {
 						t.Fatal(err)
 					}
-				case "config":
+				case nativeImportTestConfig:
 					cfg, _, err := config.Load(s.Home())
 					if err != nil {
 						t.Fatal(err)
@@ -133,12 +133,12 @@ func TestNativeImportAtomicCommitRechecksCurrentAuthority(t *testing.T) {
 						t.Fatal(err)
 					}
 					preservedPath = filepath.Join(s.Home(), "config.json")
-				case "sibling":
+				case nativeImportTestSibling:
 					preservedPath = filepath.Join(s.Home(), "pending", ".pending-unrelated")
 					if err := os.WriteFile(preservedPath, []byte("unrelated"), 0600); err != nil {
 						t.Fatal(err)
 					}
-				case "request":
+				case nativeImportTestRequest:
 					if err := s.SaveRequest(reg.ArchiveSessionID, "independent", reg.AdmittedAt.Add(time.Hour)); err != nil {
 						t.Fatal(err)
 					}
@@ -165,11 +165,11 @@ func TestNativeImportAtomicCommitRechecksCurrentAuthority(t *testing.T) {
 				}
 				return err
 			})
-			if mode == "valid" || mode == "request" {
+			if mode == nativeImportTestValid || mode == nativeImportTestRequest {
 				if err != nil {
 					t.Fatal("unchanged authority refused", err)
 				}
-				if mode == "request" {
+				if mode == nativeImportTestRequest {
 					req, found, e := s.LoadRequest(reg.ArchiveSessionID)
 					if e != nil || !found || req.Token != requestToken {
 						t.Fatal("later independent request lost", e)

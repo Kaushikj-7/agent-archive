@@ -110,8 +110,8 @@ func assertUnsupportedNativeOwnerReads(t *testing.T, s *Store, owner archive.Ses
 }
 
 func TestNativeImportRegistrationReadRefusesOutsideRoot(t *testing.T) {
-	for _, mode := range []string{"file-symlink", "directory-symlink", "absolute-outside"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []nativeImportTestMode{nativeImportTestFileSymlink, nativeImportTestDirectorySymlink, nativeImportTestAbsoluteOutside} {
+		t.Run(string(mode), func(t *testing.T) {
 			f, owner := historicalNativeOwnerFixture(t)
 			original, err := json.Marshal(owner)
 			if err != nil {
@@ -124,14 +124,14 @@ func TestNativeImportRegistrationReadRefusesOutsideRoot(t *testing.T) {
 			}
 			path := f.store.registrationPath(owner.ArchiveSessionID)
 			switch mode {
-			case "file-symlink":
+			case nativeImportTestFileSymlink:
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Symlink(target, path); err != nil {
 					t.Fatal(err)
 				}
-			case "directory-symlink":
+			case nativeImportTestDirectorySymlink:
 				directory := filepath.Dir(path)
 				if err := os.Rename(directory, directory+"-original"); err != nil {
 					t.Fatal(err)
@@ -139,7 +139,7 @@ func TestNativeImportRegistrationReadRefusesOutsideRoot(t *testing.T) {
 				if err := os.Symlink(outside, directory); err != nil {
 					t.Fatal(err)
 				}
-			case "absolute-outside":
+			case nativeImportTestAbsoluteOutside:
 				path = target
 			}
 			var decoded archive.SessionRegistration
@@ -149,7 +149,7 @@ func TestNativeImportRegistrationReadRefusesOutsideRoot(t *testing.T) {
 			if decoded.NativeImport != nil {
 				t.Fatal("outside authority was decoded")
 			}
-			if mode != "absolute-outside" {
+			if mode != nativeImportTestAbsoluteOutside {
 				if _, _, err := f.store.LoadRegistration(owner.ArchiveSessionID); err == nil {
 					t.Fatal("public owner load followed outside link")
 				}
