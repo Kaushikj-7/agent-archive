@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -108,13 +109,16 @@ func TestStartupCandidateOrderUsesRealInventoryCursor(t *testing.T) {
 
 type startupOrderingHint struct {
 	agentapi.NativeLocatorLookup
-	order  []string
-	cancel context.CancelFunc
-	calls  int
+	order         []string
+	cancel        context.CancelFunc
+	calls         int
+	budget        *agentapi.NativeReadBudget
+	chargedAtHint int64
 }
 
 func (h *startupOrderingHint) PendingOrder() []string {
 	h.calls++
+	h.chargedAtHint, _ = h.budget.Charged()
 	if h.cancel != nil {
 		h.cancel()
 	}
@@ -136,14 +140,21 @@ const (
 
 func TestStartupCandidateOrderInvalidHintsPreserveWorkAndReleaseScratch(t *testing.T) {
 	t.Parallel()
+	if reflect.TypeFor[string]().Size() != uintptr(strconv.IntSize/4) {
+		t.Fatal("string ABI differs from the charged two-word header")
+	}
 	a, b := nativePendingRegistration(0).NativeSessionID, nativePendingRegistration(1).NativeSessionID
 	for _, name := range []startupHintCase{startupHintAbsent, startupHintUnknown, startupHintDuplicate, startupHintOversized, startupHintCanceled, startupHintCancelDuring, startupHintPressure, startupHintBorrowed} {
 		t.Run(string(name), func(t *testing.T) {
 			t.Parallel()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			hint := &startupOrderingHint{order: []string{a, b}}
 			limit := agentapi.PassReadBudget
+			if name == startupHintPressure {
+				limit = 1
+			}
+			budget := agentapi.NewNativeReadBudget(limit)
+			hint := &startupOrderingHint{order: []string{a, b}, budget: budget}
 			switch name {
 			case startupHintAbsent:
 				hint.order = nil
@@ -158,11 +169,10 @@ func TestStartupCandidateOrderInvalidHintsPreserveWorkAndReleaseScratch(t *testi
 			case startupHintCancelDuring:
 				hint.cancel = cancel
 			case startupHintPressure:
-				limit = 1
+				// The constrained ledger is constructed before the hint.
 			case startupHintBorrowed:
 				// The factory is selected below before constructing the pass.
 			}
-			budget := agentapi.NewNativeReadBudget(limit)
 			factory := startupOrderingFactory
 			if name == startupHintBorrowed {
 				factory = nil
@@ -172,6 +182,12 @@ func TestStartupCandidateOrderInvalidHintsPreserveWorkAndReleaseScratch(t *testi
 			p.orderStartupCandidates()
 			if !reflect.DeepEqual(before, p.startupCandidates) {
 				t.Fatal("invalid/canceled/refused hint changed candidate work")
+			}
+			// Observe the live reservation at the allocation boundary, not
+			// just its peak after cleanup; rank inputs here contain two IDs.
+			const wantHintCharge = int64(8192*(strconv.IntSize/4) + 2*128 + 4096)
+			if hint.calls > 0 && hint.chargedAtHint != wantHintCharge {
+				t.Fatal("hint headers/rank scratch were not charged before use", hint.chargedAtHint, wantHintCharge)
 			}
 			if used, peak := budget.Charged(); used != 0 || peak > limit {
 				t.Fatal("scratch charge not bounded/released", used, peak)

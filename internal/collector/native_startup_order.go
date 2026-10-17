@@ -1,8 +1,8 @@
 package collector
 
 import (
-	"reflect"
 	"sort"
+	"strconv"
 )
 
 // A hint orders only already loaded startup work. Every candidate still passes
@@ -30,9 +30,10 @@ func (p *pass) orderStartupCandidates() {
 		return
 	}
 	// PendingOrder returns at most the existing 8192-owner vector. Borrow its
-	// strings and charge headers plus conservative rank-map scratch before any
-	// allocation, using the same 128-byte/query scratch allowance as the factory.
-	charge := int64(8192)*int64(reflect.TypeFor[string]().Size()) + int64(count)*128 + 4096
+	// strings and precharge their two-word headers (IntSize/4 bytes) plus
+	// conservative rank-map scratch before allocation, using the factory
+	// allowance of 128 bytes per query.
+	charge := int64(8192)*(strconv.IntSize/4) + int64(count)*128 + 4096
 	reservation := p.opts.sourcePasses.env.ReadBudget.Reservation()
 	if !reservation.Reserve(charge) {
 		return
