@@ -45,15 +45,15 @@ func TestInventoryProjectsProvidersOnceAndRendersEachTemplateOnce(t *testing.T) 
 		return []byte{byte(destination)}
 	}}}
 	files := inventorySkillFiles(ports, skills, t.TempDir(), "", "", "")
-	if ports.enumerations != 1 || ports.lookups != 3 || renders != [2]int{1, 1} || len(files) != 3 {
+	if ports.enumerations != 1 || ports.lookups != 4 || renders != [2]int{1, 1} || len(files) != 4 {
 		t.Fatalf("enumerations=%d lookups=%d renders=%v alternatives=%d", ports.enumerations, ports.lookups, renders, len(files))
 	}
 	// Inventory keeps separate owners, even for identical paths and templates.
-	if files[1].Path != files[2].Path || files[1].Harnesses[0] == files[2].Harnesses[0] {
+	if files[1].Path != files[2].Path || files[1].Path != files[3].Path || files[1].Harnesses[0] == files[2].Harnesses[0] || files[2].Harnesses[0] == files[3].Harnesses[0] {
 		t.Fatalf("lost shared-path ownership alternatives: %+v", files)
 	}
 	files[1].Content[0] = 99
-	if files[2].Content[0] == 99 {
+	if files[2].Content[0] == 99 || files[3].Content[0] == 99 {
 		t.Fatal("render reuse exposed aliased output content")
 	}
 }
@@ -71,7 +71,7 @@ func TestInstalledInspectsEverySharedPathOwner(t *testing.T) {
 	}
 	ports := &countedSkillPorts{SkillsLookup: registry}
 	got := Installed(ports, home, "", "")
-	if len(got) != 4 || ports.inspections != 6 {
+	if len(got) != 4 || ports.inspections != 8 {
 		t.Fatalf("installed=%v inspections=%d; every ownership alternative must validate", got, ports.inspections)
 	}
 }

@@ -583,7 +583,7 @@ func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegis
 		if reg.Imported() || mode == config.SkillEvidenceNone {
 			return nil, nil
 		}
-		if reg.Harness.Name == "muse" && museEnvironment == nil {
+		if archive.CanonicalHarness(reg.Harness.Name) == "muse" && museEnvironment == nil {
 			museEnvironment = skillRootEnvironment(env)
 		}
 		userScope, ok := userCache[reg.Harness.Name]

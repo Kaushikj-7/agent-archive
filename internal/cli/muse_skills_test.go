@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -121,5 +122,60 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 	must(t, err)
 	if len(imported) != 0 {
 		t.Fatal("import received today's skills")
+	}
+}
+
+func TestMuseSkillEnvironmentSnapshotBoundsAndAlias(t *testing.T) {
+	t.Parallel()
+	home, project, xdg := t.TempDir(), t.TempDir(), t.TempDir()
+	dir := filepath.Join(xdg, "muse", "skills", "synthetic-review")
+	must(t, os.MkdirAll(dir, 0700))
+	must(t, os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: synthetic-review\n---\nsynthetic"), 0600))
+	reads := 0
+	env := testEnv(t, t.TempDir(), time.Now())
+	env.UserHomeDir = func() (string, error) { return home, nil }
+	env.LookupEnv = func(key string) (string, bool) {
+		reads++
+		switch key {
+		case "XDG_CONFIG_HOME":
+			return xdg, true
+		case "CODEX_HOME":
+			return strings.Repeat("x", 4097), true
+		}
+		t.Fatalf("unexpected key %s", key)
+		return "", false
+	}
+	observe := skillObserver(env, config.SkillEvidenceMetadata)
+	reg := archive.SessionRegistration{Harness: archive.Harness{Name: "muse-code"}, ProjectRoot: project}
+	items, err := observe(reg, env.Now())
+	must(t, err)
+	if reads != 2 {
+		t.Fatalf("fixed snapshot reads %d", reads)
+	}
+	found := false
+	for _, item := range items {
+		if item.Payload["scope"] == "user_muse_config" && item.Payload["root_status"] == "present" {
+			found = true
+		}
+		if item.Payload["scope"] == "user_codex_foreign" {
+			t.Fatal("oversized configured root became fallback")
+		}
+	}
+	if !found {
+		t.Fatal("alias lost exact config root")
+	}
+	reg.Harness.Name = "muse"
+	_, err = observe(reg, env.Now())
+	must(t, err)
+	if reads != 2 {
+		t.Fatal("alias re-read environment")
+	}
+	for _, mode := range []config.SkillEvidence{config.SkillEvidenceNone, config.SkillEvidenceBody} {
+		reg.Origin = archive.SessionOriginImport
+		_, err = skillObserver(env, mode)(reg, env.Now())
+		must(t, err)
+	}
+	if reads != 2 {
+		t.Fatal("none/import read skill environment")
 	}
 }
