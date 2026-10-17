@@ -2,6 +2,7 @@ package collector
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 	"time"
 
@@ -65,5 +66,26 @@ func TestNativeImportReleasedUndoPreservesAcknowledgedSuccessor(t *testing.T) {
 	}
 	if _, err := ReadLocalBundle(t.Context(), f.store.Home(), f.reg, f.at.Add(3*time.Hour), "", f.opts.Sources); err != nil {
 		t.Fatal("retained evidence changed", err)
+	}
+}
+
+// Retention keeps its separate exact selecting/source protocol. Refusing legacy
+// batch undo must not make acknowledged historical publications immortal.
+func TestNativeImportUndoGuardPreservesRetention(t *testing.T) {
+	f := newHistoricalNativeStage(t)
+	result, err := Run(t.Context(), f.store, f.remote, f.opts)
+	closeStagedControlResult(result)
+	if err != nil || len(result.Errors) != 0 {
+		t.Fatal("typed release", err, result.Errors)
+	}
+	key, err := archive.MetadataObjectKey("muse", f.reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := retention.DeleteOwnedSession(t.Context(), f.store, f.remote, f.reg, state.RemovalReasonRetention, f.at.Add(24*time.Hour)); err != nil {
+		t.Fatal("historical retention refused", err)
+	}
+	if _, err := f.remote.Get(t.Context(), key); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatal("retention did not remove selecting metadata", err)
 	}
 }

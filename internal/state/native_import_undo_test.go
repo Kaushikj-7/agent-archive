@@ -1,7 +1,10 @@
 package state
 
 import (
+	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -110,5 +113,54 @@ func TestNativeImportUndoRejectsUnsafeLockIdentity(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.CheckSessionUndo(archive.SessionRegistration{ArchiveSessionID: "../outside"}); err == nil {
 		t.Fatal("unsafe request-lock identity accepted")
+	}
+}
+
+func TestNativeImportUndoDeletionRechecksOwnerAtCommit(t *testing.T) {
+	source, protected, _ := releasedNativeImportFixture(t)
+	s := newTestStore(t)
+	cfg, _, err := config.Load(source.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(s.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	ordinary := registration(t)
+	ordinary.ArchiveSessionID = protected.ArchiveSessionID
+	if err := s.SaveRegistration(ordinary); err != nil {
+		t.Fatal(err)
+	}
+	j, err := s.PrepareSessionDeletion(ordinary, RemovalReasonUndo, nil, time.Now(), "")
+	if err != nil {
+		t.Fatal("ordinary undo preparation", err)
+	}
+	path := filepath.Join(s.Home(), deletionPath(ordinary.ArchiveSessionID))
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The journal is an actual already-committed ordinary intent; its snapshot
+	// must not authorize a phase transition against the replacement current owner.
+	if err := local.Write(s.registrationPath(protected.ArchiveSessionID), protected); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveRequest(protected.ArchiveSessionID, "feedback", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	req, _, err := s.LoadRequest(protected.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AdvanceSessionDeletion(j, DeletionDeleting); !errors.Is(err, archive.ErrUnsupportedNativeImport) {
+		t.Fatalf("stale undo advance: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("stale advance changed intent", err)
+	}
+	current, found, err := s.LoadRequest(protected.ArchiveSessionID)
+	if err != nil || !found || current.Token != req.Token {
+		t.Fatal("stale advance changed request", err)
 	}
 }
