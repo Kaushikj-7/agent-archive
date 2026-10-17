@@ -983,6 +983,18 @@ Legacy or unknown allocations remain diagnostic. Each shard must match a
 successful physical job's actual attempt, including
 successful jobs carried forward into a later workflow attempt. Blank or missing
 cache/image cohorts cannot supply a candidate.
+
+The required performance gate resolves carried-forward jobs from bounded API
+attempt history, not from a manifest's claimed attempt. GitHub may issue a new
+logical job ID and current attempt number for an old execution. Reuse requires
+the exact run/head/shard, positive runner ID/name, labels, allocation interval
+and complete step identities/timings in contiguous attempt views. The original
+allocation must have been created no later than its start; a new logical alias
+must have been created at or after that allocation completed. Missing, conflicting or
+incomplete history fails closed under the existing 12-request/20-second budget
+and ten-attempt limit. Receipt identity, artifact provenance, source, compiled
+coverage and cohort checks remain mandatory.
+
 The required aggregate must also reconcile coverage before any policy uses it. The future required performance
 gate owns approval and trusted-main promotion. Queue eligibility remains unknown
 without independent telemetry, and runner allocation remains accounted by the

@@ -4,13 +4,10 @@
   1) Codex (default)
   2) Claude Code
 
-  [p] print
-  [c] copy to the clipboard
-  [w] write to a file
-  [q] quit
+  [p] print  [c] copy  [w] write  [q] quit
 
 › Choose [1]: w
-\e[11A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[11A✓ Handoff write to a file
+\e[8A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[8A✓ Handoff write to a file
 
 ? Write to
 

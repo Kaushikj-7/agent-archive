@@ -16,7 +16,7 @@ func TestGuidedCommandsTerminalChild(t *testing.T) {
 	}
 	p := newPrompter(os.Stdin, os.Stdout)
 	defer p.close()
-	choice, err := chooseDestination(p, nil, "", false, productionAgents.Catalog())
+	choice, err := chooseDestination(p, nil, "", false, productionAgents.Catalog(), nil)
 	must(t, err)
 	if choice.action != handoffWrite {
 		t.Fatal("wrong destination")

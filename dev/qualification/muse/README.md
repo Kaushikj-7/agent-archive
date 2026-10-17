@@ -217,7 +217,10 @@ No new native campaign ran to add these controls. Historical cases, binary pins,
 corpus and result files retain their original provenance.
 
 Each case admits at most four connections and four requests, including up to
-two `/models` requests and exactly two `/responses` transitions. Headers are
+two model-catalog requests (exact zero-body GET `/models` or
+`/muse-code/models`) and exactly two POST `/responses` transitions. The two catalog
+routes share one counter and response. Query-bearing targets, other aliases,
+other methods and nonzero GET bodies refuse; no URL normalization is applied. Headers are
 limited to 8 KiB, each body to 256 KiB and cumulative input to 1 MiB. Advertised
 lengths are checked before body allocation; transfer encoding, duplicate
 headers, malformed requests, unexpected routes/transitions and wrong result
@@ -253,7 +256,22 @@ New case receipts expose fixed structural counts, recognized shape/state enums
 and internal identity/index/batch/order/uniqueness booleans. Reordered results
 with valid index associations are accepted and separately reported. Receipts do
 not contain actual tool names, IDs, arguments, paths, model labels, counters or
-result bodies. Success output is compared privately with the fixed synthetic
+result bodies. The endpoint also records one first-refusal code from a closed
+set: `route`, `request-shape`, `input-shape`, `tool-declaration`, `transition`,
+`association`, `limit`, `deadline`, `io` or `unclassified` (`none` before refusal).
+The first code is retained under the server lock; later refusals cannot replace
+it. Unknown exceptions map to `unclassified`, without their text or class names.
+Separate cleanup-failure visibility remains available. Route observations are
+fixed booleans for the two exact catalog GET routes and the existing response
+POST route only; unknown targets, queries, headers and bodies are never copied.
+The controlled provider-call echo accepts the existing exact `read_file` form
+and exact `muse.read_file` only when the `namespace` member is absent. A qualified
+name with any namespace member, unknown prefix/suffix/tool, wrong controlled
+arguments or mismatched call/result associations still refuses. This finite
+provider API representation does not change native retained names or status;
+there is no general namespace stripping.
+These fixture compatibilities and diagnostics add no native tool/status qualification.
+Success output is compared privately with the fixed synthetic
 file; missing-file prose is never interpreted as typed failure. Typed status,
 parallelism and cancellation remain unavailable pending a separately reviewed
 local native campaign. Process exit and exporter acceptance cannot qualify them.
