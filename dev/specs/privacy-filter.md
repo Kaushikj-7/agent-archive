@@ -469,7 +469,10 @@ The [production local v1 field policy](../qualification/muse/retained-allowlist-
 
 Muse startup metadata may omit the optional model label. The local projection
 retains it only when present as a string, never infers a provider default, and
-reports `model_identity_unavailable` when the initial metadata has no model.
+reports `model_identity_unavailable` only when the complete validated startup
+prefix has no nonempty model label. In the qualified two-metadata startup lane,
+the second row supplies the resolved model. Metadata after the initial opening
+does not fill this startup fact. Retained refiltering reconstructs this gap.
 Original owner, reserved start and workspace validation remain required.
 
 Muse retains the shared privacy gap codes for redaction, hidden-context omission

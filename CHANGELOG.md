@@ -10,6 +10,13 @@ follow [Semantic Versioning](https://semver.org/).
   or failed effect bodies. These private bodies are still omitted; they do not
   establish tool success, errors or parallel execution.
 
+- `agent-archive handoff` names the session above `Continue in`: its title,
+  agent, when it was last active, and the handoff's size. When only one other
+  agent is installed, the question is yes or no (`Continue in Claude Code?
+  [Y/n]`) instead of a one-item list; `n` quits, and print, copy, and write
+  stay on the line below. With several agents, print, copy, write, and quit
+  share one line.
+
 - Muse local handoff previews now read only their reserved head/tail windows,
   avoiding whole-file hashes while browsing large histories. Selected sessions
   retain complete filtering and independent content verification.
@@ -79,6 +86,10 @@ follow [Semantic Versioning](https://semver.org/).
   GET route and controlled tool-echo representation, with fixed, content-free
   first-refusal diagnostics. Existing request bounds and call/result checks
   remain; this adds no native tool-status qualification.
+
+- Muse handoff no longer reports model identity as unavailable when the qualified
+  second startup metadata record supplies it. Retained refiltering also repairs
+  this warning (filter 29, adapter 0.29.0); complete usage and cost stay unavailable.
 
 - Muse retains own committed tool-call identities and validates exact prior
   result batch/index/call joins after native loss. Nonempty enriched sources

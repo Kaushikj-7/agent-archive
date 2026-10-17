@@ -1,14 +1,15 @@
 $ agent-archive handoff SESSION
 
+  \e[1mFix the flaky widget test\e[0m
+  Codex · 59 minutes ago · 2 KB
+
 ? Continue in
 
   1) Claude Code (default)
   2) Codex
   3) Cursor
 
-  [p] print
-  [c] copy to the clipboard
-  [w] write to a file
+  [p] print  [c] copy  [w] write
   [q] quit
 
 > Choose [1]: w
