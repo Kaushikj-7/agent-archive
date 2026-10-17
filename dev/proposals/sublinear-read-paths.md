@@ -1,8 +1,11 @@
 # Read paths at realistic scale: implementation plan
 
 Status: proposed 2026-10-15, revised 2026-10-16 after real-command
-measurements and design review. PR 6 measurement infrastructure is implemented;
-the optimization and provider-activation work remains pending. This plan takes the
+measurements and design review. The approved source scopes for PRs 1, 2, 3,
+4a, 5b and 6 are implemented; per-PR source and synthetic validation status is
+recorded below. Provider qualification, production activation, conditional
+PR 4b and PR 7 follow-ups, and matched live command latency acceptance remain
+open. This plan takes the
 remaining read-path work from [CLI performance](cli-performance.md) PRs 7 and 9 and
 [archive listing at scale](listing-at-scale.md) phase 4 down to per-PR scope
 and acceptance gates. It does not change any output, search rule, retention
@@ -385,6 +388,19 @@ Pass:
 
 ## PR 5: Catalog-v4 qualification and reader work
 
+PR 5b reader reuse is implemented behind the existing qualification gate, with
+independently reviewed source, full reader short-race coverage and synthetic
+unchanged-root/small-delta controls. At 1.8k synthetic rows, the scale fixture
+records 65 cold GETs, 5 unchanged-root GETs and 11 after a single deletion,
+with zero canonical LISTs or metadata-body GETs. These are operation counts,
+not qualified end-to-end latency. Local row checksums and cache inventory
+remain O(N). The [full synthetic scale evidence](../maintainers/read-path-delta-scale-2026-10-16.txt)
+records 1.8k/10k/25k/50k counts and limitations at exact source `03e20cef`.
+Existing catalog
+selection counters are preserved, including the preexisting `Outside` count
+difference from the legacy exhaustive reader for some top-level scope cases.
+PR 5a qualification, capability enablement and cutover remain unimplemented.
+
 Goal: qualified warm reads avoid `sessions/` LIST and reuse verified catalog
 deltas. Account separately for activation/head reads, tree-node reads, local
 refresh, summary selection and registration work. Reusing `RefreshRemote`
@@ -502,6 +518,14 @@ historical results with their original constants and source pins.
   session IDs or titles. Record unmet targets alongside improvements.
 
 ## PR 7: Measured local refresh and query improvements
+
+The PR 5b scale matrix triggers investigation: the 50k complete query takes
+979 ms in one unchanged-root sample, with 484 ms in refresh. It intentionally
+returns every summary, so this does not establish the cost of eligible bounded
+queries. Follow-up code remains pending representative consumer profiles and
+an integrity-preserving refresh design; no index, relaxed validation or flat
+latency claim is justified by these samples alone. See the
+[measured follow-up constraints](../maintainers/read-path-delta-scale-2026-10-16.txt).
 
 After PR 5b removes the LIST from the relevant path, use PR 6 to identify the
 remaining critical work. Query time above 100 ms at 50k triggers query work;

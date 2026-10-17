@@ -63,6 +63,11 @@ follow [Semantic Versioning](https://semver.org/).
   decoded again. Capturing such a thread's growth needs about 5 times its
   filtered size in read memory instead of about 12.
 
+- Cached catalog-v4 complete-summary reads reuse verified root deltas and local
+  queries. No-cache and model-evidence fallbacks remain complete, and selected
+  metadata retains its pinned revision and hash checks. Provider activation
+  gates are unchanged.
+
 - Protected Cursor backfill can stage selected root chats from a live WAL using
   a bounded private SQLite image. Scratch capacity is reserved before copying,
   and cleanup must succeed before admission. Existing staged evidence can then
