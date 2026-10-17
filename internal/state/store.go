@@ -53,6 +53,7 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
+	nativeContinuation  *nativeContinuation
 	summaryCache        *publishedSummaryCache
 	summaryBorrow       *publishedSummaryBorrow
 	publishedReadDigest *[32]byte
@@ -168,6 +169,12 @@ func (s *Store) SaveRegistration(reg archive.SessionRegistration) error {
 	key, err := registrationKey(reg)
 	if err != nil {
 		return err
+	}
+	// Refuse protected native ownership before even reserving its index key.
+	if key.Agent == agentmeta.Muse {
+		if err := s.checkNativeRegistrationWrite(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
+			return err
+		}
 	}
 	entry, found, err := s.readQualifiedIndex(key)
 	if err != nil {

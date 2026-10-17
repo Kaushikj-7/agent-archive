@@ -153,8 +153,9 @@ var inputReads = classifiedCalls{
 	// itself, not through a reader: it is the agent's terminal, not a
 	// question, and runs only when browseInteractive.
 	"prompt.go": {"bufio.NewReader": 2},
-	// The hook payload the agent writes and closes; never a person.
-	"hook_command.go": {"json.NewDecoder": 1},
+	// The closed hook payload comes from the agent; the second decoder checks
+	// bounded JSON in memory for the optional strict native contract.
+	"hook_command.go": {"json.NewDecoder": 2, "io.ReadAll": 1},
 	// purge apply's typed digest: refused in runPurgeApply when the switch is
 	// on and --yes is not given.
 	// Files, not standard input.

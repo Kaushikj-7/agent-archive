@@ -100,6 +100,9 @@ type sourceReader interface {
 }
 
 func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReader, bool) {
+	if opts.preparedStartup != nil && opts.preparedStartup.id == reg.ArchiveSessionID {
+		return *opts.preparedStartup, true
+	}
 	if pendingNativeEligible(reg, opts) {
 		return pendingNativeReader{reg: reg, opts: opts}, true
 	}

@@ -59,6 +59,9 @@ func (s *Store) retainIndexExtent(n int64) error {
 }
 
 func (s *Store) indexRecoveryError(err error) error {
+	if errors.Is(err, errUnsupportedNativeReservation) {
+		return err
+	}
 	if s.resourceReservation != nil {
 		return errors.Join(ErrSessionIndexRecoveryRequired, err)
 	}
