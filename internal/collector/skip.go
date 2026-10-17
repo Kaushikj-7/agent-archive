@@ -144,6 +144,9 @@ func (p *pass) retainedHistorySet(id string) bool {
 // versions match, although that failed scan is still journaled; Run reports
 // its failure again without reading it.
 func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchanged bool, signature state.ScanSignature, err error) {
+	if pendingNativeEligible(reg, p.opts) {
+		return false, signature, nil
+	}
 	id := reg.ArchiveSessionID
 	if err := checkPublicationSessionRead(p.ctx, p.local, reg, p.opts); err != nil {
 		return false, signature, err

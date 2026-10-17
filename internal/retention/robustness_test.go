@@ -431,6 +431,15 @@ func testLimitedGet(ctx context.Context, store storage.ObjectStore, key string, 
 	return bounded.GetLimited(ctx, key, limit)
 }
 
+// Preserve the bounded versioned read port while Put alone simulates outage.
+func (f *flakyStore) GetLimitedVersioned(ctx context.Context, key string, limit int64) ([]byte, string, error) {
+	bounded, ok := f.ObjectStore.(storage.LimitedVersionedGetter)
+	if !ok {
+		return nil, "", storage.ErrVersionedReadUnavailable
+	}
+	return bounded.GetLimitedVersioned(ctx, key, limit)
+}
+
 func (f *flakyStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
 	return testLimitedGet(ctx, f.ObjectStore, key, limit)
 }

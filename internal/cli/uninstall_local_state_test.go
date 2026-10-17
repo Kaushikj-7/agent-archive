@@ -109,7 +109,7 @@ var handListedLocalState = []string{
 	"generation-heads", "generation-nodes", "generation-recovery",
 	// Shared durable storage owns this local quota lock namespace.
 	"temporary-quota", "session-deletions",
-	machineRegistrationFile, "discovery-catalog.json", "discovery-health.json", "discovery-refused-starts.json", "status.json", "session-index.json", "storage-clock.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "admission-intents", "admission-intents.lock", "admission-replay-cursor.json", "application-versions.json",
+	machineRegistrationFile, "discovery-catalog.json", "discovery-catalog.lock", "discovery-health.json", "discovery-refused-starts.json", "status.json", "session-index.json", "storage-clock.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "admission-intents", "admission-intents.lock", "admission-replay-cursor.json", "application-versions.json",
 	"collector.lock", "collector-lock.json", "collector.log", "collector-error.log",
 	// Optional content indexing owns its cache, lifecycle fence and scheduler logs.
 	"search", "search-worker.lock", "search.log", "search-error.log",

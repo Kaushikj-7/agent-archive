@@ -236,6 +236,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		PendingCodexRollouts:     pendingCodexRollouts(rollouts),
 		ConfiguredCodexHomes:     readHomes,
 		NativeRoots:              cfg.NativeRoots,
+		NativeLocatorFactory:     nativeLocatorFactory,
 		ResolveCodexReadHomes:    func(current config.Config) ([]string, error) { return trustedCodexReadHomes(current, env) },
 		Parsers:                  parsersFor(env),
 		Sources:                  registryFor(env),
