@@ -3,6 +3,7 @@ package state
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,9 +16,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
+type nativeImportReleaseSnapshot struct {
+	stage       []byte
+	pending     []byte
+	publication PendingPublication
+}
+
 // This starts with an actual committed live owner and explicitly arranges an
 // already-owned historical receipt. It does not exercise historical admission.
-func releasedNativeImportFixture(t *testing.T) (*Store, archive.SessionRegistration, PendingPublication) {
+func releasedNativeImportFixture(t *testing.T, snapshots ...*nativeImportReleaseSnapshot) (*Store, archive.SessionRegistration, PendingPublication) {
 	t.Helper()
 	f := newNativeAdmissionFixture(t)
 	prepared, err := f.prepare(t.Context())
@@ -99,6 +106,17 @@ func releasedNativeImportFixture(t *testing.T) (*Store, archive.SessionRegistrat
 		t.Fatal(err)
 	}
 	defer guard.Release()
+	for _, snapshot := range snapshots {
+		snapshot.stage, err = os.ReadFile(filepath.Join(f.store.Home(), importStageRelative(reg.ArchiveSessionID)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot.pending, err = os.ReadFile(f.store.pendingPath(reg.ArchiveSessionID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot.publication = p
+	}
 	if err := f.store.VerifyAndBeginStagedRelease(t.Context(), reg.ArchiveSessionID, stagedRemote(p), guard); err != nil {
 		t.Fatal(err)
 	}
@@ -261,5 +279,99 @@ func TestNativeImportReleasedDetachIgnoresRemovedRootAndPreservesIndependentRequ
 	current, found, err := s.LoadRequest(reg.ArchiveSessionID)
 	if err != nil || !found || current.Token != req.Token {
 		t.Fatal("released checks consumed independent request", err)
+	}
+}
+
+func TestNativeImportInterruptedReleaseRestartsFromActualReceipt(t *testing.T) {
+	for _, phase := range []stagedReleasePhase{stagedReleaseVerified, stagedReleaseLocalComplete} {
+		for _, mismatch := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/mismatch=%v", phase, mismatch), func(t *testing.T) {
+				var snapshot nativeImportReleaseSnapshot
+				s, reg, _ := releasedNativeImportFixture(t, &snapshot)
+				id := reg.ArchiveSessionID
+				var receipt stagedReleaseReceipt
+				if err := s.readStagedControl(id, stagedReleaseReceiptName, &receipt); err != nil {
+					t.Fatal(err)
+				}
+				var progress stagedReleaseProgress
+				if err := s.readStagedControl(id, stagedReleaseProgressName, &progress); err != nil {
+					t.Fatal(err)
+				}
+				progress.Phase = phase
+				if mismatch {
+					progress.ReceiptSHA256 = strings.Repeat("f", 64)
+				}
+				progressPath := filepath.Join(s.Home(), stagedControl(id, stagedReleaseProgressName))
+				if err := local.Write(progressPath, progress); err != nil {
+					t.Fatal(err)
+				}
+				stagePath := filepath.Join(s.Home(), importStageRelative(id))
+				if phase == stagedReleaseVerified {
+					if err := os.WriteFile(stagePath, snapshot.stage, 0600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(s.pendingPath(id), snapshot.pending, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				reopened, err := Open(s.Home())
+				if err != nil {
+					t.Fatal(err)
+				}
+				active, routeErr := reopened.NativeImportStageActive(t.Context(), reg)
+				if mismatch {
+					if routeErr == nil {
+						t.Fatal("mismatched release progress selected routing")
+					}
+				} else if routeErr != nil || !active {
+					t.Fatal("unfinished release lost active routing", active, routeErr)
+				}
+				guard, err := local.LockCollectorGuard(s.Home())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer guard.Release()
+				paths := []string{progressPath, filepath.Join(s.Home(), stagedControl(id, stagedReleaseReceiptName)), s.registrationPath(id), s.publishedPath(id)}
+				if phase == stagedReleaseVerified {
+					paths = append(paths, stagePath, s.pendingPath(id))
+				}
+				before := map[string][]byte{}
+				for _, path := range paths {
+					raw, e := os.ReadFile(path)
+					if e != nil {
+						t.Fatal(e)
+					}
+					before[path] = raw
+				}
+				err = reopened.VerifyAndBeginStagedRelease(t.Context(), id, stagedRemote(snapshot.publication), guard)
+				if mismatch {
+					if err == nil {
+						t.Fatal("mismatched progress released evidence")
+					}
+					for path, raw := range before {
+						after, e := os.ReadFile(path)
+						if e != nil || !bytes.Equal(raw, after) {
+							t.Fatal("mismatched release changed evidence", path, e)
+						}
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal("exact interrupted release restart", err)
+				}
+				if active, err := reopened.NativeImportStageActive(t.Context(), reg); err != nil || active {
+					t.Fatal("finished restart remained active", active, err)
+				}
+				original, err := reopened.nativeImportReleasedSelection(t.Context(), reg)
+				if err != nil || !sameStagedSelection(original, receipt.Selection) {
+					t.Fatal("restart changed original selection", err)
+				}
+				for _, path := range []string{stagePath, s.pendingPath(id)} {
+					if _, e := os.Stat(path); !os.IsNotExist(e) {
+						t.Fatal("released payload remains", path, e)
+					}
+				}
+			})
+		}
 	}
 }
