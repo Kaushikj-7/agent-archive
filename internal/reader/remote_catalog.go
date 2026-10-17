@@ -558,7 +558,9 @@ func remoteCachedRows(ctx context.Context, tx *sql.Tx) (cachedKeys map[string]bo
 			return nil, nil, err
 		}
 		span.Count("rows-scanned", 1)
-		span.Count("summary-B-hashed", len(record.summary))
+		if record.checksum != "" {
+			span.Count("summary-B-hashed", len(record.summary))
+		}
 		cachedKeys[record.key] = true
 		if !record.valid() {
 			invalid = append(invalid, record.key)
