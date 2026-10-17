@@ -245,7 +245,9 @@ func legacyBlockedPublicationControl(p publishedState) bool {
 //
 //nolint:errorlint // Only bare open errors and errno qualify; unwrapping joined failures would discard independent refusal causes.
 func (q *durableQuota) unreadablePublishedCharge(ctx context.Context, path string, expected os.FileInfo, readErr error) (int, error) {
+	//lint:ignore errorlint Only raw open errors qualify; unwrapping joined failures discards independent refusals.
 	openErr, ok := readErr.(*os.PathError)
+	//lint:ignore errorlint Only bare errno qualifies; wrapped or joined failures remain refusals.
 	if !ok || openErr.Op != "openat" || openErr.Path != path || (openErr.Err != syscall.EACCES && openErr.Err != syscall.EPERM) {
 		return 0, readErr
 	}
