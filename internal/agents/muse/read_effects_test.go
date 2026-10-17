@@ -567,3 +567,35 @@ func TestCommittedReadMultipleEffectsDoNotCreateCalls(t *testing.T) {
 		t.Fatal("effect multiplicity became call/result facts", err)
 	}
 }
+
+// TestEffectJoinOverlapKeepsIdentityDomainsSeparate checks the policy's OR join:
+// a reused task or call overlaps only within the same run, and task/call values
+// cannot collide merely because their byte spellings match.
+func TestEffectJoinOverlapKeepsIdentityDomainsSeparate(t *testing.T) {
+	t.Parallel()
+	var index effectJoinIndex
+	index.add("run-a", "task-a", "call-a")
+	index.add("run-a", "task-b", "call-b")
+	for _, test := range []struct {
+		name string
+		run  string
+		task string
+		call string
+		want bool
+	}{
+		{"same-task", "run-a", "task-a", "other-call", true},
+		{"same-call", "run-a", "other-task", "call-a", true},
+		{"split-existing", "run-a", "task-a", "call-b", true},
+		{"independent-run", "run-b", "task-a", "call-a", false},
+		{"unrelated", "run-a", "other-task", "other-call", false},
+		{"separate-domains", "run-a", "call-a", "task-a", false},
+		{"delimiter-left", "run-a/task-a", "other-task", "other-call", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := index.overlaps(test.run, test.task, test.call); got != test.want {
+				t.Fatalf("overlap = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
