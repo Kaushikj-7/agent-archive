@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Pending Muse inventory queries recover when an unfinished date directory is
+  removed or renamed between passes, while retaining complete uniqueness checks.
+
 - `agent-archive handoff` names the session above `Continue in`: its title,
   agent, when it was last active, and the handoff's size. When only one other
   agent is installed, the question is yes or no (`Continue in Claude Code?
