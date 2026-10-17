@@ -69,10 +69,11 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	if err := validateNativeBase(base); err != nil {
 		return nil, err
 	}
-	fence := nativeAuthorityVersion{Version: 16, Writer: nativeAuthorityWriter, Base: base}
+	var admission string
 	if c.NativeAdmissionProtection {
-		fence.Admission = "muse-root-admission"
+		admission = "muse-root-admission"
 	}
+	fence := nativeAuthorityVersion{Version: 16, Writer: nativeAuthorityWriter, Base: base, Admission: admission}
 	version, err := json.Marshal(fence)
 	if err != nil {
 		return nil, err
@@ -92,7 +93,7 @@ func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {
 	}
 	versionRaw := bytes.TrimSpace(doc["schema_version"])
 	if len(versionRaw) == 0 || versionRaw[0] != '{' {
-		if doc["native_roots"] != nil || doc["native_authority_protection"] != nil || doc["native_admission_protection"] != nil || doc["muse_capture"] != nil || doc["muse_capture_last_issued_at"] != nil {
+		if nativeAuthorityMembersPresent(doc) {
 			return nil, false, errors.New("native authority requires its permanent writer fence")
 		}
 		return raw, false, nil
@@ -107,7 +108,7 @@ func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {
 	// Search has its own exact version16 base fence. Let its decoder validate
 	// that shape; native protection is still rejected below without a wrapper.
 	if peek.Version == 16 && peek.Writer == searchLifecycleWriter {
-		if doc["native_roots"] != nil || doc["native_authority_protection"] != nil || doc["native_admission_protection"] != nil || doc["muse_capture"] != nil || doc["muse_capture_last_issued_at"] != nil {
+		if nativeAuthorityMembersPresent(doc) {
 			return nil, false, errors.New("native authority requires its permanent writer fence")
 		}
 		return raw, false, nil
@@ -277,4 +278,8 @@ func (c Config) NativeValidationInCurrentDestination(owner archive.SessionRegist
 		return false
 	}
 	return owner.DestinationID != "" && owner.DestinationID == c.DestinationID() && c.InCurrentDestination(owner) && (c.DestinationSince.IsZero() || !candidate.NativeCreatedAt.Before(c.DestinationSince))
+}
+
+func nativeAuthorityMembersPresent(doc map[string]json.RawMessage) bool {
+	return doc["native_roots"] != nil || doc["native_authority_protection"] != nil || doc["native_admission_protection"] != nil || doc["muse_capture"] != nil || doc["muse_capture_last_issued_at"] != nil
 }

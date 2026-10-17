@@ -295,6 +295,9 @@ const (
 func classify(handler *object, app Spec, hook Hook) (kind handlerKind, dataHome, unreadable string) {
 	command, _ := handler.Get("command")
 	text, _ := command.(string)
+	if app.CommandMarkerOwnership && !exactMarkerCommand(text, app) {
+		return kindUnrelated, "", ""
+	}
 	if app.Flat || app.CommandMarkerOwnership {
 		if !strings.HasSuffix(text, " # "+app.Owner) {
 			return kindUnrelated, "", ""
@@ -563,6 +566,45 @@ func restoreForeignHookNodes(hs *object, preserved map[*object]json.RawMessage) 
 					}
 				}
 			}
+		}
+	}
+}
+
+func exactMarkerCommand(command string, spec Spec) bool {
+	rest, found := strings.CutPrefix(command, "AGENT_ARCHIVE_HOME=")
+	if !found {
+		return false
+	}
+	_, rest, ok := quotedAbsoluteWord(rest)
+	if !ok {
+		return false
+	}
+	_, rest, ok = quotedAbsoluteWord(rest)
+	if !ok {
+		return false
+	}
+	return rest == "_hook --harness "+spec.Name+" # "+spec.Owner
+}
+
+func quotedAbsoluteWord(rest string) (word, remainder string, ok bool) {
+	var value strings.Builder
+	for {
+		switch {
+		case strings.HasPrefix(rest, "'"):
+			n := strings.IndexByte(rest[1:], '\'')
+			if n < 0 {
+				return "", "", false
+			}
+			value.WriteString(rest[1 : n+1])
+			rest = rest[n+2:]
+		case strings.HasPrefix(rest, `"'"`):
+			value.WriteByte('\'')
+			rest = rest[3:]
+		case strings.HasPrefix(rest, " "):
+			word = value.String()
+			return word, rest[1:], filepath.IsAbs(word) && !strings.ContainsAny(word, "\x00\r\n")
+		default:
+			return "", "", false
 		}
 	}
 }

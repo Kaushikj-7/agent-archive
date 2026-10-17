@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 )
 
@@ -53,7 +54,7 @@ func (a *NativeAdmission) UnmarshalJSON(raw []byte) error {
 			return err
 		}
 		key, ok := token.(string)
-		if !ok || seen[key] || key != "contract" && key != "root_fingerprint" && key != "window_generation" && key != "policy_fingerprint" && key != "hook_contract" {
+		if !ok || seen[key] || !slices.Contains([]string{"contract", "root_fingerprint", "window_generation", "policy_fingerprint", "hook_contract"}, key) {
 			return errors.New("unknown native admission member")
 		}
 		seen[key] = true

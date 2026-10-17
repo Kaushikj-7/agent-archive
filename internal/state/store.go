@@ -170,6 +170,12 @@ func (s *Store) SaveRegistration(reg archive.SessionRegistration) error {
 	if err != nil {
 		return err
 	}
+	// Refuse protected native ownership before even reserving its index key.
+	if key.Agent == agentmeta.Muse {
+		if err := s.checkNativeRegistrationWrite(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
+			return err
+		}
+	}
 	entry, found, err := s.readQualifiedIndex(key)
 	if err != nil {
 		return err

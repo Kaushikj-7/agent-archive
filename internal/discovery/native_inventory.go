@@ -137,24 +137,21 @@ func NewNativeInventory(ctx context.Context, home string, roots []archive.Native
 		return nil, err
 	}
 	constructorStart := time.Now()
-	l := &NativeInventory{ctx: ctx, path: filepath.Join(home, "discovery-catalog.json"), budget: budget, validate: validate, remaining: Budget, tokens: map[string]nativeSelection{}}
 	if budget == nil || validate == nil {
 		return nil, agentapi.ErrInvalidSourceBinding
 	}
-	for _, root := range roots {
-		if root.Agent == "muse" {
-			if l.root.Agent != "" || root.Validate() != nil {
-				return nil, agentapi.ErrInvalidSourceBinding
-			}
-			l.root = root
-		}
+	root, rootErr := nativeInventoryRoot(roots)
+	if rootErr != nil {
+		return nil, rootErr
 	}
+
+	l := &NativeInventory{ctx: ctx, root: root, path: filepath.Join(home, "discovery-catalog.json"), budget: budget, validate: validate, remaining: Budget, tokens: map[string]nativeSelection{}}
 	if len(queries) > maxCatalog {
 		return nil, errCatalogTooLarge
 	}
 	valid := 0
 	for _, q := range queries {
-		if q.Root != l.root || q.Parent != nil || q.Purpose != agentapi.LocatorAdmittedOwner && q.Purpose != agentapi.LocatorStartupCandidate {
+		if !nativeInventoryQueryMatches(q, l.root) {
 			return nil, agentapi.ErrInvalidSourceBinding
 		}
 		if nativeOwner(q.NativeID) {
@@ -208,9 +205,6 @@ func NewNativeInventory(ctx context.Context, home string, roots []archive.Native
 	query := hex.EncodeToString(sum[:])
 	restored, ok := decodeNativeProgress(l.expected)
 	l.eligible = owners
-	if !l.reserve(int64(len(owners))) {
-		return nil, l.failConstruction(errCatalogBudget)
-	}
 	l.purposes = make([]uint8, len(owners))
 	for _, q := range queries {
 		n := sort.SearchStrings(owners, q.NativeID)
@@ -1117,4 +1111,21 @@ func (l *NativeInventory) skipInactive() {
 	for l.progress.Next < len(l.progress.Owners) && !slices.Contains(l.eligible, l.progress.Owners[l.progress.Next]) {
 		l.progress.Next++
 	}
+}
+
+func nativeInventoryQueryMatches(q agentapi.LocatorRequest, root archive.NativeRoot) bool {
+	return q.Root == root && q.Parent == nil && (q.Purpose == agentapi.LocatorAdmittedOwner || q.Purpose == agentapi.LocatorStartupCandidate)
+}
+
+func nativeInventoryRoot(roots []archive.NativeRoot) (selected archive.NativeRoot, err error) {
+	for _, root := range roots {
+		if root.Agent != "muse" {
+			continue
+		}
+		if selected.Agent != "" || root.Validate() != nil {
+			return selected, agentapi.ErrInvalidSourceBinding
+		}
+		selected = root
+	}
+	return selected, nil
 }

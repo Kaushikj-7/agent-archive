@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"os"
@@ -80,5 +81,48 @@ func TestMuseProtectedWriterFixtures(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(directory, name), raw, 0600); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// Unsupported recovery authority must remain at its original path, including
+// through the explicit abandon command's generic undecodable fallback.
+func TestMuseAbandonPreservesUnsupportedAuthority(t *testing.T) {
+	for _, kind := range []string{"future_admission", "protected_snapshot"} {
+		t.Run(kind, func(t *testing.T) {
+			home := t.TempDir()
+			env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+			var raw []byte
+			if kind == "future_admission" {
+				raw = []byte(`{"files_only":{"version":1,"writer":"native-authority-v16","value":true,"admission":"future-contract"}}`)
+			} else {
+				future := []byte(`{"schema_version":{"version":16,"writer":"native-authority-v16","base":1,"admission":"future-contract"}}`)
+				_, err := json.Marshal(setupjournal.Journal{FilesOnly: true, Changes: []fileapply.Change{{Path: filepath.Join(home, "config.json"), Before: future, After: []byte(`{}`), Existed: true, Mode: 0600}}})
+				if err == nil {
+					t.Fatal("serializer accepted unsupported rollback snapshot")
+				}
+				// Build unknown future wire without the current serializer's guard.
+				base, err := json.Marshal(map[string]any{"files_only": true, "changes": []fileapply.Change{{Path: filepath.Join(home, "config.json"), Before: future, After: []byte(`{}`), Existed: true, Mode: 0600}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw = base
+			}
+			path := setupjournal.JournalPath(home)
+			if err := os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			var out, stderr bytes.Buffer
+			if code := Run([]string{"setup", "--abandon-recovery"}, nil, &out, &stderr, env); code == 0 {
+				t.Fatalf("unsupported authority abandoned: %s %s", &out, &stderr)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(raw, after) {
+				t.Fatalf("unsupported journal moved or changed: %v", err)
+			}
+			entries, err := filepath.Glob(path + "*")
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("unexpected moved-aside recovery record: %v %v", entries, err)
+			}
+		})
 	}
 }

@@ -564,11 +564,7 @@ func containsPreservedJSON(value any) bool {
 	case json.RawMessage:
 		return true
 	case []any:
-		for _, item := range v {
-			if containsPreservedJSON(item) {
-				return true
-			}
-		}
+		return slices.ContainsFunc(v, containsPreservedJSON)
 	case *Object:
 		for _, member := range v.Members {
 			if containsPreservedJSON(member.Value) {

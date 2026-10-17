@@ -216,6 +216,7 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--codex-capture-scope` | a value | — |
 | `--codex-discovery` | a value | — |
 | `--keep-forever` | no value | — |
+| `--muse-home` | a value | — |
 | `--no-require-skill-use` | no value | — |
 | `--no-skills` | no value | — |
 | `--pair` | no value | — |

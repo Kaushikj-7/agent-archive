@@ -39,7 +39,7 @@ func (p *pass) loadStartupCandidates() error {
 	if err != nil {
 		return err
 	}
-	defer directory.Close()
+	defer func() { _ = directory.Close() }()
 	entries, err := directory.ReadDir(128)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return err
@@ -49,19 +49,17 @@ func (p *pass) loadStartupCandidates() error {
 			continue
 		}
 		path := filepath.Join(p.local.Home(), "admission-intents", entry.Name())
-		file, err := os.Open(path)
-		if err != nil {
+		intent, charge, loaded := p.readStartupIntent(path)
+		if !loaded {
 			continue
 		}
-		raw, readErr := io.ReadAll(io.LimitReader(file, 16<<10+1))
-		closeErr := file.Close()
-		if readErr != nil || closeErr != nil || len(raw) > 16<<10 {
+
+		if !capture.MuseIntentEligible(cfg, intent, p.now) {
+			p.startupCharge.Release(charge)
+			p.result.Errors["muse-startup-window"] = errors.New("native startup captured window is no longer eligible")
 			continue
 		}
-		var intent agentapi.AdmissionIntent
-		if json.Unmarshal(raw, &intent) != nil || !capture.RecognizedAdmissionIntent(intent) || intent.Version != 2 || !capture.MuseIntentEligible(cfg, intent, p.now) {
-			continue
-		}
+		p.startupChargeBytes += charge
 		candidate := startupCandidate{path: path, intent: intent}
 		for _, root := range cfg.NativeRoots {
 			if root.Agent == "muse" {
@@ -98,7 +96,7 @@ func (p *pass) admitStartupCandidate(candidate startupCandidate) (err error) {
 		return err
 	}
 	if !capture.MuseIntentEligible(cfg, candidate.intent, p.now) {
-		return errors.New("Muse startup window changed")
+		return errors.New("muse startup window changed")
 	}
 	key := agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: candidate.intent.NativeSessionID}
 	if id, owned, err := p.local.ArchiveSessionID(key); err != nil {
@@ -108,17 +106,17 @@ func (p *pass) admitStartupCandidate(candidate startupCandidate) (err error) {
 		if err != nil {
 			return err
 		}
-		if found && reg.NativeAdmission != nil && *reg.NativeAdmission == *candidate.intent.NativeAdmission && reg.HookObservedAt.Equal(candidate.intent.ObservedAt) && reg.NativeBinding != nil && reg.NativeBinding.Version == 2 {
+		if found && reg.NativeAdmission != nil && *reg.NativeAdmission == *candidate.intent.NativeAdmission && reg.NativeBinding != nil && reg.NativeBinding.Version == 2 && reg.NativeBinding.Validate() == nil && !candidate.intent.ObservedAt.Before(reg.NativeBinding.NativeCreatedAt) {
 			return p.ackStartupCandidate(candidate)
 		}
-		return errors.New("Muse startup conflicts with existing owner")
+		return errors.New("muse startup conflicts with existing owner")
 	}
 	result, err := p.opts.NativeLocators.Locate(p.ctx, agentapi.LocatorRequest{Purpose: agentapi.LocatorStartupCandidate, NativeID: candidate.intent.NativeSessionID, Root: candidate.root, Observed: candidate.intent.ObservedAt})
 	if err != nil {
 		return err
 	}
 	if result.Status != agentapi.LocatorFound || result.Current != nil || len(result.Candidates) != 1 || result.Revision == "" {
-		return agentapi.Wrap(agentapi.Unavailable, errors.New("Muse startup requires complete unique inventory"))
+		return agentapi.Wrap(agentapi.Unavailable, errors.New("muse startup requires complete unique inventory"))
 	}
 	ref := result.Candidates[0]
 	if ref.Kind != archive.SourceKindFile || ref.Key != candidate.intent.NativeSessionID {
@@ -182,14 +180,27 @@ func (p *pass) ackStartupCandidate(candidate startupCandidate) error {
 		return err
 	}
 	defer unlock()
-	var current agentapi.AdmissionIntent
-	if err := local.Read(candidate.path, &current); err != nil {
+	file, err := os.Open(candidate.path)
+	if err != nil {
 		return err
 	}
+	raw, readErr := io.ReadAll(io.LimitReader(file, agentapi.MaxNativeAdmissionIntentBytes+1))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil {
+		return errors.Join(readErr, closeErr)
+	}
+	var current agentapi.AdmissionIntent
+	if len(raw) > agentapi.MaxNativeAdmissionIntentBytes {
+		return errors.New("native intent exceeds private wire bound")
+	}
+	if err := json.Unmarshal(raw, &current); err != nil {
+		return err
+	}
+
 	a, _ := json.Marshal(current)
-	b, _ := json.Marshal(candidate.intent)
+	b, _ := json.Marshal(agentapi.AdmissionIntent(candidate.intent))
 	if string(a) != string(b) || !capture.RecognizedAdmissionIntent(current) {
-		return errors.New("Muse startup changed before acknowledgement")
+		return errors.New("muse startup changed before acknowledgement")
 	}
 	return os.Remove(candidate.path)
 }
@@ -203,10 +214,55 @@ type preparedStartupReader struct {
 func (r preparedStartupReader) Signature(ctx context.Context) (sourceState, error) {
 	return observe(archive.SourceKindFile, r.observation), ctx.Err()
 }
+
 func (r preparedStartupReader) Filter(ctx context.Context, _ archive.Adapter, _ int64) (archive.FilteredTranscript, sourceState, error) {
 	if err := ctx.Err(); err != nil {
 		return archive.FilteredTranscript{}, sourceState{}, err
 	}
 	filtered, err := r.prepared.Filtered()
 	return filtered, observe(archive.SourceKindFile, r.observation), err
+}
+
+func (p *pass) releaseStartupCandidates() {
+	p.startupCandidates = nil
+	if p.startupCharge != nil {
+		p.startupCharge.Release(p.startupChargeBytes)
+	}
+	p.startupChargeBytes = 0
+}
+
+func (p *pass) readStartupIntent(path string) (intent agentapi.AdmissionIntent, charge int64, loaded bool) {
+	file, err := os.Open(path)
+	if err != nil {
+		return intent, 0, false
+	}
+	info, statErr := file.Stat()
+	// Retain decoded strings, struct/slice overhead and raw decode scratch
+	// within the existing native read headroom, alongside 84 MiB sources and
+	// the existing 8 MiB inventory plus bounded query snapshot.
+	if statErr != nil || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > agentapi.MaxNativeAdmissionIntentBytes {
+		_ = file.Close()
+		return intent, 0, false
+	}
+	charge = 6*info.Size() + 4096
+	if p.startupCharge == nil {
+		p.startupCharge = p.opts.sourcePasses.env.ReadBudget.Reservation()
+	}
+	if charge > (2<<20)-p.startupChargeBytes || !p.startupCharge.Reserve(charge) {
+		_ = file.Close()
+		p.result.Errors["muse-startup-budget"] = agentapi.ReadBudgetLimit(errors.New("native candidate metadata unavailable"))
+		return intent, 0, false
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(file, info.Size()+1))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil || int64(len(raw)) != info.Size() {
+		p.startupCharge.Release(charge)
+		return intent, 0, false
+	}
+
+	if json.Unmarshal(raw, &intent) != nil || !capture.RecognizedAdmissionIntent(intent) || intent.Version != 2 || intent.NativeMode != agentapi.NativeStartupCandidate {
+		p.startupCharge.Release(charge)
+		return intent, 0, false
+	}
+	return intent, charge, true
 }

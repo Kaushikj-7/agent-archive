@@ -1,8 +1,11 @@
 package capture
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -17,7 +20,7 @@ import (
 // Existing-owner effects use the same queue, but never its startup inventory.
 // They run before the legacy replay's hooks lock so native continuation writes
 // can stage first and acquire hooks only for their individual final CAS.
-func replayMuseOwnerIntents(home string, at time.Time, after func(effectName) error) error {
+func replayMuseOwnerIntents(ctx context.Context, home string, at time.Time, after func(effectName) error) error {
 	cfg, found, err := config.Load(home)
 	if err != nil || !found {
 		return err
@@ -29,18 +32,21 @@ func replayMuseOwnerIntents(home string, at time.Time, after func(effectName) er
 	if err != nil {
 		return err
 	}
-	defer directory.Close()
+	defer func() { _ = directory.Close() }()
 	entries, err := directory.ReadDir(maxAdmissionIntents)
 	if err != nil && len(entries) == 0 {
 		return nil
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
 		path := filepath.Join(admissionIntentDir(home), entry.Name())
-		var intent agentapi.AdmissionIntent
-		if local.Read(path, &intent) != nil || !RecognizedAdmissionIntent(intent) || intent.NativeMode != agentapi.NativeOwnerContinuation {
+		intent, readErr := readMuseIntent(path)
+		if readErr != nil || !RecognizedAdmissionIntent(intent) || intent.NativeMode != agentapi.NativeOwnerContinuation {
 			continue
 		}
 		if at.Sub(intent.ObservedAt) > maxAdmissionIntentAge || intent.ObservedAt.After(at.Add(time.Minute)) {
@@ -50,7 +56,7 @@ func replayMuseOwnerIntents(home string, at time.Time, after func(effectName) er
 		if err != nil {
 			return err
 		}
-		scoped, err := store.ForNativeContinuation(context.Background(), intent)
+		scoped, err := store.ForNativeContinuation(ctx, intent)
 		if err != nil {
 			continue
 		}
@@ -66,15 +72,46 @@ func replayMuseOwnerIntents(home string, at time.Time, after func(effectName) er
 		if err != nil {
 			return err
 		}
-		var current agentapi.AdmissionIntent
-		same := local.Read(path, &current) == nil && RecognizedAdmissionIntent(current) && current.NativeOwnerID == intent.NativeOwnerID && current.ObservedAt.Equal(intent.ObservedAt) && current.Event == intent.Event && current.PauseGeneration == intent.PauseGeneration && current.NativeAdmission != nil && *current.NativeAdmission == *intent.NativeAdmission
-		if same {
-			err = acknowledgeIntent(path, after)
+		current, readErr := readMuseIntent(path)
+		if readErr == nil && RecognizedAdmissionIntent(current) && ctx.Err() == nil {
+			a, _ := json.Marshal(current)
+			b, _ := json.Marshal(intent)
+			if bytes.Equal(a, b) {
+				err = removeAdmissionIntent(path)
+				if err == nil {
+					err = effectBoundary(after, effectIntentAck)
+				}
+			}
 		}
+
 		unlock()
 		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func readMuseIntent(path string) (intent agentapi.AdmissionIntent, readErr error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return intent, err
+	}
+	defer func() { readErr = errors.Join(readErr, file.Close()) }()
+	info, err := file.Stat()
+	if err != nil {
+		return intent, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > agentapi.MaxNativeAdmissionIntentBytes {
+		return intent, errors.New("native intent exceeds private wire bound")
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, agentapi.MaxNativeAdmissionIntentBytes+1))
+	if err != nil {
+		return intent, err
+	}
+	if len(raw) > agentapi.MaxNativeAdmissionIntentBytes {
+		return intent, errors.New("native intent exceeds private wire bound")
+	}
+	readErr = json.Unmarshal(raw, &intent)
+	return intent, readErr
 }

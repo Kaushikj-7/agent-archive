@@ -20,10 +20,10 @@ import (
 
 // NativeAdmissionCandidate contains original observed authority, never an owner.
 type NativeAdmissionCandidate struct {
-	Intent      agentapi.AdmissionIntent
-	Root        archive.NativeRoot
-	ProjectRoot string
-	ProjectID   string
+	Intent      agentapi.AdmissionIntent `json:"Intent"`
+	Root        archive.NativeRoot       `json:"Root"`
+	ProjectRoot string                   `json:"ProjectRoot"`
+	ProjectID   string                   `json:"ProjectID"`
 }
 
 // PreparedNativeAdmission retains one successful concrete Filter and its live
@@ -51,21 +51,18 @@ type PreparedNativeAdmission struct {
 // after original native time and current captured policy have passed preflight.
 // It owns snapshot and closePass on success; callers close them on failure.
 func (s *Store) PrepareNativeAdmission(ctx context.Context, candidate NativeAdmissionCandidate, snapshot agentapi.SourceSnapshot, input agentapi.NativeInput, filter agentapi.TranscriptFilter, filterContext agentapi.FilterContext, lookup agentapi.NativeLocatorLookup, selection string, budget *agentapi.NativeReadBudget, closePass func() error) (*PreparedNativeAdmission, error) {
-	content, ok := snapshot.(agentapi.VerifiedContentSnapshot)
-	leased, concrete := filter.(agentapi.LeasedTranscriptFilter)
-	evidence, factsOK := snapshot.(agentapi.SourceAdmissionEvidence)
-	if s.hook || !ok || !concrete || !factsOK || filter.Name() != "muse" || !leased.LeasedFilterFor(filter) || !content.ContentProofFor(snapshot, input) || lookup == nil || selection == "" || closePass == nil || budget == nil || input.File == nil {
+	content, leased, evidence, valid := nativeAdmissionInputs(snapshot, input, filter)
+	if s.hook || !valid || lookup == nil || selection == "" || closePass == nil || budget == nil {
 		return nil, agentapi.ErrInvalidSourceBinding
 	}
-	raw, err := json.Marshal(candidate)
+
+	var err error
+	candidate, err = copyNativeAdmissionCandidate(candidate)
 	if err != nil {
 		return nil, err
 	}
-	if err = json.Unmarshal(raw, &candidate); err != nil {
-		return nil, err
-	}
 	observed := candidate.Intent
-	if observed.Version != 2 || observed.NativeMode != agentapi.NativeStartupCandidate || observed.Harness != "muse" || observed.NativeAdmission == nil || observed.NativeAdmission.Validate() != nil || observed.NativeOwnerID != "" || len(observed.Effects) != 0 || observed.TranscriptPath != "" || observed.Replay != nil || observed.LastHead != nil || observed.Event != "SessionStart" || observed.ProjectRoot != candidate.ProjectRoot || observed.ObservedCwd == "" {
+	if !nativeStartupObservationMatches(observed, candidate.ProjectRoot) {
 		return nil, agentapi.ErrInvalidSourceBinding
 	}
 	facts, err := evidence.AdmissionEvidence(ctx, agentapi.SourceAdmission{NativeID: observed.NativeSessionID})
@@ -73,7 +70,7 @@ func (s *Store) PrepareNativeAdmission(ctx context.Context, candidate NativeAdmi
 		return nil, err
 	}
 	binding := facts.Binding.Native
-	if facts.Binding.Codex != nil || binding == nil || binding.Version != 2 || binding.Validate() != nil || binding.NativeID != observed.NativeSessionID || binding.RootRevision != candidate.Root.Revision || binding.Agent != "muse" || binding.ParentID != "" || binding.RootID != "" && binding.RootID != binding.NativeID {
+	if facts.Binding.Codex != nil || !nativeStartupBindingMatches(binding, candidate) {
 		return nil, agentapi.ErrInvalidSourceBinding
 	}
 	physical, known := sourcefacts.PhysicalProject(binding.Cwd)
@@ -105,7 +102,7 @@ func (s *Store) PrepareNativeAdmission(ctx context.Context, candidate NativeAdmi
 		}
 		return nil, err
 	}
-	if !filtered.NativeStartComplete || !filtered.NativeStartAt.Equal(binding.NativeCreatedAt) || len(filtered.SessionIDs) != 1 || filtered.SessionIDs[0] != binding.NativeID {
+	if !nativeFilteredStartupMatches(filtered, binding) {
 		if release != nil {
 			release()
 		}
@@ -118,52 +115,7 @@ func (s *Store) PrepareNativeAdmission(ctx context.Context, candidate NativeAdmi
 		}
 		return nil, err
 	}
-	// Identity allocation is in memory only and follows full source proof.
-	key := agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: binding.NativeID}
-	if err := s.generationReservationAllowed(key); err != nil {
-		if release != nil {
-			release()
-		}
-		return nil, err
-	}
-	if _, owned, err := s.ArchiveSessionID(key); err != nil || owned {
-		if release != nil {
-			release()
-		}
-		return nil, errors.New("native startup identity is already owned or unresolved")
-	}
-	p.index, p.indexFound, err = s.readQualifiedIndex(key)
-	if err != nil {
-		if release != nil {
-			release()
-		}
-		return nil, err
-	}
-	if p.indexFound && !p.index.Absent {
-		registered, e := s.matchingRegistration(key, p.index.ArchiveSessionID)
-		if e != nil || registered || p.index.Reservation == "" {
-			if release != nil {
-				release()
-			}
-			return nil, errors.New("native startup already has an owner or conflicting index")
-		}
-		p.reg.ArchiveSessionID = p.index.ArchiveSessionID
-	} else {
-		if err := s.sessionIndexMissAllowed(); err != nil {
-			if release != nil {
-				release()
-			}
-			return nil, err
-		}
-		p.reg.ArchiveSessionID, err = local.ID()
-	}
-	if err != nil {
-		if release != nil {
-			release()
-		}
-		return nil, err
-	}
-	if err := p.reg.Validate(); err != nil {
+	if err := p.allocateNativeAdmissionIdentity(); err != nil {
 		if release != nil {
 			release()
 		}
@@ -198,7 +150,7 @@ func (p *PreparedNativeAdmission) checkPolicy(ctx context.Context, at time.Time)
 	}
 	i, root, b := p.candidate.Intent, p.candidate.Root, p.reg.NativeBinding
 	window := cfg.MuseCapture
-	if !found || !cfg.NativeAdmissionProtection || !cfg.NativeAuthorityProtection || cfg.Paused || window == nil || !cfg.Archive.Enabled || !slices.Contains(cfg.Harnesses, "muse") || cfg.DestinationID() != i.DestinationID || cfg.PauseGeneration != i.PauseGeneration || !nativeDestinationConfigured(cfg.Storage) || at.Sub(i.ObservedAt) > 24*time.Hour || i.ObservedAt.After(at.Add(time.Minute)) || b.NativeCreatedAt.After(i.ObservedAt) || b.NativeCreatedAt.Before(window.Since) || i.ObservedAt.Before(window.Since) || b.NativeCreatedAt.Before(cfg.DestinationSince) {
+	if !nativeAdmissionWindowMatches(cfg, found, p.reg, i, at) {
 		return errors.New("native startup is outside original capture window")
 	}
 	policy, err := config.MuseAdmissionPolicyFingerprint(cfg)
@@ -321,7 +273,7 @@ func (s *Store) CommitNativeAdmission(ctx context.Context, p *PreparedNativeAdmi
 
 type nativeAdmissionCommit struct{ prepared *PreparedNativeAdmission }
 
-func (p *nativeAdmissionCommit) check(previous, next archive.SessionRegistration, found bool) error {
+func (p *nativeAdmissionCommit) check(next archive.SessionRegistration, found bool) error {
 	if found || p == nil || p.prepared == nil || p.prepared.closed {
 		return errors.New("native admission requires absent owner")
 	}
@@ -335,7 +287,7 @@ func (p *nativeAdmissionCommit) check(previous, next archive.SessionRegistration
 
 // Filtered borrows the one successfully filtered output until Close.
 func (p *PreparedNativeAdmission) Filtered() (archive.FilteredTranscript, error) {
-	if p == nil || p.closed {
+	if p == nil || p.closed || p.store == nil {
 		return archive.FilteredTranscript{}, agentapi.ErrClosed
 	}
 	return p.filtered, nil
@@ -354,6 +306,86 @@ func (p *PreparedNativeAdmission) Close() error {
 		p.releaseOutput()
 	}
 	p.filtered = archive.FilteredTranscript{}
-	p.err = errors.Join(p.snapshot.Close(), p.closePass())
+	if p.snapshot != nil {
+		p.err = errors.Join(p.err, p.snapshot.Close())
+	}
+	if p.closePass != nil {
+		p.err = errors.Join(p.err, p.closePass())
+	}
 	return p.err
+}
+
+func (p *PreparedNativeAdmission) allocateNativeAdmissionIdentity() error {
+	var err error
+	// Identity allocation is in memory only and follows full source proof.
+	key := agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: p.reg.NativeSessionID}
+	if err := p.store.generationReservationAllowed(key); err != nil {
+		return err
+	}
+	if _, owned, err := p.store.ArchiveSessionID(key); err != nil || owned {
+		return errors.New("native startup identity is already owned or unresolved")
+	}
+	p.index, p.indexFound, err = p.store.readQualifiedIndex(key)
+	if err != nil {
+		return err
+	}
+	if p.indexFound && !p.index.Absent {
+		registered, e := p.store.matchingRegistration(key, p.index.ArchiveSessionID)
+		if e != nil || registered || p.index.Reservation == "" {
+			return errors.New("native startup already has an owner or conflicting index")
+		}
+		p.reg.ArchiveSessionID = p.index.ArchiveSessionID
+	} else {
+		if err := p.store.sessionIndexMissAllowed(); err != nil {
+			return err
+		}
+		p.reg.ArchiveSessionID, err = local.ID()
+	}
+	if err != nil {
+		return err
+	}
+	if err := p.reg.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func nativeStartupObservationMatches(observed agentapi.AdmissionIntent, projectRoot string) bool {
+	return agentapi.ValidNativeAdmissionIntentShape(observed) && observed.NativeMode == agentapi.NativeStartupCandidate && observed.ProjectRoot == projectRoot
+}
+
+func nativeStartupBindingMatches(binding *archive.NativeSourceBinding, candidate NativeAdmissionCandidate) bool {
+	return binding != nil && binding.Version == 2 && binding.Validate() == nil && binding.NativeID == candidate.Intent.NativeSessionID && binding.RootRevision == candidate.Root.Revision && binding.Agent == "muse" && binding.ParentID == "" && (binding.RootID == "" || binding.RootID == binding.NativeID)
+}
+
+func nativeAdmissionWindowMatches(cfg config.Config, found bool, reg archive.SessionRegistration, i agentapi.AdmissionIntent, at time.Time) bool {
+	window, b := cfg.MuseCapture, reg.NativeBinding
+	return found && cfg.NativeAdmissionProtection && cfg.NativeAuthorityProtection && !cfg.Paused && window != nil && cfg.Archive.Enabled && slices.Contains(cfg.Harnesses, "muse") && cfg.DestinationID() == i.DestinationID && cfg.PauseGeneration == i.PauseGeneration && nativeDestinationConfigured(cfg.Storage) && at.Sub(i.ObservedAt) <= 24*time.Hour && !i.ObservedAt.After(at.Add(time.Minute)) && !b.NativeCreatedAt.After(i.ObservedAt) && !b.NativeCreatedAt.Before(window.Since) && !i.ObservedAt.Before(window.Since) && cfg.NativeValidationInCurrentDestination(reg, b)
+}
+
+func nativeAdmissionInputs(snapshot agentapi.SourceSnapshot, input agentapi.NativeInput, filter agentapi.TranscriptFilter) (agentapi.VerifiedContentSnapshot, agentapi.LeasedTranscriptFilter, agentapi.SourceAdmissionEvidence, bool) {
+	content, ok := snapshot.(agentapi.VerifiedContentSnapshot)
+	leased, concrete := filter.(agentapi.LeasedTranscriptFilter)
+	evidence, factsOK := snapshot.(agentapi.SourceAdmissionEvidence)
+	valid := ok && concrete && factsOK && filter.Name() == "muse" && leased.LeasedFilterFor(filter) && content.ContentProofFor(snapshot, input) && input.File != nil
+	return content, leased, evidence, valid
+}
+
+func nativeFilteredStartupMatches(filtered archive.FilteredTranscript, binding *archive.NativeSourceBinding) bool {
+	return filtered.NativeStartComplete && filtered.NativeStartAt.Equal(binding.NativeCreatedAt) && len(filtered.SessionIDs) == 1 && filtered.SessionIDs[0] == binding.NativeID
+}
+
+func copyNativeAdmissionCandidate(candidate NativeAdmissionCandidate) (NativeAdmissionCandidate, error) {
+	if !agentapi.ValidNativeAdmissionIntentShape(candidate.Intent) || candidate.Intent.NativeMode != agentapi.NativeStartupCandidate {
+		return NativeAdmissionCandidate{}, agentapi.ErrInvalidSourceBinding
+	}
+	raw, err := json.Marshal(candidate)
+	if err != nil {
+		return NativeAdmissionCandidate{}, err
+	}
+	var copied NativeAdmissionCandidate
+	if err := json.Unmarshal(raw, &copied); err != nil {
+		return NativeAdmissionCandidate{}, err
+	}
+	return copied, nil
 }

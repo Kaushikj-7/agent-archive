@@ -116,22 +116,22 @@ type ChildObservation struct {
 
 // LifecycleEvent is a typed local result. Raw native payloads are never retained.
 type LifecycleEvent struct {
-	NativeHookContract string `json:",omitempty"`
-	CodexProjectRoot   string
-	CodexCwd           string
-	CodexPolicyToken   string
-	Kind               EventKind
-	Session            NativeSession
-	ProjectRoot        string
-	Source             SourceRef
-	Locator            LocatorUpdate
-	Start              StartEvidence
-	NewOnly            bool
-	Deferred           DeferredKind
-	Reason             string
-	NativeEvent        string
-	Evidence           []archive.SupplementalEvidence
-	Child              *ChildObservation
+	NativeHookContract string                         `json:",omitempty"`
+	CodexProjectRoot   string                         `json:"CodexProjectRoot"`
+	CodexCwd           string                         `json:"CodexCwd"`
+	CodexPolicyToken   string                         `json:"CodexPolicyToken"`
+	Kind               EventKind                      `json:"Kind"`
+	Session            NativeSession                  `json:"Session"`
+	ProjectRoot        string                         `json:"ProjectRoot"`
+	Source             SourceRef                      `json:"Source"`
+	Locator            LocatorUpdate                  `json:"Locator"`
+	Start              StartEvidence                  `json:"Start"`
+	NewOnly            bool                           `json:"NewOnly"`
+	Deferred           DeferredKind                   `json:"Deferred"`
+	Reason             string                         `json:"Reason"`
+	NativeEvent        string                         `json:"NativeEvent"`
+	Evidence           []archive.SupplementalEvidence `json:"Evidence"`
+	Child              *ChildObservation              `json:"Child"`
 }
 
 // HookDecoder interprets native JSON; it performs no host operations.
@@ -171,7 +171,9 @@ type LegacyHookDecoder interface {
 }
 
 // ReplayEffect is a content-free, versioned effect with original proof and identity.
-type ReplayEffect struct{ Event LifecycleEvent }
+type ReplayEffect struct {
+	Event LifecycleEvent `json:"Event"`
+}
 
 // NativeIntentMode selects a closed native admission operation.
 type NativeIntentMode string
@@ -185,23 +187,24 @@ const (
 
 // AdmissionIntent is the private replay wire envelope, retaining legacy fields.
 type AdmissionIntent struct {
-	NativeMode       NativeIntentMode         `json:"native_mode,omitempty"`
-	NativeAdmission  *archive.NativeAdmission `json:"native_admission,omitempty"`
-	NativeOwnerID    string                   `json:"native_owner_id,omitempty"`
-	ObservedCwd      string                   `json:"observed_cwd,omitempty"`
-	CodexPolicyToken string                   `json:"codex_policy_token,omitempty"`
-	Harness          string                   `json:"harness"`
-	Event            string                   `json:"event"`
-	NativeSessionID  string                   `json:"native_session_id"`
-	ProjectRoot      string                   `json:"project_root"`
-	DestinationID    string                   `json:"destination_id"`
-	PauseGeneration  string                   `json:"pause_generation,omitempty"`
-	TranscriptPath   string                   `json:"transcript_path,omitempty"`
-	CursorVersion    string                   `json:"cursor_version,omitempty"`
-	ComposerMode     string                   `json:"composer_mode,omitempty"`
-	ObservedAt       time.Time                `json:"observed_at"`
-	Version          int                      `json:"version,omitempty"`
-	Effects          []ReplayEffect           `json:"effects,omitempty"`
+	NativeWindowGeneration string                   `json:"native_window_generation,omitempty"`
+	NativeMode             NativeIntentMode         `json:"native_mode,omitempty"`
+	NativeAdmission        *archive.NativeAdmission `json:"native_admission,omitempty"`
+	NativeOwnerID          string                   `json:"native_owner_id,omitempty"`
+	ObservedCwd            string                   `json:"observed_cwd,omitempty"`
+	CodexPolicyToken       string                   `json:"codex_policy_token,omitempty"`
+	Harness                string                   `json:"harness"`
+	Event                  string                   `json:"event"`
+	NativeSessionID        string                   `json:"native_session_id"`
+	ProjectRoot            string                   `json:"project_root"`
+	DestinationID          string                   `json:"destination_id"`
+	PauseGeneration        string                   `json:"pause_generation,omitempty"`
+	TranscriptPath         string                   `json:"transcript_path,omitempty"`
+	CursorVersion          string                   `json:"cursor_version,omitempty"`
+	ComposerMode           string                   `json:"composer_mode,omitempty"`
+	ObservedAt             time.Time                `json:"observed_at"`
+	Version                int                      `json:"version,omitempty"`
+	Effects                []ReplayEffect           `json:"effects,omitempty"`
 	// Replay is the hook process marker, retained for queued new admissions.
 	Replay *archive.Replay `json:"replay,omitempty"`
 	// LastHead is the commit the contended hook saw for a stop it queued.

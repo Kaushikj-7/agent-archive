@@ -45,10 +45,11 @@ func (j Journal) MarshalJSON() ([]byte, error) {
 	if err = json.Unmarshal(raw, &doc); err != nil {
 		return nil, err
 	}
-	fence := nativeJournalFence{Version: 1, Writer: "native-authority-v16", Value: j.FilesOnly}
+	var capability string
 	if admission {
-		fence.Admission = "muse-root-admission"
+		capability = "muse-root-admission"
 	}
+	fence := nativeJournalFence{Version: 1, Writer: "native-authority-v16", Value: j.FilesOnly, Admission: capability}
 	doc["files_only"], err = json.Marshal(fence)
 	if err != nil {
 		return nil, err
@@ -143,7 +144,7 @@ func nativeJournalProtected(j Journal) (bool, error) {
 			if json.Unmarshal(raw, &doc) != nil {
 				continue
 			}
-			if doc["native_authority_protection"] == nil && doc["native_roots"] == nil {
+			if !nativeSnapshotAuthority(raw) {
 				continue
 			}
 			var cfg config.Config
@@ -197,7 +198,7 @@ func checkNativeJournalKeys(raw []byte, fence bool, admission ...bool) error {
 				known = true
 				seen[name]++
 				exact = exact && key == name && seen[name] == 1 && !bytes.Equal(bytes.TrimSpace(value), []byte("null"))
-				if name == "native_authority_protection" || name == "native_admission_protection" {
+				if strings.HasSuffix(name, "_protection") {
 					native = true
 				}
 			}
@@ -223,7 +224,7 @@ func nativeJournalAdmissionProtected(j Journal) (bool, error) {
 			if json.Unmarshal(raw, &doc) != nil {
 				continue
 			}
-			if doc["native_admission_protection"] == nil && doc["muse_capture"] == nil && doc["muse_capture_last_issued_at"] == nil {
+			if !nativeSnapshotAuthority(raw) {
 				continue
 			}
 			var cfg config.Config
@@ -234,4 +235,44 @@ func nativeJournalAdmissionProtected(j Journal) (bool, error) {
 		}
 	}
 	return protected, nil
+}
+
+// A structural schema fence is authority even when a future writer no longer
+// emits today's companion booleans. Decode it before permitting raw rollback.
+
+func nativeSnapshotAuthority(raw []byte) bool {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return false
+	}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return false
+		}
+		key, ok := token.(string)
+		if !ok {
+			return false
+		}
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil {
+			return false
+		}
+		if nativeSnapshotSelector(key, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func nativeSnapshotSelector(key string, value json.RawMessage) bool {
+	switch strings.ToLower(key) {
+	case "native_authority_protection", "native_roots", "native_admission_protection", "muse_capture", "muse_capture_last_issued_at":
+		return true
+	case "schema_version":
+		return bytes.HasPrefix(bytes.TrimSpace(value), []byte("{"))
+	default:
+		return false
+	}
 }

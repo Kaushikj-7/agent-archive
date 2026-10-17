@@ -254,6 +254,9 @@ func (s *Store) ArchiveSessionID(key agentmeta.SessionKey) (string, bool, error)
 // child candidate. A reservation is not proof of an admitted registration.
 // Callers hold hooks.lock, or the collector lock for child materialization.
 func (s *Store) EnsureArchiveSessionID(key agentmeta.SessionKey) (id string, created bool, err error) {
+	if err := s.genericNativeReservationAllowed(key); err != nil {
+		return "", false, err
+	}
 	if err := s.generationReservationAllowed(key); err != nil {
 		return "", false, err
 	}

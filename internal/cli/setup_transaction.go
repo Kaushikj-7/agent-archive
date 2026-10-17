@@ -714,7 +714,11 @@ func protectSetupWriter(home string, current config.Config, proposed ...config.C
 		if _, found, err := config.Load(home); err != nil {
 			return err
 		} else if found {
+			// Pre-fencing protects the pending transaction, but its prospective
+			// window and issuance time are not committed authority yet.
+			floor, window := current.MuseCaptureLastIssuedAt, current.MuseCapture
 			config.PreserveWriterFence(&current, proposed[0])
+			current.MuseCaptureLastIssuedAt, current.MuseCapture = floor, window
 			if err := config.Save(home, current); err != nil {
 				return err
 			}

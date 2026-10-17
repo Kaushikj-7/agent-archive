@@ -352,7 +352,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if state.SessionIndexRecoveryInterrupted(recoveryErr) {
 		recoveryErr = nil
 	}
-	replayErr := capture.ReplayAdmissionIntents(local.Home(), now, opts.Decoders)
+	replayErr := capture.ReplayAdmissionIntentsWithin(ctx, local.Home(), now, opts.Decoders)
 	// The caller holds the collector lock, so this pass is the only writer
 	// of the files it owns and may move a corrupt one aside.
 	local = local.ForCollectorPass()
@@ -365,7 +365,13 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// Establish one lazy source scope before child admission borrows its ledger.
 	closeCursorPass := openCursorPass(nil, &opts)
 	var closeNativeInventory func() error
-	defer func() { runErr = errors.Join(runErr, closeSourceAndNative(closeCursorPass, closeNativeInventory)) }()
+	var closeStartupCandidates func()
+	defer func() {
+		runErr = errors.Join(runErr, closeSourceAndNative(closeCursorPass, closeNativeInventory))
+		if closeStartupCandidates != nil {
+			closeStartupCandidates()
+		}
+	}()
 	local, closeAccounting := local.WithPublicationAccounting(ctx, (&sessionScan{opts: opts}).readBudget())
 	defer closeAccounting()
 
@@ -381,23 +387,13 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		result:             Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
 		expiredSubagents:   subagents.expired,
 	}
+	closeStartupCandidates = p.releaseStartupCandidates
 	defer p.releaseLabelResources()
-	if generationRecoveryErr != nil {
-		p.result.Errors["generation-recovery"] = generationRecoveryErr
-	}
-	if recoveryErr != nil {
-		p.result.Errors["session-index"] = recoveryErr
-	}
-	if replayErr != nil {
-		p.result.Errors["admission-intents"] = replayErr
-	}
+	p.recordInitialErrors(generationRecoveryErr, recoveryErr, replayErr)
 	// A loadWork failure returns before saveStatus, so this pass's expired
 	// subagents never reach status.json's list. That is accepted: the list
 	// is informational, and each parent's capture gap is already saved.
-	if err := p.loadWork(); err != nil {
-		return Result{}, err
-	}
-	if err := p.loadStartupCandidates(); err != nil {
+	if err := p.loadCaptureWork(); err != nil {
 		return Result{}, err
 	}
 	var inventoryErr error
@@ -505,6 +501,8 @@ func generationRecoveryStopsPass(err error) bool {
 // pass is one Run: its inputs, what it has found so far, and its result.
 type pass struct {
 	startupCandidates   []startupCandidate
+	startupCharge       *agentapi.NativeReadReservation
+	startupChargeBytes  int64
 	labelLocal          *state.Store
 	closeLabelResources func()
 	labelStates         map[string]*state.Published
@@ -1166,4 +1164,23 @@ func (r Result) CloseStagedResults() {
 	if r.stagedDiagnostics != nil {
 		r.stagedDiagnostics.close()
 	}
+}
+
+func (p *pass) recordInitialErrors(generation, recovery, replay error) {
+	if generation != nil {
+		p.result.Errors["generation-recovery"] = generation
+	}
+	if recovery != nil {
+		p.result.Errors["session-index"] = recovery
+	}
+	if replay != nil {
+		p.result.Errors["admission-intents"] = replay
+	}
+}
+
+func (p *pass) loadCaptureWork() error {
+	if err := p.loadWork(); err != nil {
+		return err
+	}
+	return p.loadStartupCandidates()
 }

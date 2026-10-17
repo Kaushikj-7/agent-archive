@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 type nativeContinuation struct {
@@ -24,25 +25,15 @@ type nativeContinuation struct {
 // Every resulting write stages with hooks.lock free, then reacquires hooks before
 // the existing request lock for the final current-policy and owner comparison.
 func (s *Store) ForNativeContinuation(ctx context.Context, intent agentapi.AdmissionIntent) (*Store, error) {
-	if intent.Version != 2 || intent.NativeMode != agentapi.NativeOwnerContinuation || intent.Harness != "muse" || intent.NativeOwnerID == "" || intent.NativeAdmission == nil || intent.NativeAdmission.Validate() != nil {
-		return nil, errors.New("native continuation requires exact owner authority")
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	raw, err := json.Marshal(intent)
+	proof, err := s.nativeContinuationProof(intent)
 	if err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(raw, &intent); err != nil {
-		return nil, err
-	}
-	owner, found, err := s.LoadRegistration(intent.NativeOwnerID)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, ErrSessionNotRegistered
-	}
-	proof := &nativeContinuation{intent: intent, owner: owner, ctx: ctx}
-	if err := s.checkNativeContinuation(ctx, proof); err != nil {
+	proof.ctx = ctx
+	if err := s.checkNativeContinuation(proof); err != nil {
 		return nil, err
 	}
 	copied := *s
@@ -51,16 +42,18 @@ func (s *Store) ForNativeContinuation(ctx context.Context, intent agentapi.Admis
 	return &copied, nil
 }
 
-func (s *Store) checkNativeContinuation(ctx context.Context, p *nativeContinuation) error {
-	if err := p.ctx.Err(); err != nil {
-		return err
+func (s *Store) checkNativeContinuation(p *nativeContinuation) error {
+	if p.ctx != nil {
+		if err := p.ctx.Err(); err != nil {
+			return err
+		}
 	}
 	i, owner := p.intent, p.owner
 	current, found, err := s.LoadRegistration(i.NativeOwnerID)
 	if err != nil {
 		return err
 	}
-	if !found || !nativeValidationOwnerMatches(current, owner) || owner.NativeAdmission == nil || *owner.NativeAdmission != *i.NativeAdmission || owner.NativeBinding == nil || owner.NativeBinding.Version != 2 || owner.NativeBinding.Validate() != nil || owner.NativeSessionID != i.NativeSessionID || owner.ProjectRoot != i.ProjectRoot || owner.DestinationID != i.DestinationID || owner.CaptureFrozen || owner.Imported() || owner.NativeChild {
+	if !nativeContinuationOwnerMatches(current, owner, i, found) {
 		return errors.New("native continuation owner changed")
 	}
 	if _, err := os.Lstat(filepath.Join(s.home, "setup-transaction.json")); !errors.Is(err, os.ErrNotExist) {
@@ -70,8 +63,11 @@ func (s *Store) checkNativeContinuation(ctx context.Context, p *nativeContinuati
 	if err != nil {
 		return err
 	}
-	if !found || !cfg.NativeAdmissionProtection || !cfg.NativeAuthorityProtection || cfg.Paused || !cfg.Archive.Enabled || !slices.Contains(cfg.Harnesses, "muse") || cfg.PauseGeneration != i.PauseGeneration || cfg.DestinationID() != i.DestinationID || !cfg.AcceptSession(owner) {
+	if !nativeContinuationConfigMatches(cfg, found, owner, i) {
 		return errors.New("native continuation capture policy changed")
+	}
+	if i.ObservedAt.Before(cfg.MuseCapture.Since) || time.Since(i.ObservedAt) > 24*time.Hour || i.ObservedAt.After(time.Now().Add(time.Minute)) || !local.PathWithin(i.ObservedCwd, owner.ProjectRoot) {
+		return errors.New("native continuation observation is outside captured window or project")
 	}
 	matched := false
 	for _, root := range cfg.NativeRoots {
@@ -79,6 +75,17 @@ func (s *Store) checkNativeContinuation(ctx context.Context, p *nativeContinuati
 			fingerprint, err := archive.NativeRootFingerprint(root)
 			matched = err == nil && fingerprint == i.NativeAdmission.RootFingerprint && root.Revision == owner.NativeBinding.RootRevision
 		}
+	}
+	selected := archive.ProjectActivation{}
+	selectedFound := false
+	for _, project := range cfg.Archive.Projects {
+		if local.PathWithin(owner.NativeBinding.Cwd, project.Root) && (!selectedFound || len(project.Root) > len(selected.Root) || len(project.Root) == len(selected.Root) && !project.Included) {
+			selected = project
+			selectedFound = true
+		}
+	}
+	if !selectedFound || !selected.Included || selected.Root != owner.ProjectRoot || selected.ProjectID != owner.ProjectID {
+		return errors.New("native continuation physical project policy changed")
 	}
 	if !matched {
 		return errors.New("native continuation root changed")
@@ -91,6 +98,13 @@ func (s *Store) checkNativeContinuation(ctx context.Context, p *nativeContinuati
 
 func (s *Store) guardNativeContinuationWrite(w lockedWrite) lockedWrite {
 	if s.nativeContinuation == nil {
+		return w
+	}
+	ownerID := s.nativeContinuation.owner.ArchiveSessionID
+	if w.path != s.registrationPath(ownerID) && w.path != s.requestPath(ownerID) {
+		w.change = func(fileSnapshot) (any, bool, error) {
+			return nil, false, errors.New("native continuation cannot write another owner or state path")
+		}
 		return w
 	}
 	lock, check := w.lock, w.check
@@ -107,7 +121,7 @@ func (s *Store) guardNativeContinuationWrite(w lockedWrite) lockedWrite {
 		return func() { unlock(); hooks() }, nil
 	}
 	w.check = func() error {
-		if err := s.checkNativeContinuation(context.Background(), s.nativeContinuation); err != nil {
+		if err := s.checkNativeContinuation(s.nativeContinuation); err != nil {
 			return err
 		}
 		if check != nil {
@@ -116,4 +130,45 @@ func (s *Store) guardNativeContinuationWrite(w lockedWrite) lockedWrite {
 		return nil
 	}
 	return w
+}
+
+func nativeContinuationOwnerMatches(current, owner archive.SessionRegistration, i agentapi.AdmissionIntent, found bool) bool {
+	return found && nativeValidationOwnerMatches(current, owner) && owner.NativeAdmission != nil && *owner.NativeAdmission == *i.NativeAdmission && owner.NativeBinding != nil && owner.NativeBinding.Version == 2 && owner.NativeBinding.Validate() == nil && owner.NativeSessionID == i.NativeSessionID && owner.ProjectRoot == i.ProjectRoot && owner.DestinationID == i.DestinationID && !owner.CaptureFrozen && !owner.Imported() && !owner.NativeChild
+}
+
+func nativeContinuationConfigMatches(cfg config.Config, found bool, owner archive.SessionRegistration, i agentapi.AdmissionIntent) bool {
+	return found && cfg.NativeAdmissionProtection && cfg.NativeAuthorityProtection && !cfg.Paused && cfg.Archive.Enabled && slices.Contains(cfg.Harnesses, "muse") && cfg.PauseGeneration == i.PauseGeneration && cfg.MuseCapture != nil && cfg.MuseCapture.Generation == i.NativeWindowGeneration && cfg.DestinationID() == i.DestinationID && cfg.AcceptSession(owner)
+}
+
+// CheckNativeContinuation checks current observation eligibility without returning
+// a writable scope. Actual continuation writes require ForNativeContinuation.
+func (s *Store) CheckNativeContinuation(intent agentapi.AdmissionIntent) error {
+	proof, err := s.nativeContinuationProof(intent)
+	if err != nil {
+		return err
+	}
+	return s.checkNativeContinuation(proof)
+}
+
+func (s *Store) nativeContinuationProof(intent agentapi.AdmissionIntent) (*nativeContinuation, error) {
+	if !agentapi.ValidNativeAdmissionIntentShape(intent) || intent.NativeMode != agentapi.NativeOwnerContinuation {
+		return nil, errors.New("native continuation requires closed exact owner observation")
+	}
+
+	raw, err := json.Marshal(intent)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(raw, &intent); err != nil {
+		return nil, err
+	}
+	owner, found, err := s.LoadRegistration(intent.NativeOwnerID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrSessionNotRegistered
+	}
+	proof := &nativeContinuation{intent: intent, owner: owner, ctx: nil}
+	return proof, nil
 }

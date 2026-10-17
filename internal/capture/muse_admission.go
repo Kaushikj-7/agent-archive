@@ -20,15 +20,15 @@ type museAdmissionContext struct{ intent agentapi.AdmissionIntent }
 
 func prepareMuseAdmission(cfg config.Config, batch []agentapi.LifecycleEvent, observedAt time.Time) (*museAdmissionContext, error) {
 	if len(batch) != 1 {
-		return nil, errors.New("Muse hook requires one root observation")
+		return nil, errors.New("muse hook requires one root observation")
 	}
 	e := batch[0]
 	if e.Session.Agent != agentmeta.Muse || e.NativeHookContract != "muse-root-hooks-v1" || e.Kind != agentapi.EventStart || e.NativeEvent != "SessionStart" || e.Start.Kind != agentapi.FreshUnknown || e.Start.Path != "" || e.Start.Reason != agentapi.FreshnessUnknownSource || e.Locator != agentapi.LocatorNone || e.Source.Path != "" || e.Source.Key != "" || e.Child != nil || e.Deferred != agentapi.DeferredNone || e.NewOnly || len(e.Evidence) != 0 || cfg.MuseCapture == nil {
-		return nil, errors.New("Muse startup observation requires committed admission window")
+		return nil, errors.New("muse startup observation requires committed admission window")
 	}
 	project, owned := ConfiguredProjectActivationFor(cfg, e.ProjectRoot)
 	if !owned || !project.Included || project.ActivatedAt.IsZero() {
-		return nil, errors.New("Muse startup requires explicit included project")
+		return nil, errors.New("muse startup requires explicit included project")
 	}
 	var root archive.NativeRoot
 	for _, r := range cfg.NativeRoots {
@@ -49,7 +49,7 @@ func prepareMuseAdmission(cfg config.Config, batch []agentapi.LifecycleEvent, ob
 
 func checkMuseAdmission(cfg config.Config, original *museAdmissionContext, owner *archive.SessionRegistration, at time.Time) error {
 	if original == nil || owner != nil || !RecognizedAdmissionIntent(original.intent) || !MuseIntentEligible(cfg, original.intent, at) {
-		return errors.New("Muse original admission window is no longer current")
+		return errors.New("muse original admission window is no longer current")
 	}
 	return nil
 }
@@ -85,19 +85,12 @@ func MuseIntentEligible(cfg config.Config, intent agentapi.AdmissionIntent, at t
 // before eligibility, acknowledgement, expiry or queue mutation.
 func RecognizedAdmissionIntent(i agentapi.AdmissionIntent) bool {
 	if i.Version == 0 || i.Version == 1 {
-		return i.NativeMode == "" && i.NativeAdmission == nil && i.NativeOwnerID == "" && i.ObservedCwd == "" && i.Harness != "muse"
+		return i.NativeWindowGeneration == "" && i.NativeMode == "" && i.NativeAdmission == nil && i.NativeOwnerID == "" && i.ObservedCwd == "" && i.Harness != "muse"
 	}
-	if i.Version == 2 && i.NativeMode == agentapi.NativeOwnerContinuation {
-		if i.Harness != "muse" || i.NativeAdmission == nil || i.NativeAdmission.Validate() != nil || i.NativeOwnerID == "" || len(i.Effects) != 1 || i.TranscriptPath != "" || i.Replay != nil || i.LastHead != nil || i.ObservedAt.IsZero() {
-			return false
-		}
-		e := i.Effects[0].Event
-		return e.Session.Agent == agentmeta.Muse && e.Session.NativeID == i.NativeSessionID && e.NativeHookContract == "muse-root-hooks-v1" && e.NativeEvent == i.Event && (e.Kind == agentapi.EventTurnStart || e.Kind == agentapi.EventStop) && e.Source.Path == "" && e.Source.Key == "" && e.Locator == agentapi.LocatorNone && e.Start.Kind == agentapi.FreshUnknown && e.Child == nil && len(e.Evidence) == 0 && e.Deferred == agentapi.DeferredNone
-	}
-	return i.Version == 2 && i.Harness == "muse" && i.NativeMode == agentapi.NativeStartupCandidate && i.NativeAdmission != nil && i.NativeAdmission.Validate() == nil && i.NativeOwnerID == "" && i.Event == "SessionStart" && i.NativeSessionID != "" && i.ProjectRoot != "" && filepath.IsAbs(i.ObservedCwd) && i.TranscriptPath == "" && i.CodexPolicyToken == "" && i.CursorVersion == "" && i.ComposerMode == "" && len(i.Effects) == 0 && i.Replay == nil && i.LastHead == nil && !i.ObservedAt.IsZero()
+	return agentapi.ValidNativeAdmissionIntentShape(i)
 }
 
-func handleMuseBatch(home string, batch []agentapi.LifecycleEvent, now time.Time, lock lockHooks, afterLock func(), o eventOptions) error {
+func handleMuseBatch(home string, batch []agentapi.LifecycleEvent, now time.Time, lock lockHooks, afterLock func()) error {
 	cfg, found, err := config.Load(home)
 	if err != nil || !found || setupjournal.TransactionPending(home) {
 		return err
@@ -113,37 +106,14 @@ func handleMuseBatch(home string, batch []agentapi.LifecycleEvent, now time.Time
 	} // no hook-triggered index recovery
 	var original *museAdmissionContext
 	if owned {
-		owner, found, err := store.LoadRegistration(id)
-		if err != nil || !found {
-			return err
-		}
-		if owner.NativeAdmission == nil || owner.NativeBinding == nil || owner.NativeBinding.Version != 2 || owner.NativeAdmission.Validate() != nil || owner.NativeBinding.Validate() != nil || !cfg.AcceptSession(owner) {
-			return nil
-		}
-		project, included := ConfiguredProjectActivationFor(cfg, batch[0].ProjectRoot)
-		if !included || !project.Included || project.Root != owner.ProjectRoot {
-			return nil
-		}
-		proof := *owner.NativeAdmission
-		event := batch[0]
-		if event.Kind == agentapi.EventStart {
-			event.Kind = agentapi.EventTurnStart
-			event.Start = agentapi.StartEvidence{}
-		}
-		intent := agentapi.AdmissionIntent{Version: 2, Harness: "muse", NativeMode: agentapi.NativeOwnerContinuation, NativeOwnerID: id, NativeAdmission: &proof, NativeSessionID: key.NativeID, ProjectRoot: owner.ProjectRoot, ObservedCwd: batch[0].ProjectRoot, ObservedAt: now.UTC(), Event: event.NativeEvent, DestinationID: owner.DestinationID, PauseGeneration: cfg.PauseGeneration, Effects: []agentapi.ReplayEffect{{Event: event}}}
-		if _, err := store.ForNativeContinuation(context.Background(), intent); err != nil {
-			return nil
-		}
-		original = &museAdmissionContext{intent: intent}
-	} else {
-		if batch[0].Kind != agentapi.EventStart {
-			return nil
-		}
+		original, err = prepareMuseContinuation(cfg, store, id, batch[0], now)
+	} else if batch[0].Kind == agentapi.EventStart {
 		original, err = prepareMuseAdmission(cfg, batch, now)
-		if err != nil {
-			return nil
-		}
 	}
+	if err != nil || original == nil {
+		return nil
+	}
+
 	id, err = local.ID()
 	if err != nil {
 		return err
@@ -174,7 +144,7 @@ func handleMuseBatch(home string, batch []agentapi.LifecycleEvent, now time.Time
 			_, err = store.ForNativeContinuation(context.Background(), original.intent)
 		}
 	} else if err == nil {
-		err = errors.New("Muse capture setup changed")
+		err = errors.New("muse capture setup changed")
 	}
 	if err == nil {
 		_, err = commitEventIntent(home, original.intent, staged)
@@ -184,4 +154,28 @@ func handleMuseBatch(home string, batch []agentapi.LifecycleEvent, now time.Time
 		return err
 	}
 	return staged.SyncDir()
+}
+
+func prepareMuseContinuation(cfg config.Config, store *state.Store, id string, event agentapi.LifecycleEvent, now time.Time) (*museAdmissionContext, error) {
+	owner, found, err := store.LoadRegistration(id)
+	if err != nil || !found {
+		return nil, err
+	}
+	if cfg.MuseCapture == nil || owner.NativeAdmission == nil || owner.NativeBinding == nil || owner.NativeBinding.Version != 2 || owner.NativeAdmission.Validate() != nil || owner.NativeBinding.Validate() != nil || !cfg.AcceptSession(owner) {
+		return nil, errors.New("muse continuation owner is not eligible")
+	}
+	project, included := ConfiguredProjectActivationFor(cfg, event.ProjectRoot)
+	if !included || !project.Included || project.Root != owner.ProjectRoot {
+		return nil, nil
+	}
+	proof := *owner.NativeAdmission
+	if event.Kind == agentapi.EventStart {
+		event.Kind = agentapi.EventTurnStart
+		event.Start = agentapi.StartEvidence{}
+	}
+	intent := agentapi.AdmissionIntent{Version: 2, Harness: "muse", NativeMode: agentapi.NativeOwnerContinuation, NativeOwnerID: id, NativeWindowGeneration: cfg.MuseCapture.Generation, NativeAdmission: &proof, NativeSessionID: owner.NativeSessionID, ProjectRoot: owner.ProjectRoot, ObservedCwd: event.ProjectRoot, ObservedAt: now.UTC(), Event: event.NativeEvent, DestinationID: owner.DestinationID, PauseGeneration: cfg.PauseGeneration, Effects: []agentapi.ReplayEffect{{Event: event}}}
+	if err := store.CheckNativeContinuation(intent); err != nil {
+		return nil, err
+	}
+	return &museAdmissionContext{intent: intent}, nil
 }

@@ -843,3 +843,21 @@ Primary references: [extending/hooks](https://dev.meta.ai/docs/muse-code/extendi
 had older-build assumptions; pin evidence to actual native builds and formats.
 
 The [production local v1 field policy](../qualification/muse/retained-allowlist-local-v1.json) is the exact current retained projection. The original `retained-allowlist.json` and derived corpus remain byte-frozen historical Q0 evidence; their broader metrics ceiling is not a production promise.
+
+### Guarded root implementation and remaining release gate
+
+The dormant root path decodes only qualified SessionStart/UserPromptSubmit/Stop/
+SessionEnd observations. An explicit startup produces an observation-only candidate
+under one configured home, included project, destination and captured window.
+The ordinary collector uses its shared native inventory and one concrete leased
+Filter to establish original native birth and complete source proof before it
+atomically exposes the first owner plus immutable binding. Publication and CLI
+readback verification retain their ordinary separate stages. Pending queue status
+reports only count/time/completeness and never calls an observation captured.
+
+Normal injected setup, generated hook settings, candidate handling, shared
+inventory, first ownership, publication, readback and status are exercised as one
+deterministic pipeline. Public setup still excludes Muse by default. Actual
+production-generated command delivery and native root-scoped TUI/exec/serve and
+platform acceptance remain separate gates; this implementation does not establish
+broader child/import/runtime/skill/launch or dynamic replay parity.

@@ -17,6 +17,15 @@ import (
 
 const rootHookContract = "muse-root-hooks-v1"
 
+type rootHookEvent string
+
+const (
+	rootSessionStart rootHookEvent = "SessionStart"
+	rootUserPrompt   rootHookEvent = "UserPromptSubmit"
+	rootStop         rootHookEvent = "Stop"
+	rootSessionEnd   rootHookEvent = "SessionEnd"
+)
+
 type hookConfigurator struct{ hookconfig.Configurator }
 
 func (h hookConfigurator) Location(r agentapi.HookLocations) string {
@@ -60,12 +69,12 @@ func (hookDecoder) Decode(ctx context.Context, input agentapi.HookInput) ([]agen
 	cwd, cwdOK := p["cwd"].(string)
 	name, nameOK := p["hook_event_name"].(string)
 	path, pathPresent := p["transcript_path"]
-	if !idOK || !hookNativeID(id) || (agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: id}).Validate() != nil || !cwdOK || strings.ContainsAny(cwd, "\x00\r\n") || len(cwd) > 4096 || !utf8.ValidString(cwd) || !filepath.IsAbs(cwd) || !nameOK || !pathPresent || path != nil || input.Environment["MUSE_SESSION_ID"] != id || input.Environment["MUSE_THREAD_ID"] != id {
+	if !idOK || !hookNativeID(id) || !cwdOK || strings.ContainsAny(cwd, "\x00\r\n") || len(cwd) > 4096 || !utf8.ValidString(cwd) || !filepath.IsAbs(cwd) || !nameOK || !pathPresent || path != nil || input.Environment["MUSE_SESSION_ID"] != id || input.Environment["MUSE_THREAD_ID"] != id {
 		return nil, nil
 	}
 	event := agentapi.LifecycleEvent{Session: agentapi.NativeSession{Agent: agentmeta.Muse, NativeID: id}, ProjectRoot: cwd, NativeEvent: name, NativeHookContract: rootHookContract, Reason: "native_root_observation"}
-	switch name {
-	case "SessionStart":
+	switch rootHookEvent(name) {
+	case rootSessionStart:
 		if source, ok := p["source"].(string); !ok || source != "startup" {
 			return nil, nil
 		}
@@ -74,18 +83,18 @@ func (hookDecoder) Decode(ctx context.Context, input agentapi.HookInput) ([]agen
 		}
 		event.Kind = agentapi.EventStart
 		event.Start = agentapi.StartEvidence{Kind: agentapi.FreshUnknown, Reason: agentapi.FreshnessUnknownSource}
-	case "UserPromptSubmit", "Stop", "SessionEnd":
+	case rootUserPrompt, rootStop, rootSessionEnd:
 		if _, present := p["source"]; present {
 			return nil, nil
 		}
-		if name == "SessionEnd" {
+		if rootHookEvent(name) == rootSessionEnd {
 			if _, ok := p["reason"].(string); !ok {
 				return nil, nil
 			}
 		} else if _, present := p["reason"]; present {
 			return nil, nil
 		}
-		if name == "UserPromptSubmit" {
+		if rootHookEvent(name) == rootUserPrompt {
 			event.Kind = agentapi.EventTurnStart
 		} else {
 			event.Kind = agentapi.EventStop
@@ -115,7 +124,7 @@ func (h hookConfigurator) Command(owner agentapi.HookOwner) (string, error) {
 		owner.DataHome = owner.DefaultDataHome
 	}
 	if owner.DataHome == "" {
-		return "", errors.New("Muse hooks require an explicit archive home")
+		return "", errors.New("muse hooks require an explicit archive home")
 	}
 	return h.Configurator.Command(owner)
 }

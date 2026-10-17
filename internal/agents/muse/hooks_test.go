@@ -92,6 +92,19 @@ func TestRootHookSettingsPreserveForeignBytesAndExactSchema(t *testing.T) {
 			t.Fatalf("ambiguous existing schema accepted: %s", raw)
 		}
 	}
+	unsupportedOwned := bytes.Replace(after, []byte(`"schema_version" : 1`), []byte(`"schema_version" : 2`), 1)
+	if bytes.Equal(unsupportedOwned, after) {
+		t.Fatal("schema mutation fixture did not change")
+	}
+	request.File.Bytes = unsupportedOwned
+	request.Action = agentapi.HookRemove
+	if _, err := h.Plan(request); err == nil {
+		t.Fatal("unsupported owned settings were removed")
+	}
+	if inspection, err := h.Inspect(agentapi.HookInspectionRequest{Owner: owner, File: request.File}); err == nil || inspection.Installed {
+		t.Fatal("unsupported owned settings were installed")
+	}
+	request.Action = agentapi.HookInstall
 	request.File.Present = false
 	request.File.Bytes = nil
 	changes, err = h.Plan(request)

@@ -31,7 +31,7 @@ func MuseAdmissionPolicyFingerprint(c Config) (string, error) {
 		}
 	}
 	if count != 1 {
-		return "", errors.New("Muse capture requires one explicit native root")
+		return "", errors.New("muse capture requires one explicit native root")
 	}
 	digest, err := archive.NativeRootFingerprint(root)
 	if err != nil {
@@ -60,13 +60,13 @@ func MuseAdmissionPolicyFingerprint(c Config) (string, error) {
 		return a.ActivatedAt.Compare(b.ActivatedAt)
 	})
 	raw, err := json.Marshal(struct {
-		Domain           string
-		Root             string
-		Enabled          bool
-		Selected         bool
-		Destination      string
-		DestinationSince time.Time
-		Projects         []archive.ProjectActivation
+		Domain           string                      `json:"Domain"`
+		Root             string                      `json:"Root"`
+		Enabled          bool                        `json:"Enabled"`
+		Selected         bool                        `json:"Selected"`
+		Destination      string                      `json:"Destination"`
+		DestinationSince time.Time                   `json:"DestinationSince"`
+		Projects         []archive.ProjectActivation `json:"Projects"`
 	}{"agent-archive/muse-admission-policy/v1", digest, c.Archive.Enabled, slices.Contains(c.Harnesses, "muse"), c.DestinationID(), c.DestinationSince, projects})
 	if err != nil {
 		return "", err
@@ -113,7 +113,7 @@ func ReconcileMuseCapture(next, previous Config, at time.Time) (Config, error) {
 		return next, nil
 	}
 	if at.IsZero() || !floor.IsZero() && !at.After(floor) || at.Before(next.DestinationSince) {
-		return Config{}, errors.New("Muse capture requires a forward window issuance time")
+		return Config{}, errors.New("muse capture requires a forward window issuance time")
 	}
 	generation, err := local.ID()
 	if err != nil {
@@ -126,7 +126,7 @@ func ReconcileMuseCapture(next, previous Config, at time.Time) (Config, error) {
 
 func validateMuseCapture(c Config) error {
 	if !c.MuseCaptureLastIssuedAt.IsZero() && !c.NativeAdmissionProtection {
-		return errors.New("Muse issuance floor requires admission protection")
+		return errors.New("muse issuance floor requires admission protection")
 	}
 	if c.MuseCapture == nil {
 		return nil
@@ -146,7 +146,7 @@ func validateMuseCaptureTransition(next, previous Config) error {
 	}
 	old, current := previous.MuseCapture, next.MuseCapture
 	if next.MuseCaptureLastIssuedAt.Before(previous.MuseCaptureLastIssuedAt) {
-		return errors.New("Muse issuance floor cannot move backward")
+		return errors.New("muse issuance floor cannot move backward")
 	}
 	if current == nil && !next.MuseCaptureLastIssuedAt.Equal(previous.MuseCaptureLastIssuedAt) {
 		return errors.New("inactive Muse issuance floor cannot advance")
@@ -156,12 +156,12 @@ func validateMuseCaptureTransition(next, previous Config) error {
 	}
 	if old != nil && *old == *current {
 		if previous.PauseGeneration != next.PauseGeneration {
-			return errors.New("Muse capture must rotate after pause transitions")
+			return errors.New("muse capture must rotate after pause transitions")
 		}
 		return nil
 	}
 	if old != nil && (old.Generation == current.Generation || !current.Since.After(old.Since)) || !previous.MuseCaptureLastIssuedAt.IsZero() && !current.Since.After(previous.MuseCaptureLastIssuedAt) {
-		return errors.New("Muse capture changes require a new forward window")
+		return errors.New("muse capture changes require a new forward window")
 	}
 	return nil
 }
@@ -169,7 +169,7 @@ func validateMuseCaptureTransition(next, previous Config) error {
 // UnmarshalJSON refuses future or ambiguous active-window authority.
 func (p *MuseCaptureConfig) UnmarshalJSON(raw []byte) error {
 	if len(raw) > 1024 {
-		return errors.New("Muse capture window exceeds bound")
+		return errors.New("muse capture window exceeds bound")
 	}
 	if err := exactAuthorityObject(raw, []string{"generation", "since", "policy_fingerprint"}); err != nil {
 		return err

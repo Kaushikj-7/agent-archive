@@ -82,6 +82,9 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 	if err != nil {
 		return err
 	}
+	if cfg.NativeAdmissionProtection && next.Harness.Name == "muse" && (next.NativeAdmission == nil || !before.found && admission == nil) {
+		return errors.New("muse ownership requires prepared native admission")
+	}
 	for _, root := range cfg.NativeRoots {
 		if before.found && previous.NativeBinding == nil && previous.TranscriptPath != "" && previous.Harness.Name == root.Agent {
 			return errors.New("native locator lost original authority; recover original binding before mutation")
@@ -113,7 +116,7 @@ func preserveNativeRegistrationAuthority(previous, next archive.SessionRegistrat
 		}
 	}
 	if admission != nil {
-		return admission.check(previous, next, found)
+		return admission.check(next, found)
 	}
 	if prepared != nil {
 		if err := prepared.check(previous, next, found); err != nil {
@@ -156,4 +159,20 @@ func validateNativeRegistrationFence(cfg config.Config, found bool, previous, ne
 		}
 	}
 	return next.Validate()
+}
+
+// genericNativeReservationAllowed keeps strong Muse admission on its prepared
+// first-owner path. Existing-owner continuation never needs a new reservation.
+func (s *Store) genericNativeReservationAllowed(key agentmeta.SessionKey) error {
+	if key.Agent != agentmeta.Muse {
+		return nil
+	}
+	cfg, _, err := config.Load(s.home)
+	if err != nil {
+		return err
+	}
+	if cfg.NativeAdmissionProtection {
+		return errors.New("muse reservation requires prepared native admission")
+	}
+	return nil
 }
