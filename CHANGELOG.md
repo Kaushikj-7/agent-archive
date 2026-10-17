@@ -21,6 +21,10 @@ follow [Semantic Versioning](https://semver.org/).
   avoiding whole-file hashes while browsing large histories. Selected sessions
   retain complete filtering and independent content verification.
 
+- Caching a session for the first time skips a redundant directory scan.
+  Rewritten metadata still prunes old cache versions, and bounded maintenance
+  remains the backstop for concurrent writers.
+
 - Interrupted history privacy preparation now reads each retained revision's
   original parent before applying a later resolved parent. Older pending
   journals can resume without replacing the original provenance.

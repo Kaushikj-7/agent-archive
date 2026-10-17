@@ -358,6 +358,39 @@ func TestCancelledCacheMaintenanceDoesNoWork(t *testing.T) {
 	}
 }
 
+func TestCacheWritesPruneOnlyExistingKeyDirectories(t *testing.T) {
+	t.Parallel()
+
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var visits []string
+	cache.readDir = func(path string) ([]os.DirEntry, error) {
+		visits = append(visits, path)
+		return os.ReadDir(path)
+	}
+	key := "sessions/codex/fresh/metadata.json"
+	dir, _ := cache.keyDir(key)
+	cache.putVerified(key, "first", []byte(`{"version":1}`))
+	if len(visits) != 0 {
+		t.Fatalf("fresh write scanned directories: %v", visits)
+	}
+	if _, ok := cache.get(key, "first"); !ok {
+		t.Fatal("fresh write did not cache validated bytes")
+	}
+	cache.putVerified(key, "second", []byte(`{"version":2}`))
+	if len(visits) != 1 || visits[0] != dir {
+		t.Fatalf("existing key scans = %v, want [%s]", visits, dir)
+	}
+	if _, ok := cache.get(key, "first"); ok {
+		t.Fatal("existing key retained old validator")
+	}
+	if _, ok := cache.get(key, "second"); !ok {
+		t.Fatal("existing key lost new validator")
+	}
+}
+
 func TestChangedCacheKeyPrunesOnlyItsOldValidators(t *testing.T) {
 	cache, err := OpenMetadataCache(t.TempDir())
 	if err != nil {

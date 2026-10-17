@@ -336,6 +336,13 @@ Pass:
 
 ## PR 4: Small cache and selected-read fixes
 
+The fresh-directory prune optimization (4a) is implemented and validated with
+the reader short race suite and an opt-in 50k cold-write profile. Its regression
+fails against the original implementation; the candidate records zero key
+directory enumerations during fresh writes. The selected-read concurrency
+trial (4b) remains conditional and unimplemented. No live latency claim follows
+from the synthetic cache profile.
+
 - `MetadataCache.putVerified` skips `pruneVersions` when its `os.Mkdir` just
   created the key directory. A fresh directory has nothing to prune. Rewritten
   keys keep today's prune, and the sweep remains the backstop. No layout change.
