@@ -28,7 +28,7 @@ func NativeImportBindingDigest(binding *NativeSourceBinding) (string, error) {
 // deliberately irrelevant to the authority of an already retained publication.
 func (r SessionRegistration) ValidateNativeImport() error {
 	n, b := r.NativeImport, r.NativeBinding
-	if n == nil || n.Validate() != nil || !admissionHex(r.ArchiveSessionID, 32) || !nativePath(r.ProjectRoot) || r.validateNativeBinding() != nil || b == nil || b.Version != 2 || b.Validate() != nil || !r.Imported() || r.Harness.Name != "muse" || r.IsChild() || r.ParentNativeSessionID != "" || b.ParentID != "" || b.RootID != "" && b.RootID != b.NativeID || r.NativeAdmission != nil || r.Replay != nil || r.HistoricalProject != nil || r.CodexBinding != nil || r.CodexAdmission != nil || r.PreviousGenerationID != "" || !r.ReadsTranscriptFile() {
+	if n == nil || n.Validate() != nil || !admissionHex(r.ArchiveSessionID, 32) || !nativePath(r.ProjectRoot) || r.validateNativeBinding() != nil || b == nil || b.Version != 2 || b.Validate() != nil || !r.nativeImportOrdinaryRoot(b) {
 		return ErrUnsupportedNativeImport
 	}
 	c := n.Confirmation
@@ -37,6 +37,13 @@ func (r SessionRegistration) ValidateNativeImport() error {
 		return ErrUnsupportedNativeImport
 	}
 	return nil
+}
+
+// nativeImportOrdinaryRoot keeps historical source authority separate from
+// live admission, Replay and every independently qualified child/history route.
+// The caller validates the non-nil binding before consulting this shape.
+func (r SessionRegistration) nativeImportOrdinaryRoot(b *NativeSourceBinding) bool {
+	return r.Imported() && r.Harness.Name == "muse" && !r.IsChild() && r.ParentNativeSessionID == "" && b.ParentID == "" && (b.RootID == "" || b.RootID == b.NativeID) && r.NativeAdmission == nil && r.Replay == nil && r.HistoricalProject == nil && r.CodexBinding == nil && r.CodexAdmission == nil && r.PreviousGenerationID == "" && r.ReadsTranscriptFile()
 }
 
 // DecodeSessionRegistration preserves private authority classification even

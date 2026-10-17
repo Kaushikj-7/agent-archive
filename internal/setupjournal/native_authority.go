@@ -78,13 +78,7 @@ func (j *Journal) UnmarshalJSON(raw []byte) (decodeErr error) {
 		if decodeErr == nil {
 			return
 		}
-		var fields map[string]json.RawMessage
-		_ = json.Unmarshal(raw, &fields)
-		protected := false
-		for key, value := range fields {
-			protected = protected || strings.EqualFold(key, "native_authority_protection") || strings.EqualFold(key, "native_admission_protection") || strings.EqualFold(key, "native_import_protection") || strings.EqualFold(key, "native_replay_protection") || strings.EqualFold(key, "files_only") && bytes.HasPrefix(bytes.TrimSpace(value), []byte("{"))
-		}
-		if protected {
+		if nativeJournalAuthorityPresent(raw) {
 			decodeErr = errors.Join(ErrUnsupportedRecoveryAuthority, decodeErr)
 		}
 	}()
@@ -109,33 +103,8 @@ func (j *Journal) UnmarshalJSON(raw []byte) (decodeErr error) {
 	}
 	fenced := len(filesOnly) > 0 && filesOnly[0] == '{'
 	if fenced {
-		// Validate the original envelope before normalizing its fence: a map
-		// would otherwise collapse duplicate managed authority fields.
-		if err := checkJournalKeys(json.NewDecoder(bytes.NewReader(raw)), 0); err != nil {
-			return err
-		}
-		admissionProtected := bytes.Equal(bytes.TrimSpace(doc["native_admission_protection"]), []byte("true"))
-		if err := checkNativeJournalKeys(filesOnly, true, admissionProtected, importProtected); err != nil {
-			return err
-		}
-		var fence nativeJournalFence
-		d := json.NewDecoder(bytes.NewReader(filesOnly))
-		d.DisallowUnknownFields()
-		if err := d.Decode(&fence); err != nil {
-			return err
-		}
-		if fence.Version != 1 || fence.Writer != "native-authority-v16" || !bytes.Equal(bytes.TrimSpace(doc["native_authority_protection"]), []byte("true")) {
-			return errors.New("unsupported native setup recovery fence")
-		}
-		if admissionProtected && fence.Admission != config.MuseAdmissionWriterSelector(replayProtected) {
-			return errors.New("unsupported native admission recovery capability")
-		}
-		if importProtected && fence.Import != "muse-historical-import" {
-			return errors.New("unsupported native import recovery capability")
-		}
-		doc["files_only"], _ = json.Marshal(fence.Value)
 		var err error
-		raw, err = json.Marshal(doc)
+		raw, err = normalizeNativeJournalFence(raw, doc, filesOnly, replayProtected, importProtected)
 		if err != nil {
 			return err
 		}
@@ -174,6 +143,47 @@ func (j *Journal) UnmarshalJSON(raw []byte) (decodeErr error) {
 	}
 	*j = plain
 	return nil
+}
+
+// nativeJournalAuthorityPresent classifies recovery errors without granting
+// authority from a malformed or aliased envelope.
+func nativeJournalAuthorityPresent(raw []byte) bool {
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &fields)
+	protected := false
+	for key, value := range fields {
+		protected = protected || strings.EqualFold(key, "native_authority_protection") || strings.EqualFold(key, "native_admission_protection") || strings.EqualFold(key, "native_import_protection") || strings.EqualFold(key, "native_replay_protection") || strings.EqualFold(key, "files_only") && bytes.HasPrefix(bytes.TrimSpace(value), []byte("{"))
+	}
+	return protected
+}
+
+func normalizeNativeJournalFence(raw []byte, doc map[string]json.RawMessage, filesOnly []byte, replayProtected, importProtected bool) ([]byte, error) {
+	// Validate the original envelope before normalizing its fence: a map
+	// would otherwise collapse duplicate managed authority fields.
+	if err := checkJournalKeys(json.NewDecoder(bytes.NewReader(raw)), 0); err != nil {
+		return nil, err
+	}
+	admissionProtected := bytes.Equal(bytes.TrimSpace(doc["native_admission_protection"]), []byte("true"))
+	if err := checkNativeJournalKeys(filesOnly, true, admissionProtected, importProtected); err != nil {
+		return nil, err
+	}
+	var fence nativeJournalFence
+	d := json.NewDecoder(bytes.NewReader(filesOnly))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&fence); err != nil {
+		return nil, err
+	}
+	if fence.Version != 1 || fence.Writer != "native-authority-v16" || !bytes.Equal(bytes.TrimSpace(doc["native_authority_protection"]), []byte("true")) {
+		return nil, errors.New("unsupported native setup recovery fence")
+	}
+	if admissionProtected && fence.Admission != config.MuseAdmissionWriterSelector(replayProtected) {
+		return nil, errors.New("unsupported native admission recovery capability")
+	}
+	if importProtected && fence.Import != "muse-historical-import" {
+		return nil, errors.New("unsupported native import recovery capability")
+	}
+	doc["files_only"], _ = json.Marshal(fence.Value)
+	return json.Marshal(doc)
 }
 
 func nativeJournalProtected(j Journal) (bool, error) {
