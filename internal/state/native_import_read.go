@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -17,11 +18,23 @@ func decodeRegistrationJSON(raw []byte, value any) error {
 	return json.Unmarshal(raw, value)
 }
 
-func readRegistrationJSON(path string, value any) error {
+func (s *Store) readRegistrationJSON(path string, value any) error {
 	if _, ok := value.(*archive.SessionRegistration); !ok {
 		return local.Read(path, value)
 	}
-	raw, err := os.ReadFile(path)
+	owner, err := os.OpenRoot(s.home)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = owner.Close() }()
+	relative, err := filepath.Rel(s.home, path)
+	if err != nil {
+		return err
+	}
+	if !filepath.IsLocal(relative) {
+		return errStateFileUnstable
+	}
+	raw, err := owner.ReadFile(relative)
 	if err != nil {
 		return err
 	}

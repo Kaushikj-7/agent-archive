@@ -470,7 +470,7 @@ func (s *Store) registrationPath(archiveSessionID string) string {
 // LoadRegistrations returns every registered session, sorted by archive
 // session ID for deterministic scan order.
 func (s *Store) LoadRegistrations() ([]archive.SessionRegistration, error) {
-	return s.loadRegistrations(readRegistrationJSON)
+	return s.loadRegistrations(s.readRegistrationJSON)
 }
 
 func (s *Store) loadRegistrations(read func(string, any) error) ([]archive.SessionRegistration, error) {

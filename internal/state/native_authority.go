@@ -82,17 +82,8 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 	if err != nil {
 		return err
 	}
-	if next.Harness.Name == "muse" && next.Replay != nil && !cfg.NativeReplayProtection {
-		return errors.New("native replay owner requires stronger writer protection")
-	}
-	if cfg.NativeImportProtection && next.Harness.Name == "muse" && !before.found && admission == nil {
-		return errors.New("muse ownership requires prepared native admission or historical import")
-	}
-	if next.NativeImport != nil && (!cfg.NativeImportProtection || next.ValidateNativeImport() != nil) {
-		return errors.New("native import requires exact writer protection")
-	}
-	if cfg.NativeAdmissionProtection && next.Harness.Name == "muse" && next.NativeImport == nil && (next.NativeAdmission == nil || !before.found && admission == nil) {
-		return errors.New("muse ownership requires prepared native admission")
+	if err := validateNativeTransitionCapabilities(cfg, next, before.found, admission); err != nil {
+		return err
 	}
 	for _, root := range cfg.NativeRoots {
 		if before.found && previous.NativeBinding == nil && previous.TranscriptPath != "" && previous.Harness.Name == root.Agent {
@@ -112,6 +103,22 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 		if root.Agent == next.Harness.Name && next.TranscriptPath != "" {
 			return errors.New("native locator requires its original source binding")
 		}
+	}
+	return nil
+}
+
+func validateNativeTransitionCapabilities(cfg config.Config, next archive.SessionRegistration, previousFound bool, admission *nativeAdmissionCommit) error {
+	if next.Harness.Name == "muse" && next.Replay != nil && !cfg.NativeReplayProtection {
+		return errors.New("native replay owner requires stronger writer protection")
+	}
+	if cfg.NativeImportProtection && next.Harness.Name == "muse" && !previousFound && admission == nil {
+		return errors.New("muse ownership requires prepared native admission or historical import")
+	}
+	if next.NativeImport != nil && (!cfg.NativeImportProtection || next.ValidateNativeImport() != nil) {
+		return errors.New("native import requires exact writer protection")
+	}
+	if cfg.NativeAdmissionProtection && next.Harness.Name == "muse" && next.NativeImport == nil && (next.NativeAdmission == nil || !previousFound && admission == nil) {
+		return errors.New("muse ownership requires prepared native admission")
 	}
 	return nil
 }

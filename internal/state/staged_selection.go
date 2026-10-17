@@ -244,9 +244,9 @@ func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingP
 	if err = scratch.unmarshalOwned(p.MetadataBytes, &metadata); err != nil {
 		return p, err
 	}
-	refs, err := metadata.SourceReferences()
-	if err != nil || len(refs) != 1 || refs[0] != p.SourceReference() || !stagedMetadataMatches(metadata, p.Bundle) {
-		return p, ErrDurableStorageRecovery
+	refs, err := stagedFactoryReferences(metadata, p)
+	if err != nil {
+		return p, err
 	}
 	q.Core.SourceSetSHA256, err = s.readyDigest(ctx, refs)
 	if err != nil {
@@ -263,6 +263,14 @@ func (s *Store) FreezeStagedSelection(ctx context.Context, id string, p PendingP
 		return p, err
 	}
 	return p, s.finishStagedSelectionFactory(ctx, p, sourceFact)
+}
+
+func stagedFactoryReferences(metadata archive.Metadata, p PendingPublication) ([]archive.SourceReference, error) {
+	refs, err := metadata.SourceReferences()
+	if err != nil || len(refs) != 1 || refs[0] != p.SourceReference() || !stagedMetadataMatches(metadata, p.Bundle) {
+		return nil, ErrDurableStorageRecovery
+	}
+	return refs, nil
 }
 
 func (s *Store) finishStagedSelectionFactory(ctx context.Context, p PendingPublication, fact *validatedStagedSource) error {
@@ -388,6 +396,14 @@ func (p *Published) preserveStagedPublished(ctx context.Context, next *published
 	return p.validateStagedPublished(ctx, next)
 }
 
+func stagedPublishedReferences(metadata archive.Metadata, next *publishedState, retained archive.SourceBundle) ([]archive.SourceReference, error) {
+	refs, err := metadata.SourceReferences()
+	if err != nil || len(refs) != 1 || next.LastPublished.Source == nil || refs[0] != *next.LastPublished.Source || !stagedMetadataMatches(metadata, retained) {
+		return nil, ErrDurableStorageRecovery
+	}
+	return refs, nil
+}
+
 func (p *Published) validateStagedPublished(ctx context.Context, next *publishedState) error {
 	q := next.LastPublished.StagedProof()
 	if invalidPublishedStagedProof(next, q) {
@@ -420,9 +436,9 @@ func (p *Published) validateStagedPublished(ctx context.Context, next *published
 	if err := scratch.unmarshalOwned(next.MetadataBytes, &metadata); err != nil {
 		return ErrDurableStorageRecovery
 	}
-	refs, err := metadata.SourceReferences()
-	if err != nil || len(refs) != 1 || next.LastPublished.Source == nil || refs[0] != *next.LastPublished.Source || !stagedMetadataMatches(metadata, retained) {
-		return ErrDurableStorageRecovery
+	refs, err := stagedPublishedReferences(metadata, next, retained)
+	if err != nil {
+		return err
 	}
 	set, err := p.store.readyDigest(ctx, refs)
 	if err != nil || set != q.Core.SourceSetSHA256 {

@@ -108,3 +108,57 @@ func assertUnsupportedNativeOwnerReads(t *testing.T, s *Store, owner archive.Ses
 	var reg archive.SessionRegistration
 	check(readRecoveryRegistration(s.registrationPath(owner.ArchiveSessionID), &buffer, &reg))
 }
+
+func TestNativeImportRegistrationReadRefusesOutsideRoot(t *testing.T) {
+	for _, mode := range []string{"file-symlink", "directory-symlink", "absolute-outside"} {
+		t.Run(mode, func(t *testing.T) {
+			f, owner := historicalNativeOwnerFixture(t)
+			original, err := json.Marshal(owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			outside := t.TempDir()
+			target := filepath.Join(outside, owner.ArchiveSessionID+".json")
+			if err := os.WriteFile(target, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+			path := f.store.registrationPath(owner.ArchiveSessionID)
+			switch mode {
+			case "file-symlink":
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatal(err)
+				}
+			case "directory-symlink":
+				directory := filepath.Dir(path)
+				if err := os.Rename(directory, directory+"-original"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, directory); err != nil {
+					t.Fatal(err)
+				}
+			case "absolute-outside":
+				path = target
+			}
+			var decoded archive.SessionRegistration
+			if err := f.store.readRegistrationJSON(path, &decoded); err == nil {
+				t.Fatal("registration reader escaped store root")
+			}
+			if decoded.NativeImport != nil {
+				t.Fatal("outside authority was decoded")
+			}
+			if mode != "absolute-outside" {
+				if _, _, err := f.store.LoadRegistration(owner.ArchiveSessionID); err == nil {
+					t.Fatal("public owner load followed outside link")
+				}
+			}
+			after, err := os.ReadFile(target)
+			if err != nil || !bytes.Equal(original, after) || len(f.store.QuarantinedFiles()) != 0 {
+				t.Fatal("outside receipt changed or quarantined", err)
+			}
+			f.assertReleased(t)
+		})
+	}
+}

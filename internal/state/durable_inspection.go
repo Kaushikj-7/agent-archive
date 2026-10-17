@@ -170,15 +170,12 @@ func (s *Store) inspectPendingRootWitnessed(home *local.RootedHome, name string,
 			if e != nil {
 				return out, true, e
 			}
-			if s.atomicWitness != nil {
-				matched, e := s.atomicWitness.Match(home.Root, filepath.Join(name, entry.Name()), info)
-				if e != nil || matched && *matchedWitness {
-					return out, true, errors.Join(ErrDurableStorageRecovery, e)
-				}
-				if matched {
-					*matchedWitness = true
-					continue
-				}
+			matched, e := s.matchInspectionAtomicWitness(home, name, entry.Name(), info, matchedWitness)
+			if e != nil {
+				return out, true, e
+			}
+			if matched {
+				continue
 			}
 			if s.atomicWitness == nil && legacy && strings.HasPrefix(entry.Name(), ".pending-") {
 				s.durableInspection.legacyTemps = true
@@ -203,6 +200,20 @@ func (s *Store) inspectPendingRootWitnessed(home *local.RootedHome, name string,
 		out = append(out, DurableStorageObligation{Namespace: namespace})
 	}
 	return out, unknown, nil
+}
+
+func (s *Store) matchInspectionAtomicWitness(home *local.RootedHome, name, entry string, info os.FileInfo, matchedWitness *bool) (bool, error) {
+	if s.atomicWitness == nil {
+		return false, nil
+	}
+	matched, err := s.atomicWitness.Match(home.Root, filepath.Join(name, entry), info)
+	if err != nil || matched && *matchedWitness {
+		return false, errors.Join(ErrDurableStorageRecovery, err)
+	}
+	if matched {
+		*matchedWitness = true
+	}
+	return matched, nil
 }
 
 func (s *Store) loadDurableInspectionConfig(home *local.RootedHome) (cfg config.Config, found bool, err error) {

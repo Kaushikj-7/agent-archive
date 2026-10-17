@@ -554,7 +554,7 @@ func (p *Published) writeWithStaged(next publishedState, staged *PendingPublicat
 			}
 			return nil
 		})
-	} else if next.PublicationVersion == 3 && next.LastPublished != nil && next.LastPublished.StagedProof() != nil && next.LastPublished.StagedProof().Core.NativeImportAuthority != "" {
+	} else if nativeImportTypedPublished(next) {
 		guard, err := p.store.nativeImportStagedCommit(p.store.durableContext(), p.id, staged, &next)
 		if err != nil {
 			return err
@@ -578,6 +578,10 @@ func (p *Published) writeWithStaged(next publishedState, staged *PendingPublicat
 		p.store.cacheSavedSummary(p.id, summary, savedDigest)
 	}
 	return nil
+}
+
+func nativeImportTypedPublished(next publishedState) bool {
+	return next.PublicationVersion == 3 && next.LastPublished != nil && next.LastPublished.StagedProof() != nil && next.LastPublished.StagedProof().Core.NativeImportAuthority != ""
 }
 
 // Found reports whether anything has been saved for the session.

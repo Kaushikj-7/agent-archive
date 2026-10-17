@@ -27,7 +27,7 @@ type StorageClockReading struct {
 // when there is none, or when the file cannot be read or decoded: a reading
 // is only ever a cache, and without one the clock is read again.
 func (s *Store) LoadStorageClockReading() (reading StorageClockReading, found bool) {
-	reading, found, err := readJSON[StorageClockReading](filepath.Join(s.home, storageClockFile))
+	reading, found, err := readJSON[StorageClockReading](s, filepath.Join(s.home, storageClockFile))
 	if err != nil || reading.CheckedAt.IsZero() {
 		return StorageClockReading{}, false
 	}

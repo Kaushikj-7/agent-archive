@@ -319,7 +319,7 @@ func (s *Store) admitPreparedImport(ctx context.Context, stage ImportStage, reg 
 
 // Validate checks the bounded journal digest, identity and selected source set.
 func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistration) error {
-	if reg.NativeImport != nil && (reg.ValidateNativeImport() != nil || !p.TypedSelection || p.Version != 2 || len(p.Preserved) != 0 || len(p.Children) != 0 || p.Bundle.History != nil) {
+	if p.invalidNativeImportShape(reg) {
 		return ErrReadySelectionFrozen
 	}
 
@@ -355,6 +355,10 @@ func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistrati
 		return err
 	}
 	return p.validateOwner(reg)
+}
+
+func (p ImportStage) invalidNativeImportShape(reg archive.SessionRegistration) bool {
+	return reg.NativeImport != nil && (reg.ValidateNativeImport() != nil || !p.TypedSelection || p.Version != 2 || len(p.Preserved) != 0 || len(p.Children) != 0 || p.Bundle.History != nil)
 }
 
 func (p ImportStage) validateOwner(reg archive.SessionRegistration) error {

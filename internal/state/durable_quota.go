@@ -358,32 +358,9 @@ func (q *durableQuota) writeWithCommitContext(ctx context.Context, path string, 
 		}
 	}
 
-	if strings.HasPrefix(path, "publication-evidence/") {
-		populated, e := rootHasEntries(q.home.Root, filepath.Dir(path))
-		if e != nil && !errors.Is(e, os.ErrNotExist) {
-			return e
-		}
-		if !populated {
-			if additional > durableStorageQuota-durableControlBytes {
-				return ErrDurableStorageCapacity
-			}
-			additional += durableControlBytes
-		}
-	}
-	if strings.HasSuffix(filepath.Dir(path), "/import-stage") {
-		present, e := rootHasEntries(q.home.Root, filepath.Dir(path))
-		if e != nil && !errors.Is(e, os.ErrNotExist) {
-			return e
-		}
-		if !present {
-			additional += durableControlBytes
-		}
-		if filepath.Base(path) == "cancel.json" && present {
-			if n > durableControlBytes/2 {
-				return ErrDurableStorageCapacity
-			}
-			additional = 0
-		}
+	additional, err = q.controlDirectoryAdditional(path, n, additional)
+	if err != nil {
+		return err
 	}
 	if additional > durableStorageQuota-u.charged {
 		return ErrDurableStorageCapacity
@@ -427,6 +404,37 @@ func (q *durableQuota) writeWithCommitContext(ctx context.Context, path string, 
 		})
 	}
 	return local.RootedAtomicWriteChecked(q.home.Root, path, encode, commit.plain)
+}
+
+func (q *durableQuota) controlDirectoryAdditional(path string, n, additional int64) (int64, error) {
+	if strings.HasPrefix(path, "publication-evidence/") {
+		populated, e := rootHasEntries(q.home.Root, filepath.Dir(path))
+		if e != nil && !errors.Is(e, os.ErrNotExist) {
+			return 0, e
+		}
+		if !populated {
+			if additional > durableStorageQuota-durableControlBytes {
+				return 0, ErrDurableStorageCapacity
+			}
+			additional += durableControlBytes
+		}
+	}
+	if strings.HasSuffix(filepath.Dir(path), "/import-stage") {
+		present, e := rootHasEntries(q.home.Root, filepath.Dir(path))
+		if e != nil && !errors.Is(e, os.ErrNotExist) {
+			return 0, e
+		}
+		if !present {
+			additional += durableControlBytes
+		}
+		if filepath.Base(path) == "cancel.json" && present {
+			if n > durableControlBytes/2 {
+				return 0, ErrDurableStorageCapacity
+			}
+			additional = 0
+		}
+	}
+	return additional, nil
 }
 
 type boundedDurableWriter struct {

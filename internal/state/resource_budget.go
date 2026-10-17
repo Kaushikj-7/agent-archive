@@ -68,7 +68,7 @@ func (s *Store) readBudgetedContext(ctx context.Context, path string, value any,
 	reservation := s.readReservation()
 	if s.resourceBudget == nil {
 		if _, published := value.(*publishedState); !published {
-			return readRegistrationJSON(path, value)
+			return s.readRegistrationJSON(path, value)
 		}
 	}
 	if s.resourceBudget != nil {

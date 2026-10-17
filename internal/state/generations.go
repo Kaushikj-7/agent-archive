@@ -444,7 +444,7 @@ func (s *Store) freezeGenerationRecovery(r generationRecovery) error {
 		return ErrSessionIdentityConflict
 	}
 	oldNode := generationNode{Version: 1, Key: r.Key, ID: r.Previous, Previous: old.PreviousGenerationID}
-	if prior, found, err := readJSON[generationNode](s.generationNodePath(r.Previous)); err != nil {
+	if prior, found, err := readJSON[generationNode](s, s.generationNodePath(r.Previous)); err != nil {
 		return ErrSessionIndexRecoveryRequired
 	} else if found {
 		if prior.Key != r.Key || prior.ID != r.Previous || prior.Previous != old.PreviousGenerationID {
@@ -559,7 +559,7 @@ func (s *Store) saveGenerationNode(n generationNode) error {
 	if !safeFileComponent(n.ID) || n.Previous == n.ID {
 		return ErrSessionIdentityConflict
 	}
-	prior, found, err := readJSON[generationNode](s.generationNodePath(n.ID))
+	prior, found, err := readJSON[generationNode](s, s.generationNodePath(n.ID))
 	if err != nil {
 		return ErrSessionIndexRecoveryRequired
 	}
@@ -686,13 +686,13 @@ func (s *Store) generationAncestry(h generationHead) (map[string]generationNode,
 		if _, duplicate := ancestry[id]; duplicate {
 			return nil, ErrSessionIdentityConflict
 		}
-		n, present, err := readJSON[generationNode](s.generationNodePath(id))
+		n, present, err := readJSON[generationNode](s, s.generationNodePath(id))
 		if err != nil || !present || n.Version != 1 || n.Key != h.Key || n.ID != id || n.Previous != "" && n.PreviousRoot != "" {
 			return nil, ErrSessionIdentityConflict
 		}
 		ancestry[id] = n
 		if n.Previous != "" {
-			r, present, err := readJSON[generationRecovery](s.generationRecoveryPath(n.Previous))
+			r, present, err := readJSON[generationRecovery](s, s.generationRecoveryPath(n.Previous))
 			if err != nil || !present || r.Version != 1 || !r.Complete || r.Key != h.Key || r.Previous != n.Previous || r.Next != id {
 				return nil, ErrSessionIdentityConflict
 			}
@@ -800,7 +800,7 @@ func (s *Store) recoverGenerationOwners(key agentmeta.SessionKey, owners []strin
 		// Genuine root reservations are always durable per-key overlays. A
 		// packed owner is derived from the preceding census and can name an
 		// expired tip or belong to the previous packed epoch during rebuilding.
-		entry, present, err := readJSON[qualifiedSessionIndexEntry](qualifiedSessionIndexPath(s.home, key))
+		entry, present, err := readJSON[qualifiedSessionIndexEntry](s, qualifiedSessionIndexPath(s.home, key))
 		if err != nil && !IsUndecodable(err) {
 			return true, err
 		}

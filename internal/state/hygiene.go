@@ -222,7 +222,7 @@ func readOrQuarantine[T any](s *Store, path, lockName string) (value T, found bo
 // lockName; with none, a lock held right now leaves the file where it is
 // and the error wraps local.ErrBusy.
 func readOrQuarantineWaiting[T any](s *Store, path, lockName string, lockWait time.Duration) (value T, found bool, err error) {
-	value, found, err = readJSON[T](path)
+	value, found, err = readJSON[T](s, path)
 	if err == nil || !isCorruptJSON(err) {
 		return value, found, err
 	}
@@ -231,7 +231,7 @@ func readOrQuarantineWaiting[T any](s *Store, path, lockName string, lockWait ti
 		return value, false, fmt.Errorf("%w (and it could not be locked to move it aside: %w)", err, lockErr)
 	}
 	defer unlock()
-	value, found, err = readJSON[T](path)
+	value, found, err = readJSON[T](s, path)
 	if err == nil || !isCorruptJSON(err) {
 		return value, found, err
 	}
@@ -257,9 +257,9 @@ func pruneQuarantine(path string) {
 	}
 }
 
-func readJSON[T any](path string) (T, bool, error) {
+func readJSON[T any](s *Store, path string) (T, bool, error) {
 	var value T
-	err := readRegistrationJSON(path, &value)
+	err := s.readRegistrationJSON(path, &value)
 	if errors.Is(err, os.ErrNotExist) {
 		return value, false, nil
 	}
