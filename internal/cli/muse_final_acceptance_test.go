@@ -294,7 +294,7 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 	for _, tc := range []struct{ name, content string }{
 		{"claude", `{"type":"assistant","sessionId":"synthetic-claude","message":{"role":"assistant","content":[{"type":"text","text":"visible"}]}}` + "\n"},
 		{"codex", `{"type":"turn_context","model":"synthetic"}` + "\n" + `{"type":"response_item","id":"m1","payload":{"type":"message","role":"assistant","content":"visible"}}` + "\n"},
-		{"cursor", "user: hello\nassistant: visible\n"},
+		{"cursor", `{"role":"user","message":{"content":[{"type":"text","text":"visible"}]}}` + "\n"},
 	} {
 		path := filepath.Join(f.project, tc.name+".jsonl")
 		if err := os.WriteFile(path, []byte(tc.content), 0600); err != nil {
@@ -352,7 +352,7 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 			row, marshalErr = json.Marshal(map[string]any{"type": "response_item", "id": "growth",
 				"payload": map[string]any{"type": "message", "role": "assistant", "content": visible}})
 		case "cursor":
-			row = []byte("assistant: " + visible)
+			row, marshalErr = json.Marshal(map[string]any{"role": "assistant", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": visible}}}})
 		default:
 			t.Fatalf("unexpected agent %s", reg.Harness.Name)
 		}
@@ -452,7 +452,7 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 		t.Fatal(statErr)
 	}
 	if museTraceFilterInput(t, recoveryTrace.String()) != sourceInfo.Size() || remote.sourcePuts.Load() != 1 || remote.metadataPuts.Load() != 1 {
-		t.Fatalf("recovery repeated Filter input/upload: source=%d metadata=%d trace=%s", remote.sourcePuts.Load(), remote.metadataPuts.Load(), recoveryTrace.String())
+		t.Fatalf("recovery repeated Filter input/upload: source=%d metadata=%d filter_bytes=%d want_muse_bytes=%d trace=%s", remote.sourcePuts.Load(), remote.metadataPuts.Load(), museTraceFilterInput(t, recoveryTrace.String()), sourceInfo.Size(), recoveryTrace.String())
 	}
 	for id, snapshot := range settled {
 		if snapshot != snapshotTree(t, filepath.Join(f.home, "published", id+".json")) {
