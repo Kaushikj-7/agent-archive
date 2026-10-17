@@ -167,7 +167,7 @@ func runLocalList(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 			PreviewLimited bool              `json:"preview_limited"`
 			Sessions       []localReadRow    `json:"sessions"`
 		}{localReadSchemaVersion, "local-read-list", "local", localCoverage(result.Coverage), more || catalog.exhausted, rows}
-		if err := json.NewEncoder(stdout).Encode(out); err != nil {
+		if err := writeCompactJSON(stdout, out); err != nil {
 			return localReadFailure(stderr, "list", err)
 		}
 	} else {
@@ -233,6 +233,9 @@ func runLocalShow(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 			out.View = &normalizedOutput{Turns: turns, ToolCalls: view.ToolCalls, ToolResults: view.ToolResults, HookFinals: view.HookFinals}
 		}
 		raw, err := json.Marshal(out)
+		if err == nil {
+			raw = append(archive.DisplayJSON(raw), '\n')
+		}
 		if err == nil && o.transcript && o.maxBytes > 0 && len(raw) > o.maxBytes {
 			err = errors.New("local transcript exceeds --max-bytes; raise the explicit output limit")
 		}
@@ -240,7 +243,7 @@ func runLocalShow(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 			return localReadFailure(stderr, "show", err)
 		}
 		returnCode := 0
-		if err := writeOutput(stdout, append(raw, '\n')); err != nil {
+		if err := writeOutput(stdout, raw); err != nil {
 			returnCode = localReadFailure(stderr, "show", err)
 		}
 		return returnCode
