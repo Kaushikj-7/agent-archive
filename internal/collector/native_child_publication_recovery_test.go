@@ -28,6 +28,16 @@ type childRecoveryProvider struct {
 
 type childRecoveryFiles struct{ attempts map[string]int }
 
+func (f childRecoveryFiles) Lstat(path string) (os.FileInfo, error) {
+	f.attempts[path]++
+	return nil, errors.New("native stat forbidden during frozen child recovery")
+}
+
+func (f childRecoveryFiles) EvalSymlinks(path string) (string, error) {
+	f.attempts[path]++
+	return "", errors.New("native resolution forbidden during frozen child recovery")
+}
+
 func (f childRecoveryFiles) OpenRegular(path string) (transcriptio.File, error) {
 	f.attempts[path]++
 	return nil, errors.New("native access forbidden during frozen child recovery")
