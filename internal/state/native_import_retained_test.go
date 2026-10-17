@@ -131,7 +131,7 @@ func releasedNativeImportFixture(t *testing.T) (*Store, archive.SessionRegistrat
 }
 
 func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) {
-	for _, mode := range []string{"valid", "missing", "future", "tampered", "predecessor", "owner", "ordinary", "metadata"} {
+	for _, mode := range []string{"valid", "missing", "future", "tampered", "predecessor", "owner", "ordinary", "metadata", "progress-missing", "progress-future", "stage", "checkpoint"} {
 		t.Run(mode, func(t *testing.T) {
 			s, reg, next := releasedNativeImportFixture(t)
 			path := filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseReceiptName))
@@ -164,6 +164,23 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 				if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
 					t.Fatal(err)
 				}
+			case "progress-missing":
+				if err := os.Remove(filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseProgressName))); err != nil {
+					t.Fatal(err)
+				}
+			case "progress-future":
+				if err := os.WriteFile(filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseProgressName)), []byte(`{"version":99}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "stage", "checkpoint":
+				if mode == "stage" {
+					reg.StagedImportSHA256 = strings.Repeat("a", 64)
+				} else {
+					reg.NativeBinding.Checkpoint.SHA256 = strings.Repeat("f", 64)
+				}
+				if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
+					t.Fatal(err)
+				}
 			case "metadata":
 				next.MetadataBytes = append(next.MetadataBytes, ' ')
 			}
@@ -189,5 +206,58 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 				t.Fatal("refusal changed owner", err)
 			}
 		})
+	}
+}
+
+func TestNativeImportReleasedDetachIgnoresRemovedRootAndPreservesIndependentRequest(t *testing.T) {
+	s, reg, next := releasedNativeImportFixture(t)
+	original, err := s.nativeImportReleasedSelection(t.Context(), reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Arrange only the supported closed membership transition; production undo
+	// authority remains a separate port, not this fixture's local write.
+	reg.NativeImport.Membership.State = "detached"
+	if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := config.Load(s.Home())
+	if err != nil || len(cfg.NativeRoots) == 0 {
+		t.Fatal("root removal fixture", err)
+	}
+	previous := cfg
+	cfg.NativeRoots = nil
+	cfg, err = config.ReconcileMuseCapture(cfg, previous, reg.AdmittedAt.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(s.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveRequest(reg.ArchiveSessionID, "independent", reg.AdmittedAt.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	req, found, err := s.LoadRequest(reg.ArchiveSessionID)
+	if err != nil || !found {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.NativeImportRetainedAuthority(t.Context(), reg); err != nil {
+			t.Fatal("detached retained authority", err)
+		}
+		if active, err := s.NativeImportStageActive(t.Context(), reg); err != nil || active {
+			t.Fatal("released stage reactivated", active, err)
+		}
+	}
+	detached, err := s.nativeImportReleasedSelection(t.Context(), reg)
+	if err != nil || !sameStagedSelection(original, detached) {
+		t.Fatal("detachment changed original proof", err)
+	}
+	if err := s.SavePending(reg.ArchiveSessionID, next); err != nil {
+		t.Fatal("detached exact pending successor", err)
+	}
+	current, found, err := s.LoadRequest(reg.ArchiveSessionID)
+	if err != nil || !found || current.Token != req.Token {
+		t.Fatal("released checks consumed independent request", err)
 	}
 }

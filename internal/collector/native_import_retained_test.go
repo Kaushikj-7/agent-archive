@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -120,7 +121,7 @@ func newHistoricalNativeStage(t *testing.T) historicalNativeStage {
 	if err := local.Write(filepath.Join(store.Home(), "registrations", reg.ArchiveSessionID+".json"), reg); err != nil {
 		t.Fatal(err)
 	}
-	bundle, err := archive.NewSourceBundle(reg, adapter, filtered, at, nil)
+	bundle, err := archive.NewSourceBundle(reg, adapter, filtered, at, []archive.SupplementalEvidence{{Kind: archive.EvidenceKindSkillSnapshot, ObservedAt: at, Provenance: "synthetic-test", Payload: map[string]any{"name": "SyntheticSkill", "snapshot": "historical-import-private-skill-body"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,5 +211,64 @@ func TestNativeImportTypedACKReleaseRetainedParserAndRestart(t *testing.T) {
 	closeStagedControlResult(result)
 	if err != nil || len(result.Errors) != 0 {
 		t.Fatal("retained successor restart", err, result.Errors)
+	}
+}
+
+func TestNativeImportReleasedPrivacySuccessorUsesOnlyRetainedSource(t *testing.T) {
+	f := newHistoricalNativeStage(t)
+	result, err := Run(t.Context(), f.store, f.remote, f.opts)
+	closeStagedControlResult(result)
+	if err != nil || len(result.Errors) != 0 {
+		t.Fatal("initial typed publication", err, result.Errors)
+	}
+	before, err := ReadLocalBundle(t.Context(), f.store.Home(), f.reg, f.at, "", f.opts.Sources)
+	beforeEvidence, marshalErr := json.Marshal(before.SupplementalEvidence)
+	if err != nil || marshalErr != nil || !strings.Contains(string(beforeEvidence), "historical-import-private-skill-body") {
+		t.Fatal("missing retained privacy fixture", err)
+	}
+	cfg, _, err := config.Load(f.store.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.SkillEvidence = config.SkillEvidenceNone
+	if err := config.Save(f.store.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.opts.SkillEvidence = config.SkillEvidenceNone
+	f.opts.Now = func() time.Time { return f.at.Add(time.Hour) }
+	f.opts.SupplementalEvidence = func(archive.SessionRegistration, time.Time) ([]archive.SupplementalEvidence, error) {
+		t.Fatal("retained privacy observed current filesystem evidence")
+		return nil, nil
+	}
+	published := 0
+	for range 3 {
+		result, err = Run(t.Context(), f.store, f.remote, f.opts)
+		closeStagedControlResult(result)
+		if err != nil || len(result.Errors) != 0 {
+			t.Fatal("retained privacy successor", err, result.Errors)
+		}
+		published += len(result.Published)
+	}
+	if published != 1 {
+		t.Fatal("privacy successor did not settle once", published)
+	}
+	after, err := ReadLocalBundle(t.Context(), f.store.Home(), f.reg, f.at.Add(time.Hour), "", f.opts.Sources)
+	if err != nil {
+		t.Fatal("retained privacy local read", err)
+	}
+	if len(after.SupplementalEvidence) != 0 || !after.Capture.CapturedAt.Equal(f.at) {
+		t.Fatal("privacy successor retained body or changed capture provenance")
+	}
+	if err := f.store.NativeImportRetainedAuthority(t.Context(), f.reg); err != nil {
+		t.Fatal("privacy successor lost original release lineage", err)
+	}
+	reopened, err := state.Open(f.store.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = Run(t.Context(), reopened, f.remote, f.opts)
+	closeStagedControlResult(result)
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
+		t.Fatal("privacy successor restart", err, result.Errors)
 	}
 }
