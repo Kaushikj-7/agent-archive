@@ -1060,7 +1060,7 @@ func (s *Store) classifyReleasedImportOwner(ctx context.Context, id string, rece
 	if err := validateNativeImportSelectionAuthority(reg, q.Core); err != nil {
 		return reg, err
 	}
-	if reg.NativeImport != nil && reg.NativeImport.Membership.State == "detached" {
+	if reg.NativeImport != nil && reg.NativeImport.Membership.State == archive.NativeImportDetached {
 		original, err := s.nativeImportReleasedSelection(ctx, reg)
 		if err != nil || !sameStagedSelection(original, q) {
 			return reg, errors.Join(ErrReadySelectionFrozen, err)

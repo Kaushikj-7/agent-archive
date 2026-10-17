@@ -10,7 +10,7 @@ import (
 )
 
 func nativeImportWireFixture() archive.NativeImport {
-	return archive.NativeImport{Contract: "muse-historical-import-v1", Confirmation: archive.NativeImportConfirmation{BatchID: "confirmed-1", BatchInstance: strings.Repeat("a", 32), ScopeSHA256: strings.Repeat("b", 64), DestinationID: "destination<&>", ProjectID: "project", RootFingerprint: strings.Repeat("c", 64), SelectedBindingSHA256: strings.Repeat("d", 64), SelectedSource: archive.NativeCheckpoint{Version: 1, Domain: "muse-ordinary", Algorithm: "sha256", Boundary: 12, SHA256: strings.Repeat("e", 64)}}, Membership: archive.NativeImportMembership{ReceiptID: strings.Repeat("f", 32), State: "attached", Effects: []string{"registration"}}}
+	return archive.NativeImport{Contract: "muse-historical-import-v1", Confirmation: archive.NativeImportConfirmation{BatchID: "confirmed-1", BatchInstance: strings.Repeat("a", 32), ScopeSHA256: strings.Repeat("b", 64), DestinationID: "destination<&>", ProjectID: "project", RootFingerprint: strings.Repeat("c", 64), SelectedBindingSHA256: strings.Repeat("d", 64), SelectedSource: archive.NativeCheckpoint{Version: 1, Domain: "muse-ordinary", Algorithm: "sha256", Boundary: 12, SHA256: strings.Repeat("e", 64)}}, Membership: archive.NativeImportMembership{ReceiptID: strings.Repeat("f", 32), State: archive.NativeImportAttached, Effects: []string{"registration"}}}
 }
 
 func TestNativeImportWireBoundAndRefusal(t *testing.T) {

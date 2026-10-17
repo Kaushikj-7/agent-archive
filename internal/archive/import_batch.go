@@ -60,7 +60,7 @@ func (b *ImportBatch) UnmarshalJSON(data []byte) error {
 // upload, or history.
 func (r SessionRegistration) InBatch(id string) bool {
 	if r.NativeImport != nil {
-		return id != "" && r.ValidateNativeImport() == nil && r.NativeImport.Membership.State == "attached" && r.NativeImport.Confirmation.BatchID == id
+		return id != "" && r.ValidateNativeImport() == nil && r.NativeImport.Membership.State == NativeImportAttached && r.NativeImport.Confirmation.BatchID == id
 	}
 	return id != "" && r.Imported() && r.ImportBatch.id == id
 }
