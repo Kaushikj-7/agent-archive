@@ -223,7 +223,7 @@ func TestMuseWarmUnchangedCohortsConsumeNoFilterInputUploadOrStorageListing(t *t
 				t.Fatalf("forced concrete reread not observed: %+v %v trace=%s", control, controlErr, reread.String())
 			}
 			peak := museAcceptanceReleased(t, ledgers)
-			t.Logf("owners=%d unchanged_ticks=3 filter_input_bytes=0 all_storage_puts=0 all_storage_lists=0 shared_peak_bytes=%d active=%s full_record_visits=unavailable filter_invocations=unavailable", owners, peak, warmElapsed)
+			t.Logf("owners=%d unchanged_ticks=3 filter_input_bytes=0 all_storage_puts=0 all_storage_lists=0 shared_peak_bytes=%d warm_wall=%s full_record_visits=unavailable filter_invocations=unavailable", owners, peak, warmElapsed)
 		})
 	}
 }
@@ -233,6 +233,20 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 	// with ordinary legacy file registrations for the three existing agents.
 	f := newMuseRootCaptureFixture(t)
 	museAcceptanceQueue(t, f, 1)
+	// This pressure scenario grows an active synthetic root. Remove the
+	// fixture's known final session.end row before its first admission,
+	// rather than assuming an ended producer can emit another turn.
+	raw, readErr := os.ReadFile(f.path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	lines := bytes.Split(bytes.TrimSuffix(raw, []byte("\n")), []byte("\n"))
+	if len(lines) != 8 || !bytes.Contains(lines[len(lines)-1], []byte(`"payload_type":"session.end"`)) {
+		t.Fatal("synthetic conversation's final end row changed")
+	}
+	if err := os.WriteFile(f.path, append(bytes.Join(lines[:len(lines)-1], []byte("\n")), '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
 	f.cfg.Harnesses = []string{"claude", "codex", "cursor", "muse"}
 	if err := config.Save(f.home, f.cfg); err != nil {
 		t.Fatal(err)
@@ -263,6 +277,51 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 		t.Fatalf("four concrete agents were not admitted: %d %v", len(regs), err)
 	}
 	before := snapshotTree(t, filepath.Join(f.home, "published"))
+	// Grow only after the small baseline is committed. Four MiB remains for
+	// ordinary durable-state checks; the one-MiB visible record in each real
+	// source must compete for decoding/build headroom on the same ledger.
+	visible := strings.Repeat("bounded synthetic growth ", (1<<20)/25)
+	for _, reg := range regs {
+		var row []byte
+		var marshalErr error
+		switch reg.Harness.Name {
+		case "muse":
+			row, marshalErr = json.Marshal(map[string]any{
+				"schema_version": 1, "id": "00000000-0000-0000-0000-0000000003f2",
+				"stream":   map[string]any{"kind": "session", "id": reg.NativeSessionID},
+				"sequence": 9, "recorded_at": int64(1792083865882704), "record_type": "event", "durability": "durable", "causation_id": nil,
+				"payload_type": "runtime.session", "payload_schema_version": 1,
+				"payload": map[string]any{"kind": "run", "run_id": "33333333-3333-4333-8333-333333333333",
+					"source_run_record_id": "77777777-7777-4777-8777-777777777777", "source_run_record_sequence": 3,
+					"event": map[string]any{"kind": "assistant_message_committed", "message_id": "synthetic-growth", "response_id": "synthetic-growth-response", "text": visible}},
+			})
+		case "claude":
+			row, marshalErr = json.Marshal(map[string]any{"type": "assistant", "sessionId": reg.NativeSessionID,
+				"message": map[string]any{"role": "assistant", "content": []map[string]any{{"type": "text", "text": visible}}}})
+		case "codex":
+			row, marshalErr = json.Marshal(map[string]any{"type": "response_item", "id": "growth",
+				"payload": map[string]any{"type": "message", "role": "assistant", "content": visible}})
+		case "cursor":
+			row = []byte("assistant: " + visible)
+		default:
+			t.Fatalf("unexpected agent %s", reg.Harness.Name)
+		}
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		file, openErr := os.OpenFile(reg.TranscriptPath, os.O_APPEND|os.O_WRONLY, 0)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		_, writeErr := file.Write(append(row, '\n'))
+		closeErr := file.Close()
+		if writeErr != nil || closeErr != nil {
+			t.Fatalf("grow %s: %v %v", reg.Harness.Name, writeErr, closeErr)
+		}
+		t.Logf("agent=%s appended_record_bytes=%d", reg.Harness.Name, len(row)+1)
+	}
+	ready := f.observed.Add(time.Hour)
+	opts.Now = func() time.Time { return ready }
 	for _, reg := range regs {
 		if err := f.store.RemoveScanSignature(reg.ArchiveSessionID); err != nil {
 			t.Fatal(err)
@@ -284,7 +343,7 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 			return nil, nil, err
 		}
 		pressureBudget = pass.ReadBudget
-		held = pressureBudget.Available() - (64 << 10)
+		held = pressureBudget.Available() - (4 << 20)
 		if held <= 0 || !pressureBudget.ReserveUnscoped(held) {
 			_ = closeLookup()
 			t.Fatal("could not occupy the existing shared ledger")
@@ -317,7 +376,7 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 	opts.NativeLocatorFactory = factory
 	recovered, recoverErr := collector.Run(t.Context(), f.store, remote, opts)
 	recovered.CloseStagedResults()
-	if recoverErr != nil || len(recovered.Errors) != 0 || len(recovered.Deferred) != 0 || recovered.Scanned != 4 {
+	if recoverErr != nil || len(recovered.Errors) != 0 || len(recovered.Deferred) != 0 || recovered.Scanned != 4 || len(recovered.Published) != 4 {
 		t.Fatalf("released pressure did not recover all agents: %+v %v", recovered, recoverErr)
 	}
 	peak := museAcceptanceReleased(t, ledgers)
