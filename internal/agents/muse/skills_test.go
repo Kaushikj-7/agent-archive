@@ -3,6 +3,7 @@ package muse
 import (
 	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -25,7 +26,7 @@ func TestSkillsShareInstallationButSeparateInventory(t *testing.T) {
 		t.Fatal("shared installation diverged")
 	}
 	roots := Skills().EvidenceRoots(l)
-	if len(roots) != 2 || roots[0].Path != want.Directory || roots[1].Path != "/synthetic/project/.agents/skills" || roots[0].UserBoundary != l.UserHome || roots[1].ProjectBoundary != l.ProjectRoot {
+	if len(roots) != 5 || roots[0].Path != want.Directory || roots[2].Path != "/synthetic/project/.agents/skills" || roots[0].UserBoundary != l.UserHome || roots[2].ProjectBoundary != l.ProjectRoot {
 		t.Fatalf("roots: %+v", roots)
 	}
 	if got := Skills().EvidenceRoots(agentapi.SkillLocations{}); len(got) != 0 {
@@ -60,5 +61,52 @@ func TestSkillPlansPreserveForeignFilesAndExpectedBytes(t *testing.T) {
 	changes, err = Skills().Plan(agentapi.SkillPlanRequest{Action: agentapi.SkillRemove, File: file})
 	if err != nil || len(changes) != 0 {
 		t.Fatal("nonregular file removed")
+	}
+}
+
+func TestSkillEvidenceRootsRespectExactEnvironmentSnapshot(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		env           *agentapi.RuntimeEnvironment
+		config, codex string
+	}{
+		{"unknown", nil, "", ""},
+		{"unset", &agentapi.RuntimeEnvironment{LookupEnv: func(string) (string, bool) { return "", false }}, "/synthetic/home/.config/muse/skills", "/synthetic/home/.codex/skills"},
+		{"custom", &agentapi.RuntimeEnvironment{LookupEnv: func(k string) (string, bool) {
+			if k == "XDG_CONFIG_HOME" {
+				return "/synthetic/xdg", true
+			}
+			return "/synthetic/codex", true
+		}}, "/synthetic/xdg/muse/skills", "/synthetic/codex/skills"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			roots := Skills().EvidenceRoots(agentapi.SkillLocations{UserHome: "/synthetic/home", Environment: tc.env})
+			got := map[string]string{}
+			for _, r := range roots {
+				got[r.Scope] = r.Path
+				if r.ProjectBoundary != "" {
+					t.Fatal("user root became project")
+				}
+			}
+			if got["user_muse_config"] != tc.config || got["user_codex_foreign"] != tc.codex {
+				t.Fatalf("roots %+v", roots)
+			}
+			for _, r := range Skills().EvidenceRoots(agentapi.SkillLocations{ProjectRoot: "/synthetic/project", Environment: tc.env}) {
+				if r.UserBoundary != "" {
+					t.Fatal("project-only observation invented user root")
+				}
+			}
+		})
+	}
+	for _, value := range []string{"", "relative", "/invalid\x00root", "/invalid\xffroot", "/" + strings.Repeat("x", 4096)} {
+		env := &agentapi.RuntimeEnvironment{LookupEnv: func(string) (string, bool) { return value, true }}
+		roots := Skills().EvidenceRoots(agentapi.SkillLocations{UserHome: "/synthetic/home", Environment: env})
+		if len(roots) != 2 {
+			t.Fatalf("invalid configured root %q: %+v", value, roots)
+		}
+		if len(Skills().EvidenceRoots(agentapi.SkillLocations{UserHome: value, ProjectRoot: value, Environment: env})) != 0 {
+			t.Fatal("invalid home/project resolved against cwd")
+		}
 	}
 }

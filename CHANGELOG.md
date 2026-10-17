@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Muse installed versions use a bounded, update-disabled `--version` probe.
+  Skill installation shares `.agents/skills` with Codex and Cursor. Muse skill
+  evidence follows the existing `none`, `metadata` and `body` settings, with
+  filtered installed inventory only; native eligibility and use remain unknown.
+  Exact runtime identity and public capture remain gated.
+
 - Muse explicit-file and local handoff support the qualified approval-free
   committed file-read effect lane. A fixed start classification preserves its
   retained validation; private names, file subjects and outcomes remain omitted.

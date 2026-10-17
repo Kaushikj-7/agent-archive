@@ -7,6 +7,9 @@ type SkillLocations struct {
 	UserHome        string
 	ProjectRoot     string
 	ClaudeDirectory string
+	// Environment is an optional fixed snapshot of XDG_CONFIG_HOME and CODEX_HOME.
+	// Nil means unknown, distinct from a known-unset variable.
+	Environment *RuntimeEnvironment
 }
 
 // SkillRoot declares one purpose-specific inventory location and its boundary.

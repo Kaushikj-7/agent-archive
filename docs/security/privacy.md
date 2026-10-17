@@ -171,6 +171,15 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   | Claude Code | `~/.claude/skills` | `<project>/.claude/skills` |
   | Codex | `~/.agents/skills`, `~/.codex/skills` | `<project>/.agents/skills` |
   | Cursor | `~/.cursor/skills` | `<project>/.cursor/skills` |
+  | Muse | `.agents/skills`, `.claude/skills` under home; exact Muse config and Codex skill roots | `.agents/skills`, `.codex/skills`, `.claude/skills` under project |
+
+  Muse config inventory uses the injected `$XDG_CONFIG_HOME/muse/skills`, or
+  `~/.config/muse/skills` only when that variable is known unset. Codex foreign
+  inventory uses injected `$CODEX_HOME/skills`, or `~/.codex/skills` only when
+  known unset. Unknown, empty or invalid configured paths are not guessed.
+  Plugin/builtin sources remain uninspected. Inventory proves installation only;
+  project trust, native activation, eligibility and invocation/read use remain
+  unknown. Skill presence cannot activate Muse capture.
 
   Only each folder's immediate `<skill>/SKILL.md` files are read (up to 256
   per folder), never other files in them. In a user-level folder a

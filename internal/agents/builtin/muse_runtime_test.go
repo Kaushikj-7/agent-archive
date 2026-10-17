@@ -13,7 +13,7 @@ func TestMuseBindingOffersLocalHandoffWithoutCapture(t *testing.T) {
 	t.Parallel()
 	r := NewBuiltins()
 	b, ok := r.Lookup(" MUSE-CODE ")
-	if !ok || b.Descriptor.ID != agentmeta.Muse || b.Descriptor.DisplayName != "Muse Code" || !slices.Equal(b.Descriptor.Operations, []agentmeta.Operation{agentmeta.Runtime, agentmeta.Parse, agentmeta.Source, agentmeta.NativeInspection, agentmeta.VersionInspection, agentmeta.HistoricalDiscovery}) {
+	if !ok || b.Descriptor.ID != agentmeta.Muse || b.Descriptor.DisplayName != "Muse Code" || !slices.Equal(b.Descriptor.Operations, []agentmeta.Operation{agentmeta.Runtime, agentmeta.Parse, agentmeta.Source, agentmeta.Skills, agentmeta.NativeInspection, agentmeta.VersionInspection, agentmeta.HistoricalDiscovery}) {
 		t.Fatalf("binding %+v; found %v", b, ok)
 	}
 	if b.Runtime == nil {
@@ -24,7 +24,7 @@ func TestMuseBindingOffersLocalHandoffWithoutCapture(t *testing.T) {
 	}
 	b.Sources, b.Filter, b.Parser = nil, nil, nil
 	b.Runtime = nil
-	b.NativeHeaders, b.Discovery, b.Preview, b.Version = nil, nil, nil, nil
+	b.NativeHeaders, b.Discovery, b.Preview, b.Version, b.Skills = nil, nil, nil, nil, nil
 	b.Descriptor = agentmeta.Descriptor{}
 	if !reflect.DeepEqual(b, Integration{}) {
 		t.Fatalf("unexpected Muse ports: %+v", b)
@@ -41,7 +41,7 @@ func TestMuseBindingOffersLocalHandoffWithoutCapture(t *testing.T) {
 	if !slices.Contains(r.VersionAgents(), "muse") {
 		t.Fatal("Muse installed-version inspector missing")
 	}
-	for _, names := range [][]string{r.HookAgents(), r.SkillAgents()} {
+	for _, names := range [][]string{r.HookAgents()} {
 		if slices.Contains(names, "muse") {
 			t.Fatalf("unsupported projection: %v", names)
 		}

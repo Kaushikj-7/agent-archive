@@ -5,6 +5,23 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 31
+
+Global and Muse adapter 0.31.0 accompany this change; parsers are unchanged.
+
+- Muse supplemental skill evidence now uses the existing bounded shared
+  filesystem inventory and privacy-filtered snapshots, according to the selected
+  `none`, `metadata` or `body` mode. Imports receive no current skill inventory.
+- Installation uses the shared `.agents/skills` destination. Inventory covers
+  shared, project, Claude-foreign and exact injected Muse config/Codex roots.
+  Unknown, empty or invalid configured roots are unavailable; plugin/builtin
+  roots are not guessed. Paths used for native observation remain local.
+- Coverage stays `installed_only`; inventory does not establish trust,
+  activation, eligibility, invocation, read inference or observed-no-use.
+  Existing secret redaction, filtered-body hashes and snapshot limits apply.
+  No native transcript fields, parser policy, public schemas or capture authority
+  change. Previously frozen pending bytes retain their original provenance.
+
 ## Source filter version 30
 
 Global and Muse adapter 0.30.0 accompany this change; Muse parser is 0.6.0.

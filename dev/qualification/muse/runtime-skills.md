@@ -19,8 +19,8 @@ environment preservation and refusal of overlong/multiline output; no native
 Muse process was run for these tests. Unrecognized output stays unknown.
 
 The skill provider uses the existing shared `.agents/skills` destination and
-ownership/expected-byte planner. It declares user and project shared inventory
-roots separately. It never runs `muse skills` or changes native settings,
+ownership/expected-byte planner. It declares user/project shared and foreign roots separately, with config-local
+and Codex roots resolved only from the fixed two-variable environment snapshot. It never runs `muse skills` or changes native settings,
 activation, hooks or MCP entries. Foreign and nonregular files are preserved.
 Shared installation must be deduplicated with Codex and Cursor by the existing
 installation transaction.
@@ -28,8 +28,9 @@ installation transaction.
 The [official skills guide](https://meta-models.github.io/muse-code-sdk/next/guides/extend/skills/)
 documents additional config-local, foreign and plugin sources. Project trust and
 activation affect availability; foreign personal roots have configuration and
-rollout gates. Those roots require exact injected locations and qualified native
-evidence before use. Current declarations intentionally cover only shared roots.
+rollout gates. Config-local and foreign filesystem inventory now uses exact injected locations;
+project trust and native activation remain unknown. Plugin and built-in roots
+remain uninspected, with no guessed filesystem locations.
 Inventory proves installation; it does not prove eligibility, invocation or a
 read. Unknown coverage must remain unavailable, never observed-no-use. Invocation
 and read attribution additionally require exact owning conversation and skill

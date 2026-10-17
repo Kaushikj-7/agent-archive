@@ -611,3 +611,10 @@ physical raw allowance is still held. It covers safe retained maps/output plus
 call, batch and source joins and normalized call slices without increasing any
 budget or format limit. Pressure refuses the whole artifact and releases every
 charge; bounded success and idempotent release are tested with many short IDs.
+
+
+Muse supplemental skills (filter31) use the shared filtered evidence allowlist,
+mode selection and bounded filesystem observer. Exact injected root inventory is
+installed-only, including foreign/project roots regardless of unproven native
+eligibility. Config/plugin/native activation facts and skill invocation/read use
+are not inferred. Native private root paths are not added to inventory payloads.
