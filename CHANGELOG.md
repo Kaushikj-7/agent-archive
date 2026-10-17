@@ -46,6 +46,11 @@ follow [Semantic Versioning](https://semver.org/).
   verified at recorded time”. Restore source access and run sync to check
   current capture health.
 
+- Warm handoff selection can use the private summary catalog. Show and handoff
+  queries retain distinct native-ID matches, complete ambiguity choices and
+  parent child-count hints. Older private projections rebuild automatically;
+  model filters retain complete metadata matching when summaries lack evidence.
+
 - A long Codex thread whose history spans more than one rollout needs far less
   read memory to capture, so it is captured at sizes that were recorded as too
   large to read (`transcript_too_large`, per-session read memory, from about

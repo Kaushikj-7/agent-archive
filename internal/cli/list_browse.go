@@ -1049,10 +1049,10 @@ func loadSessionsForBrowseContext(ctx context.Context, env metadataCacheDependen
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// Handoff needs complete bodies for its source/replay policy; the session
-	// browser hydrates the chosen body when details open.
+	// Summaries preserve handoff eligibility and replay policy; the chosen
+	// body is still loaded and verified before details or handoff output.
 	switch catalogBrowseCommand(command) {
-	case catalogBrowseShow, catalogBrowseList:
+	case catalogBrowseShow, catalogBrowseList, catalogBrowseHandoff:
 		if sessions, used, err := catalogSessionsInContext(ctx, env, store, opts, stderr, command, nil); used {
 			return sessions, err
 		}

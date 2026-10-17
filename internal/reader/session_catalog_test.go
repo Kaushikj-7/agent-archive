@@ -344,17 +344,19 @@ func TestSessionCatalogTypedFiltersEqualExhaustiveOracle(t *testing.T) {
 		{SessionID: "one", Harness: archive.Harness{Name: "codex"}, CapturedAt: baseTime, ParentSessionID: "parent", Replay: &archive.Replay{}, Models: []archive.ModelSummary{{Attributes: map[string]string{"gen_ai.request.model": "gpt-test"}}}, SkillsUsed: []archive.SkillUse{{Name: "used", SHA256: "abc"}}},
 		{SessionID: "two", Harness: archive.Harness{Name: "claude"}, CapturedAt: baseTime.Add(time.Nanosecond), Parser: archive.ParserInfo{Status: archive.ParserStatusComplete}, SkillsAvailable: []archive.SkillSnapshot{{Name: "available", SHA256: "def"}}},
 		{SessionID: "three", Harness: archive.Harness{Name: "codex"}, CapturedAt: baseTime.Add(time.Hour), Parser: archive.ParserInfo{Status: archive.ParserStatusComplete}, CaptureGaps: []archive.CaptureGap{{Code: "gap"}}},
+		{SessionID: "four", Harness: archive.Harness{Name: "orbifold"}, CapturedAt: baseTime.Add(2 * time.Hour)},
+		{SessionID: "five", Harness: archive.Harness{Name: "codexx"}, CapturedAt: baseTime.Add(3 * time.Hour)},
 	}
 	for _, s := range summaries {
 		data, e := json.Marshal(s)
 		if e != nil {
 			t.Fatal(e)
 		}
-		if _, e = c.db.ExecContext(ctx, "INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?)", s.SessionID, "etag", "hash", catalogTime(s.CapturedAt), catalogTime(s.CapturedAt), data, catalogSearch(s), strings.ToLower(s.SessionID), s.ProjectName == "", catalogRecordChecksum(catalogRecord{key: s.SessionID, etag: "etag", hash: "hash", capture: catalogTime(s.CapturedAt), activity: catalogTime(s.CapturedAt), summary: data, search: catalogSearch(s), lowerID: strings.ToLower(s.SessionID), unlabeled: s.ProjectName == ""})); e != nil {
+		if _, e = c.db.ExecContext(ctx, "INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?)", "sessions/"+s.Harness.Name+"/"+s.SessionID+"/metadata.json", "etag", "hash", catalogTime(s.CapturedAt), catalogTime(s.CapturedAt), data, catalogSearch(s), strings.ToLower(s.SessionID), s.ProjectName == "", catalogRecordChecksum(catalogRecord{key: "sessions/" + s.Harness.Name + "/" + s.SessionID + "/metadata.json", etag: "etag", hash: "hash", capture: catalogTime(s.CapturedAt), activity: catalogTime(s.CapturedAt), summary: data, search: catalogSearch(s), lowerID: strings.ToLower(s.SessionID), unlabeled: s.ProjectName == ""})); e != nil {
 			t.Fatal(e)
 		}
 	}
-	filters := []Filter{{}, {Harness: "codex"}, {Harness: "missing"}, {From: baseTime.Add(time.Nanosecond), To: baseTime.Add(time.Nanosecond)}, {From: baseTime.Add(24 * time.Hour)}, {Replays: ReplaysOnly}, {Replays: ReplaysHidden}, {Model: "gpt-test"}, {Model: "unknown"}, {Skill: "used"}, {Skill: "available", SkillUsage: SkillUsageAvailable}, {SkillSHA256: "missing"}, {RequireCompleteCoverage: true}}
+	filters := []Filter{{}, {Harness: "codex"}, {Harness: "orbifold"}, {Harness: "codexx"}, {Harness: "missing"}, {From: baseTime.Add(time.Nanosecond), To: baseTime.Add(time.Nanosecond)}, {From: baseTime.Add(24 * time.Hour)}, {Replays: ReplaysOnly}, {Replays: ReplaysHidden}, {Model: "gpt-test"}, {Model: "unknown"}, {Skill: "used"}, {Skill: "available", SkillUsage: SkillUsageAvailable}, {SkillSHA256: "missing"}, {RequireCompleteCoverage: true}}
 	for _, f := range filters {
 		for _, top := range []bool{false, true} {
 			var want []string
@@ -1032,5 +1034,97 @@ func TestSessionCatalogReloadsPriorOwnershipProjection(t *testing.T) {
 	reads = 0
 	if err = c.Refresh(ctx, headers); err != nil || reads != 0 {
 		t.Fatalf("warm refresh err=%v bodies=%d", err, reads)
+	}
+}
+
+func TestSessionCatalogLayoutRebuildsHandoffPolicy(t *testing.T) {
+	ctx := t.Context()
+	store := newCountingStore()
+	key := putSession(t, store, "codex", "abcdef0123456789", baseTime)
+	data, err := store.Get(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m archive.Metadata
+	if err = json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	zero := 0
+	m.Counts.Turns = &zero
+	m.Counts.Messages = &zero
+	m.NativeSessionID = "distinct-native-session"
+	data, err = json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Put(ctx, key, data); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := OpenSessionCatalog(ctx, cache, store, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers, err := DiscoverCatalogHeaders(ctx, store, ListOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.Refresh(ctx, headers); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.db.ExecContext(ctx, "PRAGMA user_version = 0; CREATE TABLE remote_root(id INTEGER PRIMARY KEY,root BLOB); INSERT INTO remote_root VALUES(1,'obsolete'); UPDATE sessions SET summary='{}'"); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	c, err = OpenSessionCatalog(ctx, cache, store, ListOptions{BodyRead: func(string, bool) { reads++ }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	var rows, roots int
+	if err = c.db.QueryRowContext(ctx, "SELECT count(*) FROM sessions").Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE name='remote_root'").Scan(&roots); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 || roots != 0 {
+		t.Fatalf("stale layout retained rows=%d roots=%d", rows, roots)
+	}
+	if err = c.Refresh(ctx, headers); err != nil {
+		t.Fatal(err)
+	}
+	page, err := c.Query(ctx, CatalogQuery{Words: []string{"distinct-native"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reads != 1 || len(page.Rows) != 1 || page.Rows[0].Summary.Metadata().Counts.Turns == nil || *page.Rows[0].Summary.Metadata().Counts.Turns != 0 || page.Rows[0].Summary.Metadata().Counts.Messages != nil {
+		t.Fatalf("lost policy or expanded count projection: reads=%d page=%+v", reads, page)
+	}
+	reads = 0
+	if err = c.Refresh(ctx, headers); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 0 {
+		t.Fatalf("warm refresh decoded %d bodies", reads)
+	}
+}
+
+func TestSearchSummaryPreservesOnlyHandoffPromptPolicy(t *testing.T) {
+	zero, positive := 0, 3
+	for _, turns := range []*int{nil, &zero, &positive} {
+		for _, replay := range []*archive.Replay{nil, {RunID: "private-run"}} {
+			m := archive.Metadata{Counts: archive.Counts{Turns: turns, Messages: &positive}, Replay: replay}
+			got := summarize(m).Metadata()
+			if !reflect.DeepEqual(got.Counts.Turns, turns) || got.Counts.Messages != nil || got.IsReplay() != m.IsReplay() || got.Replay != nil && got.Replay.RunID != "" {
+				t.Fatalf("handoff policy changed: input=%+v projection=%+v", m, got)
+			}
+		}
 	}
 }
