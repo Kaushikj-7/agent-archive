@@ -119,6 +119,7 @@ func TestHistoricalRevisedHistoryKeepsAllSourcesWithoutNativeCheckout(t *testing
 	originalStage, err := os.ReadFile(stagePath)
 	must(t, err)
 	foreignHome := canonical()
+	must(t, os.Chmod(foreignHome, 0700))
 	must(t, config.Save(foreignHome, mustLoadConfig(t, home)))
 	foreignStore, err := state.Open(foreignHome)
 	must(t, err)
