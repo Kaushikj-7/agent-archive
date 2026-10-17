@@ -65,23 +65,7 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 		return refilterBundleBounded(ctx, reg, adapter, stage.Bundle, agentapi.ReadLimits{FilteredBytes: DefaultMaxTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
 	}
 	if reg.HistoricalProject != nil || reg.NativeImport != nil {
-		if reg.HistoricalProject != nil {
-			if err := reg.ValidateHistoricalProject(); err != nil {
-				return archive.SourceBundle{}, err
-			}
-		}
-		if publishedErr != nil {
-			return archive.SourceBundle{}, publishedErr
-		}
-		bundle, _, found := published.LastPublished()
-		if !found {
-			return archive.SourceBundle{}, state.ErrDurableStorageRecovery
-		}
-		adapter, err := sourceAdapter(sources, reg.Harness.Name)
-		if err != nil {
-			return archive.SourceBundle{}, err
-		}
-		return refilterBundleBounded(ctx, reg, adapter, bundle, agentapi.ReadLimits{FilteredBytes: DefaultMaxTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
+		return readRetainedLocalBundle(ctx, reg, published, publishedErr, sources)
 	}
 	source, ok := newSourceReader(reg, Options{CursorDatabase: cursorDatabase, Sources: sources})
 	if !ok {
@@ -108,6 +92,26 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 		evidence = mergeSupplementalEvidence(evidence, req.HookEvidence)
 	}
 	return archive.NewSourceBundle(reg, adapter, filtered, capturedAt, evidence)
+}
+
+func readRetainedLocalBundle(ctx context.Context, reg archive.SessionRegistration, published *state.Published, publishedErr error, sources agentapi.SourcesLookup) (archive.SourceBundle, error) {
+	if reg.HistoricalProject != nil {
+		if err := reg.ValidateHistoricalProject(); err != nil {
+			return archive.SourceBundle{}, err
+		}
+	}
+	if publishedErr != nil {
+		return archive.SourceBundle{}, publishedErr
+	}
+	bundle, _, found := published.LastPublished()
+	if !found {
+		return archive.SourceBundle{}, state.ErrDurableStorageRecovery
+	}
+	adapter, err := sourceAdapter(sources, reg.Harness.Name)
+	if err != nil {
+		return archive.SourceBundle{}, err
+	}
+	return refilterBundleBounded(ctx, reg, adapter, bundle, agentapi.ReadLimits{FilteredBytes: DefaultMaxTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
 }
 
 // LastActivity is when reg's source last changed: its transcript's

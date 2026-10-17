@@ -172,10 +172,8 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	if err != nil {
 		return UndoPlan{}, err
 	}
-	for _, reg := range regs {
-		if reg.NativeImport != nil && reg.InBatch(b.ID) {
-			return UndoPlan{}, archive.ErrUnsupportedNativeImport
-		}
+	if err := refuseNativeImportUndoOwners(regs, b.ID); err != nil {
+		return UndoPlan{}, err
 	}
 	regs, err = importUndoRegistrations(store, regs, b.ID)
 	if err != nil {
@@ -776,6 +774,15 @@ type UndoResult struct {
 	// Failed maps each session left registered to why; running undo again
 	// retries it.
 	Failed map[string]error
+}
+
+func refuseNativeImportUndoOwners(regs []archive.SessionRegistration, batchID string) error {
+	for _, reg := range regs {
+		if reg.NativeImport != nil && reg.InBatch(batchID) {
+			return archive.ErrUnsupportedNativeImport
+		}
+	}
+	return nil
 }
 
 // Remove deletes each session of the plan from bucket, as whole-session
