@@ -28,7 +28,7 @@ func TestNativeImportRegistrationPreservesRetainedProofAfterStageCleanupAndDetac
 	if err := reg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, state := range []string{"attached", "detached"} {
+	for _, state := range []NativeImportMembershipState{NativeImportAttached, NativeImportDetached} {
 		reg.NativeImport.Membership.State = state
 		reg.StagedImportSHA256 = ""
 		raw, err := json.Marshal(reg)
@@ -90,11 +90,11 @@ func TestNativeImportRegistrationClosedTopSelectorPreservesCurrentValue(t *testi
 		if bytes.Equal(raw, changed) {
 			t.Fatal("inert mutation")
 		}
-		before, _ := reg.NativeImport.IdentityDigest()
+		before, _ := NativeImportIdentityDigest(reg.NativeImport)
 		if err := json.Unmarshal(changed, &reg); !errors.Is(err, ErrUnsupportedNativeImport) {
 			t.Fatal("unsupported receipt not preserved", err)
 		}
-		after, _ := reg.NativeImport.IdentityDigest()
+		after, _ := NativeImportIdentityDigest(reg.NativeImport)
 		if before != after {
 			t.Fatal("failed decode replaced current receipt")
 		}

@@ -43,17 +43,23 @@ type NativeImportBatchScope struct {
 	Selected          []NativeImportBatchSelection `json:"selected"`
 }
 
+// NativeImportBatchSelectionKind identifies a qualified import route.
+type NativeImportBatchSelectionKind string
+
+// NativeImportOrdinaryRoot selects the bounded ordinary-root route.
+const NativeImportOrdinaryRoot NativeImportBatchSelectionKind = "ordinary-root"
+
 // NativeImportBatchSelection names the ordinary import route, not observed
 // ancestry/descendant coverage. Children require separately qualified proof.
 type NativeImportBatchSelection struct {
-	Kind            string           `json:"kind"`
-	NativeID        string           `json:"native_id"`
-	OriginalTUTC    string           `json:"original_t_utc"`
-	ProjectID       string           `json:"project_id"`
-	RootFingerprint string           `json:"root_fingerprint"`
-	RootRevision    string           `json:"root_revision"`
-	BindingSHA256   string           `json:"binding_sha256"`
-	Source          NativeCheckpoint `json:"source"`
+	Kind            NativeImportBatchSelectionKind `json:"kind"`
+	NativeID        string                         `json:"native_id"`
+	OriginalTUTC    string                         `json:"original_t_utc"`
+	ProjectID       string                         `json:"project_id"`
+	RootFingerprint string                         `json:"root_fingerprint"`
+	RootRevision    string                         `json:"root_revision"`
+	BindingSHA256   string                         `json:"binding_sha256"`
+	Source          NativeCheckpoint               `json:"source"`
 }
 
 // NativeImportBatchScopeDigest validates before bounded canonical encoding.
@@ -156,7 +162,7 @@ func nativeImportBatchFiltersValid(f ImportBatchFilters) error {
 }
 
 func (s NativeImportBatchSelection) validate() error {
-	if s.Kind != "ordinary-root" || !nativeIdentity("muse", s.NativeID) || !nativeImportText(s.ProjectID, 4096) || !admissionHex(s.RootFingerprint, 64) || !nativeToken(s.RootRevision) || !admissionHex(s.BindingSHA256, 64) || s.Source.Validate() != nil {
+	if s.Kind != NativeImportOrdinaryRoot || !nativeIdentity("muse", s.NativeID) || !nativeImportText(s.ProjectID, 4096) || !admissionHex(s.RootFingerprint, 64) || !nativeToken(s.RootRevision) || !admissionHex(s.BindingSHA256, 64) || s.Source.Validate() != nil {
 		return ErrUnsupportedNativeImport
 	}
 	return nil

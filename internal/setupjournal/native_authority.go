@@ -61,10 +61,11 @@ func (j Journal) MarshalJSON() ([]byte, error) {
 	if admission {
 		capability = config.MuseAdmissionWriterSelector(replay)
 	}
-	fence := nativeJournalFence{Version: 1, Writer: "native-authority-v16", Value: j.FilesOnly, Admission: capability}
+	var importCapability string
 	if importProtected {
-		fence.Import = "muse-historical-import"
+		importCapability = "muse-historical-import"
 	}
+	fence := nativeJournalFence{Version: 1, Writer: "native-authority-v16", Value: j.FilesOnly, Admission: capability, Import: importCapability}
 	doc["files_only"], err = json.Marshal(fence)
 	if err != nil {
 		return nil, err

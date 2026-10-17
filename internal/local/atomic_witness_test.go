@@ -10,9 +10,22 @@ import (
 	"testing"
 )
 
+type atomicWitnessTestMode string
+
+const (
+	witnessValid     atomicWitnessTestMode = "valid"
+	witnessOmit      atomicWitnessTestMode = "omit"
+	witnessError     atomicWitnessTestMode = "error"
+	witnessReplace   atomicWitnessTestMode = "replace"
+	witnessRename    atomicWitnessTestMode = "rename"
+	witnessSymlink   atomicWitnessTestMode = "symlink"
+	witnessRewrite   atomicWitnessTestMode = "rewrite"
+	witnessOtherRoot atomicWitnessTestMode = "other-root"
+)
+
 func TestAtomicWriteWitnessExactIdentityDigestAndLifetime(t *testing.T) {
-	for _, mode := range []string{"valid", "omit", "error", "replace", "rename", "symlink", "rewrite", "other-root"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []atomicWitnessTestMode{witnessValid, witnessOmit, witnessError, witnessReplace, witnessRename, witnessSymlink, witnessRewrite, witnessOtherRoot} {
+		t.Run(string(mode), func(t *testing.T) {
 			home := t.TempDir()
 			if err := os.Chmod(home, 0700); err != nil {
 				t.Fatal(err)
@@ -44,26 +57,28 @@ func TestAtomicWriteWitnessExactIdentityDigestAndLifetime(t *testing.T) {
 					t.Fatal("other name excused", err)
 				}
 				switch mode {
-				case "omit":
+				case witnessValid:
+					return rename()
+				case witnessOmit:
 					return nil
-				case "error":
+				case witnessError:
 					return failure
-				case "replace", "symlink":
+				case witnessReplace, witnessSymlink:
 					if err := held.Root.Remove(witness.state.name); err != nil {
 						t.Fatal(err)
 					}
-					if mode == "symlink" {
+					if mode == witnessSymlink {
 						if err := held.Root.Symlink("outside", witness.state.name); err != nil {
 							t.Fatal(err)
 						}
 					} else if err := os.WriteFile(filepath.Join(home, witness.state.name), []byte("selected"), 0600); err != nil {
 						t.Fatal(err)
 					}
-				case "rename":
+				case witnessRename:
 					if err := held.Root.Rename(witness.state.name, "moved"); err != nil {
 						t.Fatal(err)
 					}
-				case "rewrite":
+				case witnessRewrite:
 					if err := os.WriteFile(filepath.Join(home, witness.state.name), []byte("replaced"), 0600); err != nil {
 						t.Fatal(err)
 					}
@@ -72,7 +87,7 @@ func TestAtomicWriteWitnessExactIdentityDigestAndLifetime(t *testing.T) {
 					if err := os.Chtimes(filepath.Join(home, witness.state.name), info.ModTime(), info.ModTime()); err != nil {
 						t.Fatal(err)
 					}
-				case "other-root":
+				case witnessOtherRoot:
 					other, err := os.OpenRoot(t.TempDir())
 					if err != nil {
 						t.Fatal(err)
@@ -92,14 +107,14 @@ func TestAtomicWriteWitnessExactIdentityDigestAndLifetime(t *testing.T) {
 			if saved == nil || saved.Check(held.Root) == nil {
 				t.Fatal("witness escaped callback")
 			}
-			if mode != "valid" {
+			if mode != witnessValid {
 				if err == nil {
 					t.Fatal("changed temporary committed")
 				}
 				if _, e := os.Stat(filepath.Join(home, "selected.json")); !errors.Is(e, os.ErrNotExist) {
 					t.Fatal("failure selected output", e)
 				}
-				if mode == "error" && !errors.Is(err, failure) {
+				if mode == witnessError && !errors.Is(err, failure) {
 					t.Fatal("callback error lost", err)
 				}
 				return

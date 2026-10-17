@@ -20,12 +20,13 @@ type AtomicWriteWitness struct {
 }
 
 type atomicWriteWitnessState struct {
-	root         *os.Root
-	home, parent os.FileInfo
-	file         os.FileInfo
-	name         string
-	sum          [32]byte
-	active       atomic.Bool
+	root   *os.Root
+	home   os.FileInfo
+	parent os.FileInfo
+	file   os.FileInfo
+	name   string
+	sum    [32]byte
+	active atomic.Bool
 }
 
 // Match checks one exact entry. A different name is never excused; an exact
@@ -89,7 +90,7 @@ func (w *AtomicWriteWitness) verify(ctx context.Context, scratch []byte) (err er
 		n, e := f.Read(scratch[:int(want)])
 		_, _ = h.Write(scratch[:n])
 		total += int64(n)
-		if e == io.EOF {
+		if errors.Is(e, io.EOF) {
 			break
 		}
 		if e != nil {

@@ -128,9 +128,9 @@ func (t *traversal) special(v reflect.Value, depth int, quoted bool) (bool, erro
 	// The exact closed receipt's codec uses these same plain alias fields.
 	// Validate and preflight structurally before allocating encoded bytes.
 	if typ.PkgPath() == "github.com/wangjohn/agent-archive/internal/archive" && typ.Name() == "NativeImport" {
-		copy := reflect.New(typ)
-		copy.Elem().Set(v)
-		if err := copy.Interface().(interface{ Validate() error }).Validate(); err != nil {
+		validated := reflect.New(typ)
+		validated.Elem().Set(v)
+		if err := validated.Interface().(interface{ Validate() error }).Validate(); err != nil {
 			return true, ErrUnsupported
 		}
 		bounded := counter{ctx: t.ctx, left: 16 * 1024}

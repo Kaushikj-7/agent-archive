@@ -140,9 +140,9 @@ func (c *jsonWireCounter) special(v reflect.Value, depth int) (bool, error) {
 		if !batch.IsValid() {
 			return true, c.add(4)
 		}
-		copy := reflect.New(typ)
-		copy.Elem().Set(batch)
-		if err := copy.Interface().(interface{ Validate() error }).Validate(); err != nil {
+		validated := reflect.New(typ)
+		validated.Elem().Set(batch)
+		if err := validated.Interface().(interface{ Validate() error }).Validate(); err != nil {
 			return true, errors.Join(ErrJSONWireUnsupported, err)
 		}
 		bounded := jsonWireCounter{ctx: c.ctx, left: 16 * 1024}

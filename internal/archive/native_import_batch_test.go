@@ -25,6 +25,11 @@ func nativeImportBatchFixture(t *testing.T) NativeImportBatchConfirmation {
 func TestNativeImportBatchClosedConfirmation(t *testing.T) {
 	t.Parallel()
 	value := nativeImportBatchFixture(t)
+	// Frozen pre-repair kind encoding and domain-separated scope digest.
+	const expectedScopeDigest = "a232d6eeea3d387e95a24a3de38841bef80dcc46d18444b1a3f16394168b4fa9"
+	if value.ScopeSHA256 != expectedScopeDigest {
+		t.Fatalf("scope wire digest changed: %s", value.ScopeSHA256)
+	}
 	raw, err := json.Marshal(value)
 	if err != nil {
 		t.Fatal(err)
@@ -49,6 +54,11 @@ func TestNativeImportBatchClosedConfirmation(t *testing.T) {
 		"offset-time":       bytes.Replace(raw, []byte("2026-10-16T12:00:00Z"), []byte("2026-10-16T12:00:00+00:00"), 1),
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var decoded NativeImportBatchConfirmation
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				t.Fatal(err)
+			}
 			before, _ := json.Marshal(decoded)
 			if err := decoded.UnmarshalJSON(bad); !errors.Is(err, ErrUnsupportedNativeImport) {
 				t.Fatalf("invalid confirmation accepted: %v", err)

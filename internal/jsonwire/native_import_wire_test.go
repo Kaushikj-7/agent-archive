@@ -24,6 +24,9 @@ func TestNativeImportWireBoundAndRefusal(t *testing.T) {
 		if err != nil || n < int64(len(raw)) {
 			t.Fatalf("%T bound=%d bytes=%d: %v", value, n, len(raw), err)
 		}
+		if absent, ok := value.(*archive.NativeImport); ok && absent == nil && n != 4 {
+			t.Fatalf("nil receipt count = %d, want 4", n)
+		}
 		if _, err := jsonwire.Bound(t.Context(), value, 1); err == nil {
 			t.Fatalf("%T ignored limit", value)
 		}
@@ -34,8 +37,10 @@ func TestNativeImportWireBoundAndRefusal(t *testing.T) {
 		}
 	}
 	receipt.Contract = "future"
-	if _, err := jsonwire.Bound(t.Context(), receipt, 1<<20); err == nil {
-		t.Fatal("future receipt accepted")
+	for _, invalid := range []any{receipt, &receipt} {
+		if _, err := jsonwire.Bound(t.Context(), invalid, 1<<20); err == nil {
+			t.Fatalf("%T future receipt accepted", invalid)
+		}
 	}
 }
 
@@ -48,7 +53,9 @@ func (b *nativeImportWireBudget) Reserve(n int64) bool {
 	b.used += n
 	return true
 }
-func (b *nativeImportWireBudget) Release(n int64)  { b.used -= n }
+
+func (b *nativeImportWireBudget) Release(n int64) { b.used -= n }
+
 func (b *nativeImportWireBudget) Available() int64 { return (1 << 20) - b.used }
 
 func TestNativeImportWireEscapedMaximumRefusesBeforeEncoding(t *testing.T) {

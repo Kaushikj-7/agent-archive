@@ -23,14 +23,19 @@ func TestNativeImportWireBoundAndRefusal(t *testing.T) {
 		if err != nil || n < int64(len(raw)) {
 			t.Fatalf("%T bound=%d bytes=%d: %v", value, n, len(raw), err)
 		}
+		if absent, ok := value.(*archive.NativeImport); ok && absent == nil && n != 4 {
+			t.Fatalf("nil receipt count = %d, want 4", n)
+		}
 		if _, err := agentmeta.JSONWireBound(t.Context(), value, 1); err == nil {
 			t.Fatalf("%T ignored limit", value)
 		}
 
 	}
 	receipt.Contract = "future"
-	if _, err := agentmeta.JSONWireBound(t.Context(), receipt, 1<<20); err == nil {
-		t.Fatal("future receipt accepted")
+	for _, invalid := range []any{receipt, &receipt} {
+		if _, err := agentmeta.JSONWireBound(t.Context(), invalid, 1<<20); err == nil {
+			t.Fatalf("%T future receipt accepted", invalid)
+		}
 	}
 }
 

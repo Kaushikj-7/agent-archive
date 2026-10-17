@@ -39,16 +39,27 @@ type NativeImportConfirmation struct {
 	SelectedSource        NativeCheckpoint `json:"selected_source"`
 }
 
-// NativeImportMembership describes only effects owned by the creating batch.
-// Detached receipts remain in surviving registrations for exact idempotent undo.
+// NativeImportMembershipState is the closed creating-batch attachment state.
+type NativeImportMembershipState string
+
+const (
+	// NativeImportAttached retains the creating-batch registration effect.
+	NativeImportAttached NativeImportMembershipState = "attached"
+	// NativeImportDetached retains proof after the creating-batch effect is removed.
+	NativeImportDetached NativeImportMembershipState = "detached"
+)
+
+// NativeImportMembership retains the exact creating-batch effects.
 type NativeImportMembership struct {
-	ReceiptID string   `json:"receipt_id"`
-	State     string   `json:"state"`
-	Effects   []string `json:"effects"`
+	ReceiptID string                      `json:"receipt_id"`
+	State     NativeImportMembershipState `json:"state"`
+	Effects   []string                    `json:"effects"`
 }
 
-// Validate refuses incomplete, future and ambiguous historical contracts.
-func (n *NativeImport) Validate() error {
+// Validate checks a present value for the bounded structural wire walkers.
+func (n NativeImport) Validate() error { return validateNativeImport(&n) }
+
+func validateNativeImport(n *NativeImport) error {
 	if n == nil || n.Contract != "muse-historical-import-v1" || n.Confirmation.validate() != nil || n.Membership.validate() != nil {
 		return ErrUnsupportedNativeImport
 	}
@@ -63,7 +74,7 @@ func (c NativeImportConfirmation) validate() error {
 }
 
 func (m NativeImportMembership) validate() error {
-	if !admissionHex(m.ReceiptID, 32) || m.State != "attached" && m.State != "detached" || !slices.Equal(m.Effects, []string{"registration"}) {
+	if !admissionHex(m.ReceiptID, 32) || m.State != NativeImportAttached && m.State != NativeImportDetached || !slices.Equal(m.Effects, []string{"registration"}) {
 		return ErrUnsupportedNativeImport
 	}
 	return nil
@@ -73,15 +84,15 @@ func nativeImportText(value string, limit int) bool {
 	return len(value) <= limit && utf8.ValidString(value) && strings.TrimSpace(value) != "" && !strings.ContainsAny(value, "\x00\r\n")
 }
 
-// IdentityDigest binds immutable receipt facts across attached and detached
+// NativeImportIdentityDigest binds immutable receipt facts across attached and detached
 // states. It is equality evidence, never a constructor for import permission.
-func (n *NativeImport) IdentityDigest() (string, error) {
-	if err := n.Validate(); err != nil {
+func NativeImportIdentityDigest(n *NativeImport) (string, error) {
+	if err := validateNativeImport(n); err != nil {
 		return "", err
 	}
-	copy := *n
-	copy.Membership.State = "attached"
-	raw, err := json.Marshal(copy)
+	normalized := *n
+	normalized.Membership.State = NativeImportAttached
+	raw, err := json.Marshal(normalized)
 	if err != nil {
 		return "", err
 	}
@@ -113,7 +124,7 @@ func (n *NativeImport) UnmarshalJSON(raw []byte) error {
 		return errors.Join(ErrUnsupportedNativeImport, err)
 	}
 	value := NativeImport(next)
-	if err := value.Validate(); err != nil {
+	if err := validateNativeImport(&value); err != nil {
 		return err
 	}
 	*n = value

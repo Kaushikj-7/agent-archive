@@ -9,7 +9,7 @@ func nativeImportSelectionAuthority(reg archive.SessionRegistration) (string, er
 	if err := reg.ValidateNativeImport(); err != nil {
 		return "", err
 	}
-	return reg.NativeImport.IdentityDigest()
+	return archive.NativeImportIdentityDigest(reg.NativeImport)
 }
 
 func validateNativeImportSelectionAuthority(reg archive.SessionRegistration, selection ReadySelection) error {

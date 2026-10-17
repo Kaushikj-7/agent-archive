@@ -77,10 +77,11 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	if c.NativeAdmissionProtection {
 		admission = MuseAdmissionWriterSelector(c.NativeReplayProtection)
 	}
-	fence := nativeAuthorityVersion{Version: 16, Writer: nativeAuthorityWriter, Base: base, Admission: admission}
+	var importCapability string
 	if c.NativeImportProtection {
-		fence.Import = "muse-historical-import"
+		importCapability = "muse-historical-import"
 	}
+	fence := nativeAuthorityVersion{Version: 16, Writer: nativeAuthorityWriter, Base: base, Admission: admission, Import: importCapability}
 	version, err := json.Marshal(fence)
 	if err != nil {
 		return nil, err

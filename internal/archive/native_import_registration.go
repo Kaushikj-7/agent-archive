@@ -28,7 +28,7 @@ func NativeImportBindingDigest(binding *NativeSourceBinding) (string, error) {
 // deliberately irrelevant to the authority of an already retained publication.
 func (r SessionRegistration) ValidateNativeImport() error {
 	n, b := r.NativeImport, r.NativeBinding
-	if n == nil || n.Validate() != nil || !admissionHex(r.ArchiveSessionID, 32) || !nativePath(r.ProjectRoot) || r.validateNativeBinding() != nil || b == nil || b.Version != 2 || b.Validate() != nil || !r.nativeImportOrdinaryRoot(b) {
+	if validateNativeImport(n) != nil || !admissionHex(r.ArchiveSessionID, 32) || !nativePath(r.ProjectRoot) || r.validateNativeBinding() != nil || b == nil || b.Version != 2 || b.Validate() != nil || !r.nativeImportOrdinaryRoot(b) {
 		return ErrUnsupportedNativeImport
 	}
 	c := n.Confirmation
@@ -180,12 +180,12 @@ func nativeImportEscapedKeyPossible(raw []byte) bool {
 
 // NativeImportAdmissionContext binds immutable historical owner facts to normal
 // retained publication preparation. Closed membership detachment is normalized
-// by IdentityDigest; native input and batch control are never consulted.
+// by NativeImportIdentityDigest; native input and batch control are never consulted.
 func NativeImportAdmissionContext(r SessionRegistration) (string, error) {
 	if err := r.ValidateNativeImport(); err != nil {
 		return "", err
 	}
-	receipt, err := r.NativeImport.IdentityDigest()
+	receipt, err := NativeImportIdentityDigest(r.NativeImport)
 	if err != nil {
 		return "", err
 	}
