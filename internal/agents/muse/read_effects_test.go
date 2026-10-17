@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -217,14 +217,32 @@ func TestCommittedReadNativeJoinsRefuseContradictions(t *testing.T) {
 	}
 }
 
+type readMarkerMutation string
+
+const (
+	readMarkerMissing     readMarkerMutation = "missing"
+	readMarkerUnknown     readMarkerMutation = "unknown"
+	readMarkerNull        readMarkerMutation = "null"
+	readMarkerInteger     readMarkerMutation = "integer"
+	readMarkerTerminal    readMarkerMutation = "terminal"
+	readMarkerCall        readMarkerMutation = "call"
+	readMarkerTask        readMarkerMutation = "task"
+	readMarkerIndex       readMarkerMutation = "index"
+	readMarkerMissingCall readMarkerMutation = "missing-call"
+	readMarkerLegacyCall  readMarkerMutation = "legacy-call"
+	readMarkerFutureCall  readMarkerMutation = "future-call"
+	readMarkerGap         readMarkerMutation = "gap"
+)
+
 func TestCommittedReadRetainedMarkerAndTupleAreClosed(t *testing.T) {
 	t.Parallel()
 	out, err := filterBytes(t, committedRead(t), agentapi.ReadLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{"missing", "unknown", "null", "integer", "terminal", "call", "task", "index", "missing-call", "legacy-call", "future-call", "gap"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []readMarkerMutation{readMarkerMissing, readMarkerUnknown, readMarkerNull, readMarkerInteger, readMarkerTerminal, readMarkerCall, readMarkerTask, readMarkerIndex, readMarkerMissingCall, readMarkerLegacyCall, readMarkerFutureCall, readMarkerGap} {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
 			b := bundleFor(t, out)
 			start, terminal, committed := -1, -1, -1
 			for i, r := range b.NativeRecords {
@@ -240,27 +258,27 @@ func TestCommittedReadRetainedMarkerAndTupleAreClosed(t *testing.T) {
 			}
 			f := object(b.NativeRecords[start]["fields"])
 			switch kind {
-			case "missing":
+			case readMarkerMissing:
 				delete(f, "effect_join")
-			case "unknown":
+			case readMarkerUnknown:
 				f["effect_join"] = "future"
-			case "null":
+			case readMarkerNull:
 				f["effect_join"] = nil
-			case "integer":
+			case readMarkerInteger:
 				f["effect_join"] = 1
-			case "terminal":
+			case readMarkerTerminal:
 				object(b.NativeRecords[terminal]["fields"])["effect_join"] = committedFileReadJoin
-			case "call":
+			case readMarkerCall:
 				f["tool_call_id"] = "other-call"
-			case "task":
+			case readMarkerTask:
 				f["task_id"] = "99999999-9999-4999-8999-999999999999"
-			case "index":
+			case readMarkerIndex:
 				f["model_call_index"] = json.Number("42")
-			case "missing-call":
+			case readMarkerMissingCall:
 				object(b.NativeRecords[committed]["fields"])["tool_calls"] = []any{map[string]any{"call_id": "other-call"}}
-			case "legacy-call":
+			case readMarkerLegacyCall:
 				b.NativeRecords[committed]["fields"] = map[string]any{"kind": "run", "event_kind": "assistant_tool_calls_committed"}
-			case "future-call":
+			case readMarkerFutureCall:
 				b.NativeRecords[committed], b.NativeRecords[start] = b.NativeRecords[start], b.NativeRecords[committed]
 				for i, row := range b.NativeRecords {
 					if i < 2 {
@@ -273,13 +291,13 @@ func TestCommittedReadRetainedMarkerAndTupleAreClosed(t *testing.T) {
 						row["seq"] = i + 1
 					}
 				}
-			case "gap":
+			case readMarkerGap:
 				b.Capture.Gaps = nil
 			}
 			if _, err := (Parser{}).Parse(t.Context(), b); err == nil {
 				t.Fatal("invalid retained read accepted")
 			}
-			if kind != "gap" {
+			if kind != readMarkerGap {
 				if _, err := (Filter{}).Refilter(t.Context(), b, time.Time{}); err == nil {
 					t.Fatal("invalid read refiltered")
 				}
@@ -362,7 +380,8 @@ func TestCommittedReadLeaseFailureAndTransfer(t *testing.T) {
 		t.Fatal("success leak")
 	}
 	for _, limit := range []int64{4095, peak / 2, peak - 1} {
-		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+		t.Run(strconv.FormatInt(limit, 10), func(t *testing.T) {
+			t.Parallel()
 			budget := agentapi.NewNativeReadBudget(limit)
 			out, release, err := (Filter{}).FilterLeased(t.Context(), agentapi.NativeInput{File: memoryInput{bytes.NewReader(raw)}}, agentapi.FilterContext{}, budget)
 			release()
@@ -398,13 +417,14 @@ func TestCommittedReadApprovalOverlapNeverFallsThrough(t *testing.T) {
 	for _, when := range []string{"prior", "later"} {
 		for _, overlap := range []string{"matching", "wrong-name", "task-only", "call-only"} {
 			t.Run(when+"-"+overlap, func(t *testing.T) {
+				t.Parallel()
 				raw := changeRead(t, func(rows []map[string]any) []map[string]any {
 					wire, _ := json.Marshal(request)
-					copy, _, err := decodeObject(wire)
+					requestCopy, _, err := decodeObject(wire)
 					if err != nil {
 						t.Fatal(err)
 					}
-					e := object(object(copy["payload"])["event"])
+					e := object(object(requestCopy["payload"])["event"])
 					e["tool_name"] = "read_file"
 					if overlap == "wrong-name" {
 						e["tool_name"] = "shell"
@@ -425,7 +445,7 @@ func TestCommittedReadApprovalOverlapNeverFallsThrough(t *testing.T) {
 							}
 						}
 					}
-					return append(append(append([]map[string]any{}, rows[:index]...), copy), rows[index:]...)
+					return append(append(append([]map[string]any{}, rows[:index]...), requestCopy), rows[index:]...)
 				})
 				// The request alone is well-formed; refusal is the overlap in either order.
 				out, err := filterBytes(t, raw, agentapi.ReadLimits{})
@@ -443,6 +463,7 @@ func TestCommittedReadApprovalOverlapNeverFallsThrough(t *testing.T) {
 	}
 	for _, when := range []string{"prior", "later"} {
 		t.Run("retained-"+when, func(t *testing.T) {
+			t.Parallel()
 			b := bundleFor(t, out)
 			nativeBytes, _ := json.Marshal(request)
 			r, err := envelope(nativeBytes, position{Line: 1})

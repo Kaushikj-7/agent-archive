@@ -15,10 +15,11 @@ import (
 func TestMuseCommittedToolsUseExistingArchiveConsumersAfterNativeLoss(t *testing.T) {
 	t.Parallel()
 	for _, fixture := range []struct {
-		name                 string
-		calls                int
-		result, observations bool
-		callID               string
+		name         string
+		calls        int
+		result       bool
+		observations bool
+		callID       string
 	}{
 		{"synthetic-own-tools.jsonl", 3, true, true, "call_synthetic_0"},
 		{"synthetic-committed-read-effects.jsonl", 1, false, false, "synthetic-call"},

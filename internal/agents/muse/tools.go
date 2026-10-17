@@ -168,19 +168,19 @@ func (t *toolObservations) registerCalls(r retained, index int, view *archive.No
 		if _, present := t.calls[call]; present {
 			return errFormat
 		}
-		ref := toolCallRef{record: index, normalized: -1}
 		if native != nil {
 			item := object(private[i])
 			if item["call_id"] != id {
 				return errFormat
 			}
-			ref.nativeRead = str(item["name"]) == "read_file"
 		}
+		normalized := -1
 		if view != nil {
-			ref.normalized = len(view.ToolCalls)
+			normalized = len(view.ToolCalls)
 			// Private names/actions never enter narrative listing.
 			view.ToolCalls = append(view.ToolCalls, archive.NormalizedToolCall{RecordIndex: index, CallID: id})
 		}
+		ref := toolCallRef{record: index, normalized: normalized, nativeRead: native != nil && str(object(private[i])["name"]) == "read_file"}
 		t.calls[call] = ref
 		batch.calls = append(batch.calls, ref.normalized)
 	}
@@ -193,8 +193,7 @@ func (t *toolObservations) observe(r retained, index int, view *archive.Normaliz
 	if str(f["event_kind"]) == string(eventAssistantToolCallsCommitted) {
 		return t.registerCalls(r, index, view, nil)
 	}
-	key := toolBatchIdentity{r.Stream.ID, str(f["run_id"]), ""}
-	key.message = str(f["batch_id"])
+	key := toolBatchIdentity{r.Stream.ID, str(f["run_id"]), str(f["batch_id"])}
 	batch := t.batches[key]
 	if batch == nil || batch.resulted {
 		return errFormat
