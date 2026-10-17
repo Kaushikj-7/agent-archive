@@ -239,16 +239,25 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 
 // openListStore retains list's configuration and explicit rebuild checks.
 func openListStore(env listCommandDependencies, stderr io.Writer, rebuild bool) (storage.ObjectStore, config.Config, int) {
+	store, cfg, code := openReadOnlyCommandStore(env, stderr, "list")
+	if code != 0 {
+		return nil, cfg, code
+	}
+	if rebuild && !rebuildListingIndex(env, store, stderr) {
+		return nil, cfg, 1
+	}
+	return store, cfg, 0
+}
+
+// openReadOnlyCommandStore reports the shared setup and read-only open failures.
+func openReadOnlyCommandStore(env readOnlyStoreDependencies, stderr io.Writer, command string) (storage.ObjectStore, config.Config, int) {
 	store, cfg, found, err := openReadOnlyStore(env)
 	if err != nil {
-		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)
 		return nil, cfg, 1
 	}
 	if !found {
 		terminal.Println(stderr, preSetupGuidanceFor(env))
-		return nil, cfg, 1
-	}
-	if rebuild && !rebuildListingIndex(env, store, stderr) {
 		return nil, cfg, 1
 	}
 	return store, cfg, 0
@@ -698,14 +707,9 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return fs.usageError("--transcript needs a SESSION_ID; pick a session with show and press t, or run show SESSION_ID --transcript")
 	}
 
-	store, cfg, found, err := openReadOnlyStore(env)
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
-		return 1
-	}
-	if !found {
-		terminal.Println(stderr, preSetupGuidanceFor(env))
-		return 1
+	store, cfg, code := openReadOnlyCommandStore(env, stderr, "show")
+	if code != 0 {
+		return code
 	}
 
 	ctx, stopReads := readCommandContext(env)
