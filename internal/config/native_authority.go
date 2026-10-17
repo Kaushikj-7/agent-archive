@@ -16,9 +16,10 @@ import (
 const nativeAuthorityWriter configWriter = "native-authority-v16"
 
 type nativeAuthorityVersion struct {
-	Version int             `json:"version"`
-	Writer  configWriter    `json:"writer"`
-	Base    json.RawMessage `json:"base"`
+	Version   int             `json:"version"`
+	Writer    configWriter    `json:"writer"`
+	Base      json.RawMessage `json:"base"`
+	Admission string          `json:"admission,omitempty"`
 }
 
 func (c Config) validateNativeRoots() error {
@@ -41,8 +42,14 @@ func (c Config) validateNativeRoots() error {
 // MarshalJSON preserves every preexisting writer constraint beneath the sticky
 // native-authority fence, including configs with no roots after removal.
 func (c Config) MarshalJSON() ([]byte, error) {
+	if c.NativeAdmissionProtection || c.MuseCapture != nil {
+		c.NativeAuthorityProtection = true
+	}
 	if len(c.NativeRoots) > 0 {
 		c.NativeAuthorityProtection = true
+	}
+	if err := validateMuseCapture(c); err != nil {
+		return nil, err
 	}
 	if err := c.validateNativeRoots(); err != nil {
 		return nil, err
@@ -62,7 +69,11 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	if err := validateNativeBase(base); err != nil {
 		return nil, err
 	}
-	version, err := json.Marshal(nativeAuthorityVersion{Version: 16, Writer: nativeAuthorityWriter, Base: base})
+	fence := nativeAuthorityVersion{Version: 16, Writer: nativeAuthorityWriter, Base: base}
+	if c.NativeAdmissionProtection {
+		fence.Admission = "muse-root-admission"
+	}
+	version, err := json.Marshal(fence)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +92,7 @@ func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {
 	}
 	versionRaw := bytes.TrimSpace(doc["schema_version"])
 	if len(versionRaw) == 0 || versionRaw[0] != '{' {
-		if doc["native_roots"] != nil || doc["native_authority_protection"] != nil {
+		if doc["native_roots"] != nil || doc["native_authority_protection"] != nil || doc["native_admission_protection"] != nil || doc["muse_capture"] != nil || doc["muse_capture_last_issued_at"] != nil {
 			return nil, false, errors.New("native authority requires its permanent writer fence")
 		}
 		return raw, false, nil
@@ -96,7 +107,7 @@ func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {
 	// Search has its own exact version16 base fence. Let its decoder validate
 	// that shape; native protection is still rejected below without a wrapper.
 	if peek.Version == 16 && peek.Writer == searchLifecycleWriter {
-		if doc["native_roots"] != nil || doc["native_authority_protection"] != nil {
+		if doc["native_roots"] != nil || doc["native_authority_protection"] != nil || doc["native_admission_protection"] != nil || doc["muse_capture"] != nil || doc["muse_capture_last_issued_at"] != nil {
 			return nil, false, errors.New("native authority requires its permanent writer fence")
 		}
 		return raw, false, nil
@@ -104,7 +115,15 @@ func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {
 	if peek.Version != 16 && peek.Writer != nativeAuthorityWriter {
 		return raw, false, nil
 	}
-	if err := exactAuthorityObject(versionRaw, []string{"version", "writer", "base"}); err != nil {
+	names := []string{"version", "writer", "base"}
+	admissionProtected := bytes.Equal(bytes.TrimSpace(doc["native_admission_protection"]), []byte("true"))
+	if admissionProtected {
+		names = append(names, "admission")
+	}
+	if doc["native_admission_protection"] != nil && !admissionProtected || (doc["muse_capture"] != nil || doc["muse_capture_last_issued_at"] != nil) && !admissionProtected {
+		return nil, false, errors.New("native admission requires sticky protection")
+	}
+	if err := exactAuthorityObject(versionRaw, names); err != nil {
 		return nil, false, err
 	}
 	var version nativeAuthorityVersion
@@ -118,6 +137,9 @@ func unwrapNativeConfig(raw []byte) ([]byte, bool, error) {
 	}
 	if version.Version != 16 || version.Writer != nativeAuthorityWriter || !bytes.Equal(bytes.TrimSpace(doc["native_authority_protection"]), []byte("true")) {
 		return nil, false, errors.New("native authority requires its exact permanent writer fence")
+	}
+	if admissionProtected && version.Admission != "muse-root-admission" {
+		return nil, false, errors.New("unsupported native admission capability")
 	}
 	base := bytes.TrimSpace(version.Base)
 	if err := validateNativeBase(base); err != nil {
@@ -188,6 +210,9 @@ const (
 	nativeSchemaSelector     nativeConfigSelector = "schema_version"
 	nativeProtectionSelector nativeConfigSelector = "native_authority_protection"
 	nativeRootsSelector      nativeConfigSelector = "native_roots"
+	nativeAdmissionSelector  nativeConfigSelector = "native_admission_protection"
+	museCaptureSelector      nativeConfigSelector = "muse_capture"
+	museIssuedSelector       nativeConfigSelector = "muse_capture_last_issued_at"
 	nativeStagedSelector     nativeConfigSelector = "staged_selection_protection"
 	nativeSettledSelector    nativeConfigSelector = "settled_cursor_selection_protection"
 	nativeScopedSelector     nativeConfigSelector = "scoped_picker_protection"
@@ -216,11 +241,11 @@ func checkNativeConfigSelectors(raw []byte) error {
 		if err = d.Decode(&value); err != nil {
 			return err
 		}
-		for _, name := range []nativeConfigSelector{nativeSchemaSelector, nativeProtectionSelector, nativeRootsSelector, nativeStagedSelector, nativeSettledSelector, nativeScopedSelector, nativeSearchSelector} {
+		for _, name := range []nativeConfigSelector{nativeSchemaSelector, nativeProtectionSelector, nativeRootsSelector, nativeAdmissionSelector, museCaptureSelector, museIssuedSelector, nativeStagedSelector, nativeSettledSelector, nativeScopedSelector, nativeSearchSelector} {
 			if strings.EqualFold(key, string(name)) {
 				seen[name]++
 				exact = exact && key == string(name) && seen[name] == 1
-				if name == nativeProtectionSelector || name == nativeRootsSelector {
+				if name == nativeProtectionSelector || name == nativeRootsSelector || name == nativeAdmissionSelector || name == museCaptureSelector || name == museIssuedSelector {
 					native = true
 					exact = exact && !bytes.Equal(bytes.TrimSpace(value), []byte("null"))
 				}

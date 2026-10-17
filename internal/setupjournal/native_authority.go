@@ -10,12 +10,17 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
+// ErrUnsupportedRecoveryAuthority preserves protected future journals before
+// legacy garbage-record quarantine or raw rollback can mutate their paths.
+var ErrUnsupportedRecoveryAuthority = errors.New("unsupported setup recovery authority; use a compatible agent-archive")
+
 type journalJSON Journal
 
 type nativeJournalFence struct {
-	Version int    `json:"version"`
-	Writer  string `json:"writer"`
-	Value   bool   `json:"value"`
+	Version   int    `json:"version"`
+	Writer    string `json:"writer"`
+	Value     bool   `json:"value"`
+	Admission string `json:"admission,omitempty"`
 }
 
 // MarshalJSON fences recovery before older setup binaries can apply raw rollback
@@ -25,6 +30,12 @@ func (j Journal) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	admission, err := nativeJournalAdmissionProtected(j)
+	if err != nil {
+		return nil, err
+	}
+	j.NativeAdmissionProtection = admission
+	protected = protected || admission
 	j.NativeAuthorityProtection = protected
 	raw, err := marshalBaseJSON(j)
 	if err != nil || !protected {
@@ -34,7 +45,11 @@ func (j Journal) MarshalJSON() ([]byte, error) {
 	if err = json.Unmarshal(raw, &doc); err != nil {
 		return nil, err
 	}
-	doc["files_only"], err = json.Marshal(nativeJournalFence{Version: 1, Writer: "native-authority-v16", Value: j.FilesOnly})
+	fence := nativeJournalFence{Version: 1, Writer: "native-authority-v16", Value: j.FilesOnly}
+	if admission {
+		fence.Admission = "muse-root-admission"
+	}
+	doc["files_only"], err = json.Marshal(fence)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +57,21 @@ func (j Journal) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON validates the recovery fence before interpreting any changes.
-func (j *Journal) UnmarshalJSON(raw []byte) error {
+func (j *Journal) UnmarshalJSON(raw []byte) (decodeErr error) {
+	defer func() {
+		if decodeErr == nil {
+			return
+		}
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &fields)
+		protected := false
+		for key, value := range fields {
+			protected = protected || strings.EqualFold(key, "native_authority_protection") || strings.EqualFold(key, "native_admission_protection") || strings.EqualFold(key, "files_only") && bytes.HasPrefix(bytes.TrimSpace(value), []byte("{"))
+		}
+		if protected {
+			decodeErr = errors.Join(ErrUnsupportedRecoveryAuthority, decodeErr)
+		}
+	}()
 	if err := checkNativeJournalKeys(raw, false); err != nil {
 		return err
 	}
@@ -58,7 +87,8 @@ func (j *Journal) UnmarshalJSON(raw []byte) error {
 		if err := checkJournalKeys(json.NewDecoder(bytes.NewReader(raw)), 0); err != nil {
 			return err
 		}
-		if err := checkNativeJournalKeys(filesOnly, true); err != nil {
+		admissionProtected := bytes.Equal(bytes.TrimSpace(doc["native_admission_protection"]), []byte("true"))
+		if err := checkNativeJournalKeys(filesOnly, true, admissionProtected); err != nil {
 			return err
 		}
 		var fence nativeJournalFence
@@ -69,6 +99,9 @@ func (j *Journal) UnmarshalJSON(raw []byte) error {
 		}
 		if fence.Version != 1 || fence.Writer != "native-authority-v16" || !bytes.Equal(bytes.TrimSpace(doc["native_authority_protection"]), []byte("true")) {
 			return errors.New("unsupported native setup recovery fence")
+		}
+		if admissionProtected && fence.Admission != "muse-root-admission" {
+			return errors.New("unsupported native admission recovery capability")
 		}
 		doc["files_only"], _ = json.Marshal(fence.Value)
 		var err error
@@ -83,10 +116,17 @@ func (j *Journal) UnmarshalJSON(raw []byte) error {
 	}
 	protected, err := nativeJournalProtected(plain)
 	if err != nil {
-		return err
+		return errors.Join(ErrUnsupportedRecoveryAuthority, err)
 	}
 	if protected != fenced || doc["native_authority_protection"] != nil && !fenced {
 		return errors.New("native setup recovery requires its exact writer fence")
+	}
+	admission, err := nativeJournalAdmissionProtected(plain)
+	if err != nil {
+		return errors.Join(ErrUnsupportedRecoveryAuthority, err)
+	}
+	if admission != plain.NativeAdmissionProtection || admission && !fenced {
+		return errors.New("native admission recovery requires exact fence")
 	}
 	*j = plain
 	return nil
@@ -116,15 +156,24 @@ func nativeJournalProtected(j Journal) (bool, error) {
 	return protected, nil
 }
 
-func checkNativeJournalKeys(raw []byte, fence bool) error {
+func checkNativeJournalKeys(raw []byte, fence bool, admission ...bool) error {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	token, err := d.Token()
 	if err != nil || token != json.Delim('{') {
 		return errors.New("invalid native setup recovery object")
 	}
 	names := []string{"files_only", "native_authority_protection"}
+	if !fence {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(raw, &fields) == nil && fields["native_admission_protection"] != nil {
+			names = append(names, "native_admission_protection")
+		}
+	}
 	if fence {
 		names = []string{"version", "writer", "value"}
+		if len(admission) > 0 && admission[0] {
+			names = append(names, "admission")
+		}
 	}
 	seen := map[string]int{}
 	exact := true
@@ -148,7 +197,7 @@ func checkNativeJournalKeys(raw []byte, fence bool) error {
 				known = true
 				seen[name]++
 				exact = exact && key == name && seen[name] == 1 && !bytes.Equal(bytes.TrimSpace(value), []byte("null"))
-				if name == "native_authority_protection" {
+				if name == "native_authority_protection" || name == "native_admission_protection" {
 					native = true
 				}
 			}
@@ -161,4 +210,28 @@ func checkNativeJournalKeys(raw []byte, fence bool) error {
 		return errors.New("ambiguous native setup recovery fence")
 	}
 	return nil
+}
+
+func nativeJournalAdmissionProtected(j Journal) (bool, error) {
+	protected := j.NativeAdmissionProtection
+	for _, change := range j.Changes {
+		if filepath.Base(change.Path) != "config.json" {
+			continue
+		}
+		for _, raw := range [][]byte{change.Before, change.After} {
+			var doc map[string]json.RawMessage
+			if json.Unmarshal(raw, &doc) != nil {
+				continue
+			}
+			if doc["native_admission_protection"] == nil && doc["muse_capture"] == nil && doc["muse_capture_last_issued_at"] == nil {
+				continue
+			}
+			var cfg config.Config
+			if err := json.Unmarshal(raw, &cfg); err != nil {
+				return false, err
+			}
+			protected = protected || cfg.NativeAdmissionProtection
+		}
+	}
+	return protected, nil
 }

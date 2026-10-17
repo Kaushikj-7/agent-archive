@@ -33,6 +33,7 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	preparedStartup    *preparedStartupReader
 	CollectorGuard     *local.CollectorGuard
 	CatalogDestination string
 	// HistoricalSourceAllowed vetoes explicitly excluded native dependencies at staging.
@@ -396,12 +397,16 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}
+	if err := p.loadStartupCandidates(); err != nil {
+		return Result{}, err
+	}
 	var inventoryErr error
 	closeNativeInventory, inventoryErr = p.configureNativeInventory()
 	if inventoryErr != nil {
 		return Result{}, inventoryErr
 	}
 
+	p.admitStartupCandidates()
 	p.loadDeferredSince()
 	p.reconcileNativeLinks()
 	p.observeLabels(ctx)
@@ -499,6 +504,7 @@ func generationRecoveryStopsPass(err error) bool {
 
 // pass is one Run: its inputs, what it has found so far, and its result.
 type pass struct {
+	startupCandidates   []startupCandidate
 	labelLocal          *state.Store
 	closeLabelResources func()
 	labelStates         map[string]*state.Published
@@ -754,7 +760,9 @@ func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 	// Everything the session's scan charges counts against its own ceiling
 	// too, so one large session cannot leave the others without room, and
 	// its own excess is told from pressure others put on the ledger.
-	defer budget.BeginScope(sessionReadCeiling)()
+	if p.opts.preparedStartup == nil {
+		defer budget.BeginScope(sessionReadCeiling)()
+	}
 	scopedLocal, closeLocal := p.local.WithReadBudget(ctx, budget)
 	p.local = scopedLocal
 	defer func() { closeLocal(); p.local = priorLocal }()

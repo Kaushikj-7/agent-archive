@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -66,7 +67,12 @@ func ClearAdmissionIntents(home string) error {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		if err := os.Remove(filepath.Join(admissionIntentDir(home), entry.Name())); err != nil && !os.IsNotExist(err) {
+		path := filepath.Join(admissionIntentDir(home), entry.Name())
+		var intent admissionIntent
+		if local.Read(path, &intent) != nil || !RecognizedAdmissionIntent(intent) {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			failures = append(failures, err)
 		}
 	}
@@ -96,6 +102,9 @@ func PruneAdmissionIntents(home string, cfg config.Config) error {
 		path := filepath.Join(admissionIntentDir(home), entry.Name())
 		var intent admissionIntent
 		readErr := local.Read(path, &intent)
+		if readErr != nil || !RecognizedAdmissionIntent(intent) {
+			continue
+		}
 		if readErr == nil && intent.DestinationID == cfg.DestinationID() && ((intent.CodexPolicyToken != "" && replayIntentEligible(cfg, intent, intent.ObservedAt)) || (intent.CodexPolicyToken == "" && intentProjectStillOwned(intent.ProjectRoot, cfg.Archive.Projects))) {
 			continue
 		}
@@ -287,6 +296,17 @@ func eventAdmissionIntent(home string, batch []agentapi.LifecycleEvent, now time
 // admissionIntentStillQueueable is the check made under the queue lock
 // before an intent goes in.
 func eventIntentStillQueueable(home string, intent admissionIntent) (bool, error) {
+	if intent.Version == 2 {
+		cfg, found, err := config.Load(home)
+		eligible := MuseIntentEligible(cfg, intent, intent.ObservedAt)
+		if intent.NativeMode == agentapi.NativeOwnerContinuation && RecognizedAdmissionIntent(intent) {
+			_, ownerErr := state.OpenReadOnly(home).ForNativeContinuation(context.Background(), intent)
+			eligible = ownerErr == nil
+		}
+		if err != nil || !found || setupjournal.TransactionPending(home) || !eligible {
+			return false, err
+		}
+	}
 	// A pause or setup may have committed while this hook waited for the
 	// queue lock. Recheck after taking it so a stale config cannot write a
 	// private retry record after the corresponding purge.
@@ -300,10 +320,10 @@ func eventIntentStillQueueable(home string, intent admissionIntent) (bool, error
 		}
 	}
 	current, owned := archive.ProjectActivation{}, false
-	if intent.CodexPolicyToken == "" {
+	if intent.Version != 2 && intent.CodexPolicyToken == "" {
 		current, owned = ConfiguredProjectActivationFor(cfg, intent.ProjectRoot)
 	}
-	if intent.CodexPolicyToken == "" && (!owned || !current.Included || current.Root != intent.ProjectRoot || cfg.DestinationID() != intent.DestinationID || cfg.PauseGeneration != intent.PauseGeneration || !cfg.Archive.Eligible(current.Root, intent.ObservedAt)) {
+	if intent.Version != 2 && intent.CodexPolicyToken == "" && (!owned || !current.Included || current.Root != intent.ProjectRoot || cfg.DestinationID() != intent.DestinationID || cfg.PauseGeneration != intent.PauseGeneration || !cfg.Archive.Eligible(current.Root, intent.ObservedAt)) {
 		return false, nil
 	}
 	entries, err := os.ReadDir(admissionIntentDir(home))
@@ -376,6 +396,9 @@ func replayProjectPreflight(home string, now time.Time) (map[string]sourcefacts.
 		path := filepath.Join(admissionIntentDir(home), entry.Name())
 		var intent admissionIntent
 		if local.Read(path, &intent) == nil && intent.CodexPolicyToken != "" && len(intent.Effects) > 0 {
+			if !RecognizedAdmissionIntent(intent) || intent.Version == 2 {
+				continue
+			}
 			if now.Sub(intent.ObservedAt) > maxAdmissionIntentAge || intent.ObservedAt.After(now.Add(time.Minute)) {
 				continue
 			}
@@ -398,6 +421,9 @@ func replayProjectPreflight(home string, now time.Time) (map[string]sourcefacts.
 func replayAdmissionIntents(home string, now time.Time, lookup agentapi.DecodersLookup, after func(effectName) error) error {
 	if setupjournal.TransactionPending(home) {
 		return nil
+	}
+	if err := replayMuseOwnerIntents(home, now, after); err != nil {
+		return err
 	}
 	preflight, cursor := replayProjectPreflight(home, now)
 	unlock, err := local.NamedLockWait(home, "hooks.lock", 2*time.Second)
@@ -456,6 +482,9 @@ func replayAdmissionFile(home string, store *state.Store, cfg config.Config, pat
 	var intent admissionIntent
 	if err := local.Read(path, &intent); err != nil {
 		return nil, fmt.Errorf("read admission intent: %w", err)
+	}
+	if !RecognizedAdmissionIntent(intent) || intent.Version == 2 {
+		return nil, nil
 	}
 	if !replayIntentEligible(cfg, intent, now) {
 		return nil, removeAdmissionIntent(path)
@@ -591,6 +620,9 @@ func intentEvents(intent admissionIntent, lookup agentapi.DecodersLookup) ([]age
 }
 
 func replayEffects(home string, store *state.Store, cfg config.Config, intent admissionIntent, events []agentapi.LifecycleEvent, registered bool, after func(effectName) error) error {
+	if !RecognizedAdmissionIntent(intent) || intent.Version == 2 {
+		return errors.New("unsupported admission replay operation")
+	}
 	prepared := make([]agentapi.LifecycleEvent, len(events))
 	copy(prepared, events)
 	for i, event := range prepared {

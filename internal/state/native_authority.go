@@ -32,7 +32,7 @@ func (s *Store) guardNativeRegistrationWrite(w lockedWrite) lockedWrite {
 			return nil, false, errors.New("registration write requires typed authority")
 		}
 		next = &reg
-		if err := s.checkNativeRegistrationTransition(w.path, reg, w.nativeValidation); err != nil {
+		if err := s.checkNativeRegistrationTransition(w.path, reg, w.nativeValidation, w.nativeAdmission); err != nil {
 			return nil, false, err
 		}
 		return value, true, nil
@@ -44,7 +44,7 @@ func (s *Store) guardNativeRegistrationWrite(w lockedWrite) lockedWrite {
 			}
 		}
 		if next != nil {
-			return s.checkNativeRegistrationTransition(w.path, *next, w.nativeValidation)
+			return s.checkNativeRegistrationTransition(w.path, *next, w.nativeValidation, w.nativeAdmission)
 		}
 		return nil
 	}
@@ -52,10 +52,10 @@ func (s *Store) guardNativeRegistrationWrite(w lockedWrite) lockedWrite {
 }
 
 func (s *Store) checkNativeRegistrationWrite(path string, next archive.SessionRegistration) error {
-	return s.checkNativeRegistrationTransition(path, next, nil)
+	return s.checkNativeRegistrationTransition(path, next, nil, nil)
 }
 
-func (s *Store) checkNativeRegistrationTransition(path string, next archive.SessionRegistration, prepared *nativeValidationCommit) error {
+func (s *Store) checkNativeRegistrationTransition(path string, next archive.SessionRegistration, prepared *nativeValidationCommit, admission *nativeAdmissionCommit) error {
 	before, err := readSnapshot(path)
 	if err != nil {
 		return err
@@ -71,7 +71,7 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 			return err
 		}
 	}
-	if err := preserveNativeRegistrationAuthority(previous, next, before.found, prepared); err != nil {
+	if err := preserveNativeRegistrationAuthority(previous, next, before.found, prepared, admission); err != nil {
 		return err
 	}
 	// Ordinary existing integrations keep their established compatibility paths.
@@ -104,7 +104,17 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 	return nil
 }
 
-func preserveNativeRegistrationAuthority(previous, next archive.SessionRegistration, found bool, prepared *nativeValidationCommit) error {
+func preserveNativeRegistrationAuthority(previous, next archive.SessionRegistration, found bool, prepared *nativeValidationCommit, admission *nativeAdmissionCommit) error {
+	if previous.NativeAdmission != nil || next.NativeAdmission != nil {
+		a, _ := json.Marshal(previous.NativeAdmission)
+		b, _ := json.Marshal(next.NativeAdmission)
+		if admission == nil && string(a) != string(b) {
+			return errors.New("native admission proof is immutable")
+		}
+	}
+	if admission != nil {
+		return admission.check(previous, next, found)
+	}
 	if prepared != nil {
 		if err := prepared.check(previous, next, found); err != nil {
 			return err

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -42,6 +43,7 @@ const (
 
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
+	museHome string
 	// pairingInput preserves answers buffered by first-run onboarding. The original
 	// stdin remains the terminal identity used for private code entry.
 	pairingInput             io.Reader
@@ -177,6 +179,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 		opts.codexCaptureScope = value
 		return nil
 	})
+	fs.StringVar(&opts.museHome, "muse-home", "", "explicit Muse data home for root capture")
 	fs.StringVar(&opts.apps, "apps", "", "apps to capture, comma-separated")
 	fs.StringVar(&opts.skillEvidence, "skill-evidence", "", "none, metadata, or body")
 	fs.BoolVar(&opts.noSkills, "no-skills", false, "install no agent skills, and remove those setup wrote")
@@ -449,6 +452,47 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	}
 	cfg.Archive.Projects = slices.Clone(existing.Archive.Projects)
 	problems := setupApps(env.setupNames(), &cfg, opts.apps, env.detectHarnesses(userHome), installed)
+	if opts.museHome != "" {
+		if !filepath.IsAbs(opts.museHome) {
+			problems = append(problems, errors.New("--muse-home requires an absolute Muse data home"))
+		} else {
+			canonical, err := filepath.EvalSymlinks(filepath.Join(opts.museHome, "sessions"))
+			if err != nil {
+				problems = append(problems, errors.New("--muse-home must contain an existing sessions directory"))
+			} else {
+				revision, err := local.ID()
+				if err != nil {
+					problems = append(problems, err)
+				} else {
+					root := archive.NativeRoot{Agent: "muse", Configured: filepath.Clean(opts.museHome), Canonical: canonical, Revision: revision}
+					roots := slices.Clone(cfg.NativeRoots)
+					found := false
+					for i, old := range roots {
+						if old.Agent == "muse" {
+							if old.Configured == root.Configured && old.Canonical == root.Canonical {
+								root.Revision = old.Revision
+							}
+							roots[i] = root
+							found = true
+						}
+					}
+					if !found {
+						roots = append(roots, root)
+					}
+					cfg.NativeRoots = roots
+				}
+			}
+		}
+	}
+	if slices.Contains(cfg.Harnesses, "muse") {
+		explicit := false
+		for _, root := range cfg.NativeRoots {
+			explicit = explicit || root.Agent == "muse"
+		}
+		if !explicit {
+			problems = append(problems, errors.New("Muse capture requires --muse-home with one explicit data home"))
+		}
+	}
 	if err := configureCodexCaptureScope(&cfg, opts.codexCaptureScope); err != nil {
 		problems = append(problems, err)
 	}

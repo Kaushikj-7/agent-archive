@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -259,14 +260,22 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if !reflect.DeepEqual(withoutBucketPrivacy(current), withoutBucketPrivacy(old)) {
 		return fmt.Errorf("settings changed while setup was open; restart setup to review the current settings")
 	}
-	if err := protectSetupWriter(home, current, *next); err != nil {
-		return err
-	}
 	if fresher := freshestBucketPrivacy(*next, current.BucketPrivacy); fresher != nil {
 		next.BucketPrivacy = fresher
 	}
 	mergeCommittedSetupState(old, next, stopImported)
 	if err := prepareSetupConfig(home, executable, old, next, env); err != nil {
+		return err
+	}
+	if next.DestinationSince.IsZero() && slices.Contains(next.Harnesses, "muse") {
+		next.DestinationSince = env.now().UTC()
+	}
+	reconciled, err := config.ReconcileMuseCapture(*next, old, env.now())
+	if err != nil {
+		return err
+	}
+	*next = reconciled
+	if err := protectSetupWriter(home, current, *next); err != nil {
 		return err
 	}
 	journal, err := planSetupTransaction(home, userHome, executable, old, next, env)
@@ -623,6 +632,9 @@ func abandonRecovery(out io.Writer, env Env) error {
 		terminal.Println(out, "No interrupted setup to discard. Nothing was changed.")
 		return nil
 	}
+	if errors.Is(err, setupjournal.ErrUnsupportedRecoveryAuthority) {
+		return err
+	}
 	if state.IsUndecodable(err) {
 		// Nothing in it can be trusted, so nothing in it is acted on; it is
 		// kept for anyone who wants to see what setup was doing.
@@ -698,7 +710,7 @@ func protectSetupWriter(home string, current config.Config, proposed ...config.C
 	if setupjournal.TransactionPending(home) {
 		return errors.New("setup pending before writer protection")
 	}
-	if len(proposed) > 0 && (((proposed[0].NativeAuthorityProtection || len(proposed[0].NativeRoots) > 0) && !current.NativeAuthorityProtection) || (proposed[0].SearchLifecycleProtection && !current.SearchLifecycleProtection) || (proposed[0].CodexCapture != nil && current.CodexCapture == nil) || (proposed[0].CodexHistoryProtection && !current.CodexHistoryProtection) || (proposed[0].GenerationProtection && !current.GenerationProtection) || (proposed[0].DurableStorageProtection && !current.DurableStorageProtection) || (proposed[0].RetentionProtection && !current.RetentionProtection) || (proposed[0].ImportStagingProtection && !current.ImportStagingProtection)) {
+	if len(proposed) > 0 && (((proposed[0].NativeAuthorityProtection || proposed[0].NativeAdmissionProtection || proposed[0].MuseCapture != nil || len(proposed[0].NativeRoots) > 0) && !current.NativeAuthorityProtection) || (proposed[0].NativeAdmissionProtection && !current.NativeAdmissionProtection) || (proposed[0].SearchLifecycleProtection && !current.SearchLifecycleProtection) || (proposed[0].CodexCapture != nil && current.CodexCapture == nil) || (proposed[0].CodexHistoryProtection && !current.CodexHistoryProtection) || (proposed[0].GenerationProtection && !current.GenerationProtection) || (proposed[0].DurableStorageProtection && !current.DurableStorageProtection) || (proposed[0].RetentionProtection && !current.RetentionProtection) || (proposed[0].ImportStagingProtection && !current.ImportStagingProtection)) {
 		if _, found, err := config.Load(home); err != nil {
 			return err
 		} else if found {
