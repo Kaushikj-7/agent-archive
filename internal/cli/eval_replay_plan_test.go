@@ -260,3 +260,81 @@ func FuzzEvalReplayPlanRequest(f *testing.F) {
 		}
 	})
 }
+
+// The direct CLI accepts raw JSON independently of Python's UTF-8 encoder.
+func TestEvalReplayPlanRejectsLossyScalarEscapes(t *testing.T) {
+	for _, field := range []string{"executable", "data_home", "default_data_home", "private_directory", "settings", "managed", "map-key", "map-value"} {
+		for _, escape := range []string{`\ud800`, `\udc00`, `\ud800x`, `\ud800\u0041`, `\ud800\ud800`} {
+			t.Run(field+"/"+escape, func(t *testing.T) {
+				request := replayPlannerFixture(t)
+				raw, err := json.Marshal(request)
+				must(t, err)
+				var object map[string]any
+				must(t, json.Unmarshal(raw, &object))
+				switch field {
+				case "settings", "managed":
+					object[field].(map[string]any)["path"] = "/SCALAR"
+				case "map-key":
+					object["ownership_locations"].(map[string]any)["/SCALAR"] = request.DataHome
+				case "map-value":
+					object["ownership_locations"].(map[string]any)[request.DataHome] = "/SCALAR"
+				default:
+					object[field] = "/SCALAR"
+				}
+				raw, err = json.Marshal(object)
+				must(t, err)
+				raw = bytes.ReplaceAll(raw, []byte("SCALAR"), []byte(escape))
+				var out, diagnostic bytes.Buffer
+				code := runEvalCommand([]string{"replay-plan", "--harness", "muse"}, bytes.NewReader(raw), &out, &diagnostic, replayPlannerNoHost(t))
+				if code == 0 || out.Len() != 0 || !strings.Contains(diagnostic.String(), "request_invalid") {
+					t.Fatalf("lossy scalar accepted: code=%d output=%d diagnostic=%s", code, out.Len(), diagnostic.String())
+				}
+			})
+		}
+	}
+	for _, value := range []struct{ encoded, decoded string }{
+		{`\ufffd`, "�"}, {"�", "�"}, {`\ud83d\ude80`, "🚀"}, {`\\ud800`, `\ud800`},
+	} {
+		request := replayPlannerFixture(t)
+		request.Executable = "/SCALAR"
+		raw, err := json.Marshal(request)
+		must(t, err)
+		raw = bytes.ReplaceAll(raw, []byte("SCALAR"), []byte(value.encoded))
+		decoded, err := decodeReplayPlanRequest(raw)
+		must(t, err)
+		if decoded.Executable != "/"+value.decoded {
+			t.Fatal("valid scalar or escaped literal changed")
+		}
+		var out, diagnostic bytes.Buffer
+		if runEvalCommand([]string{"replay-plan", "--harness", "muse"}, bytes.NewReader(raw), &out, &diagnostic, replayPlannerNoHost(t)) != 0 {
+			t.Fatalf("valid scalar refused: %s", diagnostic.String())
+		}
+	}
+}
+
+func TestEvalReplayPlanBoundsQuotedRunnerCommand(t *testing.T) {
+	request := replayPlannerFixture(t)
+	// Many short legal components keep the raw path small while quotes expand.
+	request.PrivateDirectory = "/private" + strings.Repeat("/a'", 700)
+	if !replayPlanPath(request.PrivateDirectory) || len(shellQuote(filepath.Join(request.PrivateDirectory, "hook-runner-launch-A"))) <= 4096 {
+		t.Fatal("fixture does not cross quoted command limit")
+	}
+	raw, err := json.Marshal(request)
+	must(t, err)
+	var out, diagnostic bytes.Buffer
+	if runEvalCommand([]string{"replay-plan", "--harness", "muse"}, bytes.NewReader(raw), &out, &diagnostic, replayPlannerNoHost(t)) == 0 || out.Len() != 0 {
+		t.Fatal("producer succeeded with an unconsumable quoted command")
+	}
+	// Exercise the greatest accepted quote-heavy path, without touching it.
+	for n := 700; n > 0; n-- {
+		request.PrivateDirectory = "/private" + strings.Repeat("/a'", n)
+		if len(shellQuote(filepath.Join(request.PrivateDirectory, "hook-runner-launch-A"))) <= 4096 {
+			response, _ := callReplayPlanner(t, request)
+			if len(response.NativeCommand) > 4096 || len(response.NativeCommand) < 4089 {
+				t.Fatal("accepted quote boundary changed")
+			}
+			return
+		}
+	}
+	t.Fatal("no accepted quote boundary")
+}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -121,8 +122,57 @@ func replayPlanObject(value any, names ...string) (map[string]any, error) {
 	return object, nil
 }
 
+// replayPlanScalarEscapes rejects the unpaired UTF-16 escapes that encoding/json
+// otherwise replaces with U+FFFD. The normal strict decoder still owns JSON
+// syntax, duplicate keys, depth, and UTF-8 validation.
+func replayPlanScalarEscapes(raw []byte) bool {
+	inString := false
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '"' {
+			inString = !inString
+			continue
+		}
+		if !inString || raw[i] != '\\' {
+			continue
+		}
+		i++ // An escaped backslash or quote cannot begin another escape.
+		if i >= len(raw) {
+			return false
+		}
+		if raw[i] != 'u' {
+			continue
+		}
+		if i+4 >= len(raw) {
+			return false
+		}
+		unit, err := strconv.ParseUint(string(raw[i+1:i+5]), 16, 16)
+		if err != nil {
+			return false
+		}
+		i += 4
+		if unit >= 0xdc00 && unit <= 0xdfff {
+			return false
+		}
+		if unit < 0xd800 || unit > 0xdbff {
+			continue
+		}
+		if i+6 >= len(raw) || raw[i+1] != '\\' || raw[i+2] != 'u' {
+			return false
+		}
+		low, err := strconv.ParseUint(string(raw[i+3:i+7]), 16, 16)
+		if err != nil || low < 0xdc00 || low > 0xdfff {
+			return false
+		}
+		i += 6
+	}
+	return true
+}
+
 func decodeReplayPlanRequest(raw []byte) (replayPlanRequest, error) {
 	var request replayPlanRequest
+	if !replayPlanScalarEscapes(raw) {
+		return request, errors.New("invalid JSON scalar escape")
+	}
 	object, err := strictHookPayload(raw)
 	if err != nil {
 		return request, err
@@ -205,6 +255,9 @@ func decodeReplayPlanRequest(raw []byte) (replayPlanRequest, error) {
 			return request, errors.New("absent observation has content")
 		}
 		if observation.Present {
+			if !replayPlanScalarEscapes(observation.Bytes) {
+				return request, errors.New("invalid observed JSON scalar escape")
+			}
 			if _, err := strictHookPayload(observation.Bytes); err != nil {
 				return request, err
 			}
@@ -305,7 +358,11 @@ func prepareReplayPlan(request replayPlanRequest, lookup agentapi.HooksLookup) (
 	if !replayPlanPath(runnerPath) {
 		return response, errors.New("runner path exceeds bound")
 	}
+	nativeCommand := shellQuote(runnerPath)
+	if len(nativeCommand) > 4096 {
+		return response, errors.New("quoted runner command exceeds bound")
+	}
 	runner := []byte("#!/bin/sh\nexport " + archive.ReplayEnv + "=" + shellQuote(marker) + "\nexec /bin/sh -c " + shellQuote(command) + "\n")
-	response = replayPlanResponse{Version: replayPlanWireVersion, PreparationOnly: true, LaunchID: request.Control.LaunchID, Replay: request.Control.Replay, ObservedSettings: request.Settings, ObservedManaged: request.Managed, OwnerPresent: inspection.Owned, Install: replayPlanWireChanges(install), OwnedInstall: replayPlanWireChanges(owned), Removal: replayPlanWireChanges(removal), Command: command, Runner: runner, RunnerPath: runnerPath, NativeCommand: shellQuote(runnerPath)}
+	response = replayPlanResponse{Version: replayPlanWireVersion, PreparationOnly: true, LaunchID: request.Control.LaunchID, Replay: request.Control.Replay, ObservedSettings: request.Settings, ObservedManaged: request.Managed, OwnerPresent: inspection.Owned, Install: replayPlanWireChanges(install), OwnedInstall: replayPlanWireChanges(owned), Removal: replayPlanWireChanges(removal), Command: command, Runner: runner, RunnerPath: runnerPath, NativeCommand: nativeCommand}
 	return response, nil
 }

@@ -81,6 +81,22 @@ class ReplayLaunchTests(unittest.TestCase):
         self.assertNotEqual(result["hypothetical_settings_bytes"], observed)
         self.assertEqual(json.loads(result["flags"][3].removeprefix("hooks=")), {"ForeignEvent": []})
 
+    def test_generated_command_limit_counts_utf8_bytes(self):
+        directory = pathlib.Path("/private/synthetic/launch-A")
+        raw, managed, control = self.fixture(directory)
+        plan = json.loads(raw)
+        for command in ("x" * 4096, "λ" * 2048):
+            plan["native_command"] = command
+            accepted = encoded(plan)
+            replay.prepare_for_qualification(accepted, managed, control,
+                plan_sha256=hashlib.sha256(accepted).hexdigest(), private_directory=directory)
+        for command in ("x" * 4097, "λ" * 2049):
+            plan["native_command"] = command
+            oversized = encoded(plan)
+            with self.assertRaisesRegex(ValueError, "bounded actual generated command"):
+                replay.prepare_for_qualification(oversized, managed, control,
+                    plan_sha256=hashlib.sha256(oversized).hexdigest(), private_directory=directory)
+
     def test_control_is_closed_and_normalized(self):
         for raw in [b'{"launch_id":"x","launch_id":"y","replay":{}}',
                     b'{"launch_id":"x","replay":{"run_id":"a","run_id":"b"}}',
@@ -195,6 +211,30 @@ class ShippingConsumerTests(unittest.TestCase):
             self.assertFalse(changed["owner_present"])
             self.assertIn("SessionStart", json.loads(changed["flags"][3].removeprefix("hooks=")))
             self.assertEqual(managed.read_bytes(), original_managed)
+            # Real CLI -> shipping Python: quote expansion is bounded before
+            # success; accepted boundary paths are planned without filesystem IO.
+            quote = lambda value: "'" + value.replace("'", "'\"'\"'") + "'"
+            private = "/private" + "/a'" * 700
+            self.assertLess(len(private.encode()), 4096)
+            self.assertGreater(len(quote(private + "/hook-runner-launch-B").encode()), 4096)
+            request["private_directory"] = private
+            with self.assertRaisesRegex(ValueError, "archive replay-plan refused"):
+                replay.prepare_from_archive(executable, request)
+            for count in range(700, 0, -1):
+                private = "/private" + "/a'" * count
+                size = len(quote(private + "/hook-runner-launch-B").encode())
+                if size <= 4096:
+                    self.assertGreaterEqual(size, 4089)
+                    request["private_directory"] = private
+                    boundary = replay.prepare_from_archive(executable, request)
+                    self.assertFalse(boundary["qualified"])
+                    overlay = json.loads(boundary["files"][1][1])
+                    generated = overlay["hooks"]["SessionStart"][-1]["hooks"][0]["command"]
+                    self.assertEqual(generated, quote(private + "/hook-runner-launch-B"))
+                    self.assertLessEqual(len(generated.encode()), 4096)
+                    break
+            else:
+                self.fail("no accepted quoted-path boundary")
 
 
 if __name__ == "__main__":

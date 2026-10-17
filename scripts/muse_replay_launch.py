@@ -173,7 +173,7 @@ def prepare_for_qualification(plan_bytes, foreign_bytes, control_bytes, *, plan_
     command = plans.get("command")
     native_command = plans.get("native_command")
     for value in (command, native_command):
-        if not isinstance(value, str) or not value or len(value) > 4096 or "\0" in value:
+        if not isinstance(value, str) or not value or len(value.encode("utf-8")) > 4096 or "\0" in value:
             raise ValueError("bounded actual generated command required")
     runner = decoded_bytes(plans.get("runner_bytes"))
     if not runner.startswith(b"#!/bin/sh\n") or b"\0" in runner:
