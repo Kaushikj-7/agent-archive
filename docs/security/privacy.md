@@ -765,3 +765,10 @@ remain unlisted in narrative transcript/handoff, preserving omitted-detail gaps.
 No normalized result objects, result/error counts, tool names, MCP, file or Git
 facts are inferred. Complete lifecycle, result status/body and billing remain
 unqualified; this does not enable capture or establish full tool parity.
+
+Muse can validate approval-free file-read effects through an earlier own committed
+call. It retains only the fixed `committed_file_read_v1` classification on the
+start row, alongside existing IDs. Private tool names, arguments, file subjects,
+profiles and outcomes remain omitted. This adds no file list, tool success/error,
+MCP, Git or parallelism facts. Marked sources require an upgraded reader; older
+approved rows remain readable. Capture and execution permission are unchanged.

@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Muse explicit-file and local handoff support the qualified approval-free
+  committed file-read effect lane. A fixed start classification preserves its
+  retained validation; private names, file subjects and outcomes remain omitted.
+  Marked sources require an upgraded reader. This adds no result status, file
+  list, parallelism or capture support.
+
 - Muse local handoff recognizes the exact startup sequence with one route-facts
   record between metadata and the original session opening. Workspace, ownership,
   causation and complete-file validation remain required.

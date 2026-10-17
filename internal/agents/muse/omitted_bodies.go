@@ -298,10 +298,7 @@ func newFieldShape(r retained) (int64, []string, bool) {
 			return 0, nil, false
 		}
 	case payloadToolBatchStarted, payloadToolBatchTerminal:
-		if kind != "tool_batch_effect" || r.Type == payloadToolBatchStarted && ek != "started" || r.Type == payloadToolBatchTerminal && ek != "terminal" || !integer(f["model_call_index"], 0) {
-			return 0, nil, false
-		}
-		names = append(names, "effect_id", "task_id", "tool_call_id", "model_call_index")
+		return effectFieldShape(r)
 	default:
 		return 0, nil, false
 	}
@@ -380,4 +377,20 @@ func toolEffectOutcome(v any) bool {
 		return keys(m, "kind", "task_completion", "output_ref_count") && integer(m["output_ref_count"], 0) && (tagged(t, "complete") || keys(t, "kind", "terminal") && str(t["kind"]) == "terminal" && tagged(t["terminal"], "completed"))
 	}
 	return false
+}
+
+func effectFieldShape(r retained) (int64, []string, bool) {
+	f := r.Fields
+	kind, event := str(f["kind"]), str(f["event_kind"])
+	if kind != "tool_batch_effect" || r.Type == payloadToolBatchStarted && event != "started" || r.Type == payloadToolBatchTerminal && event != "terminal" || !integer(f["model_call_index"], 0) || !identifier(f["run_id"]) || !identifier(f["task_id"]) || !identifier(f["effect_id"]) || str(f["tool_call_id"]) == "" {
+		return 0, nil, false
+	}
+	names := []string{"kind", "event_kind", "run_id", "effect_id", "task_id", "tool_call_id", "model_call_index"}
+	if value, present := f["effect_join"]; present {
+		if r.Type != payloadToolBatchStarted || value != committedFileReadJoin {
+			return 0, nil, false
+		}
+		names = append(names, "effect_join")
+	}
+	return 1, names, true
 }
