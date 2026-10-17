@@ -704,13 +704,13 @@ func prepareMachineAssignment(old config.Config, next *config.Config) {
 	}
 }
 
-// protectSetupWriter fences protected rollback snapshots before journal planning.
-// Callers hold hooks.lock after settling any previous setup transaction.
 // setupWriterProtectionChanges compares independent sticky writer capabilities.
 func setupWriterProtectionChanges(current, next config.Config) bool {
 	return (((next.NativeAuthorityProtection || next.NativeAdmissionProtection || next.NativeImportProtection || next.NativeReplayProtection || next.MuseCapture != nil || len(next.NativeRoots) > 0) && !current.NativeAuthorityProtection) || (next.NativeAdmissionProtection && !current.NativeAdmissionProtection) || (next.NativeImportProtection && !current.NativeImportProtection) || (next.NativeReplayProtection && !current.NativeReplayProtection) || (next.SearchLifecycleProtection && !current.SearchLifecycleProtection) || (next.CodexCapture != nil && current.CodexCapture == nil) || (next.CodexHistoryProtection && !current.CodexHistoryProtection) || (next.GenerationProtection && !current.GenerationProtection) || (next.DurableStorageProtection && !current.DurableStorageProtection) || (next.RetentionProtection && !current.RetentionProtection) || (next.ImportStagingProtection && !current.ImportStagingProtection))
 }
 
+// protectSetupWriter fences protected rollback snapshots before journal planning.
+// Callers hold hooks.lock after settling any previous setup transaction.
 func protectSetupWriter(home string, current config.Config, proposed ...config.Config) error {
 	if setupjournal.TransactionPending(home) {
 		return errors.New("setup pending before writer protection")
