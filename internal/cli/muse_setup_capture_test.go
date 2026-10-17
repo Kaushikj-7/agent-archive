@@ -35,7 +35,7 @@ func TestMuseSetupCommitsOnlyIssuedWindowAndRefreshPreservesIt(t *testing.T) {
 	}
 	setupYes(t, env, "", 0, "--yes", "--no-skills", "--provider", "s3", "--bucket", "synthetic-muse", "--aws-profile", "synthetic", "--region", "us-east-1", "--prefix", "synthetic", "--project", f.project, "--apps", "muse", "--muse-home", filepath.Dir(f.root))
 	cfg := mustLoadConfig(t, f.home)
-	if cfg.MuseCapture == nil || !cfg.MuseCapture.Since.Equal(f.birth.Add(-time.Minute)) || !cfg.NativeAdmissionProtection {
+	if cfg.MuseCapture == nil || !cfg.MuseCapture.Since.Equal(f.birth.Add(-time.Minute)) || !cfg.NativeAdmissionProtection || !cfg.NativeReplayProtection {
 		t.Fatalf("setup did not issue exact window: %+v", cfg.MuseCapture)
 	}
 	first := *cfg.MuseCapture
@@ -86,7 +86,7 @@ func TestMuseSetupCommitsOnlyIssuedWindowAndRefreshPreservesIt(t *testing.T) {
 	}
 	setupYes(t, env, "", 0, "--refresh")
 	refreshed := mustLoadConfig(t, f.home)
-	if refreshed.MuseCapture == nil || *refreshed.MuseCapture != first || !refreshed.MuseCaptureLastIssuedAt.Equal(cfg.MuseCaptureLastIssuedAt) {
+	if refreshed.MuseCapture == nil || *refreshed.MuseCapture != first || !refreshed.MuseCaptureLastIssuedAt.Equal(cfg.MuseCaptureLastIssuedAt) || !refreshed.NativeReplayProtection {
 		t.Fatal("refresh widened admission")
 	}
 }
@@ -134,5 +134,32 @@ func TestMuseSetupFailureRestoresPriorCommittedWindow(t *testing.T) {
 	after := mustLoadConfig(t, f.home)
 	if after.MuseCapture == nil || *after.MuseCapture != *f.cfg.MuseCapture || !after.MuseCaptureLastIssuedAt.Equal(f.cfg.MuseCaptureLastIssuedAt) {
 		t.Fatal("rollback lost committed window or retained tentative floor")
+	}
+}
+
+func TestMuseRefreshInstallsReplayFenceWithoutReissuingWindow(t *testing.T) {
+	t.Parallel()
+	f := newMuseRootCaptureFixture(t)
+	if f.cfg.NativeReplayProtection {
+		t.Fatal("shared foundation automatically enabled replay")
+	}
+	env := f.env
+	env.MuseRootCaptureQualified = true
+	executable, err := env.executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := f.cfg
+	current.InstalledExecutable = executable
+	if err := config.Save(f.home, current); err != nil {
+		t.Fatal(err)
+	}
+	setupYes(t, env, "", 0, "--refresh")
+	after := mustLoadConfig(t, f.home)
+	if !after.NativeReplayProtection {
+		t.Fatal("same-executable refresh did not install replay protection")
+	}
+	if after.MuseCapture == nil || *after.MuseCapture != *f.cfg.MuseCapture || !after.MuseCaptureLastIssuedAt.Equal(f.cfg.MuseCaptureLastIssuedAt) {
+		t.Fatal("refresh reissued admission")
 	}
 }

@@ -179,7 +179,7 @@ func (p *pass) admitStartupCandidate(candidate startupCandidate) (err error) {
 // authoritative and no continuation effects are synthesized here.
 func startupOwnerMatches(cfg config.Config, id string, reg archive.SessionRegistration, candidate startupCandidate) bool {
 	i, b := candidate.intent, reg.NativeBinding
-	if reg.Validate() != nil || reg.ArchiveSessionID != id || reg.Harness.Name != "muse" || reg.NativeSessionID != i.NativeSessionID || reg.NativeAdmission == nil || i.NativeAdmission == nil || *reg.NativeAdmission != *i.NativeAdmission || b == nil || b.Version != 2 || b.Agent != "muse" || b.NativeID != i.NativeSessionID || b.RootRevision != candidate.root.Revision || reg.ProjectRoot != i.ProjectRoot || reg.ProjectID != candidate.projectID || reg.DestinationID != i.DestinationID || i.ObservedAt.Before(b.NativeCreatedAt) {
+	if !sameMuseStartupReplay(reg.Replay, i.Replay) || reg.Validate() != nil || reg.ArchiveSessionID != id || reg.Harness.Name != "muse" || reg.NativeSessionID != i.NativeSessionID || reg.NativeAdmission == nil || i.NativeAdmission == nil || *reg.NativeAdmission != *i.NativeAdmission || b == nil || b.Version != 2 || b.Agent != "muse" || b.NativeID != i.NativeSessionID || b.RootRevision != candidate.root.Revision || reg.ProjectRoot != i.ProjectRoot || reg.ProjectID != candidate.projectID || reg.DestinationID != i.DestinationID || i.ObservedAt.Before(b.NativeCreatedAt) {
 		return false
 	}
 	observed, observedOK := capture.ConfiguredProjectActivationFor(cfg, i.ObservedCwd)
@@ -287,4 +287,13 @@ func (p *pass) readStartupIntent(path string) (intent agentapi.AdmissionIntent, 
 		return intent, 0, false
 	}
 	return intent, charge, true
+}
+
+// First-owner classification is immutable, including an ordinary nil marker.
+// A conflicting later startup remains queued instead of being acknowledged.
+func sameMuseStartupReplay(a, b *archive.Replay) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.RunID == b.RunID
 }

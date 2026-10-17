@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 // MaxNativeAdmissionIntentBytes is the existing private Muse v2 wire bound.
@@ -28,16 +29,19 @@ func ValidNativeAdmissionIntentShape(i AdmissionIntent) bool {
 	if i.Version != 2 || i.Harness != "muse" || i.NativeAdmission == nil || i.NativeAdmission.Validate() != nil || !nativeRootID(i.NativeSessionID) || !nativeRootPath(i.ProjectRoot, true) || !nativeRootPath(i.ObservedCwd, false) || !nativeRootHex(i.DestinationID, 64) || i.PauseGeneration != "" && !nativeRootHex(i.PauseGeneration, 32) || i.ObservedAt.IsZero() {
 		return false
 	}
-	if i.TranscriptPath != "" || i.CodexPolicyToken != "" || i.CursorVersion != "" || i.ComposerMode != "" || i.Replay != nil || i.LastHead != nil {
+	if i.TranscriptPath != "" || i.CodexPolicyToken != "" || i.CursorVersion != "" || i.ComposerMode != "" || i.LastHead != nil {
 		return false
 	}
 	switch i.NativeMode {
 	case NativeStartupCandidate:
+		if i.Replay != nil && i.Replay.RunID != "" && !archive.IsReplayRunID(i.Replay.RunID) {
+			return false
+		}
 		if i.Event != string(nativeRootStart) || i.NativeOwnerID != "" || i.NativeWindowGeneration != "" || len(i.Effects) != 0 {
 			return false
 		}
 	case NativeOwnerContinuation:
-		if !nativeRootHex(i.NativeOwnerID, 32) || !nativeRootHex(i.NativeWindowGeneration, 32) || len(i.Effects) != 1 || !nativeRootContinuationEvent(i, i.Effects[0].Event) {
+		if i.Replay != nil || !nativeRootHex(i.NativeOwnerID, 32) || !nativeRootHex(i.NativeWindowGeneration, 32) || len(i.Effects) != 1 || !nativeRootContinuationEvent(i, i.Effects[0].Event) {
 			return false
 		}
 	default:

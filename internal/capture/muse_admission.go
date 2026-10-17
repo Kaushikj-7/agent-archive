@@ -18,7 +18,10 @@ import (
 
 type museAdmissionContext struct{ intent agentapi.AdmissionIntent }
 
-func prepareMuseAdmission(cfg config.Config, batch []agentapi.LifecycleEvent, observedAt time.Time) (*museAdmissionContext, error) {
+func prepareMuseAdmission(cfg config.Config, batch []agentapi.LifecycleEvent, observedAt time.Time, replay *archive.Replay) (*museAdmissionContext, error) {
+	if replay != nil && !cfg.NativeReplayProtection {
+		return nil, errors.New("muse replay startup requires committed replay protection")
+	}
 	if len(batch) != 1 {
 		return nil, errors.New("muse hook requires one root observation")
 	}
@@ -41,6 +44,10 @@ func prepareMuseAdmission(cfg config.Config, batch []agentapi.LifecycleEvent, ob
 		return nil, err
 	}
 	c := &museAdmissionContext{intent: agentapi.AdmissionIntent{Version: 2, NativeMode: agentapi.NativeStartupCandidate, Harness: "muse", Event: "SessionStart", NativeSessionID: e.Session.NativeID, ProjectRoot: project.Root, ObservedCwd: e.ProjectRoot, ObservedAt: observedAt.UTC(), DestinationID: cfg.DestinationID(), PauseGeneration: cfg.PauseGeneration, NativeAdmission: &archive.NativeAdmission{Contract: "muse-root-admission", HookContract: e.NativeHookContract, RootFingerprint: digest, WindowGeneration: cfg.MuseCapture.Generation, PolicyFingerprint: cfg.MuseCapture.PolicyFingerprint}}}
+	if replay != nil {
+		marker := *replay
+		c.intent.Replay = &marker
+	}
 	if err := checkMuseAdmission(cfg, c, nil, observedAt); err != nil {
 		return nil, err
 	}
@@ -56,6 +63,9 @@ func checkMuseAdmission(cfg config.Config, original *museAdmissionContext, owner
 
 // MuseIntentEligible checks original captured authority without renewing it.
 func MuseIntentEligible(cfg config.Config, intent agentapi.AdmissionIntent, at time.Time) bool {
+	if intent.Replay != nil && !cfg.NativeReplayProtection {
+		return false
+	}
 	if !RecognizedAdmissionIntent(intent) || intent.Version != 2 || intent.NativeMode != agentapi.NativeStartupCandidate || !cfg.NativeAdmissionProtection || !cfg.NativeAuthorityProtection || cfg.MuseCapture == nil || cfg.Paused || !cfg.Archive.Enabled || intent.DestinationID != cfg.DestinationID() || intent.PauseGeneration != cfg.PauseGeneration || at.Sub(intent.ObservedAt) > maxAdmissionIntentAge || intent.ObservedAt.After(at.Add(time.Minute)) || intent.ObservedAt.Before(cfg.MuseCapture.Since) {
 		return false
 	}
@@ -90,7 +100,7 @@ func RecognizedAdmissionIntent(i agentapi.AdmissionIntent) bool {
 	return agentapi.ValidNativeAdmissionIntentShape(i)
 }
 
-func handleMuseBatch(home string, batch []agentapi.LifecycleEvent, now time.Time, lock lockHooks, afterLock func()) error {
+func handleMuseBatch(home string, batch []agentapi.LifecycleEvent, now time.Time, lock lockHooks, afterLock func(), replay *archive.Replay) error {
 	cfg, found, err := config.Load(home)
 	if err != nil || !found || setupjournal.TransactionPending(home) {
 		return err
@@ -108,7 +118,7 @@ func handleMuseBatch(home string, batch []agentapi.LifecycleEvent, now time.Time
 	if owned {
 		original, err = prepareMuseContinuation(cfg, store, id, batch[0], now)
 	} else if batch[0].Kind == agentapi.EventStart {
-		original, err = prepareMuseAdmission(cfg, batch, now)
+		original, err = prepareMuseAdmission(cfg, batch, now, replay)
 	}
 	if err != nil || original == nil {
 		return nil
@@ -160,6 +170,9 @@ func prepareMuseContinuation(cfg config.Config, store *state.Store, id string, e
 	owner, found, err := store.LoadRegistration(id)
 	if err != nil || !found {
 		return nil, err
+	}
+	if owner.Replay != nil && !cfg.NativeReplayProtection {
+		return nil, errors.New("muse replay owner requires committed replay protection")
 	}
 	if cfg.MuseCapture == nil || owner.NativeAdmission == nil || owner.NativeBinding == nil || owner.NativeBinding.Version != 2 || owner.NativeAdmission.Validate() != nil || owner.NativeBinding.Validate() != nil || !cfg.AcceptSession(owner) {
 		return nil, errors.New("muse continuation owner is not eligible")

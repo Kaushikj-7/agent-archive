@@ -275,6 +275,11 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 		return err
 	}
 	*next = reconciled
+	// Setup/refresh explicitly installs the stronger writer floor through the
+	// existing transaction; hooks and collectors never upgrade configuration.
+	if next.MuseCapture != nil {
+		next.NativeReplayProtection = true
+	}
 	if err := protectSetupWriter(home, current, *next); err != nil {
 		return err
 	}
