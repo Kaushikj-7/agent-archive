@@ -142,12 +142,13 @@ class ShippingConsumerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             executable = pathlib.Path(temporary).resolve() / "archive producer"
             request = {"executable": str(executable), "control": {"launch_id": "a", "replay": {}}}
-            for body, reason in [('import sys\nsys.stdout.buffer.write(b"x"*65537)\n', "output cap"),
-                                 ('import time\ntime.sleep(10)\n', "timed out")]:
+            # Overflow needs interpreter startup time; hang intentionally uses a short deadline.
+            for body, reason, seconds in [('import sys\nsys.stdout.buffer.write(b"x"*65537)\n', "output cap", 2),
+                                          ('import time\ntime.sleep(10)\n', "timed out", 0.2)]:
                 executable.write_text('#!/usr/bin/python3 -I\n' + body)
                 executable.chmod(0o700)
                 with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, reason):
-                    replay.prepare_from_archive(str(executable), request, timeout=0.2)
+                    replay.prepare_from_archive(str(executable), request, timeout=seconds)
 
     @unittest.skipUnless(os.environ.get("AGENT_ARCHIVE_REPLAY_TEST_BINARY"), "explicit built archive binary required")
     def test_actual_cli_consumed_without_test_exporter(self):
