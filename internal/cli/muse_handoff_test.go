@@ -103,7 +103,7 @@ func TestMuseHandoffUsesSharedTerminalLaunch(t *testing.T) {
 
 func TestOrdinaryHandoffDoesNotInheritReplayMarker(t *testing.T) {
 	t.Parallel()
-	for _, destination := range []handoffDestination{"claude", "codex", "cursor", "muse"} {
+	for _, destination := range []handoffDestination{handoffDestinationClaude, handoffDestinationCodex, handoffDestinationCursor, handoffDestinationMuse} {
 		t.Run(string(destination), func(t *testing.T) {
 			t.Parallel()
 			env := testEnv(t, t.TempDir(), time.Now())

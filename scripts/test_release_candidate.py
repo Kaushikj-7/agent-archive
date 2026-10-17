@@ -282,7 +282,7 @@ class CandidateTest(unittest.TestCase):
             bindings[name] = ports
         self.assertEqual(set(bindings), set(identities))
         capture_ports = ('Sources:', 'Filter:', 'Parser:', 'Decoder:', 'Hooks:')
-        muse_dormant = ('Decoder: muse.Decoder(), Hooks: muse.Hooks(), NativeHeaders: muse.NativeHeaders{}, Discovery: muse.NativeHeaders{}, '
+        muse_dormant = ('Launcher: muse.Launcher{}, Decoder: muse.Decoder(), Hooks: muse.Hooks(), NativeHeaders: muse.NativeHeaders{}, Discovery: muse.NativeHeaders{}, '
                       'Preview: muse.Previewer{}, Runtime: muse.RuntimeDetector{}, '
                       'Sources: muse.SourceProvider{}, Filter: muse.Filter{}, Parser: muse.Parser{}')
         for name, ports in bindings.items():

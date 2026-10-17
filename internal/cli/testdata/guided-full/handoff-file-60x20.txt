@@ -8,11 +8,12 @@ $ agent-archive handoff SESSION
   1) Claude Code (default)
   2) Codex
   3) Cursor
+  4) Muse Code
 
   [p] print  [c] copy  [w] write  [q] quit
 
 › Choose [1]: w
-\e[12A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[12A✓ Handoff write to a file
+\e[13A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[13A✓ Handoff write to a file
 
 ? Write to
 

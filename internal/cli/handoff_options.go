@@ -68,6 +68,7 @@ const (
 	handoffDestinationClaude handoffDestination = "claude"
 	handoffDestinationCodex  handoffDestination = "codex"
 	handoffDestinationCursor handoffDestination = "cursor"
+	handoffDestinationMuse   handoffDestination = "muse"
 )
 
 func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDependencies, interactive bool) (handoffOptions, bool) {
