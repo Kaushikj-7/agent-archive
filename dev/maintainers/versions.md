@@ -380,3 +380,9 @@ ToolResults/ToolErrors remain unavailable. Ordinary unaffected rows, other-agent
 parsers, Source2/metadata1 and private writer formats do not change. This finite
 observation lane does not enable capture or qualify rich tool/status parity.
 
+Muse effect-body compatibility accepts the closed native `file_read` profile,
+`complete` task completion and `failed` outcome forms. Only validation of private
+omitted bodies changes: equivalent old and new bodies yield byte-identical
+retained rows and the same analysis. Subject/reason strings and outcome tags are
+not retained or interpreted as result/error facts. This validation-only change allocates no additional filter, adapter or parser
+version; inherited retained schemas and metadata algorithms do not change. No source recapture or richer metadata is implied.

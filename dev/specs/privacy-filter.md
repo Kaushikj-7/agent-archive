@@ -503,6 +503,17 @@ sequence, physical position and exact prefix comparison, but contributes no time
 run/task, activity, turn, pending response, tool or accounting fact. It cannot
 interrupt required startup blocks. Existing v1 row bytes are unchanged.
 
+The tool-batch started profile additionally accepts exactly
+`{kind: file_read, subject: string}` alongside `{kind: ineligible}`. A completed
+outcome accepts `task_completion: {kind: complete}` alongside the existing
+`{kind: terminal, terminal: {kind: completed}}`, with the same nonnegative exact
+`output_ref_count`. The other accepted outcome is exactly
+`{kind: failed, reason: string}`. Unknown keys, tags and types refuse. Subject,
+reason, completion and profile tags are discarded without inferring parallelism,
+success, tool-error attribution or cancellation. These input forms use the
+unchanged omission projection and all existing identity, causality, join and
+resource bounds.
+
 Only minimal new-family identities survive: run/source record for reasoning;
 run/pending/task/call for requests and wait starts; run/pending/review for review
 rows; run/pending for wait terminals; run/effect/task/call/index for tool effects;
