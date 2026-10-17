@@ -928,17 +928,56 @@ func TestHeavySessionIsRetriedOnTheBackoffSchedule(t *testing.T) {
 		at = at.Add(gap)
 	}
 	var light []string
+	completed := map[string]bool{}
+	settled := ""
+	passes, publications, settledSkips, settledHeld := 0, 0, 0, 0
 	failures := 0
 	for now, pass := clock, 1; now.Before(end); now, pass = now.Add(time.Hour), pass+1 {
+		newLight := ""
 		if pass%6 == 0 {
-			light = append(light, r.save(1000+pass, false).ArchiveSessionID)
+			newLight = r.save(1000+pass, false).ArchiveSessionID
+			light = append(light, newLight)
 		}
+		// Keep one settled light eligible on every later pass to exercise
+		// unchanged scans without repeatedly sweeping all completed arrivals.
+		// A light leaves execution only after its publication is verified.
 		before := reads()
-		result, err := Run(t.Context(), r.local, store, Options{Sources: sources, Parsers: testParsers, MachineID: "m", CodexRollouts: lookup, Now: func() time.Time { return now }})
+		result, err := Run(t.Context(), r.local, store, Options{Sources: sources, Parsers: testParsers, MachineID: "m", CodexRollouts: lookup, Now: func() time.Time { return now }, AcceptSession: func(reg archive.SessionRegistration) bool {
+			return reg.ArchiveSessionID == settled || !completed[reg.ArchiveSessionID]
+		}})
 		if err != nil {
 			t.Fatal(err)
 		}
+		passes++
 		read := reads() > before
+		if settled != "" {
+			skipped := slices.Contains(result.Skipped, settled)
+			if read {
+				if skipped || !lookup.AllowanceSpent() {
+					t.Fatalf("pass %d: skipped=%v spent=%v, want the settled light held after the heavy read", pass, result.Skipped, lookup.AllowanceSpent())
+				}
+				settledHeld++
+			} else if !skipped {
+				t.Fatalf("pass %d: skipped=%v, want the settled light %s unchanged", pass, result.Skipped, settled)
+			} else {
+				settledSkips++
+			}
+		}
+		if newLight != "" {
+			if len(result.Published) != 1 || result.Published[0] != newLight || result.Errors[newLight] != nil || completed[newLight] {
+				t.Fatalf("pass %d: published=%v errors=%v, want the new light %s published once", pass, result.Published, result.Errors, newLight)
+			}
+			if published, err := r.local.LoadPublishedState(newLight); err != nil || published == nil {
+				t.Fatalf("pass %d: new light %s lacks published state: %v", pass, newLight, err)
+			}
+			completed[newLight] = true
+			publications++
+			if settled == "" {
+				settled = newLight
+			}
+		} else if len(result.Published) != 0 {
+			t.Fatalf("pass %d: unexpectedly published=%v without a new light", pass, result.Published)
+		}
 		switch waited := now.Sub(clock); {
 		case waited < MaxDeferral:
 			if !read || result.Deferred[id] != DeferredLookupAllowance {
@@ -959,7 +998,7 @@ func TestHeavySessionIsRetriedOnTheBackoffSchedule(t *testing.T) {
 			if next := nextLookupRetry(clock, now); !attempts[next] || !result.RetryLater[id].Equal(next) {
 				t.Fatalf("pass %d: retry later=%v, want %v", pass, result.RetryLater, next)
 			}
-			// The other Codex sessions are read as usual: none is left.
+			// Every eligible Codex session is reached, including new lights.
 			if len(result.Unreached) != 0 {
 				t.Fatalf("pass %d: unreached=%v, want every other Codex session read", pass, result.Unreached)
 			}
@@ -976,6 +1015,9 @@ func TestHeavySessionIsRetriedOnTheBackoffSchedule(t *testing.T) {
 	// 31, 63, 127, 255, 423 and 591 hours after it.
 	if failures != 11 || scheduled != 10 {
 		t.Fatalf("failures=%d attempts=%d, want 11 and 10", failures, scheduled)
+	}
+	if passes != 696 || len(light) != 116 || len(completed) != 116 || publications != 116 || settledSkips != 661 || settledHeld != 29 {
+		t.Fatalf("passes=%d arrivals=%d distinct=%d publications=%d settled skips=%d held=%d, want 696/116/116/116/661/29", passes, len(light), len(completed), publications, settledSkips, settledHeld)
 	}
 	for _, lightID := range light {
 		if published, err := r.local.LoadPublishedState(lightID); err != nil || published == nil {
