@@ -73,6 +73,8 @@ const (
 // private file elsewhere; see destination.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	// NativeImportProtection permanently preserves confirmed historical authority.
+	NativeImportProtection bool `json:"native_import_protection,omitempty"`
 	// NativeAdmissionProtection permanently fences first-owner capture writers.
 	NativeAdmissionProtection bool               `json:"native_admission_protection,omitempty"`
 	MuseCaptureLastIssuedAt   time.Time          `json:"muse_capture_last_issued_at,omitzero"`
@@ -338,7 +340,7 @@ func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
 			return err
 		}
 	}
-	if (cfg.NativeAuthorityProtection || len(cfg.NativeRoots) > 0) && (!previous.NativeAuthorityProtection || !slices.Equal(cfg.NativeRoots, previous.NativeRoots)) {
+	if (cfg.NativeAuthorityProtection || cfg.NativeImportProtection || len(cfg.NativeRoots) > 0) && (!previous.NativeAuthorityProtection || cfg.NativeImportProtection != previous.NativeImportProtection || !slices.Equal(cfg.NativeRoots, previous.NativeRoots)) {
 		if _, err := os.Lstat(filepath.Join(home, "setup-transaction.json")); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("setup pending before native source authority change")
 		}

@@ -200,6 +200,12 @@ func validateDeletionGuardVersion(raw []byte) error {
 			}
 			names = append(names, "admission")
 		}
+		if version.Import != "" {
+			if version.Import != "muse-historical-import" {
+				return errors.New("unsupported native import guard capability")
+			}
+			names = append(names, "import")
+		}
 		if err := exactAuthorityObject(raw, names); err != nil {
 			return err
 		}

@@ -47,6 +47,7 @@ type ManagedJob struct {
 }
 
 type journalV2 struct {
+	NativeImportProtection    bool `json:"native_import_protection,omitempty"`
 	NativeAdmissionProtection bool `json:"native_admission_protection,omitempty"`
 	NativeAuthorityProtection bool `json:"native_authority_protection,omitempty"`
 	FilesOnly                 bool `json:"files_only,omitempty"`
@@ -71,7 +72,7 @@ func marshalBaseJSON(j Journal) ([]byte, error) {
 	if j.Changes == nil {
 		j.Changes = []fileapply.Change{}
 	}
-	return json.Marshal(journalV2{NativeAdmissionProtection: j.NativeAdmissionProtection, NativeAuthorityProtection: j.NativeAuthorityProtection, FilesOnly: j.FilesOnly && j.NativeAuthorityProtection, Version: 2, Changes: &struct {
+	return json.Marshal(journalV2{NativeImportProtection: j.NativeImportProtection, NativeAdmissionProtection: j.NativeAdmissionProtection, NativeAuthorityProtection: j.NativeAuthorityProtection, FilesOnly: j.FilesOnly && j.NativeAuthorityProtection, Version: 2, Changes: &struct {
 		Files []fileapply.Change `json:"files"`
 	}{Files: j.Changes}, Jobs: j.Jobs, Legacy: j.Legacy, Relabeled: j.Relabeled, MoreRelabeled: j.MoreRelabeled})
 }
@@ -114,7 +115,7 @@ func unmarshalBaseJSON(data []byte) (Journal, error) {
 	if err := validateJobs(wire.Jobs); err != nil {
 		return Journal{}, err
 	}
-	return Journal{NativeAdmissionProtection: wire.NativeAdmissionProtection, NativeAuthorityProtection: wire.NativeAuthorityProtection, FilesOnly: wire.FilesOnly, Changes: wire.Changes.Files, Jobs: wire.Jobs, Legacy: wire.Legacy, Relabeled: wire.Relabeled, MoreRelabeled: wire.MoreRelabeled}, nil
+	return Journal{NativeImportProtection: wire.NativeImportProtection, NativeAdmissionProtection: wire.NativeAdmissionProtection, NativeAuthorityProtection: wire.NativeAuthorityProtection, FilesOnly: wire.FilesOnly, Changes: wire.Changes.Files, Jobs: wire.Jobs, Legacy: wire.Legacy, Relabeled: wire.Relabeled, MoreRelabeled: wire.MoreRelabeled}, nil
 }
 
 func validateJobs(jobs []ManagedJob) error {

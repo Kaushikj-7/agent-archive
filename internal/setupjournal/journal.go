@@ -35,6 +35,7 @@ func TransactionPending(home string) bool {
 // every file change with its before and after bytes, the collector's plist
 // and whether its job was loaded, and the jobs the setup retires.
 type Journal struct {
+	NativeImportProtection    bool `json:"native_import_protection,omitempty"`
 	NativeAdmissionProtection bool `json:"native_admission_protection,omitempty"`
 	// NativeAuthorityProtection permanently fences old recovery before file actions.
 	NativeAuthorityProtection bool       `json:"native_authority_protection,omitempty"`

@@ -205,10 +205,11 @@ func PreserveWriterFence(next *Config, previous Config) {
 		next.MuseCaptureLastIssuedAt = previous.MuseCaptureLastIssuedAt
 	}
 	next.NativeAdmissionProtection = next.NativeAdmissionProtection || previous.NativeAdmissionProtection || previous.MuseCapture != nil
+	next.NativeImportProtection = next.NativeImportProtection || previous.NativeImportProtection
 	next.DeletionProtection = next.DeletionProtection || previous.DeletionProtection
 	next.SourceSetPublicationProtection = next.SourceSetPublicationProtection || previous.SourceSetPublicationProtection
 	next.SearchLifecycleProtection = next.SearchLifecycleProtection || previous.SearchLifecycleProtection
-	next.NativeAuthorityProtection = next.NativeAuthorityProtection || previous.NativeAuthorityProtection || len(previous.NativeRoots) > 0
+	next.NativeAuthorityProtection = next.NativeAuthorityProtection || previous.NativeAuthorityProtection || next.NativeImportProtection || len(previous.NativeRoots) > 0
 	next.ScopedPickerProtection = next.ScopedPickerProtection || previous.ScopedPickerProtection
 	next.SettledCursorSelectionProtection = next.SettledCursorSelectionProtection || previous.SettledCursorSelectionProtection
 	next.StagedSelectionProtection = next.StagedSelectionProtection || previous.StagedSelectionProtection
