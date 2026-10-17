@@ -1102,6 +1102,20 @@ results the file lacks. Phase 2 still imports only chats that have no file:
     database-only chat is published and read back on a live Cursor, with its
     version recorded.
 
+**Protected staged admission.** When the current protected Cursor selection
+configuration is enabled, selected root chats first use the settled capture
+operation. A locked source may use the distinct fixed live-WAL operation: it
+pins one native transaction, reserves a private image of at most 128 MiB before
+creation, and reads composer and routing metadata from the same held image.
+The original request/context/resource owner stays bound throughout capture.
+Scratch deletion and durability barriers must succeed before a separate live
+proof can be staged under existing stage-3/Cursor-4 ownership. A cleanup failure
+returns retryable custody and retains the receipt; no stage or registration may
+escape that attempt. Ordinary recovery still requires settled evidence. Unknown
+Unix VFS layouts, root execution, writable process-wide SHM and exhausted
+budgets refuse this route. Synthetic tests do not renew the live support
+qualification above.
+
 **Rewritten chats.** Cursor rewrites finished messages in its database (a
 token count filled in late, an edited prompt, a checkpoint restore), so a
 cursor-sqlite chat whose new records no longer extend what was published is
