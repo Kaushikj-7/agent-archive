@@ -128,7 +128,8 @@ func newHistoricalNativeStage(t *testing.T) historicalNativeStage {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveRegistration(reg); err != nil {
+	// Complete the already-owned synthetic arrangement with its selected stage.
+	if err := local.Write(filepath.Join(store.Home(), "registrations", reg.ArchiveSessionID+".json"), reg); err != nil {
 		t.Fatal(err)
 	}
 	confirmation := struct {

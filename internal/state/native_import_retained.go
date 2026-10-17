@@ -20,6 +20,11 @@ func (s *Store) NativeImportRetainedAuthority(ctx context.Context, reg archive.S
 // NativeImportStageActive reports payload selection independently of the
 // permanent stage attribution. Released historical state is verified here.
 func (p *Published) NativeImportStageActive(reg archive.SessionRegistration) (bool, error) {
+	if reg.NativeImport != nil {
+		if err := reg.ValidateNativeImport(); err != nil {
+			return false, err
+		}
+	}
 	if reg.StagedImportSHA256 == "" {
 		return false, nil
 	}

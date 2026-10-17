@@ -212,6 +212,16 @@ func runLocalShow(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 	labels, _ := archive.LabelsFromAnalysis(target.analysis)
 	row := localReadRow{NativeID: selected.NativeID, Harness: selected.Ref.Harness, Project: selected.Directory, StartedAt: selected.StartedAt, Name: labels.Name, Title: labels.Title, Gaps: target.bundle.Capture.Gaps}
 	if o.json {
+		var normalizedView *normalizedOutput
+
+		if o.transcript {
+			view := target.analysis.View
+			turns := make([]normalizedTurn, len(view.Turns))
+			for i, turn := range view.Turns {
+				turns[i] = normalizedTurn{NormalizedTurn: turn}
+			}
+			normalizedView = &normalizedOutput{Turns: turns, ToolCalls: view.ToolCalls, ToolResults: view.ToolResults, HookFinals: view.HookFinals}
+		}
 		out := struct {
 			SchemaVersion     int                              `json:"schema_version"`
 			Domain            string                           `json:"domain"`
@@ -221,16 +231,8 @@ func runLocalShow(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 			View              *normalizedOutput                `json:"view,omitempty"`
 			TokenObservations *archive.TokenObservationSummary `json:"token_observations,omitempty"`
 			Observability     map[string]archive.Availability  `json:"observability"`
-		}{SchemaVersion: localReadSchemaVersion, Domain: "local-read-show", Source: "local", Session: row, Coverage: localCoverage(result.Coverage), TokenObservations: target.analysis.TokenObservations, Observability: localReadObservability(target.analysis.Observability)}
+		}{SchemaVersion: localReadSchemaVersion, Domain: "local-read-show", Source: "local", Session: row, View: normalizedView, Coverage: localCoverage(result.Coverage), TokenObservations: target.analysis.TokenObservations, Observability: localReadObservability(target.analysis.Observability)}
 
-		if o.transcript {
-			view := target.analysis.View
-			turns := make([]normalizedTurn, len(view.Turns))
-			for i, turn := range view.Turns {
-				turns[i] = normalizedTurn{NormalizedTurn: turn}
-			}
-			out.View = &normalizedOutput{Turns: turns, ToolCalls: view.ToolCalls, ToolResults: view.ToolResults, HookFinals: view.HookFinals}
-		}
 		raw, err := json.Marshal(out)
 		if err == nil {
 			raw = append(archive.DisplayJSON(raw), '\n')
