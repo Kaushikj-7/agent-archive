@@ -96,7 +96,7 @@ func TestNativeImportExplicitCancellationPreservesTypedAndReleasedAuthority(t *t
 	if err := s.SavePending(reg.ArchiveSessionID, next); err != nil {
 		t.Fatal(err)
 	}
-	if err := published.SaveReadyPublication(next, next.ReadyAt); err != nil {
+	if err := published.SaveCommittedPublication(next, next.ReadyAt); err != nil {
 		t.Fatal(err)
 	}
 	if published.state.PublicationVersion != 5 {
