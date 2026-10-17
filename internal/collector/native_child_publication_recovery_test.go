@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,12 +90,12 @@ func TestNativeChildLateParentPublicationRetryKeepsFrozenBytesAndNewRequest(t *t
 	now := at.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "synthetic", Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
 	initial, err := Run(t.Context(), local, remote, opts)
-	if err != nil || initial.Errors[child.ArchiveSessionID] == nil || len(initial.Published) != 0 {
+	if err != nil || initial.Errors[child.ArchiveSessionID] == nil || !strings.Contains(initial.Errors[child.ArchiveSessionID].Error(), "injected metadata failure") || len(initial.Published) != 0 {
 		t.Fatal("metadata failure did not freeze the child's publication", initial, err)
 	}
 	pending, found, err := local.LoadPublicationPending(child.ArchiveSessionID)
 	if err != nil || !found || !pending.Attempted || !pending.Bundle.NativeChild || pending.Bundle.ParentSessionID != "" {
-		t.Fatal("unlinked child did not retain its own frozen publication", found, err)
+		t.Fatal("unlinked child did not retain its own frozen publication", found, err, initial.Errors[child.ArchiveSessionID])
 	}
 	frozenMetadata := bytes.Clone(pending.MetadataBytes)
 	frozenSource := pending.SourceReference()
