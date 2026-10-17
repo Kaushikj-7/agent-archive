@@ -20,6 +20,7 @@ type PublicationSelection struct {
 // PublicationStageNamespace selects a closed, owner-validated stage store.
 type PublicationStageNamespace string
 
+// Stage namespaces distinguish retained publication inputs by their owner.
 const (
 	PendingSourceNamespace  PublicationStageNamespace = "session-pending-sources"
 	DeletionSourceNamespace PublicationStageNamespace = "session-deletion-sources"

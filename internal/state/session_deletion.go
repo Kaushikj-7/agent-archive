@@ -30,6 +30,7 @@ var ErrDeletionWorkChanged = errors.New("session work changed during removal; pr
 // SessionDeletionPhase is the durable state of an exact selecting union.
 type SessionDeletionPhase string
 
+// Session deletion phases separate preparation, removal and exact restoration.
 const (
 	DeletionPreparing  SessionDeletionPhase = "preparing"
 	DeletionPrepared   SessionDeletionPhase = "prepared"
