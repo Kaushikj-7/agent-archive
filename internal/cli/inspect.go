@@ -170,17 +170,9 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if code != 0 {
 		return code
 	}
-	store, cfg, found, err := openReadOnlyStore(env)
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
-		return 1
-	}
-	if !found {
-		terminal.Println(stderr, preSetupGuidanceFor(env))
-		return 1
-	}
-	if *rebuildIndex && !rebuildListingIndex(env, store, stderr) {
-		return 1
+	store, cfg, code := openListStore(env, stderr, *rebuildIndex)
+	if code != 0 {
+		return code
 	}
 	ctx, browsing, stopReads := listReadContext(env, store, opts, stdin, stdout)
 	defer stopReads()
@@ -243,6 +235,23 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return code
 	}
 	return printListWithPager(ctx, env, stdout, stderr, opts.noPager, choices)
+}
+
+// openListStore retains list's configuration and explicit rebuild checks.
+func openListStore(env listCommandDependencies, stderr io.Writer, rebuild bool) (storage.ObjectStore, config.Config, int) {
+	store, cfg, found, err := openReadOnlyStore(env)
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
+		return nil, cfg, 1
+	}
+	if !found {
+		terminal.Println(stderr, preSetupGuidanceFor(env))
+		return nil, cfg, 1
+	}
+	if rebuild && !rebuildListingIndex(env, store, stderr) {
+		return nil, cfg, 1
+	}
+	return store, cfg, 0
 }
 
 // listReadContext starts discovery before scope preparation and owns both
