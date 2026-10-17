@@ -1,6 +1,8 @@
 package collector
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -9,6 +11,22 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
+
+func nativeChildStateBytes(t *testing.T, home string, registrations []archive.SessionRegistration) map[string][]byte {
+	t.Helper()
+	files := make(map[string][]byte)
+	for _, reg := range registrations {
+		for _, directory := range []string{"registrations", "requests"} {
+			path := filepath.Join(home, directory, reg.ArchiveSessionID+".json")
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files[path] = raw
+		}
+	}
+	return files
+}
 
 func TestNativeChildLinksRefuseCyclicInventoryBeforeDurableEffects(t *testing.T) {
 	local := newTestStore(t)
@@ -190,5 +208,83 @@ func TestNativeChildSettledInvalidGraphHoldsScanWithoutChangingDurableWork(t *te
 				t.Fatal("graph hold changed existing owner or pending work")
 			}
 		})
+	}
+}
+
+func TestNativeChildGraphBudgetRefusalHoldsSettledChildrenAfterPressureClears(t *testing.T) {
+	for _, refusal := range []string{"ledger pressure", "fixed bound"} {
+		for _, mode := range []string{"cycle", "conflicting parent"} {
+			t.Run(refusal+"/"+mode, func(t *testing.T) {
+				local := newTestStore(t)
+				at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+				home := t.TempDir()
+				const a = "00000000-0000-0000-0000-000000000001"
+				const b = "00000000-0000-0000-0000-000000000002"
+				const c = "00000000-0000-0000-0000-000000000003"
+				child := nativeLinkRegistration("child", a, b, home, at)
+				child.ParentSessionID, child.NativeLinkVersion = "parent", 1
+				parent := nativeLinkRegistration("parent", b, "", home, at)
+				regs := []archive.SessionRegistration{child, parent}
+				children := 1
+				if mode == "cycle" {
+					regs[1].NativeChild, regs[1].ParentNativeSessionID = true, a
+					regs[1].ParentSessionID, regs[1].NativeLinkVersion = child.ArchiveSessionID, 1
+					children = 2
+				} else {
+					regs[0].ParentSessionID = "wrong"
+					regs = append(regs, nativeLinkRegistration("wrong", c, "", home, at))
+				}
+				for _, reg := range regs {
+					if err := local.SaveRegistration(reg); err != nil {
+						t.Fatal(err)
+					}
+					if err := local.SaveRequest(reg.ArchiveSessionID, "frozen-existing-work", at); err != nil {
+						t.Fatal(err)
+					}
+				}
+				before := nativeChildStateBytes(t, local.Home(), regs)
+				mtimes := snapshotMtimes(t, local.Home())
+				loads := state.PublishedStateLoads()
+				budget := agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
+				p := &pass{ctx: t.Context(), local: local, registrations: regs, now: at, result: Result{Errors: map[string]error{}},
+					opts: Options{sourcePasses: &sourcePassSet{env: agentapi.SourceEnvironment{ReadBudget: budget}}}}
+				if refusal == "fixed bound" {
+					// Count-only padding represents already loaded registration
+					// metadata. The bound must refuse before any graph allocation.
+					perRegistration := 2*int64(reflect.TypeFor[archive.SessionRegistration]().Size()) + 2048
+					p.registrations = make([]archive.SessionRegistration, int(agentapi.PassReadBudget/perRegistration)+1)
+					copy(p.registrations, regs)
+				} else if !budget.ReserveUnscoped(agentapi.PassReadBudget - 1) {
+					t.Fatal("could not establish synthetic cache pressure")
+				}
+				p.reconcileNativeLinks()
+				if refusal == "ledger pressure" {
+					// Scanning can free idle caches. The refusal must remain safe
+					// even though all read capacity is available again now.
+					budget.ReleaseUnscoped(agentapi.PassReadBudget - 1)
+				}
+				if p.result.NativeLinkPendingReasons["relationship_budget_pending"] != children || p.unreadable != nil {
+					t.Fatal("budget refusal allocated a per-child fallback or lost its reason")
+				}
+				for i := range children {
+					p.scan(t.Context(), regs[i])
+				}
+				ordinary := nativeLinkRegistration("ordinary", "ordinary-native", "", home, at)
+				claude := ordinary
+				claude.Harness.Name, claude.ParentSessionID = "claude", "claude-parent"
+				if p.holdUnopenedScan(ordinary) || p.holdUnopenedScan(claude) {
+					t.Fatal("unchecked native graph held an ordinary root or Claude child")
+				}
+				if p.pending != children || len(p.result.Errors) != 0 || len(p.result.Published) != 0 || state.PublishedStateLoads() != loads {
+					t.Fatalf("unchecked settled graph reached scanning/publication: %+v", p.result)
+				}
+				if !reflect.DeepEqual(before, nativeChildStateBytes(t, local.Home(), regs)) || !reflect.DeepEqual(mtimes, snapshotMtimes(t, local.Home())) {
+					t.Fatal("budget hold changed durable owner or request bytes")
+				}
+				if used, _ := budget.Charged(); used != 0 {
+					t.Fatalf("budget-refused graph leaked %d bytes", used)
+				}
+			})
+		}
 	}
 }

@@ -43,6 +43,7 @@ func nativeRegistrationRevision(reg archive.SessionRegistration) string {
 }
 
 func (p *pass) reconcileNativeLinks() {
+	p.nativeChildGraphUnchecked = false
 	children := 0
 	for _, reg := range p.registrations {
 		if reg.NativeChild && (p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)) {
@@ -52,6 +53,9 @@ func (p *pass) reconcileNativeLinks() {
 	if children == 0 {
 		return
 	}
+	// Stay fail-closed on either size or ledger refusal without allocating
+	// an uncharged fallback map. Only complete validation releases this hold.
+	p.nativeChildGraphUnchecked = true
 	// Temporary relationship maps borrow the already loaded registrations and
 	// the existing source ledger. Include map buckets, traversal vectors and
 	// registration value copies before allocating; release before source scans.
@@ -72,6 +76,7 @@ func (p *pass) reconcileNativeLinks() {
 	}
 	defer budget.ReleaseUnscoped(charge)
 	graph := newNativeChildGraph(p.registrations)
+	p.nativeChildGraphUnchecked = false
 	parents := make(map[nativeLinkKey]archive.SessionRegistration, len(p.registrations))
 	ambiguous := map[nativeLinkKey]bool{}
 	for _, reg := range p.registrations {

@@ -518,6 +518,9 @@ type pass struct {
 	// unreadable holds the sessions this pass must leave alone: their state
 	// could not be read, so there is nothing safe to act on.
 	unreadable map[string]bool
+	// nativeChildGraphUnchecked holds native children when relationship
+	// validation was deferred. The scalar needs no per-child fallback map.
+	nativeChildGraphUnchecked bool
 	// registered holds every session registered, readable or not.
 	registered map[string]bool
 	// parents caches the summaries of subagents' parents (see linkOwed).
