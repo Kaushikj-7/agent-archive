@@ -24,6 +24,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/gitremote"
 	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/nativefacts"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -460,7 +461,10 @@ func importRecentSessions(p *prompter, errOut io.Writer, home, userHome string, 
 		// below, so only the cause is said.
 		var stopped *importStoppedError
 		var registration *importRegistrationError
+		var cleanup *nativefacts.LiveCaptureCleanupError
 		switch {
+		case errors.As(err, &cleanup):
+			err = cleanup
 		case errors.As(err, &stopped):
 			err = errors.New("stopped")
 		case errors.As(err, &registration):

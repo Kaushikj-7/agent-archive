@@ -104,6 +104,13 @@ func readCatalogRow(ctx context.Context, snapshot *catalog.Snapshot, row catalog
 }
 
 func catalogMetadata(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, opts ListOptions) ([]archive.Metadata, error) {
+	ctx = catalog.WithReadView(ctx)
+	selectionOpts := opts
+	selectionOpts.TopLevelOnly, selectionOpts.ActivityOrder = false, false
+	selectionOpts.ScopeMatch = nil
+	if result, used, err := selectRemoteSummaryMetadata(ctx, store, prefix, MetadataQuery{Filter: filter}, selectionOpts); used || err != nil {
+		return result.Sessions, err
+	}
 	snapshot, err := catalog.OpenSnapshot(ctx, store, nil)
 	if err != nil {
 		return nil, err
@@ -132,9 +139,7 @@ func selectCatalogMetadata(ctx context.Context, store storage.ObjectStore, prefi
 	if err := ctx.Err(); err != nil {
 		return RecentResult{}, err
 	}
-	if q.IncludeRootChildren {
-		ctx = catalog.WithReadView(ctx)
-	}
+	ctx = catalog.WithReadView(ctx)
 	snapshot, err := catalog.OpenSnapshot(ctx, store, nil)
 	if err != nil {
 		return RecentResult{}, err
@@ -150,6 +155,9 @@ func selectCatalogMetadata(ctx context.Context, store storage.ObjectStore, prefi
 	}
 	span := trace.Start("catalog summary fallback")
 	defer span.End()
+	if result, used, err := selectRemoteSummaryMetadata(ctx, store, prefix, q, opts); used || err != nil {
+		return result, err
+	}
 	rows, err := catalogRows(ctx, snapshot)
 	if err != nil {
 		return RecentResult{}, err
@@ -180,8 +188,13 @@ func selectCatalogMetadata(ctx context.Context, store storage.ObjectStore, prefi
 
 // CatalogSummaries discovers the complete fresh catalog summary universe.
 // Complex CLI matchers and scope precedence may use this O(N) fallback without
-// canonical LIST or metadata-body reads. It does not promise bounded work.
+// canonical LIST. Overflow summaries can require verified metadata-body reads.
+// It does not promise bounded work.
 func CatalogSummaries(ctx context.Context, store storage.ObjectStore, filter Filter) ([]archive.Metadata, error) {
+	return CatalogSummariesWithOptions(ctx, store, filter, ListOptions{})
+}
+
+func catalogSummariesUncached(ctx context.Context, store storage.ObjectStore, filter Filter) ([]archive.Metadata, error) {
 	snapshot, err := catalog.OpenSnapshot(ctx, store, nil)
 	if err != nil {
 		return nil, err
@@ -196,8 +209,16 @@ func CatalogSummaries(ctx context.Context, store storage.ObjectStore, filter Fil
 			result = append(result, summarize(row.Entry.Summary).Metadata())
 		}
 	}
-	sort.SliceStable(result, func(i, j int) bool {
-		a, b := result[i], result[j]
+	sortCatalogSummaries(result)
+	return result, nil
+}
+
+func sortCatalogSummaries(summaries []archive.Metadata) {
+	span := trace.Start("catalog summary ordering")
+	defer span.End()
+	span.Count("summaries", len(summaries))
+	sort.SliceStable(summaries, func(i, j int) bool {
+		a, b := summaries[i], summaries[j]
 		at, bt := listingindex.ActivityTime(a), listingindex.ActivityTime(b)
 		if !at.Equal(bt) {
 			return at.After(bt)
@@ -210,7 +231,6 @@ func CatalogSummaries(ctx context.Context, store storage.ObjectStore, filter Fil
 		}
 		return a.SessionID < b.SessionID
 	})
-	return result, nil
 }
 
 // RefreshRemote reconciles one verified prior-root to new-root delta. Unknown
@@ -258,7 +278,7 @@ func (c *SQLiteSessionCatalog) refreshRemote(ctx context.Context, requiredPrior 
 	if err != nil || !usable {
 		return false, err
 	}
-	delta, err := snapshot.Delta(ctx, prior)
+	delta, err := remoteSummaryDelta(ctx, snapshot, prior)
 	if err != nil {
 		return false, err
 	}
@@ -269,7 +289,7 @@ func (c *SQLiteSessionCatalog) refreshRemote(ctx context.Context, requiredPrior 
 		}
 		return false, err
 	}
-	expected, err := snapshot.Count(ctx, catalog.Query{Index: catalog.CaptureIndex})
+	expected, err := remoteSummaryCount(ctx, snapshot)
 	if err != nil {
 		return false, err
 	}
@@ -520,6 +540,8 @@ func selectBoundedCatalog(ctx context.Context, snapshot *catalog.Snapshot, q Met
 }
 
 func remoteCachedRows(ctx context.Context, tx *sql.Tx) (cachedKeys map[string]bool, invalid []string, err error) {
+	span := trace.Start("catalog remote validation")
+	defer span.End()
 	rows, err := tx.QueryContext(ctx, "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions")
 	if err != nil {
 		return nil, nil, err
@@ -535,6 +557,10 @@ func remoteCachedRows(ctx context.Context, tx *sql.Tx) (cachedKeys map[string]bo
 		if err = record.scan(rows); err != nil {
 			return nil, nil, err
 		}
+		span.Count("rows-scanned", 1)
+		if record.checksum != "" {
+			span.Count("summary-B-hashed", len(record.summary))
+		}
 		cachedKeys[record.key] = true
 		if !record.valid() {
 			invalid = append(invalid, record.key)
@@ -544,6 +570,9 @@ func remoteCachedRows(ctx context.Context, tx *sql.Tx) (cachedKeys map[string]bo
 }
 
 func reconcileRemoteDelta(ctx context.Context, snapshot *catalog.Snapshot, delta catalog.Delta, cachedKeys map[string]bool, invalid []string, expected uint64) (catalog.Delta, error) {
+	span := trace.Start("catalog delta repair")
+	defer span.End()
+	span.Count("damaged rows", len(invalid))
 	if delta.Rebuild {
 		return delta, nil
 	}
@@ -565,7 +594,7 @@ func reconcileRemoteDelta(ctx context.Context, snapshot *catalog.Snapshot, delta
 		cachedKeys[row.Key] = true
 	}
 	if uint64(len(cachedKeys)) != expected {
-		return snapshot.Delta(ctx, catalog.ObjectRef{})
+		return remoteSummaryDelta(ctx, snapshot, catalog.ObjectRef{})
 	}
 	return delta, nil
 }

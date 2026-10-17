@@ -8,12 +8,12 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 28 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.28.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 29 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.29.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
-| Codex parser | `codex.Parser.Version()` | metadata `parser.version` | 0.27.0 | Codex identity, ownership or metadata interpretation changes. |
+| Codex parser | `codex.Parser.Version()` | metadata `parser.version` | 0.28.0 | Codex identity, ownership or metadata interpretation changes. |
 | History source schema | `archive.HistorySourceSchemaVersion` | source header `schema_version` | 3 | The self-contained Codex history manifest or record envelopes change. Filter 26 lets it carry a `session_labels` item; a reader before filter 26 refuses such a source ("session label does not match its owning ordinary source"), so read continued Codex threads with a current build. |
 | History metadata schema | `archive.HistoryMetadataSchemaVersion` | metadata `schema_version` | 2 | Preserved native revision references change incompatibly. |
 | Machine record | `machines.SchemaVersion` | `machines/<machine_id>.json` and `machines --json` | 1 | Informational registry format changes incompatibly; independent of session schemas and filtering. |
@@ -42,6 +42,12 @@ Codex has its own parser version as recorded above.
 
 The per-version filter changes are in the
 [filter changelog](../specs/privacy-filter-changelog.md).
+
+Muse startup model availability uses the complete validated startup prefix,
+including the second metadata row in the qualified model-resolution lane.
+Filter 29 and global/Muse adapter 0.29.0 refresh the fixed availability gap
+without changing retained fields, parser interpretation or schemas. The version
+28 committed-tool evidence and Muse parser 0.5.0 remain in effect.
 
 ## What a bump does
 
@@ -198,6 +204,16 @@ filter 15 or earlier source retained, so a leading open-page wrapper is neither
 a prompt nor the title, and the title falls through to the next real prompt.
 The bump makes existing sessions refresh their metadata from the retained
 source without a new source upload. Filter, adapter and other parsers are unchanged.
+
+Codex parser 0.28.0 names a multi-agent child thread from the task name in the
+NEW_TASK header its parent sent it (`Task name: /root/fix_upload_retry` becomes
+"fix upload retry"). The task itself is encrypted, so such a thread has no
+prompt and was listed only by its ID. Retained filter 18 and filter 28 sources
+were checked to hold the header (it is ordinary message text); the bump
+re-derives existing child metadata from the retained source without a new
+source upload. The last own header wins, so a forked child's inherited copy
+of its parent's header does not name it. Filter, adapter and other parsers
+are unchanged.
 
 Confirmed import staging uses the incompatible configuration fence
 `{version: 9, writer: import-staging-v9}` and sticky

@@ -21,6 +21,10 @@ minimum P4 own-conversation interpretation needed by the real existing
 `handoff --file PATH --harness muse` path. It supports complete ordinary exec/MSP
 roots, `muse-jsonl` v1, safe own main/chat prompts and committed assistant text,
 reserved logical creation time, retained refilter and existing destinations.
+Qualified own input/output observations are also available as a separate partial,
+unpriced summary. Local snapshots supply exact content proofs and provisional
+startup facts; protected binding v2 supports prepared validation checkpoints,
+while real capture and empty-locator resolution remain unavailable.
 Source/Filter, Parser, Runtime and local handoff Discovery/NativeHeaders/Preview
 are bound. Collection remains
 refused before native reads/filtering/PUT, including injected registrations.
@@ -32,13 +36,15 @@ native conversational acceptance.
 Original P1/P4 residual requirements remain: qualified usage authority, cache,
 reasoning/cost, task/call and MCP/Git/tool pairing, model switches, complete
 export/view agreement, complete names/version/skills, native show/search, launch
-into Muse and replay. Complete tool/status metrics remain unavailable in
-the current local output. A finite own committed-call slice now retains minimal
+into Muse and replay. Complete accounting and these richer facts remain
+unavailable in the current local output; partial input/output observations do
+not qualify them. A finite own committed-call slice now retains minimal
 call IDs and exact prior result joins, with observed invocation counts only for
 nonempty enriched sources without erased legacy tool rows. Blank calls remain
 unlisted in narrative handoff; normalized result objects and result/error counts
 remain omitted to preserve older typed consumers. Native qualification is one
-single-item case; multi-item/partial/reordered grammar has synthetic coverage. P2 capture/admission/storage/read-back and P3 child,
+single-item case; multi-item/partial/reordered grammar has synthetic coverage.
+P2 capture/admission/storage/read-back and P3 child,
 checkpoint/rewrite, platform, privacy/retention and resource/release gates retain
 their original owners and acceptance below. [Automatic handoff](../qualification/muse/local-handoff.md)
 now uses one qualified effective XDG data home, bounded
@@ -81,10 +87,12 @@ compaction or observers to pass tests does not qualify default behavior.
 
 ### First release: root capture
 
-The first release ships root capture alone, the way Cursor shipped with
-`SubagentLinkage` unavailable. It requires Q0, P1, P2 and the root-scoped part
+The planned first release ships qualified root capture alone, as Cursor shipped
+with `SubagentLinkage` unavailable. It requires Q0, P1, P2 and the root-scoped part
 of P5 acceptance: hook admission, locator resolution, filtering, publication and
-read-back for TUI, exec and serve roots on the supported platforms. Its declared
+read-back for TUI, exec and serve roots on the supported platforms. The
+four-event hook qualification alone does not satisfy those mode/platform gates
+or qualify TUI or MSP/serve capture. Its planned
 [`CaptureCapabilities`](../../internal/agentapi/capabilities.go) are:
 
 | Dimension | First-release state |
@@ -94,8 +102,11 @@ read-back for TUI, exec and serve roots on the supported platforms. Its declared
 | `skill_evidence` | `unavailable`. |
 | `adapter_fixtures` | `fixture_validated` with reviewed synthetic root fixtures. |
 
-The first release installs `SessionStart`, `UserPromptSubmit`, `Stop`,
-`SessionEnd` and `PostToolUseFailure`; the subagent hooks arrive with P3.
+The first release installs only the four qualified root events: `SessionStart`,
+`UserPromptSubmit`, `Stop` and `SessionEnd`. Startup is an intent-only
+`FreshUnknown` observation; source proof and current consent precede ownership
+(§3.2 and §3.5). `PostToolUseFailure`, `StopFailure` and subagent hooks require
+separate qualification before installation; subagent capture belongs to P3.
 Published roots appear in archive readers, statistics and eval export through
 the shared Analysis, with their own tool calls and usage. Backfill, pre-setup
 local reads, runtime and skill detection, replay and handoff into Muse are not
@@ -108,7 +119,7 @@ gates pass. Full parity requires every baseline gate in §5.
 | --- | --- | --- |
 | Q0: qualify authority | Reconcile the shared ports in §3.1 against the current base and freeze their signatures. Pin producer inputs. Check in a runnable isolated loopback, PTY and MSP probe and a reviewed corpus with exact assertions and provenance. Resolve integrity, original root creation and the session folder's date rule; resolve child and branch creation and checkpoint frontiers before the phases that need them. | Reproduce claimed cases from fresh roots without real provider calls or personal context. Unknown authority blocks only the affected format or capture lane. |
 | P1: source and analysis | Q0. Builtin identity and binding, the agent-neutral data-root, locator and admission ports, a confined file source, the frame decoder, the `muse-jsonl` retained format and one Analysis. Q0's reviewed frames become decoder fixtures in `internal/agents/muse/testdata`. | Conformance and fuzz tests; exact content, usage and ownership; bounded expansion; retained refilter without native files. |
-| P2: root capture and setup | P1. Reviewed data root and revision, durable owners registered without a locator, direct locator lookup with the bounded discovery fallback, a short locked binding commit, minimal hooks and transactional setup and status. | TUI, exec and serve publication and read-back; consent, race and restart tests; existing-agent regressions. With root-scoped P5 acceptance, this is the first release. |
+| P2: root capture and setup | P1. Reviewed data root and revision, guarded startup intents, shared inventory candidate queries, complete source/current-consent proof, prepared atomic first owner plus binding, four qualified hooks and transactional setup and status. | TUI, exec and serve publication and read-back; consent, race and restart tests; existing-agent regressions. With root-scoped P5 acceptance, this is the first release. |
 | P3: native children | P2. The extended child-inspection port, independent child owners, explicit bindings and roles, subagent hooks, active polling, agent-qualified durable linking and the existing stats rollup. | No-stop, failure, follow-up, close, recovery, grandchild, observer and worktree cases; no inherited consent, cross-agent links or duplicate totals. |
 | P4: access and user surfaces | P2, plus P3 where descendants are promised. Backfill and undo, pre-setup local access, skills and version detection, name refresh, child and role views across readers and export, launch, handoff and replay. | Exact undo and owned-file changes, agreement across outputs, bidirectional launch and evidence-backed skills and replay. |
 | P5: acceptance and release | The phases a release claims. Combined independent acceptance, the native, provider and platform matrix, privacy, storage and retention, compatibility and measured resources. | Every advertised capability passes the tests below on the final source. Unavailable capabilities remain explicit. |
@@ -138,11 +149,15 @@ for Codex or Claude, so there is one shape per concern rather than a Muse copy:
 | Shared boundary | Existing port it builds on | Required extension |
 | --- | --- | --- |
 | Native data root | `discovery.codex_homes` in [config](../../internal/config/discovery.go) | Setup commits the absolute configured spelling, canonical root and a revision through existing journals. Locations come from integration ports; collector launches cannot infer a different home from their environment. Root and locator bindings stay local and are never published. Changing the root requires explicit reconciliation and invalidates lookup results. Codex homes stay under discovery because they carry automatic-admission consent that Muse must never inherit; this is new config state, not a replacement for them. |
-| Locator lookup | `CodexRolloutLookup` and `SourceEnvironment.CodexRollouts` in [agentapi](../../internal/agentapi/codex_rollouts.go) | One agent-neutral lookup slot whose result has the same shape as `CodexRolloutSet`. It resolves already admitted owners; it cannot create consent or change project or destination. Every result is an untrusted hint revalidated on the opened handle. Muse is its first implementation; moving Codex's lookup and validation slices behind it is a follow-up outside the first release, so working Codex capture is not on that path. |
+| Locator lookup | `CodexRolloutLookup` and `SourceEnvironment.CodexRollouts` in [agentapi](../../internal/agentapi/codex_rollouts.go) | One agent-neutral lookup slot whose result has the same shape as `CodexRolloutSet`. It resolves already admitted owners and, in combined PR6, explicitly authorized startup candidates distinguished by purpose; it cannot create consent or change project or destination. Every result is an untrusted hint revalidated on the opened handle. Muse is its first implementation; moving Codex's lookup and validation slices behind it is a follow-up outside the first release, so working Codex capture is not on that path. |
 | Opened-source admission | `SourceAdmission`, `SourceAdmissionValidator` and `SourceAdmissionFacts`, whose binding is `*archive.CodexSourceBinding` | In memory the binding becomes agent-neutral, converted from `codex_binding` for Codex registrations at the `SourceAdmission` boundary. Reuse `SourceAdmissionSignature` and validate on the same confined descriptor used for filtering in [collector source](../../internal/collector/source.go). |
 | Child inspection | `ChildDiscoverer` and `ChildCandidate` in [agentapi](../../internal/agentapi/children.go) | Optional parent, root, logical agent ID, role and coverage facts on each candidate. Zero values keep Claude's current behavior. Today only backfill calls `ChildDiscoverer`; P3 adds the first live-capture caller. Shared code owns consent, collisions, registration and durable links. |
 
-Signature sketches that Q0 confirms or corrects before P1 starts:
+The sketches below describe the shared design shape; existing source/binding and
+inventory foundations are delivered as described in the local-subset status
+above. The candidate purpose is an approved future combined PR6 extension, not
+an existing callable API. Freeze exact final interfaces after source qualification
+and before PR6 dispatch:
 
 ```go
 // archive: one reviewed data home per agent that needs one; config stores it.
@@ -160,6 +175,7 @@ type NativeLocatorLookup interface {
 }
 
 type LocatorRequest struct {
+	Purpose  LocatorPurpose // default admitted_owner; PR6 adds startup_candidate
 	NativeID string
 	Root     archive.NativeRoot
 	Parent   *SourceRef // validated parent locator, for children
@@ -206,50 +222,91 @@ admission, child-marker or publication stores.
 
 ### 3.2 Source resolution
 
-An admitted hook registration with no locator is the durable pending work item,
-as for a new Cursor chat: the hook registers the owner and the collector fills
-the locator later with `LocatorFillFile`. Use ordinary file registrations for
-hooks, backfill and children.
+In combined PR6, the durable pending work item for a new root will be a bounded
+content-free
+`startup_candidate` in the existing typed admission queue. It is not an admitted
+registration. Before original native start T, current consent and complete source
+proof, do not call `RegisterOrMerge` or `EnsureArchiveSessionID`, reserve an ID,
+set `AdmittedAt`, or save session-specific request/evidence. Already validated
+owners retain their separate lifecycle and continuity path.
 
 Muse stores roots at `<data-root>/sessions/YYYY/MM/DD/<session-id>/session.jsonl`
-and children at `<root-dir>/subagent/<child-id>/session.jsonl`. Observed root
-session IDs are UUIDv7-shaped, and their timestamps matched the dated folders.
-Some child IDs are not time-ordered, so children are found through their parent
-instead. Resolve in this order:
+and children at `<root-dir>/subagent/<child-id>/session.jsonl`. Date and UUID
+shape are locator hints, never original-start or uniqueness authority. Resolve
+new candidates and existing pending owners through the same shared inventory:
 
-1. Load the registration and the committed root revision. If a locator is
-   recorded, open it and validate it as in step 3.
-2. Derive candidates directly. For a root, check the folders for the UTC date
-   decoded from the session ID and the adjacent days, plus the hook observation
-   date. For a child, join the validated parent directory and child ID. This is a
-   handful of `lstat` calls. The ID's timestamp and the folder date only choose
-   where to look; they never prove identity or creation.
-3. Confine the open to the approved root; reject descendant symlinks, nonregular
-   files and escapes. Validate stream identity, original creation, workspace and
-   child bindings on that descriptor before retaining or filtering bytes.
-4. If no candidate validates, fall back to one bounded traversal shared by all
-   pending owners (below). Require supported uniqueness or a separately qualified
-   native current pointer; incomplete enumeration, eviction, mtime and size cannot
-   prove it. Until then the owner stays pending with a visible reason.
-5. Take the existing short update lock; compare registration and root revision,
-   the pause and removal window, project activation, destination and original
-   binding. Recheck policy and preserve concurrent later hook observations.
-   Enumeration and transcript reads stay outside `hooks.lock`.
-6. Atomically persist the locator and `NativeSourceBinding`, preserving stable
-   IDs, origin, original admission and destination. A crash before commit repeats
-   lookup; after commit, revalidate. Continue through existing frozen publication.
+1. Freeze recognized currently eligible startup intents alongside admitted-owner
+   queries in the existing `NativeLocatorPass`/`NewNativeInventory` composition
+   delivered by PR625. Add a finite purpose: default `admitted_owner`, explicit
+   `startup_candidate`. Unknown purpose, cross-root and parent-bearing startup
+   queries refuse. Keep captured root/window/config generation, policy and queue
+   identity in collector-owned context; inventory hints grant no authority. Do
+   not create fake persisted owners or a second resolver/census. Deduplicate
+   namespace work while retaining each intent's guard/idempotency identity. Charge
+   candidate metadata to existing queue/query/pass limits before allocation; keep
+   the existing shared budgets and cache reserve.
+2. Already-bound owners open their known confined path without whole-store
+   enumeration. Cold pending queries require complete scoped namespace coverage
+   and fresh per-selected-ID directory currentness under the shared allowance.
+   Date probes cannot exclude conflicting copies elsewhere. Muse currently has
+   no qualified native current pointer: `Current` stays nil; a found result needs
+   exactly one candidate and a nonempty live selection token, checked after reads
+   and before commit. Incomplete/ambiguous coverage remains pending/refused.
+3. Open the selected same confined descriptor; reject symlinks, nonregular files
+   and escapes. Validate strict original T, identity, ordinary-root cause and
+   workspace, then check T against the candidate's original captured window,
+   which must still match current root/project/destination/pause/config policy.
+   Check the same physical included project before full Filter. Hook/opening,
+   UUID and folder times cannot replace T. An old unknown root refuses before
+   full Filter, owner/index/reservation or session effects.
+4. Run complete concrete Filter with existing source, record, graph, privacy and
+   resource limits. Retain snapshot/input/filtered leases through staging and
+   independent final complete-boundary/selection verification. Missing/partial,
+   unsupported or changed proof remains pending/refused without ownership.
+   Native reads, hashes, filtering, project inspection, staging and fsync stay
+   outside `hooks.lock`; an expired live token closes the attempt without
+   renewing allowance under a held snapshot.
+5. Use a distinct prepared first-admission operation for an expected nil owner.
+   `CommitNativeValidation` continues to require an existing owner. Bind the
+   exact guarded intent, immutable `NativeAdmission`, native key, root, complete
+   v2 binding/checkpoint, original start and file locator to a nonforgeable
+   prepared value and independent verifier. Stage the complete registration and
+   existing index inputs outside the lock, proposing an archive ID without an
+   indexed reservation. Reverify after staging and on bounded restaging retries.
+6. Under existing ordered state locks, compare captured and current root/window/
+   config generation, project/destination/pause/setup/removal policy and expected
+   no-owner CAS for the agent-qualified key. Check existing qualified, legacy,
+   generation, conflicting, corrupt and reservation states through the existing
+   bounded index protocol. Commit first owner plus binding in one logical
+   transaction using the existing recoverable registration/index/journal
+   machinery. No successful indexed owner may appear before complete proof.
+   Any protocol reservation may occur only after proof and locked policy/CAS;
+   recovery must revalidate or abandon incomplete work, never promote missing
+   proof. Do not create an empty owner and attach binding in a visible second step.
+7. Only after success acknowledge the candidate, apply compatible retained
+   lifecycle effects and use existing frozen publication/read-back/status. If an
+   owner appeared during preparation, fail CAS without effects and reprepare
+   under that owner's original authority or refuse conflict. Replay/restart must
+   recognize the exact complete owner idempotently without resetting original T.
+   Generic writes retain immutable admission/binding fences; no arbitrary-byte
+   proof constructor or globally weakened authority check is permitted.
 
 Q0's [fresh-root campaign](../qualification/muse/README.md) observed process-local
-folder dates: at a UTC/local boundary, `TZ=Etc/GMT+12` stored the previous UTC
-calendar day while the UUIDv7 encoded the current UTC day. This qualifies that
-case, not arbitrary clock skew or every timezone. Keep the adjacent-day and
-bounded fallback rules; neither date establishes creation or uniqueness.
-Relocation requires proven continuity; conflicting copies remain explicit.
-Workspace or root changes cannot silently move capture to another project,
-destination or consent window. Parser checks after filtering are insufficient.
-Frozen retry and retained privacy refresh work after native files disappear.
+folder dates: `TZ=Etc/GMT+12` stored the previous UTC calendar day while the UUIDv7
+encoded the current UTC day. This qualifies that case, not arbitrary clock skew
+or every timezone. Date hints cannot bypass complete uniqueness. Currentness
+costs O(selected IDs × completed directories); measure cold-cohort latency rather
+than promising a successful lookup from a handful of date-based `lstat` calls.
+A future current-pointer optimization needs separate qualification.
 
-The fallback reuses the bounded `ReadDirent` batches and cookies in
+Relocation requires proven continuity; conflicting copies remain explicit.
+Workspace/root/window changes cannot move pending authority to newer consent.
+An unkeyed checksum cannot authenticate execution origin: a recent exact copy
+indistinguishable from valid bytes cannot be promised excluded by integrity alone.
+Parser checks after filtering are insufficient. Frozen retry and retained privacy
+refresh work after native files disappear.
+
+The shared inventory reuses the bounded `ReadDirent` batches and cookies in
 [discovery](../../internal/discovery/discovery.go) through a narrow filesystem
 boundary, without inheriting Codex automatic admission, catalog or consent.
 `discoveryio.Walk` allocates a whole directory with `ReadDir` before its cap and
@@ -350,8 +407,8 @@ tools, tokens, titles and time bounds. Fork, rewind or side provenance alone
 never sets `ParentSessionID` or `NativeChild`. Typed harness notifications are
 not human prompts; English prose cannot determine origin or tool failure. Pair
 committed calls and results and correlate side-effect intent with the task
-terminal inside the owning run; use `PostToolUseFailure` only where task coverage
-is unavailable.
+terminal inside the owning run. A `PostToolUseFailure` fallback requires separate
+hook qualification and cannot be inferred from the four-event root contract.
 
 Choose one per-call usage authority keyed by owner and supported call identity;
 provider response IDs alone may repeat. Do not add cache aliases, goal or
@@ -431,19 +488,75 @@ complete controlled snapshot.
 
 ### 3.5 Hooks, setup and operational behavior
 
-Configure `SessionStart`, `UserPromptSubmit`, `Stop`, `SessionEnd`,
-`SubagentStart`, `SubagentStop` and `PostToolUseFailure`. `StopFailure` is a
-documented event that no probe exercised; Q0 qualifies it before it is
-configured. Qualify `PostToolBatch` only if needed for long-running activity.
-Supported startup and clear facts can establish freshness; resume and compaction
-continue owners. Prompt and stop hooks and null locators cannot admit an unknown
-old session. Cross-check payload identities against the root and thread
-environment.
+Configure only `SessionStart`, `UserPromptSubmit`, `Stop` and `SessionEnd`
+for the qualified root lane. `PostToolUseFailure`, `StopFailure`, subagent,
+TUI and MSP/serve hook capture remain unqualified by these receipts; qualify
+additional events/modes before advertising or installing them. `PostToolBatch`
+requires separate qualification if long-running activity needs it.
 
-Inject only declared bounded environment observations into `HookInput`, convert
-them to content-free lifecycle facts and discard raw environment. Keep the decoder
-pure: no directory walks, transcript reads, native CLI, filtering, upload or
-networking in hooks. Hooks stay fast, silent and nonblocking.
+The pure decoder declares only `MUSE_SESSION_ID` and `MUSE_THREAD_ID`, bounded
+at 128 bytes each. Inject one immutable read-once environment context into
+`HookInput`, reused by normal decoding and diagnostic/clock-failure/panic paths;
+never scan or persist raw environment. Require payload/root/thread IDs present
+and exactly equal, with bounded opaque ASCII grammar
+`[A-Za-z0-9][A-Za-z0-9_-]{0,127}`. Native filename/body layout validation remains
+in source/inventory. Discard unknown fields, payload bodies and reason values;
+observed unknown-key counts grant no authority.
+
+`SessionStart` requires exact `source=startup` and null `transcript_path`.
+Map it to observation-only `EventStart`, `Start.Kind=FreshUnknown`, no stat
+request, empty `Source.Path`, `LocatorNone` and the exact qualified
+`NativeHookContract`. Absolute observed cwd is local project input only.
+Missing/changed source or nonnull path cannot infer an alternative authority.
+Never convert the observation to `FreshExplicit` or `FreshnessRetainedProof` on
+queue/replay. A requested ID, matching environment, startup label or lack of an
+old registration proves neither fresh birth nor absence of child/fork provenance.
+Unknown-ID startup remains gated on complete native original-T qualification;
+its wire receipt does not establish accepted production source topology.
+
+The existing typed queue gains separate closed `startup_candidate` and
+`known_owner_effects` modes. A candidate stores only bounded content-free
+observation/ID/cwd/time, exact captured root/window/config generation and policy
+fingerprints, destination/pause generation and hook contract, with no owner,
+archive ID or locator. Capture and compare those guards at hook observation,
+queue commit, collector scheduling and final admission. Setup/removal/pause or
+root/window/project/destination changes invalidate authority; a late config load
+cannot refresh it. Unknown/missing mode/version/contract refuses before queue
+eligibility, pruning, clearing or mutation. Legacy intent translation, expiry or
+minimal replay evidence cannot promote a candidate. Retire only recognized
+expired/revoked/refused work under existing queue ownership policy.
+
+Map prompt to `EventTurnStart` and stop/end to supported lifecycle observations
+with fixed archive reasons, `FreshUnknown` and no locator. These may update
+normal lifecycle/request evidence only
+for the exact validated existing owner under its original authority and current
+policy. Unknown-owner continuations are no-op/diagnostic only: no owner,
+reservation, candidate, session evidence or directory discovery. One explicitly
+committed Muse home and included-project permission remain required; no
+all-projects, Codex-discovery or automatic missed-start admission is introduced.
+
+Protect the new intent/config generation through sticky config and setup-journal
+capability guards, including root removal, queue prune/clear and raw rollback.
+Actual old writers must refuse before mutation; generic saves preserve immutable
+admission and native authority. Reuse existing protection machinery and allocate
+no numeric versions in this design reconciliation.
+
+Hooks read no transcript/header, scan no native store, invoke no native CLI,
+filter/upload/network nothing, and perform no Git inspection for an unowned
+candidate. They stay fast, silent and bounded; source work belongs in collector.
+
+Before combined PR6 dispatch, finish native wire/source/original-T qualification,
+resolve source compatibility blockers (including approval-free read sessions and
+the unknown-ID startup topology), and review/freeze candidate-purpose and prepared
+first-admission APIs. The new production decoder, transaction, replay, race,
+cancellation, crash/restart, old-writer/journal and negative-before-mutation tests
+belong **inside PR6** before readiness/merge. Include original T before activation
+but later opening/UUID/folder times after it. PR6 acceptance follows real generated
+hook → candidate → shared inventory → same-handle complete source proof → atomic
+first owner/binding → publication/read-back/status, with existing-agent/resource
+regressions. These implementation tests are not pre-dispatch prerequisites for
+code that does not exist yet. Public source/registry capture fences remain until
+this chain passes; finite local decoding does not establish capture or full parity.
 
 Generate absolute executable and `AGENT_ARCHIVE_HOME` commands; native roots come
 from committed archive settings rather than a duplicate hook prefix. Use
@@ -502,11 +615,11 @@ first release needs the rows marked R1 for root sessions.
 | Area | Required cases and assertions |
 | --- | --- |
 | Admission and roots (R1) | Fresh versus unknown resume; copies, forks and inherited time; excluded, nested and reactivated projects and destination and removal windows. Null locator and restart before and after commit; concurrent stop, setup, pause and removal; replaced files, outside-root, symlink, nonregular and mismatched streams. No filtering or PUT before same-handle validation. Multiple installations and cross-agent ID and root collisions. |
-| Locator lookup and fallback (R1) | Direct lookup across UTC and local date boundaries, clock skew and a folder date that differs from the ID timestamp. Missing, relocated and duplicated session folders fall back to traversal. Fallback on a store larger than a pass budget: late and unrelated entries, unreadable folders, restart, root change, eviction and conflicting copies. Prove eventual coverage and bounded directory and header operations, never guessed uniqueness or session-times-store work. Valid sessions progress beside retries. |
+| Locator lookup and fallback (R1) | Complete scoped census/currentness across UTC and local date boundaries, clock skew and a folder date that differs from the ID timestamp. Date probes never bypass uniqueness; bound-owner known paths avoid enumeration. Shared traversal on a store larger than a pass budget: late and unrelated entries, unreadable folders, restart, root change, eviction and conflicting copies. Prove eventual coverage and bounded directory and header operations, never guessed uniqueness; measure selected-ID × completed-directory currentness work. Valid sessions progress beside retries. |
 | Framing and privacy (R1) | Mixed frames, child order, retained markers, copied prefixes and checkpoints, nested expansion, bad integrity or versions, duplicate keys and IDs, sequence conflicts, invalid UTF-8, blank, missing-newline and partial lines, timestamp overflow and contradictory authority. Fuzz allocation bounds. Secret sentinels in every nested argument, result, title, objective, instruction and path; no reasoning, encrypted or context dumps remotely. Exact refusal, gap and partial-metric behavior. |
 | Conversation and usage (R1) | Exact own prompts, messages, turns and text, Unicode and multiline, streams, retries, deltas and harness notifications, names, automatic titles, model switches and metadata-only refresh. Own per-model calls, cache, reasoning and cost availability; no copied or rollup duplicates. Retained refilter and parser refresh with native files removed. |
 | Children and totals | Direct, workflow, observer and grandchild success, failure and cancel, missing and late logs, active children with no or lost stops, parent exit and absence, follow-up, close, reopen and follow-up after close, reused agent IDs and forwarded records. Explicit ancestry, cycles, self-parenting and conflicting roots; one stable owner and no root fallback. Parent arrival links without new parent bytes. Root-only prompts plus child own tokens and tools, window, orphan and replay rules and incomplete tree coverage. |
-| Tools, MCP and skills (R1 for root call pairing) | Committed parallel, success, error, cancel and interrupted calls, structured and oversized results and owning-run task pairing with `PostToolUseFailure` fallback. MCP canonical IDs, stdio, HTTP, OAuth, plugin and retry attribution. Shared-root deduplication, trust, activation, foreign and plugin gates, invocation versus read and installed versus eligible evidence; foreign config survives. |
+| Tools, MCP and skills (R1 for root call pairing) | Committed parallel, success, error, cancel and interrupted calls, structured and oversized results and owning-run task pairing; any `PostToolUseFailure` fallback needs separate qualification. MCP canonical IDs, stdio, HTTP, OAuth, plugin and retry attribution. Shared-root deduplication, trust, activation, foreign and plugin gates, invocation versus read and installed versus eligible evidence; foreign config survives. |
 | Projects and Git (R1) | Shared, isolated, missing and deleted worktrees, clean and dirty starts, branch changes, detached checkout and Git unavailable. Native worktree evidence controls mapping of included repositories; hook cwd cannot bypass scope. |
 | Setup and compatibility (R1) | Foreign hooks, managed files and settings preserved byte for byte; quoting, custom XDG and archive roots, payload and environment disagreement, lock contention and interrupted setup, rollback and remove journals. Explicit opt-in only. Current and old-reader and old-writer upgrade and downgrade matrices with `native_binding`, registrations, imports and pending journals; no lost authority. |
 | Backfill and undo | Date, project, root and child selection, duplicates and conflicting copies, restart and budgets and overlap with live continuation and import. Exact batch undo preserves later independent ownership and acknowledged and native data. Pre-setup access causes no archive mutation. |
@@ -541,7 +654,7 @@ silently raise caps.
 
 | Workload | Required invariant |
 | --- | --- |
-| Many cold pending roots | Direct lookup costs a few `lstat` calls per owner. Owners that need the fallback share one bounded traversal per tick; total directory and header work stays bounded. Measure how often the fallback runs to decide whether a persisted cursor is needed. |
+| Many cold pending roots | Pending queries share one bounded resumable namespace census and existing persisted progress. Successful selection requires complete scoped coverage plus fresh per-ID currentness; date hints alone cannot prove uniqueness. Measure cold-cohort latency, O(selected IDs × completed directories) currentness, and bounded directory/header work. |
 | Warm unchanged owners | Cheap confined identity and signature checks; no full filtering, metadata PUT or whole-store enumeration merely because a tick ran. |
 | Growing root with many children | One parent analysis per changed scan, shared compact bindings and independently charged child reads; no full parent read per child. |
 | Large directories, records, checkpoints and refilter | Bounded acquisition and raw, decode, output and graph expansion, no full context cache; disk bytes, visited records and active time bounded independently. |
@@ -561,7 +674,7 @@ is open is refused safely while other qualified formats keep capturing.
 
 | Gate | Blocks | Owner and evidence needed |
 | --- | --- | --- |
-| Root integrity and original creation | First release | Q0 has recovered the [checksum encoding](../qualification/muse/permission-integrity.md) and qualified [strict initial-root logical-start semantics](../qualification/muse/root-creation.md). P1/P2 still need the complete prefix/negative validator, same-descriptor source checks, uniqueness and consent admission. Unsupported lanes remain unavailable. |
+| Root integrity and original creation | First release | Q0 has recovered the [checksum encoding](../qualification/muse/permission-integrity.md) and qualified [strict initial-root logical-start semantics](../qualification/muse/root-creation.md). The local subset supplies strict qualified prefix/same-descriptor checks and inventory foundations. P2 still needs startup-candidate source compatibility qualification and the complete current-consent first-admission/publication path. Unsupported lanes remain unavailable. |
 | Child and branch creation | Children (P3) | Q0, then P3: creation through copies, resumes, checkpoints and missing parents; whether close is terminal on every supported build, so closed children can stop being polled; observer link records, relative paths and missing-file semantics. |
 | Checkpoint and compaction formats | Capture of sessions containing the unqualified format | Q0 and P5: qualified default, manual, prune, rewrite, split, fork, rewind and TUI gestures. The current history-preserving checkpoint covers only its recorded case. Until qualified, such sessions stop capture safely at that record. |
 | Real accounting | Cost and cache claims | P5 with locally configured provider access: dated actual model, cache, reasoning, retry, background and compaction attribution and pricing. |
@@ -673,8 +786,10 @@ corrections and truthful support/refusal gates are in
 checksum recipe is independently recovered in the [checksum supplement](../qualification/muse/permission-integrity.md);
 the [initial-root contract](../qualification/muse/root-creation.md) separately
 qualifies the reserved logical-start field for strict observed 1.4.9 roots.
-Complete native grammar, same-handle/uniqueness and consent admission validation
-remain unimplemented. This work does not enable capture. Native export acceptance
+These historical campaigns do not certify the later
+[delivered local subset](#delivered-local-subset-and-residual-ownership). Complete
+format coverage and first-owner consent admission/publication remain pending;
+this evidence does not enable capture. Native export acceptance
 is not an independent verifier,
 and even rejected lines can exit 0 with empty stderr: inspect the document's
 `diagnostics.unparseable_lines` separately.

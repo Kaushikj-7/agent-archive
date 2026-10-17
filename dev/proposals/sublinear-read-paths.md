@@ -1,7 +1,11 @@
 # Read paths at realistic scale: implementation plan
 
 Status: proposed 2026-10-15, revised 2026-10-16 after real-command
-measurements and design review; nothing implemented. This plan takes the
+measurements and design review. The approved source scopes for PRs 1, 2, 3,
+4a, 5b and 6 are implemented; per-PR source and synthetic validation status is
+recorded below. Provider qualification, production activation, conditional
+PR 4b and PR 7 follow-ups, and matched live command latency acceptance remain
+open. This plan takes the
 remaining read-path work from [CLI performance](cli-performance.md) PRs 7 and 9 and
 [archive listing at scale](listing-at-scale.md) phase 4 down to per-PR scope
 and acceptance gates. It does not change any output, search rule, retention
@@ -185,6 +189,13 @@ something below, that part is dropped and needs its own proposal.
 
 ## PR 1: Balanced listing across all three header prefixes
 
+The source change is implemented. Synthetic differential, shared-budget and
+S3 page-boundary controls pass; the page-boundary regression fails against the
+original implementation. The provider-page model favors approximately
+page-sized balanced ranges over sixteen ranges at the measured archive size,
+including transferred suffixes and all three prefixes. Matched live-command
+latency and the reference wall-time goals remain unmeasured.
+
 Goal: reduce the measured critical path while accounting for actual provider
 pages, bytes and the shared concurrency budget.
 
@@ -228,6 +239,16 @@ Pass:
 
 ## PR 2: Overlap local work with discovery; drop repeated opens
 
+The source change is implemented, with deterministic synthetic controls for
+discovery/scope overlap, cancellation and joins, registration worker bounds and
+error precedence, and one storage open after a handoff pick. Independent review
+also covers the no-catalog fallback and native activity eligibility. Scoped
+activity stays after archive discovery when published scope facts determine
+admission; only all-project activity can safely move earlier. Local-first
+handoff query tiers retain zero archive requests when they resolve locally.
+Existing verified selected-body reuse and parent/child dependencies remain in
+place. Real command traces and wall-time goals remain unmeasured.
+
 Goal: wall time is max(network, local), not their sum.
 
 - **Start header discovery first.** It should begin as soon as the store is
@@ -263,6 +284,16 @@ Pass:
 - Output and errors are unchanged on the existing command tests.
 
 ## PR 3: Handoff on the SQLite catalog; show and handoff candidate wiring
+
+The source change is implemented. The private layout rebuilds older projections
+and includes nullable prompt counts and eligible native IDs in checksummed
+selection data. Word predicates also retain linked-child summaries needed for
+the existing parent hints; they do not promise a page-sized candidate bound.
+Complete ambiguity counts, ordering and picker choices remain unchanged.
+Model filters bypass the summary path because token observations can carry
+model evidence that the private projection omits. Existing complete catalog
+callers still apply scope, origin and child rules afterward, so their display
+limits are not pushed into SQL. Reference latency goals remain unmeasured.
 
 Goal: handoff uses summary projections on an unchanged warm run, and query
 predicates reduce candidate decoding without dropping valid matches. Changed
@@ -328,6 +359,13 @@ Pass:
 
 ## PR 4: Small cache and selected-read fixes
 
+The fresh-directory prune optimization (4a) is implemented and validated with
+the reader short race suite and an opt-in 50k cold-write profile. Its regression
+fails against the original implementation; the candidate records zero key
+directory enumerations during fresh writes. The selected-read concurrency
+trial (4b) remains conditional and unimplemented. No live latency claim follows
+from the synthetic cache profile.
+
 - `MetadataCache.putVerified` skips `pruneVersions` when its `os.Mkdir` just
   created the key directory. A fresh directory has nothing to prune. Rewritten
   keys keep today's prune, and the sweep remains the backstop. No layout change.
@@ -349,6 +387,19 @@ Pass:
   budget; report peak RSS, bytes, retries and wall time as well as wave count.
 
 ## PR 5: Catalog-v4 qualification and reader work
+
+PR 5b reader reuse is implemented behind the existing qualification gate, with
+independently reviewed source, full reader short-race coverage and synthetic
+unchanged-root/small-delta controls. At 1.8k synthetic rows, the scale fixture
+records 65 cold GETs, 5 unchanged-root GETs and 11 after a single deletion,
+with zero canonical LISTs or metadata-body GETs. These are operation counts,
+not qualified end-to-end latency. Local row checksums and cache inventory
+remain O(N). The [full synthetic scale evidence](../maintainers/read-path-delta-scale-2026-10-16.txt)
+records 1.8k/10k/25k/50k counts and limitations at exact source `03e20cef`.
+Existing catalog
+selection counters are preserved, including the preexisting `Outside` count
+difference from the legacy exhaustive reader for some top-level scope cases.
+PR 5a qualification, capability enablement and cutover remain unimplemented.
 
 Goal: qualified warm reads avoid `sessions/` LIST and reuse verified catalog
 deltas. Account separately for activation/head reads, tree-node reads, local
@@ -400,6 +451,28 @@ Pass:
 
 ## PR 6: Latency-modeled command benchmarks and operation-count gates
 
+Initial measurement code revision: `b441ed88`. Review follow-ups repair the
+legacy-versus-post-PR1 scheduling labels, eviction timing, picker result oracle,
+synthetic registration inventory/counters and output-visible changed handoffs.
+Command/state discovery ceilings follow independent legacy/post-PR1 fixture
+plans, with captured modeled service schedules and explicit duplicate-work
+and excess-wave negative controls. Required empty-prefix services, successful
+GET byte ceilings, unique required metadata reads, complete JSON envelopes and
+actual checksum-hash work have
+separate regression controls. The current first-session source uses a canonical
+Codex message record so the known prompt appears in its handoff; historical
+measurements retain their original fixture/source pins.
+The original observed-size 20-case command matrix passed with exact Go 1.27.2,
+alongside synthetic S3 provider-page conformance. The current matrix adds four
+scoped late-match cases (24 total), with ordinary 1,800-session operation/output
+gates for every applicable cold, warm, changed and no-cache state. Historical
+20-case logs describe the original matrix rather than this expansion. Independent source
+and documentation review found no unresolved blockers. Historical controls
+remain unchanged. Local row counts describe application-level validated and
+decoded candidates, not SQLite engine scan or exact-count work. Qualified
+catalog root/delta scale accounting accompanies PR 5b; mixed/maximum-body RSS
+trials remain conditional PR 4b work. No live-provider latency is qualified.
+
 Land this first. Extend `storagetest.MeasuredStore`, `historicalListingModel`
 and the existing command benchmarks rather than adding a harness. Preserve
 historical results with their original constants and source pins.
@@ -445,6 +518,14 @@ historical results with their original constants and source pins.
   session IDs or titles. Record unmet targets alongside improvements.
 
 ## PR 7: Measured local refresh and query improvements
+
+The PR 5b scale matrix triggers investigation: the 50k complete query takes
+979 ms in one unchanged-root sample, with 484 ms in refresh. It intentionally
+returns every summary, so this does not establish the cost of eligible bounded
+queries. Follow-up code remains pending representative consumer profiles and
+an integrity-preserving refresh design; no index, relaxed validation or flat
+latency claim is justified by these samples alone. See the
+[measured follow-up constraints](../maintainers/read-path-delta-scale-2026-10-16.txt).
 
 After PR 5b removes the LIST from the relevant path, use PR 6 to identify the
 remaining critical work. Query time above 100 ms at 50k triggers query work;

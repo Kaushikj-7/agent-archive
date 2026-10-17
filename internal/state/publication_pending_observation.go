@@ -40,7 +40,7 @@ func ordinaryPendingObservation(p PendingPublication) bool {
 
 func (s *Store) pendingObservation() *pendingWriteObservation {
 	w := s.pendingWrite
-	if w == nil || w.closed || s.resourceReleases == nil || *s.resourceReleases == nil || w.owner != s || w.budget != s.resourceBudget || w.context.Err() != nil || s.resourceContext == nil || !reflect.TypeOf(s.resourceContext).Comparable() || w.context != s.resourceContext {
+	if w == nil || w.closed || s.resourceReleases == nil || *s.resourceReleases == nil || w.owner != s || w.budget != s.resourceBudget || w.context.Err() != nil || s.resourceContext == nil || !reflect.ValueOf(s.resourceContext).Comparable() || w.context != s.resourceContext {
 		return nil
 	}
 	return w
@@ -58,7 +58,7 @@ func (s *Store) clearPendingObservation() {
 // state. The observation is optional, charged before allocation, and retained
 // only by the exact read owner until that owner's existing close.
 func (s *Store) writeObservedPending(ctx context.Context, g config.DurableStorageGuard, id string, p PendingPublication) error {
-	if s.resourceBudget == nil || s.resourceReleases == nil || *s.resourceReleases == nil || s.resourceContext == nil || !reflect.TypeOf(s.resourceContext).Comparable() || !ordinaryPendingObservation(p) {
+	if s.resourceBudget == nil || s.resourceReleases == nil || *s.resourceReleases == nil || s.resourceContext == nil || !reflect.ValueOf(s.resourceContext).Comparable() || !ordinaryPendingObservation(p) {
 		return s.writeDurableGuard(ctx, g, filepath.Join("pending", id+".json"), publicationWire(p))
 	}
 	w := s.pendingObservation()

@@ -34,6 +34,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -461,6 +462,10 @@ func (s *Store) registrationPath(archiveSessionID string) string {
 // LoadRegistrations returns every registered session, sorted by archive
 // session ID for deterministic scan order.
 func (s *Store) LoadRegistrations() ([]archive.SessionRegistration, error) {
+	return s.loadRegistrations(local.Read)
+}
+
+func (s *Store) loadRegistrations(read func(string, any) error) ([]archive.SessionRegistration, error) {
 	span := trace.Start("load registrations")
 	defer span.End()
 	dir := filepath.Join(s.home, "registrations")
@@ -471,20 +476,45 @@ func (s *Store) LoadRegistrations() ([]archive.SessionRegistration, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list registrations: %w", err)
 	}
-	out := make([]archive.SessionRegistration, 0, len(entries))
-	for _, entry := range entries {
+	// Keep results in directory order so simultaneous failures report the same
+	// first filename as the serial reader. Each worker owns its result slot.
+	// Compact this slice after joining rather than retaining two full inventories.
+	results := make([]archive.SessionRegistration, len(entries))
+	readErrors := make([]error, len(entries))
+	loaded := make([]bool, len(entries))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for range min(8, len(entries)) {
+		workers.Go(func() {
+			for i := range jobs {
+				err := read(filepath.Join(dir, entries[i].Name()), &results[i])
+				readErrors[i] = err
+				loaded[i] = err == nil
+			}
+		})
+	}
+	attempted := 0
+	for i, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		var reg archive.SessionRegistration
-		if err := local.Read(filepath.Join(dir, entry.Name()), &reg); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				// Forgotten between listing and reading.
-				continue
-			}
-			return nil, fmt.Errorf("read registration %q: %w", entry.Name(), err)
+		attempted++
+		jobs <- i
+	}
+	close(jobs)
+	workers.Wait()
+	span.Count("registration reads", attempted)
+	out := results[:0]
+	for i, err := range readErrors {
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		} // Forgotten during the scan.
+		if err != nil {
+			return nil, fmt.Errorf("read registration %q: %w", entries[i].Name(), err)
 		}
-		out = append(out, reg)
+		if loaded[i] {
+			out = append(out, results[i])
+		}
 	}
 	span.Count("registrations", len(out))
 	sort.Slice(out, func(i, j int) bool { return out[i].ArchiveSessionID < out[j].ArchiveSessionID })

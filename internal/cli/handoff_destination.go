@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -100,13 +101,16 @@ func defaultDestination(installed []handoffDestination, source string, cfg confi
 
 // chooseDestination asks where the handoff goes: one of the installed
 // agents, numbered with def first, or print, copy, write to a file, or quit.
-// Enter takes def, or print when no agent is installed. Input ending is
-// quitting, as in the session picker.
-func chooseDestination(p *prompter, installed []handoffDestination, def handoffDestination, canCopy bool, c agentmeta.Catalog) (handoffChoice, error) {
+// With one agent installed it asks yes or no to that agent instead, and no
+// quits. Enter takes def, or print when no agent is installed. Input ending
+// is quitting, as in the session picker. header, when given, names the
+// session above the question.
+func chooseDestination(p *prompter, installed []handoffDestination, def handoffDestination, canCopy bool, c agentmeta.Catalog, header []string) (handoffChoice, error) {
 	agents := installed
 	if i := slices.Index(installed, def); i > 0 {
 		agents = slices.Concat([]handoffDestination{def}, installed[:i], installed[i+1:])
 	}
+	confirm := len(agents) == 1
 	primary := make([]option, 0, len(agents))
 	for _, dest := range agents {
 		label := string(dest)
@@ -120,7 +124,12 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 		if l.action == handoffCopy && !canCopy {
 			continue
 		}
-		secondary = append(secondary, actionOption{l.word, l.key, l.label})
+		// Beside an agent the actions share one line, so each is its word.
+		label := l.label
+		if len(agents) > 0 {
+			label = l.word
+		}
+		secondary = append(secondary, actionOption{l.word, l.key, label})
 	}
 	defaultKey := string(def)
 	if len(agents) == 0 {
@@ -134,7 +143,11 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 			}
 		}
 	}
-	answer, err := p.guidedChoice(promptModel{Question: "Continue in", Primary: primary, Secondary: secondary, Default: defaultKey, Aliases: aliases, Receipt: "Handoff", ResolveReceipt: func(key string) string {
+	question := "Continue in"
+	if confirm {
+		question = "Continue in " + primary[0].Label + "?"
+	}
+	answer, err := p.guidedChoice(promptModel{Context: header, Question: question, Primary: primary, Secondary: secondary, Default: defaultKey, Aliases: aliases, Confirm: confirm, No: "quit", InlineSecondary: len(agents) > 0, Receipt: "Handoff", ResolveReceipt: func(key string) string {
 		key = agentmeta.Canonical(c, key)
 		if d, ok := c.Lookup(key); ok {
 			return d.DisplayName
@@ -164,20 +177,54 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 	return handoffChoice{action: handoffQuit}, nil
 }
 
+// handoffPromptHeader names the session a handoff continues above the
+// destination prompt: its title, then its agent, when it was last active,
+// and the handoff's size. An ASCII terminal gets ASCII separators.
+func handoffPromptHeader(target handoffTarget, h archive.Handoff, size int, now time.Time, c agentmeta.Catalog, ascii bool) []string {
+	var header []string
+	var title string
+	if target.metadata != nil {
+		title = archive.DisplayTitle(*target.metadata)
+	}
+	if strings.TrimSpace(title) == "" {
+		labels, _ := archive.LabelsFromAnalysis(target.analysis)
+		title = archive.DisplayTitle(archive.Metadata{Name: labels.Name, Title: labels.Title})
+	}
+	if title = listTitle(archive.DisplayLine(title)); title != "" {
+		header = append(header, title)
+	}
+	harness := archive.CanonicalHarness(h.Session.Harness)
+	facts := []string{}
+	if d, ok := c.Lookup(harness); ok {
+		facts = append(facts, d.DisplayName)
+	} else if harness != "" {
+		facts = append(facts, archive.DisplayLine(harness))
+	}
+	if t := h.Session.LastActivityAt; t != nil && !t.IsZero() {
+		facts = append(facts, longWhen(now, *t))
+	}
+	facts = append(facts, formatKilobytes(int64(size)))
+	separator := " · "
+	if ascii {
+		separator = " - "
+	}
+	return append(header, strings.Join(facts, separator))
+}
+
 // askHandoffDestination offers the agents installed here, defaulting by the
 // source session's harness and config.json's handoff.default_to.
-func askHandoffDestination(p *prompter, h archive.Handoff, home string, env handoffDestinationDependencies) (handoffChoice, error) {
+func askHandoffDestination(p *prompter, h archive.Handoff, header []string, home string, env handoffDestinationDependencies) (handoffChoice, error) {
 	// `--file` works before setup, when there is no configuration.
 	cfg, _, err := config.Load(home)
 	if err != nil {
 		return handoffChoice{}, fmt.Errorf("load config: %w", err)
 	}
-	return askHandoffDestinationConfig(p, h, cfg, env)
+	return askHandoffDestinationConfig(p, h, header, cfg, env)
 }
 
-func askHandoffDestinationConfig(p *prompter, h archive.Handoff, cfg config.Config, env handoffDestinationDependencies) (handoffChoice, error) {
+func askHandoffDestinationConfig(p *prompter, h archive.Handoff, header []string, cfg config.Config, env handoffDestinationDependencies) (handoffChoice, error) {
 	installed := installedDestinations(env)
-	return chooseDestination(p, installed, defaultDestination(installed, archive.CanonicalHarness(h.Session.Harness), cfg.Handoff), env.clipboardAvailable(), catalogFor(env))
+	return chooseDestination(p, installed, defaultDestination(installed, archive.CanonicalHarness(h.Session.Harness), cfg.Handoff), env.clipboardAvailable(), catalogFor(env), header)
 }
 
 // deliverHandoff carries out a choice other than launching: print it (paged
