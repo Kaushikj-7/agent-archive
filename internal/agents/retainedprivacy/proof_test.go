@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/agents/retainedprivacy"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
 func retainedFixture(t *testing.T) (retainedprivacy.Expectation, []byte, *agentapi.NativeReadBudget) {
