@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
@@ -60,7 +61,45 @@ func (p childRecoveryProvider) OpenPass(ctx context.Context, env agentapi.Source
 	return p.SourceProvider.OpenPass(ctx, env)
 }
 
+type childRecoveryRequestMode string
+
+const (
+	childRecoveryLinkOnly  childRecoveryRequestMode = "link-only"
+	childRecoveryStop      childRecoveryRequestMode = "coalesced-stop"
+	childRecoveryPrompt    childRecoveryRequestMode = "coalesced-prompt"
+	childRecoveryLaterHook childRecoveryRequestMode = "hook-during-metadata"
+	childRecoveryEvidence  childRecoveryRequestMode = "sole-link-with-evidence"
+)
+
+type childRecoveryRemote struct {
+	*metadataFailStore
+	beforeLinkedMetadata func() error
+}
+
+func (s *childRecoveryRemote) Put(ctx context.Context, key string, raw []byte) error {
+	if s.beforeLinkedMetadata != nil && filepath.Base(key) == "metadata.json" {
+		var metadata archive.Metadata
+		if err := json.Unmarshal(raw, &metadata); err != nil {
+			return err
+		}
+		if metadata.SessionID == "child" && metadata.ParentSessionID == "parent" {
+			before := s.beforeLinkedMetadata
+			s.beforeLinkedMetadata = nil
+			if err := before(); err != nil {
+				return err
+			}
+		}
+	}
+	return s.metadataFailStore.Put(ctx, key, raw)
+}
+
 func TestNativeChildLateParentPublicationRetryKeepsFrozenBytesAndNewRequest(t *testing.T) {
+	for _, mode := range []childRecoveryRequestMode{childRecoveryLinkOnly, childRecoveryStop, childRecoveryPrompt, childRecoveryLaterHook, childRecoveryEvidence} {
+		t.Run(string(mode), func(t *testing.T) { testChildLateParentPublicationRecovery(t, mode) })
+	}
+}
+
+func testChildLateParentPublicationRecovery(t *testing.T, mode childRecoveryRequestMode) {
 	local := newTestStore(t)
 	nativeHome := t.TempDir()
 	sessions := filepath.Join(nativeHome, "sessions")
@@ -97,7 +136,7 @@ func TestNativeChildLateParentPublicationRetryKeepsFrozenBytesAndNewRequest(t *t
 	if err := config.Save(local.Home(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}
+	remote := &childRecoveryRemote{metadataFailStore: &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}}
 	now := at.Add(time.Hour)
 	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "synthetic", Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1},
 		ConfiguredCodexHomes: []string{nativeHome}, ResolveCodexReadHomes: func(config.Config) ([]string, error) { return []string{nativeHome}, nil }}
@@ -169,6 +208,57 @@ func TestNativeChildLateParentPublicationRetryKeepsFrozenBytesAndNewRequest(t *t
 	if _, found, err := local.LoadRequest(child.ArchiveSessionID); err != nil || !found {
 		t.Fatal("old publication acknowledged the newer relationship request", found, err)
 	}
+	var liveRequest state.Request
+	laterHookObserved := false
+	captureLiveRequest := func() error {
+		var found bool
+		var err error
+		liveRequest, found, err = local.LoadRequest(child.ArchiveSessionID)
+		if err == nil && !found {
+			return errors.New("new live request is missing")
+		}
+		return err
+	}
+	switch mode {
+	case childRecoveryStop:
+		if err := local.SaveRequest(child.ArchiveSessionID, "stop", now.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if err := captureLiveRequest(); err != nil {
+			t.Fatal(err)
+		}
+	case childRecoveryPrompt:
+		if err := local.SaveEvidence(child.ArchiveSessionID, "prompt", now.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if err := captureLiveRequest(); err != nil {
+			t.Fatal(err)
+		}
+	case childRecoveryEvidence:
+		evidence, err := archive.NewCaptureGapEvidence("synthetic_live_activity", "Unprocessed hook evidence", "synthetic-test", now.Add(time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := local.SaveRequest(child.ArchiveSessionID, "native-parent-linked", now.Add(time.Second), evidence); err != nil {
+			t.Fatal(err)
+		}
+		if err := captureLiveRequest(); err != nil {
+			t.Fatal(err)
+		}
+		if len(liveRequest.Reasons) != 1 || len(liveRequest.HookEvidence) != 1 {
+			t.Fatal("control did not isolate the hook-evidence coverage guard")
+		}
+	case childRecoveryLaterHook:
+		remote.beforeLinkedMetadata = func() error {
+			laterHookObserved = true
+			if err := local.SaveRequest(child.ArchiveSessionID, "stop", now.Add(time.Second)); err != nil {
+				return err
+			}
+			return captureLiveRequest()
+		}
+	case childRecoveryLinkOnly:
+		// No live work coalesces with this exact relationship request.
+	}
 	// Retained history deliberately prepares one input per pass. Drive its
 	// real durable protocol after restarts; a typed pending result is valid
 	// only while the matching successor and newer request remain present.
@@ -207,8 +297,19 @@ func TestNativeChildLateParentPublicationRetryKeepsFrozenBytesAndNewRequest(t *t
 		t.Fatal("bounded retained preparation did not publish the admitted parent")
 	}
 	metadata := fetchMetadata(t, remote, "codex", child.ArchiveSessionID)
-	if _, found, err := local.LoadRequest(child.ArchiveSessionID); err != nil || found {
-		t.Fatal("verified relationship publication was not acknowledged", found, err)
+	request, found, err := local.LoadRequest(child.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode == childRecoveryLinkOnly {
+		if found {
+			t.Fatal("verified relationship publication was not acknowledged")
+		}
+	} else if !found || liveRequest.Token == "" || !reflect.DeepEqual(request, liveRequest) {
+		t.Fatal("retained header publication acknowledged or changed live work", found)
+	}
+	if mode == childRecoveryLaterHook && !laterHookObserved {
+		t.Fatal("new hook did not run during the linked metadata PUT")
 	}
 	if attempts[path] != 0 {
 		t.Fatalf("recovery attempted %d child native opens", attempts[path])
