@@ -39,6 +39,17 @@ func (r SessionRegistration) ValidateNativeImport() error {
 	return nil
 }
 
+// DecodeSessionRegistration preserves private authority classification even
+// when malformed JSON would prevent encoding/json from invoking UnmarshalJSON.
+// State readers use this before deciding whether damaged bytes are repairable.
+func DecodeSessionRegistration(raw []byte, r *SessionRegistration) error {
+	err := r.UnmarshalJSON(raw)
+	if err != nil && nativeImportKeyPossible(raw) {
+		return errors.Join(ErrUnsupportedNativeImport, err)
+	}
+	return err
+}
+
 // UnmarshalJSON protects the private receipt selector before ordinary field
 // decoding can normalize an alias, discard null, or replace a duplicate proof.
 // Registrations without this selector retain their existing decoder behavior.
@@ -116,6 +127,44 @@ func nativeImportKeyPossible(raw []byte) bool {
 	key := []byte(`"native_import"`)
 	for i := 0; i+len(key) <= len(raw); i++ {
 		if raw[i] == '"' && bytes.EqualFold(raw[i:i+len(key)], key) {
+			return true
+		}
+	}
+	return nativeImportEscapedKeyPossible(raw)
+}
+
+// Malformed values before an escaped selector must not hide its presence from
+// state preservation. Inspect only bounded JSON string tokens followed by a
+// colon; ordinary valid string values retain their existing decoding behavior.
+func nativeImportEscapedKeyPossible(raw []byte) bool {
+	if bytes.IndexByte(raw, '\\') < 0 {
+		return false
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '"' {
+			continue
+		}
+		start := i
+		i++
+		for i < len(raw) && raw[i] != '"' {
+			if raw[i] == '\\' {
+				i++
+			}
+			i++
+		}
+		end := i + 1
+		if end > len(raw) {
+			return false
+		}
+		next := end
+		for next < len(raw) && (raw[next] == ' ' || raw[next] == '\n' || raw[next] == '\r' || raw[next] == '\t') {
+			next++
+		}
+		if end-start > 80 || next == len(raw) || raw[next] != ':' {
+			continue
+		}
+		var key string
+		if json.Unmarshal(raw[start:end], &key) == nil && strings.EqualFold(key, "native_import") {
 			return true
 		}
 	}

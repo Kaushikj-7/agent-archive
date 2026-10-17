@@ -62,7 +62,7 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 	}
 	var previous archive.SessionRegistration
 	if before.found {
-		if err := json.Unmarshal(before.data, &previous); err != nil {
+		if err := archive.DecodeSessionRegistration(before.data, &previous); err != nil {
 			return err
 		}
 	}

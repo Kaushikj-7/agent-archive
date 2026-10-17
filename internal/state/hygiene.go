@@ -190,6 +190,9 @@ func quarantinePath(path string) string {
 // (json.UnmarshalTypeError) is not corruption: it is likely a file a newer
 // version wrote before a downgrade, and it is reported, never moved aside.
 func isCorruptJSON(err error) bool {
+	if errors.Is(err, archive.ErrUnsupportedNativeImport) {
+		return false
+	}
 	var syntaxErr *json.SyntaxError
 	return errors.As(err, &syntaxErr)
 }
@@ -197,6 +200,9 @@ func isCorruptJSON(err error) bool {
 // IsUndecodable reports whether err is any JSON decoding failure, corrupt or
 // of an unexpected shape.
 func IsUndecodable(err error) bool {
+	if errors.Is(err, archive.ErrUnsupportedNativeImport) {
+		return false
+	}
 	var typeErr *json.UnmarshalTypeError
 	return isCorruptJSON(err) || errors.As(err, &typeErr)
 }
@@ -252,7 +258,7 @@ func pruneQuarantine(path string) {
 
 func readJSON[T any](path string) (T, bool, error) {
 	var value T
-	err := local.Read(path, &value)
+	err := readRegistrationJSON(path, &value)
 	if errors.Is(err, os.ErrNotExist) {
 		return value, false, nil
 	}

@@ -14,7 +14,7 @@ import (
 // Default readers preserve their existing I/O and decoding behavior.
 func (s *Store) readIndexControlJSON(path string, value any) error {
 	if s.resourceReservation == nil {
-		return local.Read(path, value)
+		return readRegistrationJSON(path, value)
 	}
 	closeScratch, err := s.ownIndexExtent(32 << 10)
 	if err != nil {

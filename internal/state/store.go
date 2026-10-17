@@ -247,7 +247,7 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 			return nil, false, nil
 		}
 		var reg archive.SessionRegistration
-		if err := json.Unmarshal(current.data, &reg); err != nil {
+		if err := archive.DecodeSessionRegistration(current.data, &reg); err != nil {
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
 		originalStage := reg.StagedImportSHA256
@@ -469,7 +469,7 @@ func (s *Store) registrationPath(archiveSessionID string) string {
 // LoadRegistrations returns every registered session, sorted by archive
 // session ID for deterministic scan order.
 func (s *Store) LoadRegistrations() ([]archive.SessionRegistration, error) {
-	return s.loadRegistrations(local.Read)
+	return s.loadRegistrations(readRegistrationJSON)
 }
 
 func (s *Store) loadRegistrations(read func(string, any) error) ([]archive.SessionRegistration, error) {

@@ -339,7 +339,7 @@ func readRecoveryRegistration(path string, data *bytes.Buffer, reg *archive.Sess
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data.Bytes(), reg)
+	return archive.DecodeSessionRegistration(data.Bytes(), reg)
 }
 
 func (s *Store) recoverRegistrationOwners(key agentmeta.SessionKey, owners []string) error {

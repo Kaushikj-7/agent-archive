@@ -108,3 +108,18 @@ func TestNativeImportAbsentKeepsLegacyDecoderSemantics(t *testing.T) {
 		t.Fatal("partial legacy decoding changed", err)
 	}
 }
+
+func TestNativeImportDecodeKeepsMalformedSelectorProtected(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{
+		`{"native_import":`,
+		`{"native_\u0069mport":`,
+		`{"ignored":invalid,"native_import":{}}`,
+		`{"ignored":invalid,"native_\u0069mport":{}}`,
+	} {
+		var reg SessionRegistration
+		if err := DecodeSessionRegistration([]byte(raw), &reg); !errors.Is(err, ErrUnsupportedNativeImport) {
+			t.Fatalf("private selector lost: %q %v", raw, err)
+		}
+	}
+}
