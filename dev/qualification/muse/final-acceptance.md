@@ -203,7 +203,14 @@ staging the next. Each hook chunk must leave the preexisting owner set unchanged
 until admission. One publication union and one 128-tick bound span all chunks;
 every final native ID must match the expected cohort exactly and have a durable
 admission, source binding and checkpoint. This keeps the 512-owner setup within
-the real queue rather than enlarging it.
+the real queue rather than enlarging it. Startup admission uses the existing
+immutable inventory order hint to schedule only its loaded candidates; the hint
+grants no ownership, source or currentness authority. Scratch is charged to the
+existing ledger, malformed hints preserve the original work order, and every
+normal native read, Filter, guarded commit and acknowledgement remains required.
+Reverse and random-permutation regression cases use the real inventory locator
+and Check to distinguish ordered progress from an original-order control. Cold
+setup tick count and wall must be reported separately from settled warm work.
 
 The warm assertions cover three settled ticks with zero native Filter input
 bytes, zero storage PUTs, zero calls through all three listing entry points,

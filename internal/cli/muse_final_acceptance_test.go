@@ -228,6 +228,7 @@ func TestMuseWarmUnchangedCohortsConsumeNoFilterInputUploadOrStorageListing(t *t
 			opts := museAcceptanceOptions(t, f, &ledgers)
 			disable := trace.Enable()
 			defer disable()
+			coldStarted := time.Now()
 			published := map[string]bool{}
 			admissionTicks := 0
 			expectedNative := map[string]bool{}
@@ -241,8 +242,9 @@ func TestMuseWarmUnchangedCohortsConsumeNoFilterInputUploadOrStorageListing(t *t
 				}
 				museAcceptanceQueue(t, f, first, end-first)
 				museAcceptanceCollect(t, f, remote, opts, end, published, &admissionTicks)
-				t.Logf("admission chunk first=%d end=%d published_union=%d", first, end, len(published))
+				t.Logf("admission chunk first=%d end=%d published_union=%d cold_ticks=%d", first, end, len(published), admissionTicks)
 			}
+			t.Logf("owners=%d cold_admission_ticks=%d cold_admission_wall=%s published_union=%d", owners, admissionTicks, time.Since(coldStarted), len(published))
 			var first bytes.Buffer
 			trace.Write(&first)
 			disable()

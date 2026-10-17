@@ -77,6 +77,7 @@ func (p *pass) loadStartupCandidates() error {
 }
 
 func (p *pass) admitStartupCandidates() {
+	p.orderStartupCandidates()
 	for _, candidate := range p.startupCandidates {
 		if p.ctx.Err() != nil {
 			return
