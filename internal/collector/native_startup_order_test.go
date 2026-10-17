@@ -121,37 +121,51 @@ func (h *startupOrderingHint) PendingOrder() []string {
 	return h.order
 }
 
+type startupHintCase string
+
+const (
+	startupHintAbsent       startupHintCase = "absent"
+	startupHintUnknown      startupHintCase = "unknown"
+	startupHintDuplicate    startupHintCase = "duplicate"
+	startupHintOversized    startupHintCase = "oversized"
+	startupHintCanceled     startupHintCase = "canceled"
+	startupHintCancelDuring startupHintCase = "cancel-during-hint"
+	startupHintPressure     startupHintCase = "pressure"
+	startupHintBorrowed     startupHintCase = "borrowed-lookup"
+)
+
 func TestStartupCandidateOrderInvalidHintsPreserveWorkAndReleaseScratch(t *testing.T) {
 	t.Parallel()
 	a, b := nativePendingRegistration(0).NativeSessionID, nativePendingRegistration(1).NativeSessionID
-	for _, name := range []string{"absent", "unknown", "duplicate", "oversized", "canceled", "cancel-during-hint", "pressure", "borrowed-lookup"} {
-		t.Run(name, func(t *testing.T) {
+	for _, name := range []startupHintCase{startupHintAbsent, startupHintUnknown, startupHintDuplicate, startupHintOversized, startupHintCanceled, startupHintCancelDuring, startupHintPressure, startupHintBorrowed} {
+		t.Run(string(name), func(t *testing.T) {
 			t.Parallel()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			hint := &startupOrderingHint{order: []string{a, b}}
 			limit := agentapi.PassReadBudget
 			switch name {
-			case "absent":
+			case startupHintAbsent:
 				hint.order = nil
-			case "unknown":
+			case startupHintUnknown:
 				hint.order = []string{a, "outside-immutable-query-domain"}
-			case "duplicate":
+			case startupHintDuplicate:
 				hint.order = []string{a, a}
-			case "oversized":
+			case startupHintOversized:
 				hint.order = make([]string, 8193)
-			case "canceled":
+			case startupHintCanceled:
 				cancel()
-			case "cancel-during-hint":
+			case startupHintCancelDuring:
 				hint.cancel = cancel
-			case "pressure":
+			case startupHintPressure:
 				limit = 1
 			}
 			budget := agentapi.NewNativeReadBudget(limit)
-			p := pass{ctx: ctx, opts: Options{NativeLocators: hint, NativeLocatorFactory: startupOrderingFactory, sourcePasses: &sourcePassSet{env: agentapi.SourceEnvironment{ReadBudget: budget}}}, startupCandidates: []startupCandidate{{intent: agentapi.AdmissionIntent{NativeSessionID: b}}, {intent: agentapi.AdmissionIntent{NativeSessionID: a}}}}
-			if name == "borrowed-lookup" {
-				p.opts.NativeLocatorFactory = nil
+			factory := startupOrderingFactory
+			if name == startupHintBorrowed {
+				factory = nil
 			}
+			p := pass{ctx: ctx, opts: Options{NativeLocators: hint, NativeLocatorFactory: factory, sourcePasses: &sourcePassSet{env: agentapi.SourceEnvironment{ReadBudget: budget}}}, startupCandidates: []startupCandidate{{intent: agentapi.AdmissionIntent{NativeSessionID: b}}, {intent: agentapi.AdmissionIntent{NativeSessionID: a}}}}
 			before := append([]startupCandidate(nil), p.startupCandidates...)
 			p.orderStartupCandidates()
 			if !reflect.DeepEqual(before, p.startupCandidates) {
@@ -160,7 +174,7 @@ func TestStartupCandidateOrderInvalidHintsPreserveWorkAndReleaseScratch(t *testi
 			if used, peak := budget.Charged(); used != 0 || peak > limit {
 				t.Fatal("scratch charge not bounded/released", used, peak)
 			}
-			if (name == "canceled" || name == "pressure" || name == "borrowed-lookup") && hint.calls != 0 {
+			if (name == startupHintCanceled || name == startupHintPressure || name == startupHintBorrowed) && hint.calls != 0 {
 				t.Fatal("fallback invoked hint before eligibility/charge")
 			}
 		})
