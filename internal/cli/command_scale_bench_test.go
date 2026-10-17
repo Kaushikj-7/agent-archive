@@ -455,7 +455,7 @@ func validateReadPathScopedOutput(size int, out []byte, changed bool) error {
 		return err
 	}
 	total := (size + 99) / 100
-	if doc.TotalMatched == nil || *doc.TotalMatched != total || !doc.TotalMatchedKnown || doc.Returned != min(total, 50) || len(doc.Sessions) != min(total, 50) {
+	if doc.Version != listSchemaVersion || doc.Limit != 50 || doc.Truncated != (total > 50) || doc.TotalMatched == nil || *doc.TotalMatched != total || !doc.TotalMatchedKnown || doc.Returned != min(total, 50) || len(doc.Sessions) != min(total, 50) {
 		return errors.New("incomplete scoped list")
 	}
 	for i, m := range doc.Sessions {
@@ -567,6 +567,7 @@ func BenchmarkCommandReadPaths(b *testing.B) {
 					}
 					observationStore.ListingModel = &observationModel
 					observationStore.CaptureListingCosts = true
+					observationStore.CaptureGETKeys = true
 					observedEnv.OpenStore = func(config.Config) (storage.ObjectStore, error) { return observationStore, nil }
 					observedEnv.LookupEnv = func(key string) (string, bool) {
 						if key == envTrace {
@@ -586,6 +587,12 @@ func BenchmarkCommandReadPaths(b *testing.B) {
 						b.Fatal("unrecorded listing services")
 					}
 					b.ReportMetric(float64(waves), "modeled-critical-page-waves/op")
+					if err := readPathRequireGETCoverage(command, state, size, observationStore.SuccessfulGETKeys(), observationModel.Headers); err != nil {
+						b.Fatal(err)
+					}
+					if err := readPathGETByteBudget(command, state, size, observationStore.Metrics(), observationModel.Headers); err != nil {
+						b.Fatal(err)
+					}
 					localCounts := readPathLocalCounts(diagnostic)
 					if command == readPathHandoffPicker && localCounts["local-registrations"] != int64(size) {
 						b.Fatal("handoff registration accounting omitted fixture reads", localCounts)
@@ -749,6 +756,7 @@ func testCommandReadPathOperationBudgets(t *testing.T, command readPathCommand) 
 			store := storagetest.NewMeasuredStore(mem, 0)
 			store.ListingModel = &storagetest.ListingLatencyModel{}
 			store.CaptureListingCosts = true
+			store.CaptureGETKeys = true
 			env := readPathEnv(t, home, store, command)
 			seedReadPathRegistrations(t, home, size, command)
 			args := readPathBenchmarkArgs(command, cacheState == readPathNoCache)
@@ -774,6 +782,12 @@ func testCommandReadPathOperationBudgets(t *testing.T, command readPathCommand) 
 			}
 			m := store.Metrics()
 			if err := readPathDiscoveryBudget(m, store.ListingCosts(), expectedListings, store.ListingModel.StopAtBoundary); err != nil {
+				t.Fatal(err)
+			}
+			if err := readPathRequireGETCoverage(command, cacheState, size, store.SuccessfulGETKeys(), headers); err != nil {
+				t.Fatal(err)
+			}
+			if err := readPathGETByteBudget(command, cacheState, size, m, headers); err != nil {
 				t.Fatal(err)
 			}
 			if err := readPathOperationBudget(command, cacheState, size, m); err != nil {
@@ -828,7 +842,7 @@ func validateReadPathOutput(command readPathCommand, size, code int, out []byte,
 		if err := json.Unmarshal(out, &doc); err != nil {
 			return err
 		}
-		if len(doc.Sessions) != 50 || doc.TotalMatched == nil || *doc.TotalMatched != size {
+		if doc.Version != listSchemaVersion || doc.Limit != 50 || doc.Returned != 50 || !doc.TotalMatchedKnown || !doc.Truncated || len(doc.Sessions) != 50 || doc.TotalMatched == nil || *doc.TotalMatched != size {
 			return errors.New("incomplete list")
 		}
 		for i, m := range doc.Sessions {
@@ -842,6 +856,13 @@ func validateReadPathOutput(command readPathCommand, size, code int, out []byte,
 		if err := json.Unmarshal(out, &metadata); err != nil {
 			return err
 		}
+		expectedSource, err := readPathSelectedSourceReference()
+		if err != nil {
+			return err
+		}
+		if metadata.SchemaVersion != archive.MetadataSchemaVersion || metadata.FilterVersion != archive.FilterVersion || metadata.Harness.Name != "codex" || !metadata.CapturedAt.Equal(storagetest.BenchmarkTime) || metadata.SourceBundle != expectedSource {
+			return errors.New("incomplete selected metadata document")
+		}
 		if metadata.SessionID != "00000001000000000000000000000001" || metadata.NativeSessionID != "native-00000001" || metadata.Title != fmt.Sprintf("synthetic-%08x-v%d", 1, boolVersion(changed)) {
 			return errors.New("incorrect selected identity or revision")
 		}
@@ -853,6 +874,9 @@ func validateReadPathOutput(command readPathCommand, size, code int, out []byte,
 		outcome := archive.TurnOutcomeCompleted
 		if changed {
 			outcome = archive.TurnOutcomeInterrupted
+		}
+		if handoff.Version != archive.HandoffVersion || handoff.Session.Harness != "codex" || len(handoff.Exchanges) != 1 || handoff.Exchanges[0].Prompt != "Synthetic read path benchmark request" || handoff.Exchanges[0].PromptTruncated {
+			return errors.New("incomplete selected handoff document")
 		}
 		if handoff.Session.ArchiveSessionID != "00000001000000000000000000000001" || handoff.Session.NativeSessionID != "native-00000001" || handoff.Session.TurnOutcome != outcome {
 			return errors.New("incorrect selected handoff identity or revision")
@@ -1009,10 +1033,13 @@ func TestReadPathPickerRejectsPartialWrongAndStaleFrames(t *testing.T) {
 
 func TestReadPathHandoffRejectsStaleSelectedMetadata(t *testing.T) {
 	t.Parallel()
-	stale := archive.Handoff{Session: archive.HandoffSession{ArchiveSessionID: "00000001000000000000000000000001", NativeSessionID: "native-00000001", TurnOutcome: archive.TurnOutcomeCompleted}}
+	stale := archive.Handoff{Version: archive.HandoffVersion, Session: archive.HandoffSession{Harness: "codex", ArchiveSessionID: "00000001000000000000000000000001", NativeSessionID: "native-00000001", TurnOutcome: archive.TurnOutcomeCompleted}, Exchanges: []archive.HandoffExchange{{Prompt: "Synthetic read path benchmark request"}}}
 	raw, err := json.Marshal(stale)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err = validateReadPathOutput(readPathHandoffQuery, 1800, 0, raw, false); err != nil {
+		t.Fatal("valid original handoff rejected", err)
 	}
 	if err = validateReadPathOutput(readPathHandoffQuery, 1800, 0, raw, true); err == nil {
 		t.Fatal("accepted unchanged handoff metadata after selected revision changed")
