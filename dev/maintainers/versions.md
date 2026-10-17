@@ -8,8 +8,8 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 28 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.28.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 29 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.29.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
@@ -42,6 +42,12 @@ Codex has its own parser version as recorded above.
 
 The per-version filter changes are in the
 [filter changelog](../specs/privacy-filter-changelog.md).
+
+Muse startup model availability uses the complete validated startup prefix,
+including the second metadata row in the qualified model-resolution lane.
+Filter 29 and global/Muse adapter 0.29.0 refresh the fixed availability gap
+without changing retained fields, parser interpretation or schemas. The version
+28 committed-tool evidence and Muse parser 0.5.0 remain in effect.
 
 ## What a bump does
 

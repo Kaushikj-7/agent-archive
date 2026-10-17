@@ -44,8 +44,8 @@ func TestInjectedCatalogReachesCLIFlagsAndLaunch(t *testing.T) {
 		t.Fatalf("launch %+v %v", spec, err)
 	}
 	var choiceOut bytes.Buffer
-	choice, err := chooseDestination(newPrompter(strings.NewReader("TEST-AGENT\n"), &choiceOut), []handoffDestination{syntheticDestination}, syntheticDestination, false, c)
-	if err != nil || choice.dest != syntheticDestination || !strings.Contains(choiceOut.String(), "Synthetic (default)") {
+	choice, err := chooseDestination(newPrompter(strings.NewReader("TEST-AGENT\n"), &choiceOut), []handoffDestination{syntheticDestination}, syntheticDestination, false, c, nil)
+	if err != nil || choice.dest != syntheticDestination || !strings.Contains(choiceOut.String(), "Continue in Synthetic?") {
 		t.Fatalf("choice %+v %v %s", choice, err, choiceOut.String())
 	}
 	fs := env.newCommandFlags("list", &stderr)

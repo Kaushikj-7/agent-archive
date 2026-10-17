@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/nativefacts"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
@@ -759,12 +760,19 @@ func (r Registration) stageSettledCursor(ctx context.Context, w *parentWork, reg
 		return e
 	}
 	defer request.Close()
+
+	var digest string
 	evidence, e := port.CaptureSettledCursor(request)
-	if e != nil {
-		return e
+	if e == nil {
+		defer func() { err = errors.Join(err, evidence.Close()) }()
+		digest, e = store.SaveSettledCursorImportStage(ctx, reg, request, evidence)
+	} else {
+		if cursorstore.ReasonOf(e) != cursorstore.Locked {
+			return e
+		}
+		digest, e = r.stageLiveCursor(ctx, store, reg, request)
 	}
-	defer func() { err = errors.Join(err, evidence.Close()) }()
-	digest, e := store.SaveSettledCursorImportStage(ctx, reg, request, evidence)
+
 	if e != nil {
 		return e
 	}
@@ -777,4 +785,31 @@ func (r Registration) stageSettledCursor(ctx context.Context, w *parentWork, reg
 
 type settledCapturePort interface {
 	CaptureSettledCursor(*nativefacts.CaptureRequest) (*nativecapture.Proof, error)
+}
+
+// stageLiveCursor requires the distinct builtin operation and real state-issued
+// workspace. A generic copied pathname never enters the settled proof route.
+func (r Registration) stageLiveCursor(ctx context.Context, store *state.Store, reg archive.SessionRegistration, original *nativefacts.CaptureRequest) (digest string, err error) {
+	port, ok := r.Sources.(liveCapturePort)
+	if !ok {
+		return "", state.ErrReadySelectionFrozen
+	}
+	if err = store.RecoverCursorScratch(ctx); err != nil {
+		return "", err
+	}
+	live, err := store.NewLiveCaptureRequest(original)
+	if err != nil {
+		return "", err
+	}
+	defer func() { err = errors.Join(err, live.Close()) }()
+	evidence, err := port.CaptureLiveCursor(live)
+	if err != nil {
+		return "", err
+	}
+	defer func() { err = errors.Join(err, evidence.Close()) }()
+	return store.SaveLiveCursorImportStage(ctx, reg, original, evidence)
+}
+
+type liveCapturePort interface {
+	CaptureLiveCursor(*nativefacts.LiveCaptureRequest) (*nativecapture.LiveProof, error)
 }

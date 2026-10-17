@@ -183,30 +183,126 @@ def observations(rows, topology, run_id, attempt, actual_attempts=None):
     return tests, metrics
 
 
-def worker_attempts(jobs, topology, run_id, attempt):
+def worker_attempts(jobs, topology, run_id, attempt, *, require_success=True):
     result = {}
+    identities = set()
     for shard in range(topology['workers']):
         selected = [job for job in jobs if job.get('name') == f'linux-short ({shard})']
         if len(selected) != 1:
             raise ValueError('missing or duplicate API worker job')
         job = selected[0]
         actual = job.get('run_attempt')
-        if (job.get('run_id') != int(run_id) or job.get('head_sha') != topology['head']
-                or job.get('status') != 'completed' or job.get('conclusion') != 'success'
+        if (type(job.get('run_id')) is not int or job['run_id'] != int(run_id)
+                or job.get('head_sha') != topology['head']
+                or job.get('status') != 'completed' or job.get('conclusion') not in (
+                    'success', 'failure', 'cancelled', 'skipped', 'neutral', 'timed_out',
+                    'action_required', 'stale', 'startup_failure')
+                or require_success and job.get('conclusion') != 'success'
+                or type(job.get('id')) is not int or job['id'] <= 0 or job['id'] in identities
                 or type(actual) is not int or not 1 <= actual <= int(attempt)):
             raise ValueError('API worker allocation identity or attempt invalid')
+        identities.add(job['id'])
         result[shard] = actual
     return result
 
 
+def allocation_stamp(value):
+    if not isinstance(value, str):
+        raise ValueError('API worker allocation timestamp missing')
+    parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    if parsed.tzinfo is None:
+        raise ValueError('API worker allocation timestamp lacks timezone')
+    return parsed.timestamp()
+
+
+def worker_execution(job):
+    """Exact API execution evidence; logical job IDs/attempts are not execution."""
+    start, end = allocation_stamp(job.get('started_at')), allocation_stamp(job.get('completed_at'))
+    allocation_stamp(job.get('created_at'))
+    if (end < start or type(job.get('runner_id')) is not int or job['runner_id'] <= 0
+            or not isinstance(job.get('runner_name'), str) or not job['runner_name']
+            or not isinstance(job.get('labels'), list) or not job['labels']
+            or any(not isinstance(label, str) or not label for label in job['labels'])
+            or not isinstance(job.get('steps'), list) or not job['steps']):
+        raise ValueError('API worker allocation evidence incomplete')
+    numbers, steps = set(), []
+    for step in job['steps']:
+        if (not isinstance(step, dict) or not isinstance(step.get('name'), str) or not step['name']
+                or type(step.get('number')) is not int or step['number'] <= 0 or step['number'] in numbers
+                or step.get('status') != 'completed'
+                or step.get('conclusion') not in ('success', 'failure', 'cancelled', 'skipped', 'neutral')):
+            raise ValueError('API worker step evidence incomplete')
+        if not start <= allocation_stamp(step.get('started_at')) <= allocation_stamp(step.get('completed_at')) <= end:
+            raise ValueError('API worker step outside allocation')
+        numbers.add(step['number'])
+        steps.append(tuple(step[key] for key in ('name', 'number', 'status', 'conclusion', 'started_at', 'completed_at')))
+    # GitHub can clear runner_group_id on inherited logical copies. The actual
+    # positive runner ID/name, labels, interval and every step must stay exact.
+    return (job['run_id'], job['head_sha'], job['name'], job['runner_id'], job['runner_name'], tuple(job['labels']),
+            job['started_at'], job['completed_at'], job['status'], job['conclusion'], tuple(steps))
+
+
+def physical_worker_attempts(inventories, topology, run_id, attempt):
+    """Resolve only exact, contiguous API aliases back to their first execution."""
+    snapshots, ids = {}, {}
+    if set(inventories) != set(range(1, attempt + 1)):
+        raise ValueError('API worker attempt history incomplete')
+    for number in range(1, attempt + 1):
+        jobs = inventories[number]
+        worker_attempts(jobs, topology, run_id, number, require_success=number == attempt)
+        snapshots[number] = {}
+        for shard in range(topology['workers']):
+            job = next(job for job in jobs if job['name'] == f'linux-short ({shard})')
+            # Failed prior allocations never establish an inherited success.
+            execution = worker_execution(job) if job['conclusion'] == 'success' else None
+            identity = tuple(json.dumps(job.get(key), sort_keys=True) for key in (
+                'run_id', 'head_sha', 'name', 'created_at', 'started_at', 'completed_at',
+                'runner_id', 'runner_name', 'labels', 'status', 'conclusion', 'steps'))
+            if job['id'] in ids and ids[job['id']] != identity:
+                raise ValueError('conflicting API worker job identity')
+            ids[job['id']] = identity
+            snapshots[number][shard] = job, execution
+    result = {}
+    for shard in range(topology['workers']):
+        execution = snapshots[attempt][shard][1]
+        matching = [number for number in snapshots if snapshots[number][shard][1] == execution]
+        origin = matching[0]
+        if matching != list(range(origin, attempt + 1)):
+            raise ValueError('API worker execution history is not contiguous')
+        original = snapshots[origin][shard][0]
+        if (original['run_attempt'] != origin
+                or allocation_stamp(original['created_at']) > allocation_stamp(original['started_at'])):
+            raise ValueError('API worker physical origin unproven')
+        previous = original
+        for number in range(origin + 1, attempt + 1):
+            job = snapshots[number][shard][0]
+            created = allocation_stamp(job['created_at'])
+            if (job['run_attempt'] not in (origin, number)
+                    or job['id'] == previous['id'] and job['created_at'] != previous['created_at']
+                    or job['id'] != previous['id'] and (
+                        created < allocation_stamp(job['completed_at'])
+                        or created < allocation_stamp(previous['created_at']))):
+                raise ValueError('API worker inherited allocation unproven')
+            previous = job
+        result[shard] = origin
+    return result
+
+
 def current_worker_attempts(api, topology, run_id, attempt):
+    attempt = int(attempt)
+    if not 1 <= attempt <= 10:
+        raise ValueError('API worker attempt history exceeds bound')
     path = f'/repos/{collect_ci_timing.REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}'
     run = api.get(path)
     if run.get('id') != int(run_id) or run.get('run_attempt') != int(attempt):
         raise ValueError('API enclosing workflow attempt mismatch')
     collect_ci_timing.validate_run(run, 'Test', topology)
-    jobs = api.pages(path + '/jobs', 'jobs')['jobs']
-    return worker_attempts(jobs, topology, run_id, attempt)
+    # At most ten inventories plus this run read, within the existing API
+    # request/deadline budget. Missing pages or history still fail closed.
+    inventories = {number: api.pages(
+        f'/repos/{collect_ci_timing.REPOSITORY}/actions/runs/{run_id}/attempts/{number}/jobs', 'jobs')['jobs']
+        for number in range(1, attempt + 1)}
+    return physical_worker_attempts(inventories, topology, run_id, attempt)
 
 
 def verify_raw_coverage(paths, topology, *, allow_legacy=False):

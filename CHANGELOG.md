@@ -10,6 +10,13 @@ follow [Semantic Versioning](https://semver.org/).
   headers, including range overread. Content-free trace counts distinguish
   local catalog validation and decoding from remote discovery costs.
 
+- `agent-archive handoff` names the session above `Continue in`: its title,
+  agent, when it was last active, and the handoff's size. When only one other
+  agent is installed, the question is yes or no (`Continue in Claude Code?
+  [Y/n]`) instead of a one-item list; `n` quits, and print, copy, and write
+  stay on the line below. With several agents, print, copy, write, and quit
+  share one line.
+
 - Muse local handoff previews now read only their reserved head/tail windows,
   avoiding whole-file hashes while browsing large histories. Selected sessions
   retain complete filtering and independent content verification.
@@ -43,6 +50,12 @@ follow [Semantic Versioning](https://semver.org/).
   decoded again. Capturing such a thread's growth needs about 5 times its
   filtered size in read memory instead of about 12.
 
+- Protected Cursor backfill can stage selected root chats from a live WAL using
+  a bounded private SQLite image. Scratch capacity is reserved before copying,
+  and cleanup must succeed before admission. Existing staged evidence can then
+  publish after the native source disappears. Live Cursor/platform qualification
+  remains unverified; unknown capabilities and exhausted budgets stay pending.
+
 - Archived Cursor sessions now carry the chat's name. Sessions captured from
   Cursor's agent transcripts, which record no name, read it from the chat's
   `composerData` row in Cursor's database (read-only, in place), imported
@@ -72,6 +85,15 @@ follow [Semantic Versioning](https://semver.org/).
   Codex thread whose ID starts `01a10e11`.
 
 ### Local native validation foundation
+
+- Muse's opt-in qualification endpoint accepts the observed exact model-catalog
+  GET route and controlled tool-echo representation, with fixed, content-free
+  first-refusal diagnostics. Existing request bounds and call/result checks
+  remain; this adds no native tool-status qualification.
+
+- Muse handoff no longer reports model identity as unavailable when the qualified
+  second startup metadata record supplies it. Retained refiltering also repairs
+  this warning (filter 29, adapter 0.29.0); complete usage and cost stay unavailable.
 
 - Muse retains own committed tool-call identities and validates exact prior
   result batch/index/call joins after native loss. Nonempty enriched sources

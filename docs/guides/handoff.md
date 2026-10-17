@@ -138,23 +138,35 @@ agent-archive handoff
 ```
 
 Pick a session in [the picker](#the-picker) (a number, or `/` and a few
-words to find one), and `handoff` asks where to continue:
+words to find one), and `handoff` names the session and asks where to
+continue:
 
 ```text
+  Fix the flaky widget test
+  Claude Code · 2 hours ago · 14 KB
+
 ? Continue in
 
   1) Codex (default)
   2) Claude Code
 
-  [p] print
-  [c] copy to the clipboard
-  [w] write to a file
-  [q] quit
+  [p] print  [c] copy  [w] write  [q] quit
 
 › Choose [1]:
 ```
 
-Only agents whose CLI is on `PATH` are numbered. Enter takes the default:
+Only agents whose CLI is on `PATH` are numbered. When only one is installed,
+the question is yes or no instead: Enter or `y` starts that agent, and `n` or
+`q` quits.
+
+```text
+? Continue in Claude Code? [Y/n]
+  or [p] print  [c] copy  [w] write
+
+›
+```
+
+Enter takes the default:
 `handoff.default_to` for the session's harness in `config.json` (see
 [configuration](../reference/configuration.md)) when that agent is installed,
 else Codex for a Claude Code session and Claude Code for a Codex or Cursor
@@ -797,6 +809,11 @@ from; see [JSON output](../reference/json-output.md). The format is specified
 in the [handoff design](../../dev/proposals/implemented/handoff.md).
 
 ### Muse local sessions
+
+The model-unavailable warning reflects the complete validated startup prefix.
+A model resolved in the qualified second metadata record is available; missing
+or empty model labels remain unavailable. This does not establish complete usage
+or cost.
 
 Use `agent-archive handoff --file /path/to/session.jsonl --harness muse` to read
 a complete supported ordinary exec/MSP root without setup. Add `--format json`,
