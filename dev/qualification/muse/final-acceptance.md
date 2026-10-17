@@ -202,8 +202,11 @@ bytes, zero storage PUTs, zero calls through all three listing entry points,
 unchanged published files and released shared charges. Initial publication and
 forced signature-removal reread are positive controls. The four-agent control
 uses real Muse admission alongside ordinary Claude/Codex/Cursor file sessions,
-occupies the existing shared pass ledger, checks named shared-pressure deferrals
-without replacing prior publication, then releases that pressure and retries.
+occupies the existing shared pass ledger, checks ordinary-agent growth publication
+beside a named Muse shared-pressure deferral while preserving the Muse baseline,
+then releases pressure and publishes Muse growth without reuploading or consuming
+Filter input from the settled ordinary sources. Existing provider environments
+must carry the same observed ledger object.
 It adds no reserve or production test port.
 
 These controls report the existing ledger peak separately from process memory.

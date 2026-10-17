@@ -55,6 +55,46 @@ func (s *museAcceptanceStore) ListRange(ctx context.Context, prefix, after, thro
 	return s.MemoryStore.ListRange(ctx, prefix, after, through)
 }
 
+// Observe the existing SourceEnvironment without replacing source passes,
+// snapshots, filters or admission evidence; concrete proof identity survives.
+type museAcceptanceSources struct {
+	agentapi.SourcesLookup
+	opened map[string][]*agentapi.NativeReadBudget
+}
+
+func (s *museAcceptanceSources) LookupSources(name string) (agentapi.SourceProvider, agentapi.TranscriptFilter, bool) {
+	provider, filter, ok := s.SourcesLookup.LookupSources(name)
+	if !ok {
+		return provider, filter, false
+	}
+	return museAcceptanceProvider{SourceProvider: provider, name: name, owner: s}, filter, true
+}
+
+type museAcceptanceProvider struct {
+	agentapi.SourceProvider
+	name  string
+	owner *museAcceptanceSources
+}
+
+func (p museAcceptanceProvider) OpenPass(ctx context.Context, env agentapi.SourceEnvironment) (agentapi.SourcePass, error) {
+	p.owner.opened[p.name] = append(p.owner.opened[p.name], env.ReadBudget)
+	return p.SourceProvider.OpenPass(ctx, env)
+}
+
+func (s *museAcceptanceSources) requireShared(t *testing.T, budget *agentapi.NativeReadBudget) {
+	t.Helper()
+	for _, name := range []string{"claude", "codex", "cursor", "muse"} {
+		if len(s.opened[name]) == 0 {
+			t.Fatalf("%s source pass was not observed", name)
+		}
+		for _, actual := range s.opened[name] {
+			if actual == nil || actual != budget {
+				t.Fatalf("%s used a different source ledger", name)
+			}
+		}
+	}
+}
+
 func (s *museAcceptanceStore) reset() {
 	s.puts.Store(0)
 	s.lists.Store(0)
@@ -276,7 +316,17 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 	if err != nil || len(regs) != 4 {
 		t.Fatalf("four concrete agents were not admitted: %d %v", len(regs), err)
 	}
-	before := snapshotTree(t, filepath.Join(f.home, "published"))
+	var museOwner archive.SessionRegistration
+	for _, reg := range regs {
+		if reg.Harness.Name == "muse" {
+			museOwner = reg
+		}
+	}
+	if museOwner.ArchiveSessionID == "" {
+		t.Fatal("actual admitted Muse owner absent")
+	}
+	musePublishedPath := filepath.Join(f.home, "published", museOwner.ArchiveSessionID+".json")
+	before := snapshotTree(t, musePublishedPath)
 	// Grow only after the small baseline is committed. Four MiB remains for
 	// ordinary durable-state checks; the one-MiB visible record in each real
 	// source must compete for decoding/build headroom on the same ledger.
@@ -350,6 +400,8 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 		}
 		return lookup, closeLookup, nil
 	}
+	sources := &museAcceptanceSources{SourcesLookup: f.registry, opened: map[string][]*agentapi.NativeReadBudget{}}
+	opts.Sources = sources
 	remote.reset()
 	pressure, pressureErr := collector.Run(t.Context(), f.store, remote, opts)
 	pressure.CloseStagedResults()
@@ -359,26 +411,54 @@ func TestMuseAndExistingAgentsSharePressureAndRecoverWithoutNewReserve(t *testin
 	occupied := held
 	pressureBudget.ReleaseUnscoped(held)
 	held = 0
-	if pressureErr != nil || len(pressure.Errors) != 0 || len(pressure.Published) != 0 || len(pressure.Deferred) != 4 {
-		t.Fatalf("four-agent shared refusal: %+v %v", pressure, pressureErr)
+	sources.requireShared(t, pressureBudget)
+	if pressureErr != nil || len(pressure.Errors) != 0 || len(pressure.Published) != 3 || len(pressure.Deferred) != 1 || pressure.Deferred[museOwner.ArchiveSessionID] != collector.DeferredReadBudget {
+		t.Fatalf("ordinary headroom/native retry: %+v %v", pressure, pressureErr)
 	}
+	ordinaryPublished := map[string]bool{}
+	for _, id := range pressure.Published {
+		ordinaryPublished[id] = true
+	}
+	settled := map[string]string{}
 	for _, reg := range regs {
-		if pressure.Deferred[reg.ArchiveSessionID] != collector.DeferredReadBudget {
-			t.Fatalf("%s did not retain shared-pressure deferral: %+v", reg.Harness.Name, pressure.Deferred)
+		if reg.Harness.Name != "muse" {
+			if !ordinaryPublished[reg.ArchiveSessionID] {
+				t.Fatalf("%s growth did not publish under native pressure", reg.Harness.Name)
+			}
+			settled[reg.ArchiveSessionID] = snapshotTree(t, filepath.Join(f.home, "published", reg.ArchiveSessionID+".json"))
 		}
 		if _, blocked, err := f.store.LoadBlocked(reg.ArchiveSessionID); err != nil || blocked {
 			t.Fatalf("%s pressure became a session limit: blocked=%v %v", reg.Harness.Name, blocked, err)
 		}
 	}
-	if remote.puts.Load() != 0 || before != snapshotTree(t, filepath.Join(f.home, "published")) {
-		t.Fatal("shared pressure replaced an existing publication")
+	if before != snapshotTree(t, musePublishedPath) || remote.sourcePuts.Load() != 3 || remote.metadataPuts.Load() != 3 {
+		t.Fatalf("pressure lost Muse baseline or duplicated ordinary upload: source=%d metadata=%d", remote.sourcePuts.Load(), remote.metadataPuts.Load())
 	}
 	opts.NativeLocatorFactory = factory
+	sources.opened = map[string][]*agentapi.NativeReadBudget{}
+	remote.reset()
+	disable := trace.Enable()
+	defer disable()
 	recovered, recoverErr := collector.Run(t.Context(), f.store, remote, opts)
 	recovered.CloseStagedResults()
-	if recoverErr != nil || len(recovered.Errors) != 0 || len(recovered.Deferred) != 0 || recovered.Scanned != 4 || len(recovered.Published) != 4 {
-		t.Fatalf("released pressure did not recover all agents: %+v %v", recovered, recoverErr)
+	var recoveryTrace bytes.Buffer
+	trace.Write(&recoveryTrace)
+	if recoverErr != nil || len(recovered.Errors) != 0 || len(recovered.Deferred) != 0 || recovered.Scanned != 4 || len(recovered.Published) != 1 || recovered.Published[0] != museOwner.ArchiveSessionID || len(recovered.Skipped) != 3 {
+		t.Fatalf("released pressure did not publish Muse beside settled agents: %+v %v", recovered, recoverErr)
+	}
+	sources.requireShared(t, ledgers[len(ledgers)-1])
+	sourceInfo, statErr := os.Stat(museOwner.TranscriptPath)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if museTraceFilterInput(t, recoveryTrace.String()) != sourceInfo.Size() || remote.sourcePuts.Load() != 1 || remote.metadataPuts.Load() != 1 {
+		t.Fatalf("recovery repeated Filter input/upload: source=%d metadata=%d trace=%s", remote.sourcePuts.Load(), remote.metadataPuts.Load(), recoveryTrace.String())
+	}
+	for id, snapshot := range settled {
+		if snapshot != snapshotTree(t, filepath.Join(f.home, "published", id+".json")) {
+			t.Fatal("recovery rewrote a settled ordinary snapshot")
+		}
 	}
 	peak := museAcceptanceReleased(t, ledgers)
-	t.Logf("agents=claude,codex,cursor,muse shared_limit=%d cache_reserve=%d session_ceiling=%d occupied=%d shared_peak_bytes=%d released=0", agentapi.PassReadBudget, agentapi.PassCacheReserve, collector.SessionReadCeiling, occupied, peak)
+	t.Logf("agents=claude,codex,cursor,muse shared_limit=%d cache_reserve=%d session_ceiling=%d occupied=%d ordinary_growth_publications=3 deferred_muse=1 recovered_muse=1 shared_peak_bytes=%d released=0", agentapi.PassReadBudget, agentapi.PassCacheReserve, collector.SessionReadCeiling, occupied, peak)
 }
