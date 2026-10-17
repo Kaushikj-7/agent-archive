@@ -227,29 +227,34 @@ func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
 		return s.approval(run, ek, e)
 	}
 	if r.Type == payloadApprovalWaitStarted || r.Type == payloadToolBatchStarted {
-		rec := object(p["record"])
-		call := str(rec["tool_call_id"])
-		if r.Type == payloadToolBatchStarted {
-			call = str(rec["call_id"])
-		}
-		// Approval-free reads use exact indexed absence before the legacy approved
-		// matcher; unrelated requests never cause a scan of their private bodies.
-		if r.Type == payloadToolBatchStarted && !s.pendingIndex.overlaps(run, str(rec["task_id"]), call) {
-			return s.readStart(r, p, rec)
-		}
-		match := false
-		for key, request := range s.requested {
-			if key.run == run && request["task_id"] == rec["task_id"] && request["tool_call_id"] == call && request["tool_name"] == rec["tool_name"] {
-				if r.Type == payloadApprovalWaitStarted && key.pending != str(rec["pending_action_id"]) {
-					continue
-				}
-				match = true
+		return s.observeEffectStart(r, p, run)
+	}
+	return nil
+}
+
+func (s *nativeBodyJoins) observeEffectStart(r retained, p map[string]any, run string) error {
+	rec := object(p["record"])
+	call := str(rec["tool_call_id"])
+	if r.Type == payloadToolBatchStarted {
+		call = str(rec["call_id"])
+	}
+	// Approval-free reads use exact indexed absence before the legacy approved
+	// matcher; unrelated requests never cause a scan of their private bodies.
+	if r.Type == payloadToolBatchStarted && !s.pendingIndex.overlaps(run, str(rec["task_id"]), call) {
+		return s.readStart(r, p, rec)
+	}
+	match := false
+	for key, request := range s.requested {
+		if key.run == run && request["task_id"] == rec["task_id"] && request["tool_call_id"] == call && request["tool_name"] == rec["tool_name"] {
+			if r.Type == payloadApprovalWaitStarted && key.pending != str(rec["pending_action_id"]) {
+				continue
 			}
+			match = true
 		}
-		if !match {
-			if r.Type != payloadToolBatchStarted || s.readStart(r, p, rec) != nil {
-				return errFormat
-			}
+	}
+	if !match {
+		if r.Type != payloadToolBatchStarted || s.readStart(r, p, rec) != nil {
+			return errFormat
 		}
 	}
 	return nil
