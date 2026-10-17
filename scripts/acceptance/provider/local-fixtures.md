@@ -46,3 +46,33 @@ history replay, live-WAL admission, complete deletion/retention/restoration,
 cloned-owner concurrency, distributed CAS, AWS/R2 accounts, real native app
 layouts, native macOS/arm64 execution or old-release compatibility. Those gates
 remain separate and must be integrated against their immutable implementations.
+
+## Source-set history campaign
+
+On a candidate containing the source-set publication implementation, add
+`--history-source-set` to the runner command. This keeps all four existing
+provider parents and adds the CLI parent
+`TestDisposableProviderHistoryRecoversAfterNativeAndLocalLoss`.
+
+That parent admits a synthetic two-rollout Codex history through actual SQLite
+inventory and the backfill command, removes the complete synthetic native home,
+and loses acknowledgement only after a successful real MinIO metadata PUT. It
+requires journal 5, inner commit 2, the complete source roster, and unchanged
+selected metadata and commit across local Store restart. Replay must settle the
+covered request, pending journal and owned import stage. After removal of the
+whole synthetic local archive home, a separately issued credential reads the
+active and every preserved source. Deleting an actual preserved provider object
+must fail the independent read; restoring its exact bytes must restore the read.
+The existing constructor retains actual out-of-prefix PUT/LIST refusals and
+verifies owned-prefix cleanup.
+
+Independently pass the new exact identity and all existing parents/descendants
+to `verify-results.py`; a successful old four-parent stream does not satisfy the
+history campaign. Retain the successful process exit, clean candidate identity,
+tool identities/hashes, raw stream, verifier verdict and owned-process cleanup.
+A failed or skipped body leaves the campaign unqualified.
+
+This campaign does not cover changed-policy history replay, staged privacy
+successors, live-WAL, deletion/retention/restoration, owner concurrency, distributed
+CAS, AWS/R2, genuine native app layouts, native platform execution or old-release
+compatibility. Those obligations remain open even when this campaign passes.
