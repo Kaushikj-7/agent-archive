@@ -212,7 +212,7 @@ func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, pre
 	known := options.Cache.keys(listPrefix)
 	scan.Count("cached keys", len(known))
 	scan.End()
-	objects, err := listObjects(ctx, store, listPrefix, known)
+	objects, err := listObjects(ctx, store, listPrefix, known, options.Cache)
 	if err != nil {
 		return nil, err
 	}

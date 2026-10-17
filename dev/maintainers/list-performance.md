@@ -1,5 +1,65 @@
 # Listing performance target
 
+Provider-page measurement work extends the existing synthetic stores and
+command benchmarks with separate LIST-page and per-key delay, transferred and
+discarded header bytes, and GET delay. Deterministic operation counts are the
+regression gates; modeled time is supplementary. Content-free trace counters
+separate local row validation, summary decoding and cache inventory from remote
+requests. Ordinary command gates derive separate legacy and post-PR1 ceilings
+from the fixture headers and their independently specified range policies;
+duplicated discovery, omitted required services (including empty v2) and excess
+modeled page waves must fail. Successful GET bytes use independent fixture
+metadata sums, selected-window sizes, selected-source size and a sized metadata
+fallback allowance. Unique successful metadata-key coverage prevents source
+reads or duplicate selected reads from masking a missing inventory body. Key
+capture also stays outside benchmark timing. Recorded per-range services use
+the explicit topology with independent auxiliary listings or one shared
+16-slot pool. Modeled critical page waves and longest single-range chains are separate
+metrics, and request-record collection runs outside benchmark timing.
+The historical baselines below retain their original constants and
+source pins; new modeled runs do not revise that evidence or qualify live R2
+performance. See the [read-path plan](../proposals/sublinear-read-paths.md).
+
+`BenchmarkCommandReadPaths` covers the six list/show/handoff read paths plus
+a named-project list whose newest match lies beyond the initial global page, at
+1,800 sessions by default, with 10k/25k/50k behind `AGENT_ARCHIVE_PERF=1`.
+Cold, warm and one-percent-changed fixtures reset to the same exact object
+snapshot for each iteration; `--no-cache` cases apply to list, which supports
+that flag. Local trace accounting uses a separate untimed invocation so trace
+recording does not inflate the benchmark's time and allocation measurements.
+The current 24-case matrix includes cold/warm/changed for all seven commands
+and no-cache for the three list cases. Ordinary tests gate the same applicable
+states at 1,800 sessions. The historical 20-case measurements predate the four
+scoped cases. The scoped fixture selects project-0: its newest match is global
+row 100, beyond the first 50 rows, and its oracle requires every returned
+scoped result in order, with exact totals and changed revisions.
+Picker checks validate every advertised visible row's identity, revision and
+order, including the initial 50-row window marker. Selected show/handoff JSON
+checks complete document envelopes, a changed output-visible revision and the
+known selected source reference or prompt exchange. Summary-hash byte counts
+exclude rows with an empty checksum; corrupt nonempty checksums still count
+the hashing work actually performed. Handoff picker homes contain one
+synthetic registration per archived session; their missing native files remain
+inside those homes. Successful registration counts and attempted reads (where
+available) are reported separately. Cache eviction spans include inventory and
+filesystem deletion, counting only successful removals.
+`AGENT_ARCHIVE_READ_LATENCY=1` enables a modeled timing replay: 200 ms per page,
+400 microseconds per transferred key, and 160 ms per GET. These values are one
+explicit sensitivity decomposition within the observed full-page and GET ranges,
+not a calibration of the provider's page overhead and per-key cost.
+
+`BenchmarkReadPathListingPolicies` explicitly separates the legacy topology
+from post-PR1 projections. The legacy full-warm comparison uses sidecar-based
+canonical ranges in their own sixteen-slot pool, with independent sequential
+v2/v3 listings and strict-beyond boundary overread. The post-PR1 comparisons
+use one, eight, sixteen or page-sized ranges across a shared sixteen-slot pool
+and inclusive boundary termination. These labels describe the modeled policy;
+post-PR1 results do not establish behavior on a pre-fix binary. Its page/key
+delay decompositions are sensitivity assumptions:
+the observed full-page timings do not calibrate small-page latency. Qualified
+catalog root/delta scale accounting accompanies the catalog-reader work;
+mixed and maximum-body RSS/concurrency trials remain a separate measured step.
+
 On the default legacy destination format, ordinary noninteractive
 `list --limit N` and `list --json --limit N`
 use session-addressed revision-qualified `listing/v3/` entries; existing
@@ -133,12 +193,22 @@ details. A missing index retains complete compatibility scanning. On R2 a
 listing page of 1,000 keys takes
 0.5–0.9 s, and one listing's pages are strictly sequential. So since the
 [listing-at-scale](../proposals/listing-at-scale.md) phase 1 change, the scan is
-split into contiguous key ranges listed concurrently: at most 16 in flight,
-each about 200 of the sidecars the metadata cache knows (one page). The
-ranges cover every key whatever the boundaries, so the cache only decides
-how evenly the work is spread. With under 400 cached sidecars under the
-listed prefix (a `--harness` listing counts only that harness's), or with
-`--no-cache`, the scan is the single sequential listing.
+split into contiguous key ranges listed concurrently. Sessions and both
+listing-index prefixes share at most sixteen in-flight listings. After a
+complete listing, each prefix saves private complete-key hints for roughly
+1,000-key ranges; prefixes with at most 1,000 keys stay sequential. This policy
+accounts for full provider pages transferred past range boundaries rather than
+assuming that sixteen short returned ranges transfer sixteen short responses.
+An exact inclusive range boundary terminates without fetching another page.
+
+Hints split the complete keyspace and never prove existence or absence. Stale,
+deleted or empty boundaries preserve complete ordered results; missing or
+damaged hints use the existing sidecar-based planner or sequential fallback.
+Unknown harnesses and non-hex identities remain covered. Each hint file is
+0600, atomically replaced and bounded to `15 + ceil(keys/1000)` boundaries.
+`--no-cache` retains complete sequential discovery. These changes reduce
+constant factors; fresh legacy discovery still grows with archive size and
+does not establish the catalog-v4 scale targets.
 
 ## Synthetic baseline recorded 2026-10-12
 

@@ -22,7 +22,7 @@ func FindMetadataPrefix(ctx context.Context, store storage.ObjectStore, prefix, 
 	idPrefix = strings.ToLower(idPrefix)
 	canonicalPrefix := listPrefixFor(prefix, filter.Harness)
 	known := opts.Cache.keys(canonicalPrefix)
-	objects, err := listObjects(ctx, store, canonicalPrefix, known)
+	objects, err := listObjects(ctx, store, canonicalPrefix, known, opts.Cache)
 	if err != nil {
 		return nil, err
 	}

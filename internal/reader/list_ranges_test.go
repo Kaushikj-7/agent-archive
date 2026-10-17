@@ -104,11 +104,11 @@ func TestListRangesEqualsListForAnyKeysAndBoundaries(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := listRanges(ctx, store, "sessions", bounds, nil)
+		got, err := listRangesWithSlots(ctx, store, "sessions", bounds, nil, make(chan struct{}, rangeConcurrency))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(keysOf(got), keysOf(want)) {
+		if !slices.Equal(got, want) {
 			t.Fatalf("trial %d, bounds %q:\nranges %q\nlist   %q", trial, bounds, keysOf(got), keysOf(want))
 		}
 	}
@@ -182,7 +182,7 @@ func TestListRangesBoundsConcurrency(t *testing.T) {
 	store := &rangeRecorder{MemoryStore: storagetest.NewMemoryStore(), hold: make(chan struct{})}
 	done := make(chan error, 1)
 	go func() {
-		_, err := listRanges(context.Background(), store, "sessions", boundsN(3*rangeConcurrency), nil)
+		_, err := listRangesWithSlots(context.Background(), store, "sessions", boundsN(3*rangeConcurrency), nil, make(chan struct{}, rangeConcurrency))
 		done <- err
 	}()
 	// Wait for the first wave to fill every slot, then release them all.
@@ -202,7 +202,7 @@ func TestListRangesReturnsTheFailureNotTheCancellationItCaused(t *testing.T) {
 	failure := errors.New("403 forbidden")
 	bounds := boundsN(5)
 	store := &rangeRecorder{MemoryStore: storagetest.NewMemoryStore(), hold: make(chan struct{}), failAt: bounds[3], failErr: failure}
-	_, err := listRanges(context.Background(), store, "sessions", bounds, nil)
+	_, err := listRangesWithSlots(context.Background(), store, "sessions", bounds, nil, make(chan struct{}, rangeConcurrency))
 	if !errors.Is(err, failure) {
 		t.Fatalf("listRanges error = %v, want the range's own failure", err)
 	}
@@ -221,7 +221,7 @@ func TestListRangesReturnsTheFirstFailureNotALaterEcho(t *testing.T) {
 	bounds := boundsN(5)
 	store := &rangeRecorder{MemoryStore: storagetest.NewMemoryStore(), hold: make(chan struct{}),
 		echoErr: errors.New("connection reset"), failAt: bounds[4], failErr: failure}
-	if _, err := listRanges(context.Background(), store, "sessions", bounds, nil); !errors.Is(err, failure) {
+	if _, err := listRangesWithSlots(context.Background(), store, "sessions", bounds, nil, make(chan struct{}, rangeConcurrency)); !errors.Is(err, failure) {
 		t.Fatalf("listRanges error = %v, want the first failure", err)
 	}
 }
@@ -253,7 +253,7 @@ func TestListRangesFailsWhenCancelledBeforeEveryRangeStarted(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := listRanges(ctx, store, "sessions", boundsN(3*rangeConcurrency), nil)
+		_, err := listRangesWithSlots(ctx, store, "sessions", boundsN(3*rangeConcurrency), nil, make(chan struct{}, rangeConcurrency))
 		done <- err
 	}()
 	waitInFlight(t, store, rangeConcurrency)
@@ -269,7 +269,7 @@ func TestListRangesReportsTheCallersCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := listRanges(ctx, store, "sessions", boundsN(3*rangeConcurrency), nil)
+		_, err := listRangesWithSlots(ctx, store, "sessions", boundsN(3*rangeConcurrency), nil, make(chan struct{}, rangeConcurrency))
 		done <- err
 	}()
 	time.Sleep(10 * time.Millisecond)
@@ -285,7 +285,7 @@ func TestListRangesReportsTheCallersCancellation(t *testing.T) {
 func TestListMetadataUsesCachePlannedRanges(t *testing.T) {
 	ctx := context.Background()
 	store := &rangeRecorder{MemoryStore: storagetest.NewMemoryStore()}
-	for i := range 2*rangeSidecars + 50 {
+	for i := range 1100 {
 		putSession(t, store, "claude", fmt.Sprintf("%032x", i*7919), baseTime.Add(time.Duration(i)*time.Minute))
 	}
 	cache, err := OpenMetadataCache(t.TempDir())
@@ -310,7 +310,7 @@ func TestListMetadataUsesCachePlannedRanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	if store.lists != 1 || len(store.ranges) != 3 {
-		t.Fatalf("warm cache: %d lists and %d ranges, want 3 ranges and no plain listing", store.lists, len(store.ranges))
+		t.Fatalf("warm cache: %d lists and %d ranges, want 3 key-balanced ranges and no plain listing", store.lists, len(store.ranges))
 	}
 	plain, err := ListMetadata(ctx, store, "sessions", Filter{})
 	if err != nil {
