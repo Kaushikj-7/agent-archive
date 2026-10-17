@@ -103,11 +103,11 @@ func (j *Journal) UnmarshalJSON(raw []byte) (decodeErr error) {
 	}
 	fenced := len(filesOnly) > 0 && filesOnly[0] == '{'
 	if fenced {
-		var err error
-		raw, err = normalizeNativeJournalFence(raw, doc, filesOnly, replayProtected, importProtected)
+		normalized, err := normalizeNativeJournalFence(raw, doc, filesOnly, replayProtected, importProtected)
 		if err != nil {
 			return err
 		}
+		raw = normalized
 	}
 	plain, err := unmarshalBaseJSON(raw)
 	if err != nil {
