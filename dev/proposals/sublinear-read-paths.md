@@ -413,7 +413,12 @@ legacy-versus-post-PR1 scheduling labels, eviction timing, picker result oracle,
 synthetic registration inventory/counters and output-visible changed handoffs.
 Command/state discovery ceilings follow independent legacy/post-PR1 fixture
 plans, with captured modeled service schedules and explicit duplicate-work
-and excess-wave negative controls.
+and excess-wave negative controls. Required empty-prefix services, successful
+GET byte ceilings, unique required metadata reads, complete JSON envelopes and
+actual checksum-hash work have
+separate regression controls. The current first-session source uses a canonical
+Codex message record so the known prompt appears in its handoff; historical
+measurements retain their original fixture/source pins.
 The original observed-size 20-case command matrix passed with exact Go 1.27.2,
 alongside synthetic S3 provider-page conformance. The current matrix adds four
 scoped late-match cases (24 total), with ordinary 1,800-session operation/output

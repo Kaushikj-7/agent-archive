@@ -540,7 +540,9 @@ func canonicalCatalogRows(ctx context.Context, tx *sql.Tx) (map[string]string, m
 			return nil, nil, err
 		}
 		span.Count("rows-scanned", 1)
-		span.Count("summary-B-hashed", len(record.summary))
+		if record.checksum != "" {
+			span.Count("summary-B-hashed", len(record.summary))
+		}
 		prior[record.key] = record.etag
 		validSummary[record.key] = record.valid()
 	}
@@ -780,7 +782,9 @@ func fillCatalogPage(rows *sql.Rows, q CatalogQuery, offset int, filterSummaries
 			return err
 		}
 		span.Count("rows-scanned", 1)
-		span.Count("summary-B-hashed", len(record.summary))
+		if record.checksum != "" {
+			span.Count("summary-B-hashed", len(record.summary))
+		}
 		if !record.valid() {
 			return errors.New("invalid session catalog summary checksum")
 		}

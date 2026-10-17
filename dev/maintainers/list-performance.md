@@ -7,10 +7,14 @@ regression gates; modeled time is supplementary. Content-free trace counters
 separate local row validation, summary decoding and cache inventory from remote
 requests. Ordinary command gates derive separate legacy and post-PR1 ceilings
 from the fixture headers and their independently specified range policies;
-duplicated discovery and excess modeled page waves must fail. Recorded
-per-range services use the explicit topology with independent auxiliary listings
-or one shared 16-slot pool.
-Modeled critical page waves and longest single-range chains are separate
+duplicated discovery, omitted required services (including empty v2) and excess
+modeled page waves must fail. Successful GET bytes use independent fixture
+metadata sums, selected-window sizes, selected-source size and a sized metadata
+fallback allowance. Unique successful metadata-key coverage prevents source
+reads or duplicate selected reads from masking a missing inventory body. Key
+capture also stays outside benchmark timing. Recorded per-range services use
+the explicit topology with independent auxiliary listings or one shared
+16-slot pool. Modeled critical page waves and longest single-range chains are separate
 metrics, and request-record collection runs outside benchmark timing.
 The historical baselines below retain their original constants and
 source pins; new modeled runs do not revise that evidence or qualify live R2
@@ -27,11 +31,14 @@ The current 24-case matrix includes cold/warm/changed for all seven commands
 and no-cache for the three list cases. Ordinary tests gate the same applicable
 states at 1,800 sessions. The historical 20-case measurements predate the four
 scoped cases. The scoped fixture selects project-0: its newest match is global
-row 100, beyond the first 50 rows, and its oracle requires every returned scoped result
-in order, with exact totals and changed revisions.
+row 100, beyond the first 50 rows, and its oracle requires every returned
+scoped result in order, with exact totals and changed revisions.
 Picker checks validate every advertised visible row's identity, revision and
 order, including the initial 50-row window marker. Selected show/handoff JSON
-checks a changed output-visible revision. Handoff picker homes contain one
+checks complete document envelopes, a changed output-visible revision and the
+known selected source reference or prompt exchange. Summary-hash byte counts
+exclude rows with an empty checksum; corrupt nonempty checksums still count
+the hashing work actually performed. Handoff picker homes contain one
 synthetic registration per archived session; their missing native files remain
 inside those homes. Successful registration counts and attempted reads (where
 available) are reported separately. Cache eviction spans include inventory and
