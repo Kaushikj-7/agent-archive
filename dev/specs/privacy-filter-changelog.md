@@ -5,6 +5,17 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 29
+
+Global and Muse adapter 0.29.0 accompany this change.
+
+- Muse reports `model_identity_unavailable` only when no nonempty model label
+  exists in the complete validated startup prefix. The qualified two-metadata
+  lane resolves the model in its second row. Retained refiltering repairs the
+  previous false gap without native files.
+- No transcript fields, redaction rules or accounting claims change. Version 28
+  committed-tool evidence and Muse parser 0.5.0 remain in effect.
+
 ## Source filter version 28
 
 Global adapter 0.28.0, Muse filter 0.28.0 and Muse parser 0.5.0 retain minimal
