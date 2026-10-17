@@ -43,4 +43,16 @@ func (e Env) runtimeLookup() agentapi.RuntimeLookup { return e.agentRegistry() }
 
 func (e Env) launcherLookup() agentapi.LauncherLookup { return e.agentRegistry() }
 
-func (e Env) setupNames() []string { return agentmeta.SetupNames(e.agentRegistry().Catalog()) }
+func (e Env) setupNames() []string {
+	names := agentmeta.SetupNames(e.agentRegistry().Catalog())
+	if e.MuseRootCaptureQualified {
+		return names
+	}
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if name != "muse" {
+			out = append(out, name)
+		}
+	}
+	return out
+}

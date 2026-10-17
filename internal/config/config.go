@@ -73,6 +73,10 @@ const (
 // private file elsewhere; see destination.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
 type Config struct {
+	// NativeAdmissionProtection permanently fences first-owner capture writers.
+	NativeAdmissionProtection bool               `json:"native_admission_protection,omitempty"`
+	MuseCaptureLastIssuedAt   time.Time          `json:"muse_capture_last_issued_at,omitzero"`
+	MuseCapture               *MuseCaptureConfig `json:"muse_capture,omitempty"`
 	// DeletionProtection fences owner-bound deletion and exact retention restoration.
 	DeletionProtection bool `json:"deletion_protection,omitempty"`
 	// SourceSetPublicationProtection fences history source-set publication writers.
@@ -339,6 +343,9 @@ func SaveWithCatalog(home string, cfg Config, c agentmeta.Catalog) error {
 			return errors.New("setup pending before native source authority change")
 		}
 	}
+	if err := validateMuseCaptureTransition(cfg, previous); err != nil {
+		return err
+	}
 	if cfg.RetentionDays == 0 {
 		cfg.RetentionProtection = true
 	}
@@ -404,7 +411,12 @@ func SetPaused(home string, paused bool, at ...time.Time) (Config, error) {
 	if err := transitionDiscoveryPause(&cfg, paused, now.UTC()); err != nil {
 		return Config{}, err
 	}
+	previous := cfg
 	cfg.Paused = paused
+	cfg, err = ReconcileMuseCapture(cfg, previous, now)
+	if err != nil {
+		return Config{}, err
+	}
 	if err := Save(home, cfg); err != nil {
 		return Config{}, err
 	}

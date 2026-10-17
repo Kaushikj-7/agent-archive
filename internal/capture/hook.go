@@ -150,6 +150,9 @@ func handleBatch(home, harness string, batch []agentapi.LifecycleEvent, now time
 	if err := validateBatchStructure(harness, batch, now); err != nil {
 		return err
 	}
+	if harness == "muse" {
+		return handleMuseBatch(home, batch, now, lock, afterLock)
+	}
 	if setupjournal.TransactionPending(home) {
 		filtered, err := filterBatchEvidence(batch)
 		if err != nil {

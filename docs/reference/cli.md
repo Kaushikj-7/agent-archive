@@ -102,6 +102,7 @@ Usage: agent-archive setup [--abandon-recovery] [--verbose]
                [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
                [--codex-discovery on|off] [--search-indexing on|off]
+               [--muse-home DIR]
                [--codex-capture-scope included-projects|all-projects]
                [--prefix PREFIX] [--retention-days DAYS | --keep-forever]
                [--require-skill-use | --no-require-skill-use]
@@ -185,6 +186,8 @@ An interrupted setup is recovered on the next run.
                         share one identity, cannot rely on file locks, and
                         each run the background job. Only for a home that one
                         machine ever mounts; recorded while it is needed
+  --muse-home DIR       Explicit Muse data home; root capture is not publicly
+                        enabled yet
   --codex-discovery MODE on or off; fresh scripted Codex setup must choose.
                         Reconfiguration keeps an omitted choice. Discovery
                         finds supported sources; recent native copies may count
@@ -216,6 +219,7 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--codex-capture-scope` | a value | — |
 | `--codex-discovery` | a value | — |
 | `--keep-forever` | no value | — |
+| `--muse-home` | a value | — |
 | `--no-require-skill-use` | no value | — |
 | `--no-skills` | no value | — |
 | `--pair` | no value | — |
