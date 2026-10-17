@@ -17,10 +17,15 @@ import (
 )
 
 type localReadOptions struct {
-	harness, project, query string
-	allProjects, json       bool
-	transcript, full        bool
-	limit, maxBytes         int
+	harness     string
+	project     string
+	query       string
+	allProjects bool
+	json        bool
+	transcript  bool
+	full        bool
+	limit       int
+	maxBytes    int
 }
 
 const localReadSchemaVersion = 1
@@ -103,11 +108,11 @@ type localReadRow struct {
 }
 
 func localRow(c nativesessions.Candidate) localReadRow {
-	row := localReadRow{NativeID: c.NativeID, Harness: c.Ref.Harness, Project: c.Directory, StartedAt: c.StartedAt}
+	var gaps []archive.CaptureGap
 	if c.Ref.Harness == "muse" {
-		row.Gaps = []archive.CaptureGap{{Code: "child_coverage_unavailable"}}
+		gaps = []archive.CaptureGap{{Code: "child_coverage_unavailable"}}
 	}
-	return row
+	return localReadRow{NativeID: c.NativeID, Harness: c.Ref.Harness, Project: c.Directory, StartedAt: c.StartedAt, Gaps: gaps}
 }
 
 func localReadFailure(stderr io.Writer, command string, err error) int {
@@ -204,8 +209,8 @@ func runLocalShow(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 	if err != nil {
 		return localReadFailure(stderr, "show", err)
 	}
-	row := localRow(*selected)
-	row.Name, row.Gaps = target.analysis.Facts.Name, target.bundle.Capture.Gaps
+	labels, _ := archive.LabelsFromAnalysis(target.analysis)
+	row := localReadRow{NativeID: selected.NativeID, Harness: selected.Ref.Harness, Project: selected.Directory, StartedAt: selected.StartedAt, Name: labels.Name, Title: labels.Title, Gaps: target.bundle.Capture.Gaps}
 	if o.json {
 		out := struct {
 			SchemaVersion     int                              `json:"schema_version"`
@@ -216,14 +221,8 @@ func runLocalShow(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 			View              *normalizedOutput                `json:"view,omitempty"`
 			TokenObservations *archive.TokenObservationSummary `json:"token_observations,omitempty"`
 			Observability     map[string]archive.Availability  `json:"observability"`
-		}{SchemaVersion: localReadSchemaVersion, Domain: "local-read-show", Source: "local", Session: row, Coverage: localCoverage(result.Coverage), TokenObservations: target.analysis.TokenObservations}
-		observed := target.analysis.Observability
-		out.Observability = map[string]archive.Availability{"structured_counts": observed.StructuredCounts, "tool_calls": observed.ToolCalls, "files_touched": observed.FilesTouched, "git_activity": observed.GitActivity, "compactions": observed.Compactions, "tool_errors": observed.ToolErrors, "tool_results": observed.ToolResults}
-		for key, value := range out.Observability {
-			if value.State == "" {
-				delete(out.Observability, key)
-			}
-		}
+		}{SchemaVersion: localReadSchemaVersion, Domain: "local-read-show", Source: "local", Session: row, Coverage: localCoverage(result.Coverage), TokenObservations: target.analysis.TokenObservations, Observability: localReadObservability(target.analysis.Observability)}
+
 		if o.transcript {
 			view := target.analysis.View
 			turns := make([]normalizedTurn, len(view.Turns))
@@ -249,7 +248,7 @@ func runLocalShow(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 		return returnCode
 	}
 	if !o.transcript {
-		terminal.Printf(stdout, "%s (%s)\n%s\nStarted: %s\n", archive.DisplayLine(row.NativeID), archive.DisplayLine(row.Harness), archive.DisplayLine(row.Name), row.StartedAt.Format(time.RFC3339))
+		terminal.Printf(stdout, "%s (%s)\n%s\nStarted: %s\n", archive.DisplayLine(row.NativeID), archive.DisplayLine(row.Harness), archive.DisplayLine(archive.DisplayTitle(archive.Metadata{Name: row.Name, Title: row.Title})), row.StartedAt.Format(time.RFC3339))
 	}
 	gapOutput := stdout
 	if o.transcript {
@@ -266,7 +265,7 @@ func runLocalShow(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 		if err != nil {
 			return localReadFailure(stderr, "show", err)
 		}
-		view := sessionView{Metadata: archive.Metadata{SessionID: selected.NativeID, NativeSessionID: selected.NativeID, Name: row.Name, Harness: target.bundle.Capture.Harness, StartedAt: selected.StartedAt}}
+		view := sessionView{Metadata: archive.Metadata{SessionID: selected.NativeID, NativeSessionID: selected.NativeID, Name: row.Name, Title: row.Title, Harness: target.bundle.Capture.Harness, StartedAt: selected.StartedAt}}
 		render := transcriptOptions{summaryOptions: summaryOptions{Now: env.now(), Style: styleFor(stdout)}, Full: o.full}
 		if o.maxBytes > 0 {
 			var fits bool
@@ -280,4 +279,48 @@ func runLocalShow(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 		}
 	}
 	return 0
+}
+
+func runLocalListCommand(fs *commandFlags, env listCommandDependencies, stdout, stderr io.Writer, o localReadOptions) int {
+	if err := localReadFlags(fs, "source", "harness", "limit", "json", "all-projects", "project", "no-pager"); err != nil {
+		return fs.usageError("%v", err)
+	}
+	canonical, ok := harnessFlagWithCatalog(catalogFor(env), o.harness)
+	if !ok {
+		return fs.usageError("%s", harnessFlagError(o.harness))
+	}
+	if o.limit < 0 {
+		return fs.usageError("--limit cannot be negative")
+	}
+	o.harness = canonical
+	return runLocalList(env, stdout, stderr, o)
+}
+
+func dispatchShowSource(fs *commandFlags, env showCommandDependencies, stdout, stderr io.Writer, source string, o localReadOptions) (bool, int) {
+	if source == "local" {
+		if err := localReadFlags(fs, "source", "harness", "project", "all-projects", "transcript", "full", "json", "no-pager", "max-bytes"); err != nil {
+			return true, fs.usageError("%v", err)
+		}
+		if o.query == "" {
+			return true, fs.usageError("--source local needs a native session ID; use list --source local to find one")
+		}
+		if o.project != "" && o.allProjects {
+			return true, fs.usageError("--project and --all-projects cannot be used together")
+		}
+		return true, runLocalShow(env, stdout, stderr, o)
+	}
+	if source != "archive" || o.project != "" || o.allProjects {
+		return true, fs.usageError("--source must be archive or local; --project and --all-projects need --source local")
+	}
+	return false, 0
+}
+
+func localReadObservability(observed archive.Observability) map[string]archive.Availability {
+	out := map[string]archive.Availability{"structured_counts": observed.StructuredCounts, "tool_calls": observed.ToolCalls, "files_touched": observed.FilesTouched, "git_activity": observed.GitActivity, "compactions": observed.Compactions, "tool_errors": observed.ToolErrors, "tool_results": observed.ToolResults}
+	for key, value := range out {
+		if value.State == "" {
+			delete(out, key)
+		}
+	}
+	return out
 }

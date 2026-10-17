@@ -21,6 +21,8 @@ func (LocalInspection) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.N
 	case agentapi.DiscoveryImport, agentapi.DiscoveryProjects, agentapi.DiscoveryHandoff:
 		r.Purpose = agentapi.DiscoveryHandoff
 		return (NativeHeaders{}).InspectHeader(r)
+	case agentapi.DiscoveryBoundedProjects:
+		return agentapi.NativeHeader{}, errFormat
 	default:
 		return agentapi.NativeHeader{}, errFormat
 	}
@@ -31,6 +33,8 @@ func (LocalInspection) Roots(loc agentapi.NativeLocations, purpose agentapi.Disc
 	switch purpose {
 	case agentapi.DiscoveryImport, agentapi.DiscoveryProjects, agentapi.DiscoveryHandoff:
 		return (NativeHeaders{}).Roots(loc, agentapi.DiscoveryHandoff)
+	case agentapi.DiscoveryBoundedProjects:
+		return nil
 	default:
 		return nil
 	}

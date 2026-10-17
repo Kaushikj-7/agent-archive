@@ -18,11 +18,11 @@ import (
 func hostileLocalNative(t *testing.T) (Env, string) {
 	t.Helper()
 	env, data, base, _ := museNativeEnv(t)
-	workspace := filepath.Join(base, "checkout\u202e\u009b")
-	if err := os.Mkdir(workspace, 0700); err != nil {
+	workspace, err := os.MkdirTemp(base, "checkout\u202e\u009b")
+	if err != nil {
 		t.Fatal(err)
 	}
-	workspace, err := filepath.EvalSymlinks(workspace)
+	workspace, err = filepath.EvalSymlinks(workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +54,7 @@ func TestLocalReadJSONEscapesNativeDisplayControls(t *testing.T) {
 	env, workspace := hostileLocalNative(t)
 	for _, args := range [][]string{{"list", "--source", "local", "--harness", "muse", "--json"}, {"show", museSyntheticID, "--source", "local", "--harness", "muse", "--json", "--transcript", "--max-bytes", "0"}} {
 		t.Run(args[0], func(t *testing.T) {
+			t.Parallel()
 			var out, problems bytes.Buffer
 			if code := Run(args, nil, &out, &problems, env); code != 0 {
 				t.Fatalf("code %d: %s", code, problems.String())
@@ -121,6 +122,7 @@ func TestLocalReadJSONRejectsShortSuccessfulWrites(t *testing.T) {
 	writeMuseNative(t, data, museSyntheticID, museNativeBytes(t, "exec", museSyntheticID, workspace))
 	for _, args := range [][]string{{"list", "--source", "local", "--harness", "muse", "--json"}, {"show", museSyntheticID, "--source", "local", "--harness", "muse", "--json"}} {
 		t.Run(args[0], func(t *testing.T) {
+			t.Parallel()
 			var problems bytes.Buffer
 			out := &localShortWriter{}
 			if code := Run(args, nil, out, &problems, env); code != 1 || out.calls != 1 || !strings.Contains(problems.String(), io.ErrShortWrite.Error()) {
@@ -278,5 +280,60 @@ func TestLocalReadRejectsUnsupportedArchiveFlagsWithoutStorage(t *testing.T) {
 		if code := Run(args, nil, &out, &errOut, env); code != 2 || out.Len() != 0 {
 			t.Fatalf("accepted unsupported arguments %v: %d %s", args, code, out.String())
 		}
+	}
+}
+
+func TestLocalShowLabelsConformToArchivedMetadataFromSameAnalysis(t *testing.T) {
+	t.Parallel()
+	env, data, workspace, _ := museNativeEnv(t)
+	writeMuseNative(t, data, museSyntheticID, museNativeBytes(t, "exec", museSyntheticID, workspace))
+	discovered, err := discoverLocalRead(t.Context(), env, localReadOptions{harness: "muse"})
+	if err != nil || len(discovered.Candidates) != 1 {
+		t.Fatalf("local discovery: %v %+v", err, discovered.Coverage)
+	}
+	target, err := handoffFromNative(t.Context(), discovered.Candidates[0], env.nativeFiles(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := archive.BuildMetadataWithAnalysis(target.bundle, target.analysis, nil, "synthetic-machine", discovered.Candidates[0].StartedAt, env.Now(), archive.SourceReference{Key: "sessions/muse/synthetic/source.jsonl.gz", SHA256: strings.Repeat("a", 64), CompressedBytes: 1}, archive.ParserInfo{Name: "muse", Version: "0.6.0"})
+	if err != nil || metadata.Title == "" {
+		t.Fatal("same Analysis has no archived title", err)
+	}
+	out, problems, code := runShow(t, env, museSyntheticID, "--source", "local", "--harness", "muse", "--json")
+	if code != 0 {
+		t.Fatalf("local show %d: %s", code, problems)
+	}
+	var document struct {
+		Session localReadRow `json:"session"`
+	}
+	if err := json.Unmarshal([]byte(out), &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.Session.Name != metadata.Name || document.Session.Title != metadata.Title {
+		t.Fatalf("local labels %+v differ from archive name %q title %q", document.Session, metadata.Name, metadata.Title)
+	}
+	summary, problems, code := runShow(t, env, museSyntheticID, "--source", "local", "--harness", "muse")
+	if code != 0 || !strings.Contains(summary, archive.DisplayTitle(metadata)) {
+		t.Fatalf("local summary omits shared title: %d %s %s", code, summary, problems)
+	}
+	transcript, problems, code := runShow(t, env, museSyntheticID, "--source", "local", "--harness", "muse", "--transcript")
+	if code != 0 || !strings.Contains(transcript, archive.DisplayTitle(metadata)) {
+		t.Fatalf("local transcript omits shared title: %d %s %s", code, transcript, problems)
+	}
+	// A single bounded preview still cannot derive the human first-prompt title.
+	var listOutput, listProblems bytes.Buffer
+	code = Run([]string{"list", "--source", "local", "--harness", "muse", "--json"}, nil, &listOutput, &listProblems, env)
+	listed, problems := listOutput.String(), listProblems.String()
+	if code != 0 {
+		t.Fatalf("local list %d: %s", code, problems)
+	}
+	var listing struct {
+		Sessions []localReadRow `json:"sessions"`
+	}
+	if err := json.Unmarshal([]byte(listed), &listing); err != nil {
+		t.Fatal(err)
+	}
+	if len(listing.Sessions) != 1 || listing.Sessions[0].Title != "" {
+		t.Fatal("bounded preview invented full source title")
 	}
 }
