@@ -90,16 +90,9 @@ func (j *Journal) UnmarshalJSON(raw []byte) (decodeErr error) {
 		return err
 	}
 	filesOnly := bytes.TrimSpace(doc["files_only"])
-	replayProtected := bytes.Equal(bytes.TrimSpace(doc["native_replay_protection"]), []byte("true"))
-	if doc["native_replay_protection"] != nil && !replayProtected {
-		return errors.New("native replay recovery requires sticky protection")
-	}
-	if replayProtected && !bytes.Equal(bytes.TrimSpace(doc["native_admission_protection"]), []byte("true")) {
-		return errors.New("native replay recovery requires admission protection")
-	}
-	importProtected := bytes.Equal(bytes.TrimSpace(doc["native_import_protection"]), []byte("true"))
-	if doc["native_import_protection"] != nil && !importProtected {
-		return errors.New("native import recovery requires sticky protection")
+	replayProtected, importProtected, err := nativeJournalStickyCapabilities(doc)
+	if err != nil {
+		return err
 	}
 	fenced := len(filesOnly) > 0 && filesOnly[0] == '{'
 	if fenced {
@@ -143,6 +136,23 @@ func (j *Journal) UnmarshalJSON(raw []byte) (decodeErr error) {
 	}
 	*j = plain
 	return nil
+}
+
+// nativeJournalStickyCapabilities checks wire-level flags before interpreting
+// the recovery fence or its snapshots, in the original refusal order.
+func nativeJournalStickyCapabilities(doc map[string]json.RawMessage) (bool, bool, error) {
+	replayProtected := bytes.Equal(bytes.TrimSpace(doc["native_replay_protection"]), []byte("true"))
+	if doc["native_replay_protection"] != nil && !replayProtected {
+		return false, false, errors.New("native replay recovery requires sticky protection")
+	}
+	if replayProtected && !bytes.Equal(bytes.TrimSpace(doc["native_admission_protection"]), []byte("true")) {
+		return false, false, errors.New("native replay recovery requires admission protection")
+	}
+	importProtected := bytes.Equal(bytes.TrimSpace(doc["native_import_protection"]), []byte("true"))
+	if doc["native_import_protection"] != nil && !importProtected {
+		return false, false, errors.New("native import recovery requires sticky protection")
+	}
+	return replayProtected, importProtected, nil
 }
 
 // nativeJournalAuthorityPresent classifies recovery errors without granting
