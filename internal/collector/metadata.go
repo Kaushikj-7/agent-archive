@@ -279,7 +279,7 @@ type refreshSource struct {
 // (rotated, oversize, unsafe) reports no change: regeneration is then the
 // only way the summary can move.
 func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) bool {
-	if s.reg.CaptureFrozen || s.reg.HistoricalProject != nil {
+	if s.reg.RetainedOnly() {
 		return false
 	}
 	source, ok := newSourceReader(s.reg, s.opts)

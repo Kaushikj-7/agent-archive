@@ -85,7 +85,13 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 	if next.Harness.Name == "muse" && next.Replay != nil && !cfg.NativeReplayProtection {
 		return errors.New("native replay owner requires stronger writer protection")
 	}
-	if cfg.NativeAdmissionProtection && next.Harness.Name == "muse" && (next.NativeAdmission == nil || !before.found && admission == nil) {
+	if cfg.NativeImportProtection && next.Harness.Name == "muse" && !before.found && admission == nil {
+		return errors.New("muse ownership requires prepared native admission or historical import")
+	}
+	if next.NativeImport != nil && (!cfg.NativeImportProtection || next.ValidateNativeImport() != nil) {
+		return errors.New("native import requires exact writer protection")
+	}
+	if cfg.NativeAdmissionProtection && next.Harness.Name == "muse" && next.NativeImport == nil && (next.NativeAdmission == nil || !before.found && admission == nil) {
 		return errors.New("muse ownership requires prepared native admission")
 	}
 	for _, root := range cfg.NativeRoots {
@@ -111,6 +117,9 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 }
 
 func preserveNativeRegistrationAuthority(previous, next archive.SessionRegistration, found bool, prepared *nativeValidationCommit, admission *nativeAdmissionCommit) error {
+	if (previous.NativeImport != nil || next.NativeImport != nil) && (!found || !sameNativeImportReceipt(previous.NativeImport, next.NativeImport)) {
+		return errors.New("native import receipt requires exact prepared transition")
+	}
 	if found && (previous.NativeBinding != nil || next.NativeBinding != nil) && !sameNativeReplay(previous.Replay, next.Replay) {
 		return errors.New("native replay classification is immutable")
 	}
@@ -177,12 +186,18 @@ func (s *Store) genericNativeReservationAllowed(key agentmeta.SessionKey) error 
 	if err != nil {
 		return err
 	}
-	if cfg.NativeAdmissionProtection {
-		return errors.New("muse reservation requires prepared native admission")
+	if cfg.NativeAdmissionProtection || cfg.NativeImportProtection {
+		return errors.New("muse reservation requires prepared native admission or historical import")
 	}
 	return nil
 }
 
 func sameNativeReplay(a, b *archive.Replay) bool {
 	return a == nil && b == nil || a != nil && b != nil && a.RunID == b.RunID
+}
+
+func sameNativeImportReceipt(a, b *archive.NativeImport) bool {
+	left, le := json.Marshal(a)
+	right, re := json.Marshal(b)
+	return le == nil && re == nil && string(left) == string(right)
 }

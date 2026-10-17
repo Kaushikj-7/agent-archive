@@ -316,6 +316,10 @@ func (s *Store) admitPreparedImport(ctx context.Context, stage ImportStage, reg 
 
 // Validate checks the bounded journal digest, identity and selected source set.
 func (p ImportStage) Validate(ctx context.Context, reg archive.SessionRegistration) error {
+	if reg.NativeImport != nil && (reg.ValidateNativeImport() != nil || !p.TypedSelection || p.Version != 2 || len(p.Preserved) != 0 || len(p.Children) != 0 || p.Bundle.History != nil) {
+		return ErrReadySelectionFrozen
+	}
+
 	if p.TypedSelection {
 		if len(p.Children) > 64 {
 			return ErrDurableStorageCapacity
@@ -913,7 +917,7 @@ func (s *Store) preparedImportChildren(ctx context.Context, stage ImportStage) (
 func sameImportStageOwner(staged, current archive.SessionRegistration) bool {
 	return staged.ArchiveSessionID == current.ArchiveSessionID && staged.NativeSessionID == current.NativeSessionID &&
 		staged.Harness.Name == current.Harness.Name && staged.ProjectID == current.ProjectID && staged.ProjectRoot == current.ProjectRoot &&
-		sameHistoricalProjectProof(staged, current) && sameImportParentProof(staged, current) &&
+		sameHistoricalProjectProof(staged, current) && sameNativeImportReceipt(staged.NativeImport, current.NativeImport) && sameImportParentProof(staged, current) &&
 		sameNativeImportBinding(staged.NativeBinding, current.NativeBinding) && staged.DestinationID == current.DestinationID && staged.InBatch(current.ImportBatch.Recorded())
 }
 

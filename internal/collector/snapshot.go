@@ -31,6 +31,11 @@ var ErrNoTranscript = errors.New("the session's transcript is not available on t
 // own when Cursor is running, which is removed before it returns.
 func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegistration, capturedAt time.Time, cursorDatabase string, sources agentapi.SourcesLookup) (archive.SourceBundle, error) {
 	defer trace.Start("read local transcript").End()
+	if reg.NativeImport != nil {
+		if err := reg.ValidateNativeImport(); err != nil {
+			return archive.SourceBundle{}, err
+		}
+	}
 	store, closeRead := state.OpenReadOnly(home).WithReadBudget(ctx, nil)
 	defer closeRead()
 	if err := store.CheckDurableSessionRead(reg.ArchiveSessionID); err != nil {
@@ -54,9 +59,11 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 		}
 		return refilterBundleBounded(ctx, reg, adapter, stage.Bundle, agentapi.ReadLimits{FilteredBytes: DefaultMaxTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
 	}
-	if reg.HistoricalProject != nil {
-		if err := reg.ValidateHistoricalProject(); err != nil {
-			return archive.SourceBundle{}, err
+	if reg.HistoricalProject != nil || reg.NativeImport != nil {
+		if reg.HistoricalProject != nil {
+			if err := reg.ValidateHistoricalProject(); err != nil {
+				return archive.SourceBundle{}, err
+			}
 		}
 		if publishedErr != nil {
 			return archive.SourceBundle{}, publishedErr
@@ -142,7 +149,12 @@ func lastActivities(ctx context.Context, regs []archive.SessionRegistration, dat
 	}
 	groups := map[sourcePassKey][]archive.SessionRegistration{}
 	for _, reg := range regs {
-		if reg.HistoricalProject != nil {
+		if reg.NativeImport != nil {
+			if err := reg.ValidateNativeImport(); err != nil {
+				return nil, err
+			}
+		}
+		if reg.HistoricalProject != nil || reg.NativeImport != nil {
 			out[reg.ArchiveSessionID] = reg.Admitted()
 			continue
 		}

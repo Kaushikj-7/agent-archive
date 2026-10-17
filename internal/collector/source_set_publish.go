@@ -476,14 +476,26 @@ func (s *sessionScan) publicationPolicy(bundle archive.SourceBundle) (string, er
 }
 
 func (s *sessionScan) publicationAdmission() string {
+	var receipt string
+	if s.reg.NativeImport != nil {
+		if s.reg.ValidateNativeImport() != nil {
+			return ""
+		}
+		var err error
+		receipt, err = s.reg.NativeImport.IdentityDigest()
+		if err != nil {
+			return ""
+		}
+	}
 	body, _ := json.Marshal(struct {
-		Session   string                `json:"Session"`
-		Native    string                `json:"Native"`
-		Project   string                `json:"Project"`
-		Admission string                `json:"Admission"`
-		Origin    archive.SessionOrigin `json:"Origin"`
-		Batch     archive.ImportBatch   `json:"Batch"`
-	}{Session: s.reg.ArchiveSessionID, Native: s.reg.NativeSessionID, Project: s.reg.ProjectID, Admission: s.reg.Admitted().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), Origin: s.reg.Origin, Batch: s.reg.ImportBatch})
+		Session               string                `json:"Session"`
+		Native                string                `json:"Native"`
+		Project               string                `json:"Project"`
+		Admission             string                `json:"Admission"`
+		Origin                archive.SessionOrigin `json:"Origin"`
+		Batch                 archive.ImportBatch   `json:"Batch"`
+		NativeImportAuthority string                `json:"NativeImportAuthority,omitempty"`
+	}{NativeImportAuthority: receipt, Session: s.reg.ArchiveSessionID, Native: s.reg.NativeSessionID, Project: s.reg.ProjectID, Admission: s.reg.Admitted().UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), Origin: s.reg.Origin, Batch: s.reg.ImportBatch})
 	return storage.SHA256Hex(body)
 }
 

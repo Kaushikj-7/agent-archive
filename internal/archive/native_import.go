@@ -29,13 +29,14 @@ type NativeImport struct {
 // NativeImportConfirmation identifies the durable batch instance and exact
 // selected source. The enclosing registration binds owner and original birth.
 type NativeImportConfirmation struct {
-	BatchID         string           `json:"batch_id"`
-	BatchInstance   string           `json:"batch_instance"`
-	ScopeSHA256     string           `json:"scope_sha256"`
-	DestinationID   string           `json:"destination_id"`
-	ProjectID       string           `json:"project_id"`
-	RootFingerprint string           `json:"root_fingerprint"`
-	SelectedSource  NativeCheckpoint `json:"selected_source"`
+	BatchID               string           `json:"batch_id"`
+	BatchInstance         string           `json:"batch_instance"`
+	ScopeSHA256           string           `json:"scope_sha256"`
+	DestinationID         string           `json:"destination_id"`
+	ProjectID             string           `json:"project_id"`
+	RootFingerprint       string           `json:"root_fingerprint"`
+	SelectedBindingSHA256 string           `json:"selected_binding_sha256"`
+	SelectedSource        NativeCheckpoint `json:"selected_source"`
 }
 
 // NativeImportMembership describes only effects owned by the creating batch.
@@ -55,7 +56,7 @@ func (n *NativeImport) Validate() error {
 }
 
 func (c NativeImportConfirmation) validate() error {
-	if !nativeImportText(c.BatchID, 64) || !admissionHex(c.BatchInstance, 32) || !admissionHex(c.ScopeSHA256, 64) || !nativeImportText(c.DestinationID, 4096) || !nativeImportText(c.ProjectID, 4096) || !admissionHex(c.RootFingerprint, 64) || c.SelectedSource.Validate() != nil {
+	if !nativeImportText(c.BatchID, 64) || !admissionHex(c.BatchInstance, 32) || !admissionHex(c.ScopeSHA256, 64) || !nativeImportText(c.DestinationID, 4096) || !nativeImportText(c.ProjectID, 4096) || !admissionHex(c.RootFingerprint, 64) || !admissionHex(c.SelectedBindingSHA256, 64) || c.SelectedSource.Validate() != nil {
 		return ErrUnsupportedNativeImport
 	}
 	return nil
@@ -121,7 +122,7 @@ func (n *NativeImport) UnmarshalJSON(raw []byte) error {
 
 // UnmarshalJSON refuses duplicate, aliased, null or future confirmation fields.
 func (c *NativeImportConfirmation) UnmarshalJSON(raw []byte) error {
-	if err := nativeImportObject(raw, "batch_id", "batch_instance", "scope_sha256", "destination_id", "project_id", "root_fingerprint", "selected_source"); err != nil {
+	if err := nativeImportObject(raw, "batch_id", "batch_instance", "scope_sha256", "destination_id", "project_id", "root_fingerprint", "selected_binding_sha256", "selected_source"); err != nil {
 		return err
 	}
 	type plain NativeImportConfirmation

@@ -18,7 +18,7 @@ import (
 // The caller closes the returned data lease
 // after the preview and any returned publication have finished their consumers.
 func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (builder func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error), release func(), resultErr error) {
-	if reg.HistoricalProject != nil {
+	if reg.HistoricalProject != nil || reg.NativeImport != nil {
 		return nil, func() {}, errors.New("historical imports cannot recover native continuation; preview a new explicit import")
 	}
 	if reg.IsChild() || !reg.ReadsTranscriptFile() {
@@ -193,7 +193,7 @@ func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bo
 }
 
 func (p *pass) retainedSignatureAuthority(reg archive.SessionRegistration) error {
-	if reg.HistoricalProject == nil {
+	if reg.HistoricalProject == nil && reg.NativeImport == nil {
 		return p.local.FrozenGeneration(reg)
 	}
 	s := sessionScan{reg: reg}
@@ -298,6 +298,9 @@ func generationRecoveryBuilder(ctx context.Context, owner *sessionScan, filtered
 }
 
 func (s *sessionScan) retainedOnlyAuthority() error {
+	if s.reg.NativeImport != nil {
+		return s.reg.ValidateNativeImport()
+	}
 	if s.reg.HistoricalProject != nil {
 		return s.reg.ValidateHistoricalProject()
 	}

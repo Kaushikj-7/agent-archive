@@ -216,6 +216,11 @@ func (s *sessionScan) scanRetainedOrNative(ctx context.Context) (sessionOutcome,
 	if err := s.checkRetainedHistory(); err != nil {
 		return outcomeSkipped, err
 	}
+	if s.reg.NativeImport != nil && s.reg.StagedImportSHA256 != "" && s.published.TypedStagedPublished() {
+		// Preserve exact ACK/readback release after a crash before retained-only
+		// maintenance; the creating receipt itself outlives this ephemeral stage.
+		return outcomeSkipped, s.releaseTypedStage()
+	}
 	if s.maintainsRetainedOnly() {
 		outcome, err := s.maintainFrozen()
 		if err != nil {
@@ -982,6 +987,9 @@ func (opts Options) historicalProjectName(reg archive.SessionRegistration) strin
 }
 
 func (s *sessionScan) validateHistoricalSnapshot() error {
+	if s.reg.NativeImport != nil {
+		return s.reg.ValidateNativeImport()
+	}
 	if s.reg.HistoricalProject == nil {
 		return nil
 	}
@@ -995,5 +1003,5 @@ func (s *sessionScan) validateHistoricalSnapshot() error {
 }
 
 func (s *sessionScan) maintainsRetainedOnly() bool {
-	return s.reg.CaptureFrozen || s.reg.HistoricalProject != nil && s.hasRetainedPublication()
+	return s.reg.CaptureFrozen || (s.reg.HistoricalProject != nil || s.reg.NativeImport != nil) && s.hasRetainedPublication()
 }
