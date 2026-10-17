@@ -38,15 +38,21 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 	}
 	store, closeRead := state.OpenReadOnly(home).WithReadBudget(ctx, nil)
 	defer closeRead()
-	if err := store.CheckDurableSessionRead(reg.ArchiveSessionID); err != nil {
-		return archive.SourceBundle{}, err
+	if reg.NativeImport == nil {
+		if err := store.CheckDurableSessionRead(reg.ArchiveSessionID); err != nil {
+			return archive.SourceBundle{}, err
+		}
 	}
 	published, publishedErr := store.LoadPublishedState(reg.ArchiveSessionID)
 	if errors.Is(publishedErr, state.ErrDurableStorageRecovery) {
 		return archive.SourceBundle{}, publishedErr
 	}
-	if reg.NativeImport != nil && publishedErr == nil && published.Summary().Published {
-		if err := published.ValidateNativeImportReadAuthority(reg); err != nil {
+	if reg.NativeImport != nil {
+		if publishedErr == nil && published.Summary().Published {
+			if err := published.ValidateNativeImportReadAuthority(reg); err != nil {
+				return archive.SourceBundle{}, err
+			}
+		} else if err := store.CheckDurableSessionRead(reg.ArchiveSessionID); err != nil {
 			return archive.SourceBundle{}, err
 		}
 	}

@@ -316,7 +316,7 @@ func acknowledgedLegacyQuarantine(name string) bool {
 // CheckDurableSessionRead refuses unknown session obligations before preview
 // opens a provider. It shares the root/config cache and bounded local probes.
 func (s *Store) CheckDurableSessionRead(id string) error {
-	return s.checkDurableSessionRead(id, nil)
+	return s.checkDurableSessionRead(id, nil, nil)
 }
 
 type publicationReadOwner struct {
@@ -328,10 +328,10 @@ type publicationReadOwner struct {
 // CheckPublicationSessionRead validates owned publication replay only. Generic
 // preview, naming and fresh native eligibility retain CheckDurableSessionRead.
 func (s *Store) CheckPublicationSessionRead(reg archive.SessionRegistration, machine, admission string) error {
-	return s.checkDurableSessionRead(reg.ArchiveSessionID, &publicationReadOwner{reg, machine, admission})
+	return s.checkDurableSessionRead(reg.ArchiveSessionID, &publicationReadOwner{reg, machine, admission}, nil)
 }
 
-func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner) (err error) {
+func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner, nativeImportACK *StagedSelection) (err error) {
 	if unsafeDurableSessionID(id) {
 		return ErrDurableStorageRecovery
 	}
@@ -381,7 +381,7 @@ func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner) 
 	}
 
 	if history || present || evidence {
-		if err := s.validateDurableReadPending(id, history, owner); err != nil {
+		if err := s.validateDurableReadPendingSelection(id, history, owner, nativeImportACK); err != nil {
 			return err
 		}
 	}
@@ -397,13 +397,19 @@ func publicationReadOwnerChanged(metadata archive.Metadata, reg archive.SessionR
 }
 
 func (s *Store) validateDurableReadPending(id string, history bool, owner *publicationReadOwner) error {
+	return s.validateDurableReadPendingSelection(id, history, owner, nil)
+}
+
+func (s *Store) validateDurableReadPendingSelection(id string, history bool, owner *publicationReadOwner, nativeImportACK *StagedSelection) error {
 	// This guard discards the validated transaction; its decoded inputs
 	// must not accumulate on the caller's existing ledger.
 	scratch, closeScratch := s.WithReadBudget(s.durableContext(), s.resourceBudget)
 	var pending PendingPublication
 	var readable bool
 	var readErr error
-	if owner != nil {
+	if nativeImportACK != nil {
+		pending, readable, readErr = scratch.loadNativeImportReadPending(id, nativeImportACK)
+	} else if owner != nil {
 		pending, readable, readErr = scratch.LoadPublicationPending(id)
 		if readErr == nil && readable && pending.JournalVersion == 5 {
 			var metadata archive.Metadata

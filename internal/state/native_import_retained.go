@@ -60,7 +60,7 @@ func (p *Published) ValidateNativeImportReadAuthority(reg archive.SessionRegistr
 		return ErrDurableStorageRecovery
 	}
 	if !p.TypedStagedPublished() {
-		return p.ValidateNativeImportAuthority(reg)
+		return p.validateNativeImportReleasedRead(reg)
 	}
 	ctx := p.store.durableContext()
 	read, closeRead := p.store.WithReadBudget(ctx, p.store.resourceBudget)
@@ -78,7 +78,7 @@ func (p *Published) ValidateNativeImportReadAuthority(reg archive.SessionRegistr
 		return err
 	}
 	if released {
-		return current.ValidateNativeImportAuthority(reg)
+		return current.validateNativeImportReleasedRead(reg)
 	}
 	stage, found, err := read.LoadImportStage(ctx, reg)
 	if err != nil || !found || stage.Version != 2 || !stage.TypedSelection || stage.SHA256 != q.StageSHA256 {
@@ -92,7 +92,14 @@ func (p *Published) ValidateNativeImportReadAuthority(reg archive.SessionRegistr
 	if err != nil || bundle != q.Core.BundleSHA256 {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	return nil
+	return read.checkDurableSessionRead(p.id, nil, q)
+}
+
+func (p *Published) validateNativeImportReleasedRead(reg archive.SessionRegistration) error {
+	if err := p.ValidateNativeImportAuthority(reg); err != nil {
+		return err
+	}
+	return p.store.CheckDurableSessionRead(reg.ArchiveSessionID)
 }
 
 // This read-only coherence check uses the existing closed codecs and exact
@@ -119,6 +126,50 @@ func (s *Store) nativeImportReadReleaseState(id string, q *StagedSelection) (boo
 		return false, ErrDurableStorageRecovery
 	}
 	return progress.Phase == stagedReleaseReleased, nil
+}
+
+// The caller has already validated this exact current ACK, its owner and held
+// stage. Reuse pending's pure wire/source/proof checks, without granting the
+// paused collector or a changed admission policy permission to mutate it.
+func (s *Store) loadNativeImportReadPending(id string, q *StagedSelection) (pending PendingPublication, found bool, err error) {
+	if err := s.checkPendingHistoryVersion(id); err != nil {
+		return pending, true, err
+	}
+	if err := s.readBudgeted(s.pendingPath(id), &pending, true); err != nil {
+		return pending, true, err
+	}
+	if err := pending.ValidateReadySlot(id); err != nil {
+		return pending, true, err
+	}
+	if err := pending.validateStagedShape(); err != nil {
+		return pending, true, err
+	}
+	if q.Version != 3 || pending.StagedProof() == nil || !sameStagedSelection(*pending.StagedProof(), *q) {
+		return pending, true, ErrDurableStorageRecovery
+	}
+	if err := pending.validateComplete(); err != nil {
+		return pending, true, err
+	}
+	if err := validateReadySourceKeys(pending); err != nil {
+		return pending, true, err
+	}
+	ctx := s.durableContext()
+	bundle, err := s.readyDigest(ctx, pending.Bundle)
+	if err != nil || bundle != q.Core.BundleSHA256 {
+		return pending, true, errors.Join(ErrDurableStorageRecovery, err)
+	}
+	policy, err := s.readyDigest(ctx, readyPolicy(pending))
+	if err != nil || policy != q.Core.PolicyContext {
+		return pending, true, errors.Join(ErrDurableStorageRecovery, err)
+	}
+	binding, err := s.readyBinding(ctx, pending)
+	if err != nil || binding != q.Core.BindingSHA256 || readySHA(pending.MetadataBytes) != q.Core.MetadataSHA256 {
+		return pending, true, errors.Join(ErrDurableStorageRecovery, err)
+	}
+	if err := s.validateStagedPendingMetadata(ctx, pending, q); err != nil {
+		return pending, true, err
+	}
+	return pending, true, pending.ValidateHistoryBudgeted(id, s.resourceBudget)
 }
 
 // ValidateNativeImportAuthority is read-only: a receipt never substitutes for

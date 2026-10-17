@@ -321,6 +321,7 @@ func assertInterruptedNativeImportLocalRead(t *testing.T, f historicalNativeStag
 	if _, err := ReadLocalBundle(t.Context(), f.store.Home(), f.reg, f.at, "", f.opts.Sources); err != nil {
 		t.Fatal("paused ACK local read required removed native root", err)
 	}
+	assertInterruptedACKPendingRefusals(t, f)
 	stageDirectory := filepath.Join(f.store.Home(), "sessions", f.reg.ArchiveSessionID, "import-stage")
 	for _, name := range []string{"release.json", "release-progress.json"} {
 		path := filepath.Join(stageDirectory, name)
@@ -366,5 +367,41 @@ func assertInterruptedNativeImportLocalRead(t *testing.T, f historicalNativeStag
 	}
 	if err := config.Save(f.store.Home(), originalConfig); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func assertInterruptedACKPendingRefusals(t *testing.T, f historicalNativeStage) {
+	t.Helper()
+	path := filepath.Join(f.store.Home(), "pending", f.reg.ArchiveSessionID+".json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, replacement := range map[string]json.RawMessage{
+		"journal_version": json.RawMessage(`999`),
+		"source_bytes":    json.RawMessage(`"AAAA"`),
+		"metadata_bytes":  json.RawMessage(`"e30="`),
+	} {
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := doc[key]; !present {
+			t.Fatal("pending refusal fixture field absent", key)
+		}
+		doc[key] = replacement
+		changed, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, changed, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadLocalBundle(t.Context(), f.store.Home(), f.reg, f.at, "", f.opts.Sources); err == nil {
+			t.Fatal("ACK local read ignored invalid present pending control", key)
+		}
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
