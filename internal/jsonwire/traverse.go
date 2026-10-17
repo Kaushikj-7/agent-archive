@@ -50,7 +50,7 @@ func (t *traversal) value(v reflect.Value, depth int, quoted bool) error {
 		}
 		return t.value(v.Elem(), depth+1, quoted)
 	}
-	if handled, err := t.special(v, quoted); handled {
+	if handled, err := t.special(v, depth, quoted); handled {
 		return err
 	}
 	switch v.Kind() {
@@ -116,7 +116,7 @@ func (t *traversal) floating(v reflect.Value, quoted bool) error {
 	return t.scalar(s, 24, quoted)
 }
 
-func (t *traversal) special(v reflect.Value, quoted bool) (bool, error) {
+func (t *traversal) special(v reflect.Value, depth int, quoted bool) (bool, error) {
 	typ := v.Type()
 	if typ.PkgPath() == "github.com/wangjohn/agent-archive/internal/archive" && typ.Name() == "ImportBatch" {
 		id := v.FieldByName("id")
@@ -125,6 +125,24 @@ func (t *traversal) special(v reflect.Value, quoted bool) (bool, error) {
 		}
 		return true, t.quoted(id.String())
 	}
+	// The exact closed receipt's codec uses these same plain alias fields.
+	// Validate and preflight structurally before allocating encoded bytes.
+	if typ.PkgPath() == "github.com/wangjohn/agent-archive/internal/archive" && typ.Name() == "NativeImport" {
+		copy := reflect.New(typ)
+		copy.Elem().Set(v)
+		if err := copy.Interface().(interface{ Validate() error }).Validate(); err != nil {
+			return true, ErrUnsupported
+		}
+		bounded := counter{ctx: t.ctx, left: 16 * 1024}
+		if err := (&traversal{ctx: t.ctx, count: &bounded}).structure(v, depth); err != nil {
+			return true, err
+		}
+		if t.count != nil {
+			return true, t.count.add(16*1024 - bounded.left)
+		}
+		return true, t.structure(v, depth)
+	}
+
 	if !v.CanInterface() {
 		return false, nil
 	}
