@@ -199,6 +199,9 @@ func decodeConfig(data []byte, c *Config) (bool, error) {
 			return false, err
 		}
 	}
+	if err := validateMuseCapture(Config(plain)); err != nil {
+		return false, err
+	}
 	if err := Config(plain).validateNativeRoots(); err != nil {
 		return false, err
 	}

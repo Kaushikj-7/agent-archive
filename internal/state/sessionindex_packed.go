@@ -87,6 +87,12 @@ func (s *Store) packedSessionIndexEntry(key agentmeta.SessionKey) (qualifiedSess
 		return entry, false, err
 	}
 	if valid {
+		if entry.NativeReservation != "" {
+			if err := s.nativeReservationOwner(entry); err != nil {
+				return entry, false, err
+			}
+			entry.NativeReservation = ""
+		}
 		entry.Reservation = ""
 		return entry, true, nil
 	}
@@ -263,7 +269,10 @@ func (reader *packedIndexReader) entry(index int) (qualifiedSessionIndexEntry, e
 		return qualifiedSessionIndexEntry{}, ErrSessionIndexRecoveryRequired
 	}
 	var entry qualifiedSessionIndexEntry
-	if json.Unmarshal(data, &entry) != nil {
+	if err := json.Unmarshal(data, &entry); err != nil {
+		if errors.Is(err, errUnsupportedNativeReservation) {
+			return entry, err
+		}
 		return entry, ErrSessionIndexRecoveryRequired
 	}
 	key := agentmeta.SessionKey{Agent: entry.Agent, NativeID: entry.NativeID}
@@ -400,6 +409,9 @@ func (s *Store) readQualifiedIndexSnapshot(path string, validateOwner bool) (fil
 	}
 	entry, found, err := s.readPackedEntry(name[:64], marker)
 	if err != nil {
+		if errors.Is(err, errUnsupportedNativeReservation) {
+			return before, err
+		}
 		if !validateOwner && !marker.Complete {
 			// A new census epoch invalidates old aggregate bytes. Generation
 			// callers already prove routing from their journal or complete

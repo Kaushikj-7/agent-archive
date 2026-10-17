@@ -97,6 +97,9 @@ func describeVersion(version string, info *debug.BuildInfo) string {
 // substitute a temporary home directory, a fixed clock, and an in-memory
 // object store. A nil field defaults to the real thing.
 type Env struct {
+	// MuseRootCaptureQualified is an injected acceptance-only setup projection.
+	// Production leaves this false until root-mode/platform acceptance is reviewed.
+	MuseRootCaptureQualified bool
 	// sessionChangeConsumers replaces only the finite post-pass consumer list in tests.
 	sessionChangeConsumers []sessionChangeConsumer
 	// CodexLabelHost overrides opt-in native hosting; never consulted in files mode.
