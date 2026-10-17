@@ -13,7 +13,6 @@ import (
 	"golang.org/x/term"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/search"
@@ -1045,15 +1044,6 @@ func readSessionView(ctx context.Context, store storage.ObjectStore, harness, se
 	return metadataWithLinks(ctx, store, metadata), nil
 }
 
-// loadSessionsForBrowse lists metadata with the same filters list uses, for
-// interactive show and handoff. It reads every match, newest activity first,
-// for the caller to scope and limit.
-func loadSessionsForBrowse(env browseReadDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, error) {
-	ctx, stopReads := readCommandContext(env)
-	defer stopReads()
-	return loadSessionsForBrowseContext(catalog.WithReadView(ctx), env, store, opts, stderr, command)
-}
-
 // loadSessionsForBrowseContext preserves the invocation's cancellation and view.
 func loadSessionsForBrowseContext(ctx context.Context, env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, error) {
 	if err := ctx.Err(); err != nil {
@@ -1067,7 +1057,18 @@ func loadSessionsForBrowseContext(ctx context.Context, env metadataCacheDependen
 			return sessions, err
 		}
 	}
-	sessions, err := reader.ListMetadataWithOptions(ctx, store, archiveSessionsPrefix, opts.filter, reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, command)})
+	var sessions []archive.Metadata
+	var err error
+	readOpts := reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, command)}
+	if ctx.Value(readDiscoveryKey{}) != nil {
+		var headers reader.HeaderSnapshot
+		headers, err = discoverReadHeaders(ctx, store, readOpts)
+		if err == nil {
+			sessions, err = reader.ListMetadataFromSnapshot(ctx, store, headers, opts.filter, readOpts)
+		}
+	} else {
+		sessions, err = reader.ListMetadataWithOptions(ctx, store, archiveSessionsPrefix, opts.filter, readOpts)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1107,6 +1108,8 @@ func archiveSearch(sessions []archive.Metadata, scope sessionScope, format listF
 // scope first. ok is false, with code 0, when none match (after saying so),
 // and with code 1 after an error.
 func findBrowseSessions(ctx context.Context, env sessionSelectionDependencies, store storage.ObjectStore, cfg config.Config, stdout, stderr io.Writer, harness, command string) (choices *scopeChoices, ok bool, code int) {
+	ctx, stopDiscovery := startReadDiscovery(ctx, env, store, false)
+	defer stopDiscovery()
 	scope, err := scopeFor(env, "", false)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)

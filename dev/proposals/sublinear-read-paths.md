@@ -236,6 +236,16 @@ Pass:
 
 ## PR 2: Overlap local work with discovery; drop repeated opens
 
+The source change is implemented, with deterministic synthetic controls for
+discovery/scope overlap, cancellation and joins, registration worker bounds and
+error precedence, and one storage open after a handoff pick. Independent review
+also covers the no-catalog fallback and native activity eligibility. Scoped
+activity stays after archive discovery when published scope facts determine
+admission; only all-project activity can safely move earlier. Local-first
+handoff query tiers retain zero archive requests when they resolve locally.
+Existing verified selected-body reuse and parent/child dependencies remain in
+place. Real command traces and wall-time goals remain unmeasured.
+
 Goal: wall time is max(network, local), not their sum.
 
 - **Start header discovery first.** It should begin as soon as the store is

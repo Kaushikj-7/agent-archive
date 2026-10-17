@@ -37,6 +37,10 @@ follow [Semantic Versioning](https://semver.org/).
   without retaining, preserving damaged journals for recovery while keeping
   the bounded-memory checks used for large Codex histories.
 
+- Interactive legacy reads overlap fresh header discovery with independent
+  local preparation. Registration reads use eight workers, and handoff reuses
+  the picker's storage client. Scoped native-read rules remain unchanged.
+
 - When Codex discovery is unavailable but every published automatic session has
   recorded read-back verification, status says “discovery unknown; archive
   verified at recorded time”. Restore source access and run sync to check
