@@ -41,6 +41,7 @@ var hookFuzzSeeds = []struct {
 		`{"hook_event_name":"subagentStop","conversation_id":"k1","workspace_roots":["$P"],"subagent_transcript_path":"$P/sub.jsonl"}`,
 		`{"hook_event_name":"stop","conversation_id":"k1","workspace_roots":["$P"],"transcript_path":"$T","status":"completed"}`,
 	}},
+	{"muse", []string{`{"hook_event_name":"SessionStart","session_id":"fuzz-session","cwd":"$P","transcript_path":null,"source":"startup"}`, `{"hook_event_name":"Stop","session_id":"fuzz-session","cwd":"$P","transcript_path":null}`}},
 	{"unknown", []string{`{"hook_event_name":"Stop","session_id":"u"}`}},
 	{"codex", []string{``, `null`, `[]`, `"text"`, `{"hook_event_name":7}`, `{"hook_event_name":"Stop","session_id":{"a":1},"cwd":["$P"]}`}},
 }
@@ -86,6 +87,12 @@ func FuzzHookPayload(f *testing.F) {
 		}
 		env := testEnv(t, home, now)
 		env.UserHomeDir = func() (string, error) { return userHome, nil }
+		if harness == "muse" {
+			env.LookupEnv = func(key string) (string, bool) {
+				_, present := museTestIdentityEnvironment(key)
+				return "fuzz-session", present
+			}
+		}
 		input = strings.NewReplacer("$T", transcript, "$P", project).Replace(input)
 		for i, line := range strings.Split(input, "\n") {
 			if i == 8 {

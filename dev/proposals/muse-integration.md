@@ -849,3 +849,54 @@ Primary references: [extending/hooks](https://dev.meta.ai/docs/muse-code/extendi
 had older-build assumptions; pin evidence to actual native builds and formats.
 
 The [production local v1 field policy](../qualification/muse/retained-allowlist-local-v1.json) is the exact current retained projection. The original `retained-allowlist.json` and derived corpus remain byte-frozen historical Q0 evidence; their broader metrics ceiling is not a production promise.
+
+### Guarded root implementation and remaining release gate
+
+The dormant root path decodes only qualified SessionStart/UserPromptSubmit/Stop/
+SessionEnd observations. An explicit startup produces an observation-only candidate
+under one configured home, included project, destination and captured window.
+The ordinary collector uses its shared native inventory and one concrete leased
+Filter to establish original native birth and complete source proof before it
+atomically exposes the first owner plus immutable binding. Publication and CLI
+readback verification retain their ordinary separate stages. Pending queue status
+reports only count/time/completeness and never calls an observation captured.
+
+Normal injected setup, generated hook settings, candidate handling, shared
+inventory, first ownership, publication, readback and status are exercised as one
+deterministic pipeline. Public setup still excludes Muse by default. Actual
+production-generated command delivery and native root-scoped TUI/exec/serve and
+platform acceptance remain separate gates; this implementation does not establish
+broader child/import/runtime/skill/launch or dynamic replay parity.
+
+PR6 observation identity accepts the bounded opaque ASCII hook contract. That
+only authorizes a candidate query. The existing qualified native census and
+ordinary source format still require their supported canonical UUID identities;
+unsupported opaque source formats remain pending/refused before Filter or owner.
+UUID spelling, ordering and timestamps supply no freshness evidence.
+
+A pending first-owner reservation now carries `native_reservation`, a comparable
+`muse-root-reservation-v1:` plus lowercase SHA256 digest of the complete original
+candidate and concrete source binding. The domain-separated digest excludes the
+minted archive ID and registration timestamps. It is never admission/recovery
+proof: exact retry must freshly reopen, validate and concretely Filter the same
+candidate/source. Missing, changed or future authority preserves/refuses the
+reservation. Append after a crash conservatively refuses; automatic abandonment
+or changed-source recovery is outside this contract. Only a complete matching
+durable Muse owner with valid birth admission/v2 binding allows supported-marker
+cleanup by the existing index finish/recovery machinery.
+
+Reservation authority is a physical per-key overlay. Current pending native
+reservations are never projected into packed census rows. Active unsupported
+packed markers refuse before repair/fallback; authoritative physical overlays
+remain intact through a census. Explicitly obsolete known derived aggregates
+retain the existing bounded replacement lifecycle; PR6 adds no whole-obsolete-
+aggregate scan or claim about hypothetical future authority hidden there.
+
+The existing bounded native queue replay expires only fully recognized private
+v2 observations strictly older than 24 hours. The exact boundary, future clock
+observations and unsupported/malformed authority remain pending. Expiry uses the
+whole recognized record under the queue lock and caller cancellation, grants no
+owner or effects, and preserves a replaced observation. Startup acknowledgement
+after durable ownership also honors caller cancellation; the complete owner can
+remain for an ordinary exact retry. Startup proof failures expose only a fixed
+content-free diagnostic key and sanitized unavailable class/message.

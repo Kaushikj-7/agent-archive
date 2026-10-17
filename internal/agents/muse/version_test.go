@@ -47,34 +47,48 @@ type versionHostFake struct {
 }
 
 func (*versionHostFake) Exists(string) (bool, bool) { panic("unexpected filesystem probe") }
+
 func (h *versionHostFake) ResolveExecutable(name string) (string, bool) {
 	if name != "muse" {
 		panic("unexpected executable")
 	}
 	return h.path, h.path != ""
 }
+
 func (*versionHostFake) Directories(string) []agentapi.VersionDirectory {
 	panic("unexpected directory scan")
 }
+
 func (h *versionHostFake) ProbeVersion(p agentapi.VersionProbe) (string, bool) {
 	h.probes = append(h.probes, p)
 	return h.output, h.success
 }
 
+type expectedVersionState string
+
+const (
+	expectedVersionAbsent   expectedVersionState = "absent"
+	expectedVersionUnknown  expectedVersionState = "unknown"
+	expectedVersionObserved expectedVersionState = "observed"
+)
+
 func TestVersionInspectionUsesOneFixedUpdateDisabledProbe(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		path, output, state, version string
-		success                      bool
+		path    string
+		output  string
+		state   expectedVersionState
+		version string
+		success bool
 	}{
-		{"", "", "absent", "", false},
-		{"/synthetic/muse", "", "unknown", "", false},
-		{"/synthetic/muse", "unexpected", "unknown", "", true},
-		{"/synthetic/muse", "Muse Code 1.4.9 (1.4.9-R6297.1)", "observed", "1.4.9", true},
+		{"", "", expectedVersionAbsent, "", false},
+		{"/synthetic/muse", "", expectedVersionUnknown, "", false},
+		{"/synthetic/muse", "unexpected", expectedVersionUnknown, "", true},
+		{"/synthetic/muse", "Muse Code 1.4.9 (1.4.9-R6297.1)", expectedVersionObserved, "1.4.9", true},
 	} {
 		h := &versionHostFake{path: tc.path, output: tc.output, success: tc.success}
 		got := (VersionInspector{}).ObserveVersion(agentapi.VersionEnvironment{Host: h})
-		if got.VersionState != tc.state || got.Version != tc.version || got.Installed != (tc.path != "") {
+		if got.VersionState != string(tc.state) || got.Version != tc.version || got.Installed != (tc.path != "") {
 			t.Fatalf("%+v", got)
 		}
 		if tc.path == "" {

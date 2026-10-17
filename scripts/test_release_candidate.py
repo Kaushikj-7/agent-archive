@@ -282,24 +282,27 @@ class CandidateTest(unittest.TestCase):
             bindings[name] = ports
         self.assertEqual(set(bindings), set(identities))
         capture_ports = ('Sources:', 'Filter:', 'Parser:', 'Decoder:', 'Hooks:')
-        muse_local = ('NativeHeaders: muse.NativeHeaders{}, Discovery: muse.NativeHeaders{}, '
+        muse_dormant = ('Decoder: muse.Decoder(), Hooks: muse.Hooks(), Skills: muse.Skills(), Version: muse.VersionInspector{}, NativeHeaders: muse.NativeHeaders{}, Discovery: muse.NativeHeaders{}, '
                       'Preview: muse.Previewer{}, Runtime: muse.RuntimeDetector{}, '
                       'Sources: muse.SourceProvider{}, Filter: muse.Filter{}, Parser: muse.Parser{}')
         for name, ports in bindings.items():
             implemented = [port in ports for port in capture_ports]
             if name == 'Muse':
-                # Local handoff discovery, headers, and previews are not capture
-                # admission. Keep these ports exact; Decoder/Hooks need review.
-                self.assertEqual(ports, muse_local)
-                self.assertNotIn('Decoder:', ports)
-                self.assertNotIn('Hooks:', ports)
+                # Root admission is implemented but public setup remains dormant
+                # until separate native mode/platform acceptance is reviewed.
+                self.assertEqual(ports, muse_dormant)
+                projection = (root / 'internal/cli/agents.go').read_text()
+                self.assertRegex(projection, r'if e\.MuseRootCaptureQualified \{\s*return names\s*\}')
+                self.assertRegex(projection, r'if name != "muse" \{\s*out = append\(out, name\)')
+                env = (root / 'internal/cli/cli.go').read_text()
+                self.assertIn('MuseRootCaptureQualified bool', env)
             else:
                 self.assertTrue(not any(implemented) or all(implemented),
                                 f'partial capture binding needs explicit acceptance policy: {name}')
         capture_apps = {identities[name] for name, ports in bindings.items()
-                        if all(port in ports for port in capture_ports)}
+                        if name != 'Muse' and all(port in ports for port in capture_ports)}
         self.assertEqual(capture_apps, {'claude', 'codex', 'cursor'})
-        self.assertEqual(bindings['Muse'], muse_local)
+        self.assertEqual(bindings['Muse'], muse_dormant)
         app_rows = {'claude-code' if name == 'claude' else name for name in capture_apps}
         self.assertTrue((set(identities.values()) - capture_apps).isdisjoint(rc.ROWS))
         template = json.loads((root / 'dev/maintainers/release-evidence/example.json').read_text())

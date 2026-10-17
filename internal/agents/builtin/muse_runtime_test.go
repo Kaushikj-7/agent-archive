@@ -9,11 +9,11 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 )
 
-func TestMuseBindingOffersLocalHandoffWithoutCapture(t *testing.T) {
+func TestMuseBindingOffersDormantCapturePorts(t *testing.T) {
 	t.Parallel()
 	r := NewBuiltins()
 	b, ok := r.Lookup(" MUSE-CODE ")
-	if !ok || b.Descriptor.ID != agentmeta.Muse || b.Descriptor.DisplayName != "Muse Code" || !slices.Equal(b.Descriptor.Operations, []agentmeta.Operation{agentmeta.Runtime, agentmeta.Parse, agentmeta.Source, agentmeta.Skills, agentmeta.NativeInspection, agentmeta.VersionInspection, agentmeta.HistoricalDiscovery}) {
+	if !ok || b.Descriptor.ID != agentmeta.Muse || b.Descriptor.DisplayName != "Muse Code" || !slices.Equal(b.Descriptor.Operations, []agentmeta.Operation{agentmeta.Runtime, agentmeta.Parse, agentmeta.Source, agentmeta.LifecycleHooks, agentmeta.ManagedHooks, agentmeta.Skills, agentmeta.NativeInspection, agentmeta.VersionInspection, agentmeta.HistoricalDiscovery}) {
 		t.Fatalf("binding %+v; found %v", b, ok)
 	}
 	if b.Runtime == nil {
@@ -23,6 +23,10 @@ func TestMuseBindingOffersLocalHandoffWithoutCapture(t *testing.T) {
 		t.Fatal("local source/parser missing")
 	}
 	b.Sources, b.Filter, b.Parser = nil, nil, nil
+	if b.Decoder == nil || b.Hooks == nil {
+		t.Fatal("dormant capture ports missing")
+	}
+	b.Decoder, b.Hooks = nil, nil
 	b.Runtime = nil
 	b.NativeHeaders, b.Discovery, b.Preview, b.Version, b.Skills = nil, nil, nil, nil, nil
 	b.Descriptor = agentmeta.Descriptor{}
@@ -35,15 +39,12 @@ func TestMuseBindingOffersLocalHandoffWithoutCapture(t *testing.T) {
 	if len(observations) != 1 || observations[0] != (agentapi.AgentRuntime{Agent: agentmeta.Muse, RuntimeObservation: agentapi.RuntimeObservation{PresenceKey: "MUSE_THREAD_ID"}}) {
 		t.Fatalf("presence-only observation lost or upgraded: %+v", observations)
 	}
-	if got := agentmeta.SetupNames(r.Catalog()); !slices.Equal(got, []string{"codex", "claude", "cursor"}) {
-		t.Fatalf("runtime-only integration offered for capture: %v", got)
+	if got := agentmeta.SetupNames(r.Catalog()); !slices.Equal(got, []string{"codex", "claude", "cursor", "muse"}) {
+		t.Fatalf("bound hook integration missing from capability catalog: %v", got)
 	}
-	if !slices.Contains(r.VersionAgents(), "muse") {
-		t.Fatal("Muse installed-version inspector missing")
-	}
-	for _, names := range [][]string{r.HookAgents()} {
-		if slices.Contains(names, "muse") {
-			t.Fatalf("unsupported projection: %v", names)
+	for _, names := range [][]string{r.HookAgents(), r.SkillAgents(), r.VersionAgents()} {
+		if !slices.Contains(names, "muse") {
+			t.Fatalf("bound operation missing: %v", names)
 		}
 	}
 }

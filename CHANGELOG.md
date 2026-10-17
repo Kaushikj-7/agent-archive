@@ -12,6 +12,10 @@ follow [Semantic Versioning](https://semver.org/).
   filtered installed inventory only; native eligibility and use remain unknown.
   Exact runtime identity and public capture remain gated.
 
+- Prepare guarded capture of newly started Muse sessions, with explicit home,
+  project and capture-window checks before ownership. Public setup remains
+  disabled pending native acceptance; existing Muse local reading is unchanged.
+
 - Muse explicit-file and local handoff support the qualified approval-free
   committed file-read effect lane. A fixed start classification preserves its
   retained validation; private names, file subjects and outcomes remain omitted.

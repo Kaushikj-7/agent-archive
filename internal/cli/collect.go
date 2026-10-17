@@ -612,12 +612,19 @@ func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegis
 	}
 }
 
+type skillEnvironmentKey string
+
+const (
+	skillXDGConfigHome skillEnvironmentKey = "XDG_CONFIG_HOME"
+	skillCodexHome     skillEnvironmentKey = "CODEX_HOME"
+)
+
 // skillRootEnvironment snapshots only the two configurable skill-root variables.
 // Invalid/oversized observations remain set-but-unavailable; they never become
 // known-unset fallbacks. The snapshot is shared across the complete pass.
 func skillRootEnvironment(env Env) *agentapi.RuntimeEnvironment {
-	xdg, xdgSet := env.lookupEnv("XDG_CONFIG_HOME")
-	codex, codexSet := env.lookupEnv("CODEX_HOME")
+	xdg, xdgSet := env.lookupEnv(string(skillXDGConfigHome))
+	codex, codexSet := env.lookupEnv(string(skillCodexHome))
 	if len(xdg) > 4096 {
 		xdg = ""
 	}
@@ -625,10 +632,10 @@ func skillRootEnvironment(env Env) *agentapi.RuntimeEnvironment {
 		codex = ""
 	}
 	return &agentapi.RuntimeEnvironment{LookupEnv: func(key string) (string, bool) {
-		switch key {
-		case "XDG_CONFIG_HOME":
+		switch skillEnvironmentKey(key) {
+		case skillXDGConfigHome:
 			return xdg, xdgSet
-		case "CODEX_HOME":
+		case skillCodexHome:
 			return codex, codexSet
 		}
 		return "", false

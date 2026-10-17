@@ -67,9 +67,10 @@ func TestSkillPlansPreserveForeignFilesAndExpectedBytes(t *testing.T) {
 func TestSkillEvidenceRootsRespectExactEnvironmentSnapshot(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name          string
-		env           *agentapi.RuntimeEnvironment
-		config, codex string
+		name   string
+		env    *agentapi.RuntimeEnvironment
+		config string
+		codex  string
 	}{
 		{"unknown", nil, "", ""},
 		{"unset", &agentapi.RuntimeEnvironment{LookupEnv: func(string) (string, bool) { return "", false }}, "/synthetic/home/.config/muse/skills", "/synthetic/home/.codex/skills"},
@@ -81,6 +82,7 @@ func TestSkillEvidenceRootsRespectExactEnvironmentSnapshot(t *testing.T) {
 		}}, "/synthetic/xdg/muse/skills", "/synthetic/codex/skills"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			roots := Skills().EvidenceRoots(agentapi.SkillLocations{UserHome: "/synthetic/home", Environment: tc.env})
 			got := map[string]string{}
 			for _, r := range roots {

@@ -23,13 +23,11 @@ func (skillProvider) EvidenceRoots(l agentapi.SkillLocations) []agentapi.SkillRo
 		if !validSkillRoot(base) {
 			return
 		}
-		root := agentapi.SkillRoot{Path: filepath.Join(base, suffix), Scope: scope}
+		userBoundary, projectBoundary := base, ""
 		if project {
-			root.ProjectBoundary = base
-		} else {
-			root.UserBoundary = base
+			userBoundary, projectBoundary = "", base
 		}
-		roots = append(roots, root)
+		roots = append(roots, agentapi.SkillRoot{Path: filepath.Join(base, suffix), Scope: scope, UserBoundary: userBoundary, ProjectBoundary: projectBoundary})
 	}
 	if validSkillRoot(l.UserHome) {
 		if base, ok := configuredSkillRoot(l.Environment, "XDG_CONFIG_HOME", filepath.Join(l.UserHome, ".config")); ok {

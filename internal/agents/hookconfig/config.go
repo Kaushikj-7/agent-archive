@@ -15,15 +15,18 @@ import (
 
 // Spec contains native rules supplied by an integration, never an agent switch.
 type Spec struct {
-	Name             string
-	Events           []string
-	Flat             bool
-	Version          bool
-	Owner            string
-	PrototypeOwner   string
-	RootEnvironment  string
-	DefaultDirectory string
-	Filename         string
+	SchemaVersionKey       string
+	CommandMarkerOwnership bool
+	PreserveForeignBytes   bool
+	Name                   string
+	Events                 []string
+	Flat                   bool
+	Version                bool
+	Owner                  string
+	PrototypeOwner         string
+	RootEnvironment        string
+	DefaultDirectory       string
+	Filename               string
 }
 
 // Configurator edits injected JSON values using the byte preserving editor.
@@ -86,6 +89,20 @@ func merge(existing []byte, spec Spec, hook Hook) ([]byte, error) {
 			}
 		}
 	}
+	if app.SchemaVersionKey != "" {
+		value, present := doc.Root.Get(app.SchemaVersionKey)
+		if present && !isOne(value) {
+			return nil, errors.New("unsupported native hook settings schema")
+		}
+		if !present {
+			if len(doc.Root.Members) != 0 {
+				return nil, errors.New("native hook settings require a qualified schema")
+			}
+			if err := doc.SetBefore("hooks", app.SchemaVersionKey, json.Number("1")); err != nil {
+				return nil, err
+			}
+		}
+	}
 	hs, err := hooksObject(doc.Root)
 	if err != nil {
 		return nil, err
@@ -93,6 +110,7 @@ func merge(existing []byte, spec Spec, hook Hook) ([]byte, error) {
 	if hs == nil {
 		hs = &object{}
 	}
+	preserved := foreignHookNodes(existing, hs, app, hook)
 	emptied, err := stripOwned(hs, app, hook)
 	if err != nil {
 		return nil, err
@@ -110,11 +128,15 @@ func merge(existing []byte, spec Spec, hook Hook) ([]byte, error) {
 		var entry any = handler
 		if !app.Flat {
 			handler = &object{Members: []member{{Key: "command", Value: command}, {Key: "statusMessage", Value: spec.Owner}, {Key: "timeout", Value: json.Number("2")}, {Key: "type", Value: "command"}}}
+			if app.CommandMarkerOwnership {
+				handler.Remove("statusMessage", 0)
+			}
 			entry = &object{Members: []member{{Key: "hooks", Value: []any{handler}}}}
 		}
 		list, _ := getList(hs, event)
 		hs.Set(event, append(list, entry))
 	}
+	restoreForeignHookNodes(hs, preserved)
 	if err = doc.Set("hooks", hs); err != nil {
 		return nil, err
 	}
@@ -145,6 +167,7 @@ func remove(existing []byte, spec Spec, hook Hook) ([]byte, bool, error) {
 	if hs == nil {
 		return existing, false, nil
 	}
+	preserved := foreignHookNodes(existing, hs, spec, hook)
 	emptied, err := stripOwned(hs, spec, hook)
 	if err != nil {
 		return nil, false, err
@@ -165,8 +188,11 @@ func remove(existing []byte, spec Spec, hook Hook) ([]byte, bool, error) {
 		if v, ok := doc.Root.Get("version"); spec.Version && ok && isOne(v) && len(doc.Root.Members) == 1 {
 			doc.Clear()
 		}
-	} else if err = doc.Set("hooks", hs); err != nil {
-		return nil, false, err
+	} else {
+		restoreForeignHookNodes(hs, preserved)
+		if err = doc.Set("hooks", hs); err != nil {
+			return nil, false, err
+		}
 	}
 	return doc.Bytes(), true, nil
 }
@@ -269,7 +295,10 @@ const (
 func classify(handler *object, app Spec, hook Hook) (kind handlerKind, dataHome, unreadable string) {
 	command, _ := handler.Get("command")
 	text, _ := command.(string)
-	if app.Flat {
+	if app.CommandMarkerOwnership && !exactMarkerCommand(text, app) {
+		return kindUnrelated, "", ""
+	}
+	if app.Flat || app.CommandMarkerOwnership {
 		if !strings.HasSuffix(text, " # "+app.Owner) {
 			return kindUnrelated, "", ""
 		}
@@ -442,3 +471,140 @@ func stripOwned(hs *object, app Spec, hook Hook) (map[string]bool, error) {
 }
 
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
+
+// foreignHookNodes retains only unowned, unchanged native groups and handlers.
+// Expected-byte file changes still guard the entire document at application.
+func foreignHookNodes(raw []byte, hs *object, spec Spec, hook Hook) map[*object]json.RawMessage {
+	if !spec.PreserveForeignBytes {
+		return nil
+	}
+	preserved := map[*object]json.RawMessage{}
+	var doc map[string]json.RawMessage
+	if json.Unmarshal(raw, &doc) != nil {
+		return preserved
+	}
+	var events map[string][]json.RawMessage
+	if json.Unmarshal(doc["hooks"], &events) != nil {
+		return preserved
+	}
+	for _, member := range hs.Members {
+		groups, ok := member.Value.([]any)
+		if !ok {
+			continue
+		}
+		rawGroups := events[member.Key]
+		if len(groups) != len(rawGroups) {
+			continue
+		}
+		for n, value := range groups {
+			group, ok := value.(*object)
+			if !ok {
+				continue
+			}
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(rawGroups[n], &fields) != nil {
+				continue
+			}
+			var rawHandlers []json.RawMessage
+			if json.Unmarshal(fields["hooks"], &rawHandlers) != nil {
+				continue
+			}
+			h, _ := group.Get("hooks")
+			handlers, ok := h.([]any)
+			if !ok || len(handlers) != len(rawHandlers) {
+				continue
+			}
+			allForeign := true
+			for k, value := range handlers {
+				handler, ok := value.(*object)
+				if !ok {
+					allForeign = false
+					continue
+				}
+				kind, _, _ := classify(handler, spec, hook)
+				if hook.replaces(kind) {
+					allForeign = false
+				} else {
+					preserved[handler] = rawHandlers[k]
+				}
+			}
+			if allForeign {
+				preserved[group] = rawGroups[n]
+			}
+		}
+	}
+	return preserved
+}
+
+func restoreForeignHookNodes(hs *object, preserved map[*object]json.RawMessage) {
+	if len(preserved) == 0 {
+		return
+	}
+	for _, member := range hs.Members {
+		groups, ok := member.Value.([]any)
+		if !ok {
+			continue
+		}
+		for n, value := range groups {
+			group, ok := value.(*object)
+			if !ok {
+				continue
+			}
+			if raw, ok := preserved[group]; ok {
+				groups[n] = raw
+				continue
+			}
+			h, _ := group.Get("hooks")
+			handlers, ok := h.([]any)
+			if !ok {
+				continue
+			}
+			for k, value := range handlers {
+				if handler, ok := value.(*object); ok {
+					if raw, ok := preserved[handler]; ok {
+						handlers[k] = raw
+					}
+				}
+			}
+		}
+	}
+}
+
+func exactMarkerCommand(command string, spec Spec) bool {
+	rest, found := strings.CutPrefix(command, "AGENT_ARCHIVE_HOME=")
+	if !found {
+		return false
+	}
+	rest, ok := quotedAbsoluteWord(rest)
+	if !ok {
+		return false
+	}
+	rest, ok = quotedAbsoluteWord(rest)
+	if !ok {
+		return false
+	}
+	return rest == "_hook --harness "+spec.Name+" # "+spec.Owner
+}
+
+func quotedAbsoluteWord(rest string) (remainder string, ok bool) {
+	var value strings.Builder
+	for {
+		switch {
+		case strings.HasPrefix(rest, "'"):
+			n := strings.IndexByte(rest[1:], '\'')
+			if n < 0 {
+				return "", false
+			}
+			value.WriteString(rest[1 : n+1])
+			rest = rest[n+2:]
+		case strings.HasPrefix(rest, `"'"`):
+			value.WriteByte('\'')
+			rest = rest[3:]
+		case strings.HasPrefix(rest, " "):
+			word := value.String()
+			return rest[1:], filepath.IsAbs(word) && !strings.ContainsAny(word, "\x00\r\n")
+		default:
+			return "", false
+		}
+	}
+}

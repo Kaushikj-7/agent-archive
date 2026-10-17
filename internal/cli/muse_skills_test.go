@@ -31,10 +31,10 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 	calls := map[string]int{}
 	env.LookupEnv = func(key string) (string, bool) {
 		calls[key]++
-		switch key {
-		case "XDG_CONFIG_HOME":
+		switch skillEnvironmentKey(key) {
+		case skillXDGConfigHome:
 			return xdg, true
-		case "CODEX_HOME":
+		case skillCodexHome:
 			return codexHome, true
 		}
 		t.Fatalf("unexpected environment read %s", key)
@@ -136,10 +136,10 @@ func TestMuseSkillEnvironmentSnapshotBoundsAndAlias(t *testing.T) {
 	env.UserHomeDir = func() (string, error) { return home, nil }
 	env.LookupEnv = func(key string) (string, bool) {
 		reads++
-		switch key {
-		case "XDG_CONFIG_HOME":
+		switch skillEnvironmentKey(key) {
+		case skillXDGConfigHome:
 			return xdg, true
-		case "CODEX_HOME":
+		case skillCodexHome:
 			return strings.Repeat("x", 4097), true
 		}
 		t.Fatalf("unexpected key %s", key)
