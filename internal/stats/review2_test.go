@@ -219,7 +219,7 @@ func TestPartnerPlatformModelIDsArePriced(t *testing.T) {
 		sessions = append(sessions, meta(fmt.Sprintf("s%d", i), "claude", day(time.September, 28, 10+i), modelTokens(id, 1_000_000, 0, 0, 0)))
 	}
 	got := Compute(sessions, opts())
-	row := modelRow(t, got, "opus")
+	row := modelRow(t, got, "opus-5.5")
 	if !row.Priced || row.Cost.Partial || !slices.Equal(row.Models, []string{"claude-opus-5-5"}) || row.Cost.USD == nil || !near(*row.Cost.USD, 16) {
 		t.Fatalf("opus row = %+v, want the four ids priced as one model (4 x $4)", row)
 	}
@@ -228,25 +228,29 @@ func TestPartnerPlatformModelIDsArePriced(t *testing.T) {
 	}
 	// The legacy-named Haiku 3.5 id prices as Haiku.
 	legacy := Compute([]archive.Metadata{meta("h", "claude", day(time.September, 28, 10), modelTokens("claude-3-5-haiku-20241022", 1_000_000, 0, 0, 0))}, opts())
-	if r := modelRow(t, legacy, "haiku"); !r.Priced || r.Cost.USD == nil || !near(*r.Cost.USD, 0.8) {
+	if r := modelRow(t, legacy, "haiku-3.5"); !r.Priced || r.Cost.USD == nil || !near(*r.Cost.USD, 0.8) {
 		t.Fatalf("haiku row = %+v", r)
 	}
 }
 
-// A session that used two models of one family is one session of the family,
-// and its subagents' models count for it too.
-func TestModelFamilyCountsASessionOnce(t *testing.T) {
+// A session whose subagents used the same model as it is one session of that
+// model, and every exact version is a row of its own: Opus 5.5 and Opus 5 are
+// not one "opus" row.
+func TestModelRowCountsASessionOnce(t *testing.T) {
 	t.Parallel()
 	parent := meta("p", "claude", day(time.September, 28, 10), modelTokens("claude-opus-5-5", 1000, 0, 0, 0), modelTokens("claude-opus-4-8", 1000, 0, 0, 0))
-	child := meta("k", "claude", day(time.September, 28, 10), parentOf("p"), modelTokens("claude-opus-5", 1000, 0, 0, 0), modelTokens("claude-sonnet-5-5", 1000, 0, 0, 0))
-	other := meta("o", "claude", day(time.September, 28, 11), modelTokens("claude-opus-5", 1000, 0, 0, 0))
+	child := meta("k", "claude", day(time.September, 28, 10), parentOf("p"), modelTokens("claude-opus-5-5", 1000, 0, 0, 0), modelTokens("claude-sonnet-5-5", 1000, 0, 0, 0))
+	other := meta("o", "claude", day(time.September, 28, 11), modelTokens("claude-opus-5-5", 1000, 0, 0, 0), modelTokens("claude-opus-5", 1000, 0, 0, 0))
 	got := Compute([]archive.Metadata{parent, child, other}, opts())
-	opus, sonnet := modelRow(t, got, "opus"), modelRow(t, got, "sonnet")
-	if opus.Sessions != 2 || sonnet.Sessions != 1 || opus.Tokens != 4000 || !slices.Equal(opus.Models, []string{"claude-opus-4-8", "claude-opus-5", "claude-opus-5-5"}) {
+	opus, sonnet := modelRow(t, got, "opus-5.5"), modelRow(t, got, "sonnet-5.5")
+	if opus.Sessions != 2 || sonnet.Sessions != 1 || opus.Tokens != 3000 || !slices.Equal(opus.Models, []string{"claude-opus-5-5"}) {
 		t.Fatalf("opus %+v sonnet %+v", opus, sonnet)
 	}
-	if opus.CostShare == nil || sonnet.CostShare == nil || !near(*opus.CostShare+*sonnet.CostShare, 1) {
-		t.Fatalf("cost shares %v %v", opus.CostShare, sonnet.CostShare)
+	if older := modelRow(t, got, "opus-5"); older.Sessions != 1 || older.Tokens != 1000 {
+		t.Fatalf("opus 5 %+v", older)
+	}
+	if len(got.Models) != 4 {
+		t.Fatalf("models = %+v, want one row per version", got.Models)
 	}
 }
 

@@ -228,7 +228,7 @@ func finishHandoff(opts handoffOptions, target handoffTarget, home string, inter
 		defer p.close()
 		var choice handoffChoice
 		var err error
-		header := handoffPromptHeader(target, h, len(rendered), env.now(), catalogFor(env))
+		header := handoffPromptHeader(target, h, len(rendered), env.now(), catalogFor(env), capabilitiesFor(stdin, stdout).ASCII)
 		if opts.config != nil {
 			choice, err = askHandoffDestinationConfig(p, h, header, opts.config.cfg, env)
 		} else {

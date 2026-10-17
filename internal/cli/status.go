@@ -390,6 +390,12 @@ func formatBytes(n int64) string {
 	return fmt.Sprintf("%.1f MB", float64(n)/1e6)
 }
 
+// formatKilobytes words a byte count in whole KB, rounded up, in the same
+// decimal units as formatBytes.
+func formatKilobytes(n int64) string {
+	return fmt.Sprintf("%d KB", (n+999)/1000)
+}
+
 // sizeLimitedSession is one session status APP lists as stopped at a size
 // limit.
 type sizeLimitedSession struct {

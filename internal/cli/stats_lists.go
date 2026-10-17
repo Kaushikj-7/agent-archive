@@ -93,7 +93,7 @@ func (p *statsPrinter) projectsTable() []string {
 	return append(lines, p.listMore(len(shown), total, allProjectsHint)...)
 }
 
-// modelsPage is the model families, up to statsMaxListRows: its spend and share of it, tokens and
+// modelsPage is the models, up to statsMaxListRows: its spend and share of it, tokens and
 // sessions. A model the price table does not list is flagged unpriced, with
 // its tokens.
 func (p *statsPrinter) modelsPage() [][]string {

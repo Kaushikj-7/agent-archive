@@ -1,8 +1,8 @@
 agent-archive stats · models · last 30 days · 3 agents
 
 MODELS (4)                               sessions  tokens  est. cost  share
-opus               ████████████████████        13     60M       $136    83%
-sonnet             ███                         13     23M        $22    13%
+opus-5             ████████████████████        13     60M       $136    83%
+sonnet-5           ███                         13     23M        $22    13%
 gpt-5              █                            5    4.9M      $5.69     3%
 codex-auto-review                               1    110K   unpriced
 Unpriced: the price table does not list codex-auto-review, so its tokens are

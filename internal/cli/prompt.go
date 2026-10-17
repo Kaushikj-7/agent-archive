@@ -164,27 +164,27 @@ type actionOption struct {
 }
 
 // matchOption finds the option whose key equals answer, or failing that the
-// only option whose key starts with it.
-func matchOption(answer string, options []option) (string, bool) {
+// only option whose key starts with it. It is "" when none does.
+func matchOption(answer string, options []option) string {
 	answer = strings.ToLower(answer)
 	if answer == "" {
-		return "", false
+		return ""
 	}
 	for _, o := range options {
 		if answer == o.Key {
-			return o.Key, true
+			return o.Key
 		}
 	}
 	match := ""
 	for _, o := range options {
 		if strings.HasPrefix(o.Key, answer) {
 			if match != "" {
-				return "", false
+				return ""
 			}
 			match = o.Key
 		}
 	}
-	return match, match != ""
+	return match
 }
 
 func (p *prompter) secret(label string) (string, error) {
