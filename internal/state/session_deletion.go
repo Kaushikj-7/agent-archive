@@ -256,6 +256,9 @@ func (s *Store) loadProtectedSessionDeletion(id string) (SessionDeletion, bool, 
 	return j, true, home.Check()
 }
 
+// readDeletionObject uses the read lifetime captured by the Store.
+//
+//nolint:contextcheck // Explicit entrypoints bind caller and captured owner through withDurableContext; this receiver-owned reader preserves that joined lifetime on every read and checked close.
 func (s *Store) readDeletionObject(home *local.RootedHome, dir *os.Root, name string, limit int64) (out []byte, err error) {
 	ctx := s.durableContext()
 	if err := ctx.Err(); err != nil {
@@ -323,6 +326,8 @@ func (s *Store) saveSessionDeletion(j SessionDeletion, expected *string) error {
 }
 
 func (s *Store) saveSessionDeletionContext(ctx context.Context, j SessionDeletion, expected *string) error {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	if err := ctx.Err(); err != nil {
 		return err
 	}

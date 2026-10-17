@@ -77,3 +77,59 @@ func TestDeletionLoadRefusesCancellationAfterMetadataOpen(t *testing.T) {
 		t.Fatal("fresh retry lost exact deletion metadata", found, err)
 	}
 }
+
+func TestDeletionSaveBindsExplicitCallerToRetainedControlRead(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	reg := registration(t)
+	if err := s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	j, err := s.PrepareSessionDeletion(reg, RemovalReasonRetention, nil, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.home, deletionPath(reg.ArchiveSessionID))
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	opened := false
+	var bytesRead int64
+	s.deletionFileOpen = func(root *os.Root, name string) (*os.File, error) {
+		f, err := root.Open(name)
+		if err == nil && name == "intent.json" {
+			opened = true
+			cancel()
+		}
+		return f, err
+	}
+	s.publicationFileClose = func(f *os.File) error {
+		if filepath.Base(f.Name()) == "intent.json" {
+			bytesRead, _ = f.Seek(0, io.SeekCurrent)
+		}
+		return f.Close()
+	}
+	j.Phase = DeletionDeleting
+	if err := s.saveSessionDeletionContext(ctx, j, nil); !errors.Is(err, context.Canceled) {
+		t.Fatal("explicit cancellation lost", err)
+	}
+	if !opened || bytesRead != 0 {
+		t.Fatal("explicit caller cancellation did not stop actual control read", opened, bytesRead)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("cancelled transition changed durable intent", err)
+	}
+	s.deletionFileOpen = nil
+	s.publicationFileClose = nil
+	if err := s.saveSessionDeletionContext(t.Context(), j, nil); err != nil {
+		t.Fatal("fresh exact transition retry failed", err)
+	}
+	replay, found, err := s.LoadSessionDeletion(reg)
+	if err != nil || !found || replay.Phase != DeletionDeleting {
+		t.Fatal("exact fresh transition not durable", found, err)
+	}
+}
