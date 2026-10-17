@@ -93,7 +93,7 @@ func TestListingModelMatchesS3ProviderPages(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want, cost := ModelListingRange(headers, tc.after, tc.through, ListingLatencyModel{})
+			want, cost := ModelListingRange(headers, tc.after, tc.through, ListingLatencyModel{StopAtBoundary: true})
 			if !reflect.DeepEqual(got, want) || pages.Load() != cost.Pages || keys.Load() != cost.Keys {
 				t.Fatalf("got=%d want=%d pages=%d/%d transferred=%d/%d", len(got), len(want), pages.Load(), cost.Pages, keys.Load(), cost.Keys)
 			}

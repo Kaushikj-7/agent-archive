@@ -355,7 +355,7 @@ func DiscoverCatalogHeaders(ctx context.Context, store storage.ObjectStore, opts
 	known := opts.Cache.keys("sessions/")
 	scan.Count("cached keys", len(known))
 	scan.End()
-	objects, err := listObjects(ctx, store, "sessions/", known)
+	objects, err := listObjects(ctx, store, "sessions/", known, opts.Cache)
 	if err != nil {
 		return HeaderSnapshot{}, err
 	}

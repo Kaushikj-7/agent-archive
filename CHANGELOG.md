@@ -25,6 +25,10 @@ follow [Semantic Versioning](https://semver.org/).
   original parent before applying a later resolved parent. Older pending
   journals can resume without replacing the original provenance.
 
+- Legacy archive discovery balances complete header listings with private
+  key-range hints for sessions and both listing indexes, under one 16-request
+  budget. S3 ranges stop at an exact page boundary without an extra request.
+
 - Pending-publication cleanup refuses malformed JSON inside records it scans
   without retaining, preserving damaged journals for recovery while keeping
   the bounded-memory checks used for large Codex histories.

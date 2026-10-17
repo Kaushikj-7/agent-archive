@@ -32,6 +32,14 @@ func (s *opaqueListingStore) List(ctx context.Context, prefix string) ([]storage
 	return objects, err
 }
 
+func (s *opaqueListingStore) ListRange(ctx context.Context, prefix, after, through string) ([]storage.Object, error) {
+	objects, err := s.indexedCountingStore.ListRange(ctx, prefix, after, through)
+	for i := range objects {
+		objects[i].ETag = "opaque/revision:" + objects[i].ETag
+	}
+	return objects, err
+}
+
 func (s *opaqueListingStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
 	info, err := s.MemoryStore.Stat(ctx, key)
 	info.ETag = "opaque/revision:" + info.ETag

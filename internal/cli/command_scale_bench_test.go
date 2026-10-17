@@ -491,7 +491,7 @@ func BenchmarkCommandReadPaths(b *testing.B) {
 					}
 					home := b.TempDir()
 					store := storagetest.NewMeasuredStore(mem, 0)
-					store.ListingModel = &storagetest.ListingLatencyModel{}
+					store.ListingModel = &storagetest.ListingLatencyModel{StopAtBoundary: true}
 					if os.Getenv("AGENT_ARCHIVE_READ_LATENCY") == "1" {
 						// One sensitivity decomposition inside the observed full-page/GET ranges;
 						// separate calibration of overhead and per-key costs remains outstanding.
@@ -754,7 +754,7 @@ func testCommandReadPathOperationBudgets(t *testing.T, command readPathCommand) 
 			}
 			home := t.TempDir()
 			store := storagetest.NewMeasuredStore(mem, 0)
-			store.ListingModel = &storagetest.ListingLatencyModel{}
+			store.ListingModel = &storagetest.ListingLatencyModel{StopAtBoundary: true}
 			store.CaptureListingCosts = true
 			store.CaptureGETKeys = true
 			env := readPathEnv(t, home, store, command)

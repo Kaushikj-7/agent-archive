@@ -193,12 +193,22 @@ details. A missing index retains complete compatibility scanning. On R2 a
 listing page of 1,000 keys takes
 0.5–0.9 s, and one listing's pages are strictly sequential. So since the
 [listing-at-scale](../proposals/listing-at-scale.md) phase 1 change, the scan is
-split into contiguous key ranges listed concurrently: at most 16 in flight,
-each about 200 of the sidecars the metadata cache knows (one page). The
-ranges cover every key whatever the boundaries, so the cache only decides
-how evenly the work is spread. With under 400 cached sidecars under the
-listed prefix (a `--harness` listing counts only that harness's), or with
-`--no-cache`, the scan is the single sequential listing.
+split into contiguous key ranges listed concurrently. Sessions and both
+listing-index prefixes share at most sixteen in-flight listings. After a
+complete listing, each prefix saves private complete-key hints for roughly
+1,000-key ranges; prefixes with at most 1,000 keys stay sequential. This policy
+accounts for full provider pages transferred past range boundaries rather than
+assuming that sixteen short returned ranges transfer sixteen short responses.
+An exact inclusive range boundary terminates without fetching another page.
+
+Hints split the complete keyspace and never prove existence or absence. Stale,
+deleted or empty boundaries preserve complete ordered results; missing or
+damaged hints use the existing sidecar-based planner or sequential fallback.
+Unknown harnesses and non-hex identities remain covered. Each hint file is
+0600, atomically replaced and bounded to `15 + ceil(keys/1000)` boundaries.
+`--no-cache` retains complete sequential discovery. These changes reduce
+constant factors; fresh legacy discovery still grows with archive size and
+does not establish the catalog-v4 scale targets.
 
 ## Synthetic baseline recorded 2026-10-12
 
