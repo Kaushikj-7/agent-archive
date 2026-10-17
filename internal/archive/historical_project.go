@@ -87,7 +87,7 @@ func (r SessionRegistration) validateProjectOwnership() error {
 
 // RetainedOnly reports an explicit frozen generation or historical import snapshot.
 func (r SessionRegistration) RetainedOnly() bool {
-	return r.CaptureFrozen || r.HistoricalProject != nil
+	return r.CaptureFrozen || r.HistoricalProject != nil || r.NativeImport != nil
 }
 
 func validHistoricalCwd(cwd string) bool {

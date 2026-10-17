@@ -195,7 +195,7 @@ func validateDeletionGuardVersion(raw []byte) error {
 		}
 		names := []string{"version", "writer", "base"}
 		if version.Admission != "" {
-			if version.Admission != "muse-root-admission" && version.Admission != "muse-root-admission-replay" {
+			if version.Admission != MuseAdmissionWriterSelector(false) && version.Admission != MuseAdmissionWriterSelector(true) {
 				return errors.New("unsupported native admission guard capability")
 			}
 			names = append(names, "admission")
