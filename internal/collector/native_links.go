@@ -90,6 +90,13 @@ func (p *pass) reconcileNativeLinks() {
 		}
 		if !graph.accepts(reg) {
 			p.nativeLinkPending("parent_identity_conflict")
+			// An older settled link must not leak a known-invalid parent into
+			// another publication. Reuse the existing per-pass unopened-work
+			// hold; durable ownership and frozen publication bytes stay intact.
+			if p.unreadable == nil {
+				p.unreadable = map[string]bool{}
+			}
+			p.unreadable[reg.ArchiveSessionID] = true
 			continue
 		}
 		p.reconcileNativeLink(i, reg, parents, ambiguous)

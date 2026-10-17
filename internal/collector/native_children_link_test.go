@@ -139,3 +139,56 @@ func TestNativeChildLinksDoNotMutateExcludedChild(t *testing.T) {
 		t.Fatal("excluded child acquired durable relationship effects")
 	}
 }
+
+func TestNativeChildSettledInvalidGraphHoldsScanWithoutChangingDurableWork(t *testing.T) {
+	for _, mode := range []string{"cycle", "conflicting parent"} {
+		t.Run(mode, func(t *testing.T) {
+			local := newTestStore(t)
+			at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+			home := t.TempDir()
+			const a = "00000000-0000-0000-0000-000000000001"
+			const b = "00000000-0000-0000-0000-000000000002"
+			const c = "00000000-0000-0000-0000-000000000003"
+			child := nativeLinkRegistration("child", a, b, home, at)
+			child.ParentSessionID, child.NativeLinkVersion = "parent", 1
+			parent := nativeLinkRegistration("parent", b, "", home, at)
+			regs := []archive.SessionRegistration{child, parent}
+			invalid := 1
+			if mode == "cycle" {
+				regs[1].NativeChild, regs[1].ParentNativeSessionID = true, a
+				regs[1].ParentSessionID, regs[1].NativeLinkVersion = child.ArchiveSessionID, 1
+				invalid = 2
+			} else {
+				regs[0].ParentSessionID = "wrong"
+				regs = append(regs, nativeLinkRegistration("wrong", c, "", home, at))
+			}
+			for _, reg := range regs {
+				if err := local.SaveRegistration(reg); err != nil {
+					t.Fatal(err)
+				}
+				if err := local.SaveRequest(reg.ArchiveSessionID, "frozen-existing-work", at); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := snapshotMtimes(t, local.Home())
+			loads := state.PublishedStateLoads()
+			p := &pass{ctx: t.Context(), local: local, registrations: regs, now: at, result: Result{Errors: map[string]error{}},
+				opts: Options{sourcePasses: &sourcePassSet{env: agentapi.SourceEnvironment{ReadBudget: agentapi.NewNativeReadBudget(agentapi.PassReadBudget)}}}}
+			p.reconcileNativeLinks()
+			for i := range invalid {
+				if !p.unreadable[regs[i].ArchiveSessionID] {
+					t.Fatal("settled invalid link remained eligible for scanning")
+				}
+				// Exercise the real scan path. Its unopened-work gate must
+				// return before published-state loading or source/publication.
+				p.scan(t.Context(), regs[i])
+			}
+			if p.result.Scanned != invalid || len(p.result.Waiting) != invalid || len(p.result.Errors) != 0 || len(p.result.Published) != 0 || state.PublishedStateLoads() != loads {
+				t.Fatalf("invalid graph reached source/publication: %+v", p.result)
+			}
+			if !reflect.DeepEqual(before, snapshotMtimes(t, local.Home())) {
+				t.Fatal("graph hold changed existing owner or pending work")
+			}
+		})
+	}
+}
