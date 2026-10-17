@@ -467,6 +467,15 @@ Registered capture, backfill and Muse launch stay unavailable. Explicit files an
 
 The [production local v1 field policy](../qualification/muse/retained-allowlist-local-v1.json) is the exact current retained projection. The original `retained-allowlist.json` and derived corpus remain byte-frozen historical Q0 evidence; their broader metrics ceiling is not a production promise.
 
+The qualified single-metadata startup also permits exactly one schema-2
+`runtime.session.route_facts` record immediately before the original
+`session.opened.observed` record. Metadata, route facts and opening all require
+nil causation; the route cwd must equal the metadata workspace. The permission
+frame remains the sole native birth authority. Header corroboration and raw
+startup facts use the same fixed prefix within their existing bounds; complete
+source validation remains mandatory. This changes validation only, with no new
+retained fields or metadata interpretation.
+
 Muse startup metadata may omit the optional model label. The local projection
 retains it only when present as a string, never infers a provider default, and
 reports `model_identity_unavailable` only when the complete validated startup

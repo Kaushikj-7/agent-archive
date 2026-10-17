@@ -371,3 +371,19 @@ func TestPendingWriteObservationExcludesOriginalEvidenceAuthority(t *testing.T) 
 		t.Fatal("original-evidence obligation entered observation protocol")
 	}
 }
+
+func TestPendingWriteObservationExcludesRetentionRestorationAuthority(t *testing.T) {
+	t.Parallel()
+	_, p, _, _ := observedPendingFixture(t)
+	if !ordinaryPendingObservation(p) {
+		t.Fatal("ordinary fixture is not eligible")
+	}
+	// Eligibility alone is under test; this does not claim a modified frozen
+	// preparation passes complete new-candidate or current-intent validation.
+	preparation := *p.Preparation
+	preparation.Retention = &RetentionRestoration{}
+	p.Preparation = &preparation
+	if ordinaryPendingObservation(p) {
+		t.Fatal("retention authority entered observation protocol")
+	}
+}

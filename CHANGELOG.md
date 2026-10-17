@@ -12,6 +12,10 @@ follow [Semantic Versioning](https://semver.org/).
   Marked sources require an upgraded reader. This adds no result status, file
   list, parallelism or capture support.
 
+- Muse local handoff recognizes the exact startup sequence with one route-facts
+  record between metadata and the original session opening. Workspace, ownership,
+  causation and complete-file validation remain required.
+
 - Pending Muse inventory queries recover when an unfinished date directory is
   removed or renamed between passes, while retaining complete uniqueness checks.
 
@@ -50,6 +54,18 @@ follow [Semantic Versioning](https://semver.org/).
 - Caching a session for the first time skips a redundant directory scan.
   Rewritten metadata still prunes old cache versions, and bounded maintenance
   remains the backstop for concurrent writers.
+
+- Interrupted owned retention keeps the complete selecting source set and exact
+  metadata for recovery. A newer hook can restore that same baseline after native
+  files disappear; its new evidence stays queued. Explicit undo cannot restore
+  the removed session. Deletion preserves catalog snapshots and refuses changed
+  winners or unsafe local ownership.
+
+- Recover complete historical source-set publications from exact private retained evidence,
+  with one shared disk/memory budget and permanent source-set writer protection.
+  Stronger privacy replaces all selected revisions and retires obsolete private
+  proof bodies only after the full local selection is durable. Historical import
+  admission staging and additional native ancestor permission remain separate.
 
 - Interrupted history privacy preparation now reads each retained revision's
   original parent before applying a later resolved parent. Older pending

@@ -35,7 +35,7 @@ type pendingWriteObservation struct {
 }
 
 func ordinaryPendingObservation(p PendingPublication) bool {
-	return p.JournalVersion == 5 && p.Preparation != nil && p.Preparation.OriginalEvidenceSHA256 == "" && p.Selection == nil && p.StagedProof() == nil && p.Catalog == nil
+	return p.JournalVersion == 5 && p.Preparation != nil && p.Preparation.Retention == nil && p.Preparation.OriginalEvidenceSHA256 == "" && p.Selection == nil && p.StagedProof() == nil && p.Catalog == nil
 }
 
 func (s *Store) pendingObservation() *pendingWriteObservation {

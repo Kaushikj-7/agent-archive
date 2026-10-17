@@ -15,6 +15,7 @@ import (
 // PreparationAuthority freezes the exact original selection and inputs.
 // Progress and retired cleanup are deliberately outside its digest.
 type PreparationAuthority struct {
+	Retention               *RetentionRestoration     `json:"retention,omitempty"`
 	NativeTarget            *PublicationNativeTarget  `json:"native_target,omitempty"`
 	PrivacyPreviousMetadata []byte                    `json:"privacy_previous_metadata,omitempty"`
 	Migration               *OrdinaryHistoryMigration `json:"migration,omitempty"`
@@ -113,7 +114,8 @@ func preparationSHAWithFacts(a PreparationAuthority, facts *payloadDigestFacts) 
 	if a.Migration != nil {
 		migration = a.Migration.SHA256
 	}
-	return publicationSHA256(append(append([]byte("preparation-authority/v1\x00"), raw...), []byte("\x00"+migration+"\x00"+previousPrivacySHA)...))
+	retention, _ := json.Marshal(a.Retention)
+	return publicationSHA256(append(append(append([]byte("preparation-authority/v1\x00"), raw...), []byte("\x00"+migration+"\x00"+previousPrivacySHA)...), retentionBinding(a.Retention, retention)...))
 }
 
 func progressSHAWithFacts(p PreparationProgress, facts *payloadDigestFacts) string {
@@ -242,6 +244,9 @@ func (owned *PendingPublication) validatePublicationEnvelopeWithFacts(facts *pay
 		return ErrDurableStorageRecovery
 	}
 	a := p.Preparation
+	if err := p.validateRetentionEnvelope(); err != nil {
+		return err
+	}
 	if p.Commit != nil && p.Commit.SettledPrivacySHA256 != "" {
 		return ErrDurableStorageRecovery
 	}
@@ -309,6 +314,9 @@ func (a PreparationAuthority) validateWithFacts(facts *payloadDigestFacts) (err 
 	}
 	if a.Version != 1 || (a.Kind != PreparationCapture && a.Kind != PreparationPrivacyCommitted && a.Kind != PreparationPrivacyPending && a.Kind != PreparationPrivacyPendingAbsent) || a.SHA256 != preparationSHAWithFacts(a, facts) || a.OriginMetadataSHA256 != publicationSHA256(a.OriginMetadata) || len(a.Inputs) == 0 || len(a.Inputs) > 65 {
 		return ErrDurableStorageRecovery
+	}
+	if err := a.validateRetention(); err != nil {
+		return err
 	}
 	if err := a.validateInputFacts(); err != nil {
 		return err

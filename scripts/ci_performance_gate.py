@@ -14,6 +14,9 @@ import normalize_ci_timing
 SHA = re.compile(r'[0-9a-f]{40}')
 IDENT = re.compile(r'github\.com/wangjohn/agent-archive/[^:]+::(?:Test|Fuzz|Example)\w*')
 MAX_BYTES = 16 * 1024 * 1024
+# Preserve ten worker inventories or one inventory plus bounded approval pages,
+# including the two independent tested-merge/ancestry reads when required.
+REQUEST_LIMIT = 14
 POLICY = 'scripts/ci_performance_policy.json'
 EXCEPTIONS = 'scripts/ci_performance_exceptions.json'
 EXCEPTION_COMMAND = re.compile(r'/(approve|revoke)-performance-exceptions ([0-9a-f]{40})')
@@ -296,9 +299,9 @@ def current_worker_attempts(api, topology, run_id, attempt):
     run = api.get(path)
     if run.get('id') != int(run_id) or run.get('run_attempt') != int(attempt):
         raise ValueError('API enclosing workflow attempt mismatch')
-    collect_ci_timing.validate_run(run, 'Test', topology)
-    # At most ten inventories plus this run read, within the existing API
-    # request/deadline budget. Missing pages or history still fail closed.
+    collect_ci_timing.validate_run(run, 'Test', topology, api=api)
+    # At most ten inventories, this run read and two tested-context reads,
+    # within the bounded API request/deadline budget. Missing pages or history still fail closed.
     inventories = {number: api.pages(
         f'/repos/{collect_ci_timing.REPOSITORY}/actions/runs/{run_id}/attempts/{number}/jobs', 'jobs')['jobs']
         for number in range(1, attempt + 1)}
@@ -587,7 +590,7 @@ def main():
         if len(paths) != topology['workers']:
             raise ValueError('missing or excess raw worker manifests')
         rows = normalize_workers(paths, topology, verify_coverage=True)
-        api = collect_ci_timing.API(os.environ.get('GH_TOKEN', ''), seconds=20, request_limit=12)
+        api = collect_ci_timing.API(os.environ.get('GH_TOKEN', ''), seconds=20, request_limit=REQUEST_LIMIT)
         run_id, attempt = os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT']
         actual = current_worker_attempts(api, topology, run_id, attempt)
         result = evaluate(read(args.policy), rows, topology, run_id, attempt, read(args.exceptions),
