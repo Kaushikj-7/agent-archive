@@ -82,6 +82,9 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 	if err != nil {
 		return err
 	}
+	if next.Harness.Name == "muse" && next.Replay != nil && !cfg.NativeReplayProtection {
+		return errors.New("native replay owner requires stronger writer protection")
+	}
 	if cfg.NativeAdmissionProtection && next.Harness.Name == "muse" && (next.NativeAdmission == nil || !before.found && admission == nil) {
 		return errors.New("muse ownership requires prepared native admission")
 	}
