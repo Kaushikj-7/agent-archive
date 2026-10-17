@@ -22,6 +22,10 @@ func hostileLocalNative(t *testing.T) (Env, string) {
 	if err := os.Mkdir(workspace, 0700); err != nil {
 		t.Fatal(err)
 	}
+	workspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
 	env.WorkingDir = func() (string, error) { return workspace, nil }
 	prompt := "Prompt " + strings.Repeat("\u202e\u009b", 64) + " visible"
 	raw := museNativeBytes(t, "exec", museSyntheticID, workspace)
