@@ -82,6 +82,9 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 	if err != nil {
 		return err
 	}
+	if next.Harness.Name == "muse" && next.Replay != nil && !cfg.NativeReplayProtection {
+		return errors.New("native replay owner requires stronger writer protection")
+	}
 	if cfg.NativeAdmissionProtection && next.Harness.Name == "muse" && (next.NativeAdmission == nil || !before.found && admission == nil) {
 		return errors.New("muse ownership requires prepared native admission")
 	}
@@ -108,6 +111,9 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 }
 
 func preserveNativeRegistrationAuthority(previous, next archive.SessionRegistration, found bool, prepared *nativeValidationCommit, admission *nativeAdmissionCommit) error {
+	if found && (previous.NativeBinding != nil || next.NativeBinding != nil) && !sameNativeReplay(previous.Replay, next.Replay) {
+		return errors.New("native replay classification is immutable")
+	}
 	if previous.NativeAdmission != nil || next.NativeAdmission != nil {
 		a, _ := json.Marshal(previous.NativeAdmission)
 		b, _ := json.Marshal(next.NativeAdmission)
@@ -175,4 +181,8 @@ func (s *Store) genericNativeReservationAllowed(key agentmeta.SessionKey) error 
 		return errors.New("muse reservation requires prepared native admission")
 	}
 	return nil
+}
+
+func sameNativeReplay(a, b *archive.Replay) bool {
+	return a == nil && b == nil || a != nil && b != nil && a.RunID == b.RunID
 }

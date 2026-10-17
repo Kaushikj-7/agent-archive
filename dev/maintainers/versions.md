@@ -19,6 +19,7 @@ affects.
 | Machine record | `machines.SchemaVersion` | `machines/<machine_id>.json` and `machines --json` | 1 | Informational registry format changes incompatibly; independent of session schemas and filtering. |
 | Configuration | `config.SchemaVersion` | `config.json` `schema_version` | 1 | `config.json` changes incompatibly. |
 | List JSON | `cli.listSchemaVersion` | `list --json` `schema_version` | 4 | The script-facing list document changes incompatibly. Version 3 removed `unavailable`; version 4 makes exact-count knowledge explicit. |
+| Local read JSON | `cli.localReadSchemaVersion` | `list/show --source local --json` `schema_version` | 1 | Independent `local-read-list` and `local-read-show` documents change incompatibly; native IDs and bounded coverage remain explicit. Archive list version 4 is unchanged. |
 | Status JSON | `statusView.Version` in `internal/cli/status.go` | `status --json` `schema_version` | 4 | Status output changes incompatibly; schema 4 separates discovery from actual hook evidence. |
 
 Muse uses its independent parser 0.6.0 and archive-native `muse-jsonl` mixed ordinary-v1/native-omission-v2
@@ -300,6 +301,30 @@ with journal fence version 1 / writer `native-authority-v16` / original boolean
 `value`, requiring their true native protection marker. This blocks older raw
 rollback recovery before config loading; adding an ignored journal field alone
 would not protect authority.
+
+Confirmed historical Muse import uses the private exact registration contract
+`native_import` / `muse-historical-import-v1`. Its closed creating-batch receipt
+binds the nonreused batch instance, resolved selection digest, selected raw
+checkpoint and attached or detached membership. The native16 wrapper adds
+`"import":"muse-historical-import"` with sticky `native_import_protection`;
+both setup-journal wire forms require the same exact member in `files_only`.
+The independent admission selector, lower base and owned-deletion18 wrapper
+remain intact. The distinct reservation prefix is `muse-import-reservation-v1:`.
+These strings grant only confirmed historical staging and retained maintenance;
+they establish no live capture window. No numeric version, filter, adapter,
+parser or uploaded schema allocation accompanies this private contract.
+
+Native replay classification protection is independently opt-in through sticky
+`native_replay_protection`. It requires admission protection and the exact
+native16 admission selector `muse-root-admission-replay`; both setup journal
+forms require that selector and preserve the flag across rollback snapshots.
+The independent historical import selector and lower/deletion floors compose
+unchanged. Ordinary protection does not enable this capability. Native owner
+classification distinguishes nil, an empty replay marker and an exact normalized
+run ID, and ordinary writers cannot relabel an owner. This extends existing
+registration provenance and `ApplyReplay` semantics without changing source
+filtering, parsing, Analysis or old-owner classification, so it allocates no
+filter, adapter, parser or numeric schema version.
 
 Muse parser 0.2.0 corrects unavailable tool/file/Git counts and full export file
 presence without losing qualified prompt/message counts. Cursor parser 0.22.0

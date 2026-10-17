@@ -704,13 +704,18 @@ func prepareMachineAssignment(old config.Config, next *config.Config) {
 	}
 }
 
+// setupWriterProtectionChanges compares independent sticky writer capabilities.
+func setupWriterProtectionChanges(current, next config.Config) bool {
+	return (((next.NativeAuthorityProtection || next.NativeAdmissionProtection || next.NativeImportProtection || next.NativeReplayProtection || next.MuseCapture != nil || len(next.NativeRoots) > 0) && !current.NativeAuthorityProtection) || (next.NativeAdmissionProtection && !current.NativeAdmissionProtection) || (next.NativeImportProtection && !current.NativeImportProtection) || (next.NativeReplayProtection && !current.NativeReplayProtection) || (next.SearchLifecycleProtection && !current.SearchLifecycleProtection) || (next.CodexCapture != nil && current.CodexCapture == nil) || (next.CodexHistoryProtection && !current.CodexHistoryProtection) || (next.GenerationProtection && !current.GenerationProtection) || (next.DurableStorageProtection && !current.DurableStorageProtection) || (next.RetentionProtection && !current.RetentionProtection) || (next.ImportStagingProtection && !current.ImportStagingProtection))
+}
+
 // protectSetupWriter fences protected rollback snapshots before journal planning.
 // Callers hold hooks.lock after settling any previous setup transaction.
 func protectSetupWriter(home string, current config.Config, proposed ...config.Config) error {
 	if setupjournal.TransactionPending(home) {
 		return errors.New("setup pending before writer protection")
 	}
-	if len(proposed) > 0 && (((proposed[0].NativeAuthorityProtection || proposed[0].NativeAdmissionProtection || proposed[0].MuseCapture != nil || len(proposed[0].NativeRoots) > 0) && !current.NativeAuthorityProtection) || (proposed[0].NativeAdmissionProtection && !current.NativeAdmissionProtection) || (proposed[0].SearchLifecycleProtection && !current.SearchLifecycleProtection) || (proposed[0].CodexCapture != nil && current.CodexCapture == nil) || (proposed[0].CodexHistoryProtection && !current.CodexHistoryProtection) || (proposed[0].GenerationProtection && !current.GenerationProtection) || (proposed[0].DurableStorageProtection && !current.DurableStorageProtection) || (proposed[0].RetentionProtection && !current.RetentionProtection) || (proposed[0].ImportStagingProtection && !current.ImportStagingProtection)) {
+	if len(proposed) > 0 && setupWriterProtectionChanges(current, proposed[0]) {
 		if _, found, err := config.Load(home); err != nil {
 			return err
 		} else if found {

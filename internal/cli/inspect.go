@@ -125,6 +125,7 @@ func openReadOnlyStore(env readOnlyStoreDependencies) (storage.ObjectStore, conf
 // browse (stdin and stdout are both terminals).
 func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env listCommandDependencies) int {
 	fs := env.newCommandFlags("list", stderr)
+	source := fs.String("source", "archive", "session source: archive or bounded read-only local native sessions")
 	harness := fs.String("harness", "", "only sessions from this harness (codex, claude, cursor)")
 	model := fs.String("model", "", "only sessions that requested or observed this model")
 	skill := fs.String("skill", "", "only sessions involving this skill (see --skill-usage)")
@@ -154,6 +155,12 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if *project != "" && *allProjects {
 		return fs.usageError("--project and --all-projects cannot be used together: --project lists one project, --all-projects lists every project")
 	}
+	if *source == "local" {
+		return runLocalListCommand(fs, env, stdout, stderr, localReadOptions{harness: *harness, project: *project, allProjects: *allProjects, query: query, limit: *limit, json: *jsonOut})
+	}
+	if *source != "archive" {
+		return fs.usageError("--source must be archive or local")
+	}
 	opts, code := listOptionsFromFlags(fs, listFlagValues{
 		harness: *harness, model: *model, skill: *skill, skillSHA256: *skillSHA256,
 		skillUsage: *skillUsage, since: *since, complete: *complete,
@@ -163,17 +170,9 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if code != 0 {
 		return code
 	}
-	store, cfg, found, err := openReadOnlyStore(env)
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
-		return 1
-	}
-	if !found {
-		terminal.Println(stderr, preSetupGuidanceFor(env))
-		return 1
-	}
-	if *rebuildIndex && !rebuildListingIndex(env, store, stderr) {
-		return 1
+	store, cfg, code := openListStore(env, stderr, *rebuildIndex)
+	if code != 0 {
+		return code
 	}
 	ctx, browsing, stopReads := listReadContext(env, store, opts, stdin, stdout)
 	defer stopReads()
@@ -236,6 +235,32 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return code
 	}
 	return printListWithPager(ctx, env, stdout, stderr, opts.noPager, choices)
+}
+
+// openListStore retains list's configuration and explicit rebuild checks.
+func openListStore(env listCommandDependencies, stderr io.Writer, rebuild bool) (storage.ObjectStore, config.Config, int) {
+	store, cfg, code := openReadOnlyCommandStore(env, stderr, "list")
+	if code != 0 {
+		return nil, cfg, code
+	}
+	if rebuild && !rebuildListingIndex(env, store, stderr) {
+		return nil, cfg, 1
+	}
+	return store, cfg, 0
+}
+
+// openReadOnlyCommandStore reports the shared setup and read-only open failures.
+func openReadOnlyCommandStore(env readOnlyStoreDependencies, stderr io.Writer, command string) (storage.ObjectStore, config.Config, int) {
+	store, cfg, found, err := openReadOnlyStore(env)
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)
+		return nil, cfg, 1
+	}
+	if !found {
+		terminal.Println(stderr, preSetupGuidanceFor(env))
+		return nil, cfg, 1
+	}
+	return store, cfg, 0
 }
 
 // listReadContext starts discovery before scope preparation and owns both
@@ -630,6 +655,9 @@ func validLowerSHA256(value string) bool {
 // With no SESSION_ID on a TTY, it opens the same session browser as list.
 func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env showCommandDependencies) int {
 	fs := env.newCommandFlags("show", stderr)
+	source := fs.String("source", "archive", "session source: archive or bounded read-only local native sessions")
+	project := fs.String("project", "", "with --source local, search this existing checkout directory")
+	allProjects := fs.Bool("all-projects", false, "with --source local, search every native checkout")
 	harness := fs.String("harness", "", "the session's harness, if the same ID exists under more than one")
 	revisions := fs.Bool("revisions", false, "list validated active and preserved native revisions; with --json, print the inventory")
 	revision := fs.String("revision", "", "read this exact native revision ID from the parent only (see --revisions)")
@@ -665,6 +693,9 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if *full && *jsonOut {
 		return fs.usageError("--full is for the readable transcript; --json always includes every retained tool result")
 	}
+	if handled, code := dispatchShowSource(fs, env, stdout, stderr, *source, localReadOptions{harness: *harness, project: *project, allProjects: *allProjects, query: sessionID, json: *jsonOut, transcript: *transcript, full: *full, maxBytes: *maxBytes}); handled {
+		return code
+	}
 
 	if sessionID == "" && !browseInteractive(env, stdin, stdout) {
 		return fs.usageError("a SESSION_ID is required (see agent-archive list)")
@@ -676,14 +707,9 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return fs.usageError("--transcript needs a SESSION_ID; pick a session with show and press t, or run show SESSION_ID --transcript")
 	}
 
-	store, cfg, found, err := openReadOnlyStore(env)
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
-		return 1
-	}
-	if !found {
-		terminal.Println(stderr, preSetupGuidanceFor(env))
-		return 1
+	store, cfg, code := openReadOnlyCommandStore(env, stderr, "show")
+	if code != 0 {
+		return code
 	}
 
 	ctx, stopReads := readCommandContext(env)
