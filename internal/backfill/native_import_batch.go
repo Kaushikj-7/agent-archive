@@ -30,6 +30,7 @@ func decodeBatch(raw []byte, b *Batch) error {
 	return nil
 }
 
+// UnmarshalJSON decodes a batch while preserving closed native import authority.
 func (b *Batch) UnmarshalJSON(raw []byte) error { return decodeBatch(raw, b) }
 
 func readBatch(path string, b *Batch) (err error) {
