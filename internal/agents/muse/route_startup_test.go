@@ -164,22 +164,27 @@ func TestRouteFactsStartupRejectsUnqualifiedNativePrefixes(t *testing.T) {
 			return []map[string]any{r[0], r[1], extra, r[2]}
 		}
 	}
-	cases["interposed private effect"] = func(r []map[string]any) []map[string]any {
-		lines := bytes.Split(bytes.TrimSpace(readSynthetic(t, "synthetic-native-omissions.jsonl")), []byte("\n"))
-		for _, line := range lines[1:] {
-			extra, _, err := decodeObject(line)
-			if err == nil && str(extra["payload_type"]) == "approval_wait.effect.started" {
-				return []map[string]any{r[0], r[1], extra, r[2]}
-			}
+	var privateEffect map[string]any
+	lines := bytes.Split(bytes.TrimSpace(readSynthetic(t, "synthetic-native-omissions.jsonl")), []byte("\n"))
+	for _, line := range lines[1:] {
+		extra, _, err := decodeObject(line)
+		if err == nil && str(extra["payload_type"]) == "approval_wait.effect.started" {
+			privateEffect = extra
+			break
 		}
+	}
+	if privateEffect == nil {
 		t.Fatal("missing synthetic effect")
-		return nil
+	}
+	cases["interposed private effect"] = func(r []map[string]any) []map[string]any {
+		return []map[string]any{r[0], r[1], privateEffect, r[2]}
 	}
 	for _, index := range []int{0, 1, 2} {
 		cases[[]string{"metadata cause", "route cause", "opening cause"}[index]] = func(r []map[string]any) []map[string]any { r[index]["causation_id"] = r[1]["id"]; return r }
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			raw := routeStartupMutation(t, mutate)
 			if _, err := filterBytes(t, raw, agentapi.ReadLimits{}); err == nil {
 				t.Fatal("filter accepted unqualified prefix")
@@ -219,23 +224,33 @@ func TestRouteFactsStartupRetainedGuards(t *testing.T) {
 	}
 }
 
+type routeStartupFramingKind string
+
+const (
+	routeStartupChecksum     routeStartupFramingKind = "checksum"
+	routeStartupFrameSchema  routeStartupFramingKind = "frame schema"
+	routeStartupLeadingBlank routeStartupFramingKind = "leading blank"
+	routeStartupUnterminated routeStartupFramingKind = "unterminated"
+)
+
 func TestRouteFactsStartupKeepsPhysicalAndParentGuards(t *testing.T) {
 	t.Parallel()
 	raw := readSynthetic(t, "synthetic-route-startup.jsonl")
-	for name, input := range map[string][]byte{
-		"checksum":      bytes.Replace(raw, []byte(`"content_sha256":"sha256:`), []byte(`"content_sha256":"sha256:0`), 1),
-		"frame schema":  bytes.Replace(raw, []byte(`"frame_schema_version":1`), []byte(`"frame_schema_version":2`), 1),
-		"leading blank": append([]byte("\n"), raw...),
-		"unterminated":  bytes.TrimSuffix(raw, []byte("\n")),
+	for name, input := range map[routeStartupFramingKind][]byte{
+		routeStartupChecksum:     bytes.Replace(raw, []byte(`"content_sha256":"sha256:`), []byte(`"content_sha256":"sha256:0`), 1),
+		routeStartupFrameSchema:  bytes.Replace(raw, []byte(`"frame_schema_version":1`), []byte(`"frame_schema_version":2`), 1),
+		routeStartupLeadingBlank: append([]byte("\n"), raw...),
+		routeStartupUnterminated: bytes.TrimSuffix(raw, []byte("\n")),
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(string(name), func(t *testing.T) {
+			t.Parallel()
 			if _, err := filterBytes(t, input, agentapi.ReadLimits{}); err == nil {
 				t.Fatal("filter accepted physical mutation")
 			}
 			if _, err := routeStartupFacts(t, input); err == nil {
 				t.Fatal("startup accepted physical mutation")
 			}
-			if name == "checksum" || name == "frame schema" {
+			if name == routeStartupChecksum || name == routeStartupFrameSchema {
 				if _, err := inspectSynthetic(t, input); err == nil {
 					t.Fatal("header accepted malformed frame")
 				}
