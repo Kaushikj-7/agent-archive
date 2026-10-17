@@ -252,10 +252,6 @@ func (s *Store) loadDurableInspectionConfig(home *local.RootedHome) (cfg config.
 	cache.configValue = cfg
 	cache.configFound = found
 	cache.configValid = true
-	remaining := durableEntryLimit - entries
-	if err := inspectImportLocks(s.durableContext(), home, &remaining); err != nil {
-		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
-	}
 	return cfg, found, nil
 }
 
@@ -282,6 +278,10 @@ func (s *Store) inspectHeldDurableReadRoots(home *local.RootedHome) (cfg config.
 	}
 	_, anonymous, entries, err := s.inspectPendingRoots(home, found && !cfg.DurableStorageProtection)
 	if anonymous || err != nil || !found && entries > 0 {
+		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
+	}
+	remaining := durableEntryLimit - entries
+	if err := inspectImportLocks(s.durableContext(), home, &remaining); err != nil {
 		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	return cfg, found, nil
