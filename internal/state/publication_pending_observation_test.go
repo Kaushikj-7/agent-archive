@@ -18,9 +18,12 @@ import (
 type pendingObservationSliceContext []context.Context
 
 func (c pendingObservationSliceContext) Deadline() (time.Time, bool) { return c[0].Deadline() }
-func (c pendingObservationSliceContext) Done() <-chan struct{}       { return c[0].Done() }
-func (c pendingObservationSliceContext) Err() error                  { return c[0].Err() }
-func (c pendingObservationSliceContext) Value(key any) any           { return c[0].Value(key) }
+
+func (c pendingObservationSliceContext) Done() <-chan struct{} { return c[0].Done() }
+
+func (c pendingObservationSliceContext) Err() error { return c[0].Err() }
+
+func (c pendingObservationSliceContext) Value(key any) any { return c[0].Value(key) }
 
 func TestPendingWriteObservationHandlesNoncomparableContextValue(t *testing.T) {
 	t.Parallel()
