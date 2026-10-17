@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"os"
 	"path/filepath"
 	"sort"
@@ -152,6 +153,12 @@ func (s *Store) RemoveSuperseded(archiveSessionID, key string) error {
 // nothing reads it: backfill consults removal records only for sessions
 // that are not registered.
 func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.SessionKey, deferForWork bool, removal *RemovalRecord) (forgotten bool, err error) {
+	undo := removal != nil && removal.Reason == RemovalReasonUndo
+	if undo {
+		if err := s.CheckSessionUndo(archive.SessionRegistration{ArchiveSessionID: archiveSessionID}); err != nil {
+			return false, err
+		}
+	}
 	if err := s.refuseTypedStagedRetirement(archiveSessionID); err != nil {
 		return false, err
 	}
@@ -190,7 +197,7 @@ func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.Session
 		return false, errors.Join(err, takeBack())
 	}
 	defer retirement.Discard()
-	started, err := s.forgetIdleLocked(archiveSessionID, key, deferForWork, revision, retirement)
+	started, err := s.forgetIdleLocked(archiveSessionID, key, deferForWork, undo, revision, retirement)
 	if started {
 		// A forget that failed part way keeps its record: the session may
 		// be unregistered already.
@@ -216,12 +223,17 @@ func (s *Store) ForgetIdleSession(archiveSessionID string, key agentmeta.Session
 // forgetIdleLocked is the part of ForgetIdleSession done under the request
 // lock: the recheck, then the forget. started reports whether the forget
 // began removing the session's own records.
-func (s *Store) forgetIdleLocked(archiveSessionID string, key agentmeta.SessionKey, deferForWork bool, revision, retirement *local.Staged) (started bool, err error) {
+func (s *Store) forgetIdleLocked(archiveSessionID string, key agentmeta.SessionKey, deferForWork, undo bool, revision, retirement *local.Staged) (started bool, err error) {
 	unlock, err := s.lockRequest(archiveSessionID)
 	if err != nil {
 		return false, err
 	}
 	defer unlock()
+	if undo {
+		if err := s.checkSessionUndoLocked(archiveSessionID); err != nil {
+			return false, err
+		}
+	}
 	if err := s.CheckDurableSessionRead(archiveSessionID); err != nil {
 		return false, err
 	}

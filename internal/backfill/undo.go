@@ -172,6 +172,11 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	if err != nil {
 		return UndoPlan{}, err
 	}
+	for _, reg := range regs {
+		if reg.NativeImport != nil && reg.InBatch(b.ID) {
+			return UndoPlan{}, archive.ErrUnsupportedNativeImport
+		}
+	}
 	regs, err = importUndoRegistrations(store, regs, b.ID)
 	if err != nil {
 		return UndoPlan{}, err
@@ -783,6 +788,10 @@ func (p UndoPlan) Remove(ctx context.Context, store *state.Store, bucket storage
 	result := UndoResult{Failed: map[string]error{}}
 	for _, s := range p.Sessions {
 		reg := s.Registration
+		if err := store.CheckSessionUndo(reg); err != nil {
+			result.Failed[reg.ArchiveSessionID] = err
+			continue
+		}
 		if err := store.CheckDurableSessionRead(reg.ArchiveSessionID); err != nil {
 			result.Failed[reg.ArchiveSessionID] = fmt.Errorf("recover local publication before undo: %w", err)
 			continue

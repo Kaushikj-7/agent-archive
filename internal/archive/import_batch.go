@@ -32,6 +32,10 @@ func (b ImportBatch) IsZero() bool { return b.id == "" }
 // test in internal/backfill holds callers to it.
 func (b ImportBatch) Recorded() string { return b.id }
 
+// matchesNativeImportAttribution checks immutable creating provenance, including
+// detached receipts. It does not authorize operational batch membership.
+func (b ImportBatch) matchesNativeImportAttribution(id string) bool { return id != "" && b.id == id }
+
 // MarshalJSON writes the ID as a JSON string.
 func (b ImportBatch) MarshalJSON() ([]byte, error) { return json.Marshal(b.id) }
 

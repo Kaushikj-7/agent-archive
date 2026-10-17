@@ -33,7 +33,7 @@ func (r SessionRegistration) ValidateNativeImport() error {
 	}
 	c := n.Confirmation
 	digest, err := NativeImportBindingDigest(b)
-	if err != nil || digest != c.SelectedBindingSHA256 || c.SelectedSource != *b.Checkpoint || c.BatchID != r.ImportBatch.Recorded() || c.ProjectID != r.ProjectID || c.DestinationID != r.DestinationID || b.Agent != r.Harness.Name || b.NativeID != r.NativeSessionID || b.Path != r.TranscriptPath || !b.NativeCreatedAt.Equal(r.SessionStartedAt) {
+	if err != nil || digest != c.SelectedBindingSHA256 || c.SelectedSource != *b.Checkpoint || !r.ImportBatch.matchesNativeImportAttribution(c.BatchID) || c.ProjectID != r.ProjectID || c.DestinationID != r.DestinationID || b.Agent != r.Harness.Name || b.NativeID != r.NativeSessionID || b.Path != r.TranscriptPath || !b.NativeCreatedAt.Equal(r.SessionStartedAt) {
 		return ErrUnsupportedNativeImport
 	}
 	return nil
