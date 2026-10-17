@@ -287,7 +287,6 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *s
 			}
 			continue
 		}
-		info := file.info
 		name := entry.name
 		payload := map[string]any{
 			"name": name, "coverage": string(archive.SkillCoverageInstalledOnly), "scope": root.scope,
@@ -297,7 +296,7 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *s
 		if entry.id != "" {
 			installedName["id"] = entry.id
 		}
-		if info.Size() > maxSkillBytes {
+		if file.info.Size() > maxSkillBytes {
 			inventory = append(inventory, installedName)
 			omittedSnapshots++
 			continue
