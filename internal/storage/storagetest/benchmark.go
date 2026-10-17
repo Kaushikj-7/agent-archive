@@ -132,7 +132,7 @@ func SeedReadPathArchive(tb testing.TB, store *MemoryStore, count, generation in
 		sourceHash := fmt.Sprintf("%064x", 1)
 		sourceBytes := 1
 		if i == 0 {
-			bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: native, ProjectID: "project-0", Capture: archive.SourceCapture{Harness: archive.Harness{Name: harness}, AdapterName: harness, AdapterVersion: "1", SourceFormat: "jsonl", FilterVersion: archive.FilterVersion, CapturedAt: BenchmarkTime}, NativeRecords: []map[string]any{{"type": "event_msg", "payload": map[string]any{"type": "user_message", "message": "Synthetic read path benchmark request"}}}}
+			bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: id, NativeSessionID: native, ProjectID: "project-0", Capture: archive.SourceCapture{Harness: archive.Harness{Name: harness}, AdapterName: harness, AdapterVersion: "1", SourceFormat: "jsonl", FilterVersion: archive.FilterVersion, CapturedAt: BenchmarkTime}, NativeRecords: []map[string]any{{"type": "response_item", "payload": map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "Synthetic read path benchmark request"}}}}}}
 			compressed, err := archive.BuildCompressedSource(bundle)
 			if err != nil {
 				tb.Fatal(err)
