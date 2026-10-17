@@ -169,17 +169,44 @@ func TestNativeChildLateParentPublicationRetryKeepsFrozenBytesAndNewRequest(t *t
 	if _, found, err := local.LoadRequest(child.ArchiveSessionID); err != nil || !found {
 		t.Fatal("old publication acknowledged the newer relationship request", found, err)
 	}
-	// The next pass must publish the relation from retained own content. It
-	// cannot reread the missing child or borrow any parent content.
-	now = now.Add(time.Minute)
-	result, err = Run(t.Context(), local, remote, opts)
-	if err != nil || result.Errors[child.ArchiveSessionID] != nil {
-		t.Fatal("retained relationship publication failed", result, err)
+	// Retained history deliberately prepares one input per pass. Drive its
+	// real durable protocol after restarts; a typed pending result is valid
+	// only while the matching successor and newer request remain present.
+	linkedPublished := false
+	for range 4 {
+		local, err = openTestStore(local.Home())
+		if err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Minute)
+		result, err = Run(t.Context(), local, remote, opts)
+		if err != nil {
+			t.Fatal("retained relationship publication failed", result, err)
+		}
+		childErr := result.Errors[child.ArchiveSessionID]
+		if childErr != nil {
+			if !errors.Is(childErr, archive.ErrHistoryMutationPending) {
+				t.Fatal("retained relationship publication failed", childErr)
+			}
+			staged, found, err := local.LoadPublicationPending(child.ArchiveSessionID)
+			if err != nil || !found || staged.History == nil || staged.Bundle.ParentSessionID != parent.ArchiveSessionID {
+				t.Fatal("pending result lacks its durable relationship successor", found, err)
+			}
+			if _, found, err := local.LoadRequest(child.ArchiveSessionID); err != nil || !found {
+				t.Fatal("private preparation acknowledged the relationship request", found, err)
+			}
+			continue
+		}
+		metadata := fetchMetadata(t, remote, "codex", child.ArchiveSessionID)
+		if metadata.ParentSessionID == parent.ArchiveSessionID && metadata.NativeChild {
+			linkedPublished = true
+			break
+		}
+	}
+	if !linkedPublished {
+		t.Fatal("bounded retained preparation did not publish the admitted parent")
 	}
 	metadata := fetchMetadata(t, remote, "codex", child.ArchiveSessionID)
-	if metadata.ParentSessionID != parent.ArchiveSessionID || !metadata.NativeChild {
-		t.Fatal("retained publication did not expose the admitted parent")
-	}
 	if _, found, err := local.LoadRequest(child.ArchiveSessionID); err != nil || found {
 		t.Fatal("verified relationship publication was not acknowledged", found, err)
 	}
