@@ -64,7 +64,7 @@ func (s *Store) writeObservedPending(ctx context.Context, g config.DurableStorag
 			return err
 		}
 		if guard != nil {
-			return s.writeDurableGuardChecked(ctx, g, filepath.Join("pending", id+".json"), publicationWire(p), guard)
+			return s.writeDurableGuardWitnessed(ctx, g, filepath.Join("pending", id+".json"), publicationWire(p), guard)
 		}
 	}
 

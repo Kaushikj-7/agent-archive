@@ -524,7 +524,7 @@ func (p *Published) write(next publishedState) error {
 					return e
 				}
 			}
-			var guard func(func() error) error
+			var guard func(*local.AtomicWriteWitness, func() error) error
 			if next.Bundle.Capture.Harness.Name == "muse" && next.Commit != nil {
 				var e error
 				guard, e = p.store.nativeImportPublicationCommit(p.store.durableContext(), p.id, nativeImportPublicationTarget{Admission: next.Commit.AdmissionContext, Destination: next.Commit.DestinationID, Policy: next.Commit.PolicyContext, Adapter: next.Bundle.Capture.AdapterVersion, Predecessor: next.Commit.PredecessorSHA256, Metadata: next.Commit.MetadataSHA256, Preparation: next.Commit.PreparationSHA256})

@@ -85,6 +85,10 @@ func RootedAtomicWrite(root *os.Root, name string, write func(io.Writer) error) 
 // RootedAtomicWriteChecked prepares and syncs outside the optional commit check.
 // The check must invoke its rename exactly once on success; directory sync follows it.
 func RootedAtomicWriteChecked(root *os.Root, name string, write func(io.Writer) error, commit func(func() error) error) (err error) {
+	return rootedAtomicWrite(root, name, write, commit, nil)
+}
+
+func rootedAtomicWrite(root *os.Root, name string, write func(io.Writer) error, commit func(func() error) error, witnessed *witnessedAtomicCommit) (err error) {
 	token, err := ID()
 	if err != nil {
 		return err
@@ -100,13 +104,37 @@ func RootedAtomicWriteChecked(root *os.Root, name string, write func(io.Writer) 
 			err = errors.Join(err, e)
 		}
 	}()
-	err = write(f)
+	output := io.Writer(f)
+	if witnessed != nil {
+		output = io.MultiWriter(f, witnessed.hash)
+	}
+	err = write(output)
 	if err == nil {
 		err = f.Sync()
+	}
+	var temporaryInfo os.FileInfo
+	if witnessed != nil && err == nil {
+		temporaryInfo, err = f.Stat()
 	}
 	err = errors.Join(err, f.Close())
 	if err != nil {
 		return err
+	}
+	if witnessed != nil {
+		witness, e := newAtomicWriteWitness(root, temp, temporaryInfo, witnessed.hash.Sum(nil))
+		if e != nil {
+			return e
+		}
+		defer func() { witness.state.active.Store(false) }()
+		commit = func(rename func() error) error {
+			return witnessed.check(witness, func() error {
+				if e := witness.verify(witnessed.ctx, witnessed.scratch); e != nil {
+					return e
+				}
+				witness.state.active.Store(false)
+				return rename()
+			})
+		}
 	}
 	if commit == nil {
 		if err = root.Rename(temp, name); err != nil {

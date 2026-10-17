@@ -78,12 +78,15 @@ func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]Dura
 		}
 		stamps[i].info = info
 	}
-	if cache.valid && cache.legacy == legacy && os.SameFile(cache.home, homeInfo) && sameDurableStamp(cache.stamps[0].info, stamps[0].info) && sameDurableStamp(cache.stamps[1].info, stamps[1].info) && sameDurableStamp(cache.stamps[2].info, stamps[2].info) {
+	if s.atomicWitness == nil && cache.valid && cache.legacy == legacy && os.SameFile(cache.home, homeInfo) && sameDurableStamp(cache.stamps[0].info, stamps[0].info) && sameDurableStamp(cache.stamps[1].info, stamps[1].info) && sameDurableStamp(cache.stamps[2].info, stamps[2].info) {
 		return append([]DurableStorageObligation(nil), cache.obligations...), cache.anonymous, cache.entries, home.Check()
 	}
-	cache.valid = false
-	cache.legacyTemps = false
+	if s.atomicWitness == nil {
+		cache.valid = false
+		cache.legacyTemps = false
+	}
 	cache.scans++
+	matchedWitness := false
 	remaining := durableEntryLimit
 	var out []DurableStorageObligation
 	anonymous := false
@@ -91,7 +94,7 @@ func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]Dura
 		if stamps[i].info == nil {
 			continue
 		}
-		entries, unknown, e := s.inspectPendingRoot(home, name, &remaining, legacy)
+		entries, unknown, e := s.inspectPendingRootWitnessed(home, name, &remaining, legacy, &matchedWitness)
 		if e != nil {
 			return out, true, durableEntryLimit - remaining, e
 		}
@@ -111,6 +114,15 @@ func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]Dura
 	if err := errors.Join(ctx.Err(), home.Check()); err != nil {
 		return out, true, durableEntryLimit - remaining, err
 	}
+	if s.atomicWitness != nil {
+		if !matchedWitness {
+			return out, true, durableEntryLimit - remaining, ErrDurableStorageRecovery
+		}
+		if err := s.atomicWitness.Check(home.Root); err != nil {
+			return out, true, durableEntryLimit - remaining, errors.Join(ErrDurableStorageRecovery, err)
+		}
+		return out, anonymous, durableEntryLimit - remaining, nil
+	}
 	cache.entries = durableEntryLimit - remaining
 	cache.legacy = legacy
 	cache.home = homeInfo
@@ -121,7 +133,12 @@ func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]Dura
 	return append([]DurableStorageObligation(nil), out...), anonymous, cache.entries, nil
 }
 
-func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remaining *int, legacy bool) (out []DurableStorageObligation, unknown bool, err error) {
+func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remaining *int, legacy bool) ([]DurableStorageObligation, bool, error) {
+	matched := false
+	return s.inspectPendingRootWitnessed(home, name, remaining, legacy, &matched)
+}
+
+func (s *Store) inspectPendingRootWitnessed(home *local.RootedHome, name string, remaining *int, legacy bool, matchedWitness *bool) (out []DurableStorageObligation, unknown bool, err error) {
 	root, err := privateDirectory(home.Root, name, false)
 	if err != nil {
 		return nil, true, err
@@ -153,7 +170,17 @@ func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remainin
 			if e != nil {
 				return out, true, e
 			}
-			if legacy && strings.HasPrefix(entry.Name(), ".pending-") {
+			if s.atomicWitness != nil {
+				matched, e := s.atomicWitness.Match(home.Root, filepath.Join(name, entry.Name()), info)
+				if e != nil || matched && *matchedWitness {
+					return out, true, errors.Join(ErrDurableStorageRecovery, e)
+				}
+				if matched {
+					*matchedWitness = true
+					continue
+				}
+			}
+			if s.atomicWitness == nil && legacy && strings.HasPrefix(entry.Name(), ".pending-") {
 				s.durableInspection.legacyTemps = true
 			}
 			if legacy && info.Mode().IsRegular() && (acknowledgedLegacyQuarantine(entry.Name()) || strings.HasPrefix(entry.Name(), ".pending-") && info.ModTime().Before(time.Now().Add(-staleTempAge))) {

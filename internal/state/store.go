@@ -53,6 +53,7 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
+	atomicWitness       *local.AtomicWriteWitness
 	nativeContinuation  *nativeContinuation
 	summaryCache        *publishedSummaryCache
 	summaryBorrow       *publishedSummaryBorrow

@@ -35,18 +35,20 @@ func nativeImportPendingTarget(p PendingPublication) nativeImportPublicationTarg
 // nativeImportPublicationCommit captures only bounded equality digests. The
 // final rooted reread is under the registration's existing request lock, after
 // encoding and before rename; no captured routing decision grants authority.
-func (s *Store) nativeImportPublicationCommit(ctx context.Context, id string, target nativeImportPublicationTarget) (func(func() error) error, error) {
+func (s *Store) nativeImportPublicationCommit(ctx context.Context, id string, target nativeImportPublicationTarget) (func(*local.AtomicWriteWitness, func() error) error, error) {
 	before, historical, err := s.nativeImportPublicationState(ctx, id, target)
 	if err != nil || !historical {
 		return nil, err
 	}
-	return func(commit func() error) error {
+	return func(witness *local.AtomicWriteWitness, commit func() error) error {
 		unlock, err := local.NamedLockWait(s.home, requestLockName(id), time.Second)
 		if err != nil {
 			return err
 		}
 		defer unlock()
-		after, historical, err := s.nativeImportPublicationState(ctx, id, target)
+		scoped := *s
+		scoped.atomicWitness = witness
+		after, historical, err := scoped.nativeImportPublicationState(ctx, id, target)
 		if err != nil {
 			return err
 		}

@@ -314,7 +314,16 @@ func (q *durableQuota) writeWithHeadroom(path string, n int64, write func(io.Wri
 	return q.writeWithHeadroomContext(q.store.durableContext(), path, n, write, commit, headroom)
 }
 
+type durableCommitCheck struct {
+	plain     func(func() error) error
+	witnessed func(*local.AtomicWriteWitness, func() error) error
+}
+
 func (q *durableQuota) writeWithHeadroomContext(ctx context.Context, path string, n int64, write func(io.Writer) error, commit func(func() error) error, headroom int64) (err error) {
+	return q.writeWithCommitContext(ctx, path, n, write, durableCommitCheck{plain: commit}, headroom)
+}
+
+func (q *durableQuota) writeWithCommitContext(ctx context.Context, path string, n int64, write func(io.Writer) error, commit durableCommitCheck, headroom int64) (err error) {
 	if n < 0 || n > durableStorageQuota/2 {
 		return ErrDurableStorageCapacity
 	}
@@ -391,13 +400,30 @@ func (q *durableQuota) writeWithHeadroomContext(ctx context.Context, path string
 		return err
 	}
 	defer func() { err = errors.Join(err, dir.Close()) }()
-	return local.RootedAtomicWriteChecked(q.home.Root, path, func(w io.Writer) error {
+	encode := func(w io.Writer) error {
 		limited := &boundedDurableWriter{writer: w, remaining: n}
 		if e := write(limited); e != nil {
 			return e
 		}
 		return q.guard.CheckHome(q.path)
-	}, commit)
+	}
+	if commit.witnessed != nil {
+		const verifyBytes = 4096
+		reservation := q.store.readReservation()
+		if !reservation.Reserve(verifyBytes) {
+			return errStateBudget
+		}
+		defer reservation.Release(verifyBytes)
+		return local.RootedAtomicWriteWitnessed(ctx, q.home.Root, path, encode, make([]byte, verifyBytes), func(witness *local.AtomicWriteWitness, rename func() error) error {
+			return commit.witnessed(witness, func() error {
+				if err := errors.Join(ctx.Err(), q.guard.CheckHome(q.path)); err != nil {
+					return err
+				}
+				return rename()
+			})
+		})
+	}
+	return local.RootedAtomicWriteChecked(q.home.Root, path, encode, commit.plain)
 }
 
 type boundedDurableWriter struct {
@@ -445,6 +471,14 @@ func (s *Store) writeDurableGuardChecked(ctx context.Context, g config.DurableSt
 }
 
 func (s *Store) writeDurableGuardHeadroom(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit func(func() error) error, headroom int64) (err error) {
+	return s.writeDurableGuardCommit(ctx, g, path, p, durableCommitCheck{plain: commit}, headroom)
+}
+
+func (s *Store) writeDurableGuardWitnessed(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit func(*local.AtomicWriteWitness, func() error) error) error {
+	return s.writeDurableGuardCommit(ctx, g, path, p, durableCommitCheck{witnessed: commit}, 0)
+}
+
+func (s *Store) writeDurableGuardCommit(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit durableCommitCheck, headroom int64) (err error) {
 	reservation := s.readReservation()
 	if err = g.CheckHome(s.home); err != nil {
 		return err
@@ -491,7 +525,7 @@ func (s *Store) writeDurableGuardHeadroom(ctx context.Context, g config.DurableS
 	} else if streamed {
 		encode = func(w io.Writer) error { return streamJSON(ctx, w, p, reservation) }
 	}
-	return q.writeWithHeadroomContext(ctx, path, n, encode, commit, headroom)
+	return q.writeWithCommitContext(ctx, path, n, encode, commit, headroom)
 }
 
 func (s *Store) stagePendingSourceGuard(g config.DurableStorageGuard, id string, ref archive.SourceReference, data []byte) (err error) {
@@ -542,7 +576,7 @@ func (s *Store) writeDurableGuardDigest(ctx context.Context, g config.DurableSto
 	return s.writeDurableGuardDigestChecked(ctx, g, path, p, nil)
 }
 
-func (s *Store) writeDurableGuardDigestChecked(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit func(func() error) error) (sum [32]byte, n int64, err error) {
+func (s *Store) writeDurableGuardDigestChecked(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit func(*local.AtomicWriteWitness, func() error) error) (sum [32]byte, n int64, err error) {
 	if err = g.CheckHome(s.home); err != nil {
 		return sum, n, err
 	}
@@ -578,7 +612,7 @@ func (s *Store) writeDurableGuardDigestChecked(ctx context.Context, g config.Dur
 	defer reservation.Release(digestScratch)
 	hash := sha256.New()
 	var emitted int64
-	err = q.writeWithHeadroomContext(ctx, path, n, func(w io.Writer) error {
+	err = q.writeWithCommitContext(ctx, path, n, func(w io.Writer) error {
 		output := &publicationEmittedWriter{writer: io.MultiWriter(w, hash)}
 		e := jsonwire.Encode(ctx, output, p, reservation)
 		emitted = output.written
@@ -586,7 +620,7 @@ func (s *Store) writeDurableGuardDigestChecked(ctx context.Context, g config.Dur
 			return errors.Join(errStateBudget, e)
 		}
 		return e
-	}, commit, 0)
+	}, durableCommitCheck{witnessed: commit}, 0)
 	if err == nil {
 		copy(sum[:], hash.Sum(nil))
 		n = emitted
