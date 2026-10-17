@@ -17,10 +17,11 @@ import (
 )
 
 type checkedReadTestBody struct {
-	reader       io.Reader
-	closeErr     error
-	cancel       context.CancelFunc
-	read, closes int
+	reader   io.Reader
+	closeErr error
+	cancel   context.CancelFunc
+	read     int
+	closes   int
 }
 
 func (b *checkedReadTestBody) Read(data []byte) (int, error) {
@@ -31,6 +32,7 @@ func (b *checkedReadTestBody) Read(data []byte) (int, error) {
 	}
 	return n, err
 }
+
 func (b *checkedReadTestBody) Close() error { b.closes++; return b.closeErr }
 
 type checkedReadTestHTTP struct {
@@ -39,7 +41,8 @@ type checkedReadTestHTTP struct {
 	status       int
 	length       *int64
 	calls        int
-	method, path string
+	method       string
+	path         string
 }
 
 func (h *checkedReadTestHTTP) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -54,10 +57,11 @@ func (h *checkedReadTestHTTP) RoundTrip(r *http.Request) (*http.Response, error)
 	}
 	return &http.Response{StatusCode: h.status, Header: headers, Body: h.body, ContentLength: length}, h.transportErr
 }
-func checkedReadFixtureStore(t *testing.T, transport *checkedReadTestHTTP, max int64) *S3Store {
+
+func checkedReadFixtureStore(t *testing.T, transport *checkedReadTestHTTP, readLimit int64) *S3Store {
 	t.Helper()
 	cfg := aws.Config{Region: "us-east-1", Credentials: awscredentials.NewStaticCredentialsProvider("synthetic", "synthetic", ""), HTTPClient: &http.Client{Transport: transport}}
-	s, err := NewS3Store(S3StoreOptions{Client: NewClient(cfg, "https://synthetic.invalid", true, 3), Bucket: "archive", Prefix: "owned", MaxGetBytes: max})
+	s, err := NewS3Store(S3StoreOptions{Client: NewClient(cfg, "https://synthetic.invalid", true, 3), Bucket: "archive", Prefix: "owned", MaxGetBytes: readLimit})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,6 +221,7 @@ func (r checkedReadFailure) Read(data []byte) (int, error) { return copy(data, "
 type checkedReadWrappedError struct{ err error }
 
 func (e *checkedReadWrappedError) Error() string { return "synthetic wrapper" }
+
 func (e *checkedReadWrappedError) Unwrap() error { return e.err }
 
 func TestS3CheckedMissingBucketAndInvalidKeyRemainFailures(t *testing.T) {
@@ -246,10 +251,11 @@ func TestS3CheckedReadBoundsErrorBodiesBeforeSDKDecoding(t *testing.T) {
 		t.Run(strconv.FormatBool(declared), func(t *testing.T) {
 			stream := &streamingBody{}
 			body := &checkedReadTestBody{reader: stream}
-			transport := &checkedReadTestHTTP{body: body, status: http.StatusNotFound}
+			var length *int64
 			if declared {
-				transport.length = aws.Int64(CheckedReadErrorBodyBytes + 100)
+				length = aws.Int64(CheckedReadErrorBodyBytes + 100)
 			}
+			transport := &checkedReadTestHTTP{body: body, status: http.StatusNotFound, length: length}
 			s := checkedReadFixtureStore(t, transport, 64)
 			_, err := s.GetLimitedChecked(t.Context(), "missing", 1)
 			//lint:ignore errorlint Only bare ErrNotFound is canonical absence; wrapped or joined errors remain failures.
@@ -310,9 +316,9 @@ func TestS3CheckedReadRefusesRedirectBeforeFollowingAndChecksItsClose(t *testing
 	transport := checkedRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		calls++
 		if r.URL.Path == "/archive/owned/source" {
-			return &http.Response{StatusCode: 307, Header: http.Header{"Location": []string{"/target"}}, Body: body}, nil
+			return &http.Response{StatusCode: http.StatusTemporaryRedirect, Header: http.Header{"Location": []string{"/target"}}, Body: body}, nil
 		}
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("followed"))}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("followed"))}, nil
 	})
 	cfg := aws.Config{Region: "us-east-1", Credentials: awscredentials.NewStaticCredentialsProvider("synthetic", "synthetic", ""), HTTPClient: &http.Client{Transport: transport}}
 	store, err := NewS3Store(S3StoreOptions{Client: NewClient(cfg, "https://synthetic.invalid", true, 3), Bucket: "archive", Prefix: "owned"})

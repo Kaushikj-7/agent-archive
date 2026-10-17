@@ -162,11 +162,13 @@ func (c checkedResponseTransport) RoundTrip(request *http.Request) (*http.Respon
 	c.capture.transportErr = err
 	c.capture.mu.Unlock()
 	if response != nil && response.Body != nil {
-		body := &checkedResponseBody{inner: response.Body, ctx: request.Context()}
+		var errorRemaining int64
+		rejectErrorBody := false
 		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-			body.errorRemaining = CheckedReadErrorBodyBytes + 1
-			body.rejectErrorBody = response.ContentLength > CheckedReadErrorBodyBytes
+			errorRemaining = CheckedReadErrorBodyBytes + 1
+			rejectErrorBody = response.ContentLength > CheckedReadErrorBodyBytes
 		}
+		body := &checkedResponseBody{inner: response.Body, ctx: request.Context(), errorRemaining: errorRemaining, rejectErrorBody: rejectErrorBody}
 		c.capture.mu.Lock()
 		c.capture.body = body
 		c.capture.mu.Unlock()
@@ -259,6 +261,7 @@ func (b *checkedResponseBody) Read(data []byte) (int, error) {
 	remember(err)
 	return n, err
 }
+
 func (b *checkedResponseBody) Close() error {
 	b.once.Do(func() { b.err = b.inner.Close() })
 	return b.err
