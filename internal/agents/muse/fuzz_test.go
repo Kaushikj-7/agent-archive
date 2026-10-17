@@ -34,6 +34,11 @@ func FuzzMuseNative(f *testing.F) {
 			f.Fatal(e)
 		}
 		f.Add(raw)
+		if name == "synthetic-native-omissions.jsonl" {
+			read := bytes.Replace(raw, []byte(`"parallel_profile":{"kind":"ineligible"}`), []byte(`"parallel_profile":{"kind":"file_read","subject":"PRIVATE_EFFECT_SUBJECT_SENTINEL"}`), 1)
+			f.Add(bytes.Replace(read, []byte(`"task_completion":{"kind":"terminal","terminal":{"kind":"completed"}}`), []byte(`"task_completion":{"kind":"complete"}`), 1))
+			f.Add(bytes.Replace(read, []byte(`"outcome":{"kind":"completed","output_ref_count":1,"task_completion":{"kind":"terminal","terminal":{"kind":"completed"}}}`), []byte(`"outcome":{"kind":"failed","reason":"PRIVATE_EFFECT_REASON_SENTINEL"}`), 1))
+		}
 		if name == "synthetic-exec-empty.jsonl" {
 			f.Add(bytes.Replace(raw, []byte(`,"model_id":"synthetic-model"`), nil, 1))
 		}
