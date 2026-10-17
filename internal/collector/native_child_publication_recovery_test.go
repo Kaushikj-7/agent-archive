@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 	"github.com/wangjohn/agent-archive/internal/transcriptio"
@@ -60,6 +63,10 @@ func (p childRecoveryProvider) OpenPass(ctx context.Context, env agentapi.Source
 func TestNativeChildLateParentPublicationRetryKeepsFrozenBytesAndNewRequest(t *testing.T) {
 	local := newTestStore(t)
 	nativeHome := t.TempDir()
+	sessions := filepath.Join(nativeHome, "sessions")
+	if err := os.Mkdir(sessions, 0700); err != nil {
+		t.Fatal(err)
+	}
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	const parentID = "11111111-1111-4111-8111-111111111111"
 	const childID = "22222222-2222-4222-8222-222222222222"
@@ -79,16 +86,21 @@ func TestNativeChildLateParentPublicationRetryKeepsFrozenBytesAndNewRequest(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := writeTranscript(t, nativeHome, "rollout-"+childID+".jsonl", string(header)+"\n"+string(task)+"\n"+codexTranscript+"\n")
+	path := writeTranscript(t, sessions, "rollout-"+childID+".jsonl", string(header)+"\n"+string(task)+"\n"+codexTranscript+"\n")
 	child := nativeLinkRegistration("child", childID, parentID, nativeHome, at)
 	child.ProjectRoot, child.TranscriptPath, child.NativeRootSessionID = nativeHome, path, parentID
 	child.DestinationID = "" // Existing admitted legacy destination semantics, as registration(t).
 	if err := local.SaveRegistration(child); err != nil {
 		t.Fatal(err)
 	}
+	cfg := config.Config{MachineID: "synthetic", Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: nativeHome, ProjectID: child.ProjectID, Included: true, ActivatedAt: at}}}}
+	if err := config.Save(local.Home(), cfg); err != nil {
+		t.Fatal(err)
+	}
 	remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}
 	now := at.Add(time.Hour)
-	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "synthetic", Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
+	opts := Options{Sources: testSources, Parsers: testParsers, MachineID: "synthetic", Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1},
+		ConfiguredCodexHomes: []string{nativeHome}, ResolveCodexReadHomes: func(config.Config) ([]string, error) { return []string{nativeHome}, nil }}
 	initial, err := Run(t.Context(), local, remote, opts)
 	if err != nil || initial.Errors[child.ArchiveSessionID] == nil || !strings.Contains(initial.Errors[child.ArchiveSessionID].Error(), "injected metadata failure") || len(initial.Published) != 0 {
 		t.Fatal("metadata failure did not freeze the child's publication", initial, err)
@@ -109,6 +121,7 @@ func TestNativeChildLateParentPublicationRetryKeepsFrozenBytesAndNewRequest(t *t
 	}
 	parent := nativeLinkRegistration("parent", parentID, "", nativeHome, at)
 	parent.ProjectRoot, parent.DestinationID = nativeHome, child.DestinationID
+	parent.TranscriptPath = filepath.Join(sessions, "rollout-"+parentID+".jsonl")
 	// No parent source is written: linking depends on independent persisted
 	// ownership, not a new parent byte or a still-running parent.
 	if err := local.SaveRegistration(parent); err != nil {
