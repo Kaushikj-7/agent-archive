@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -82,10 +83,14 @@ type promptModel struct {
 	Receipt        string
 	ResolveReceipt func(string) string
 	Secret         bool
-	// Confirm asks Question as yes or no about Primary's only option: Enter
-	// takes Default, and the caller maps "y" and "n" through Aliases. Primary
-	// is not listed, and Secondary follows the question on one line.
+	// Confirm asks Question as yes or no about Primary's only option: y and
+	// yes answer it, n and no answer No, and Enter takes Default. Primary is
+	// not listed; Helpers follow the question, then Secondary on one line
+	// without No's action. Primary and Aliases match only when typed in full,
+	// so a letter never answers yes by abbreviating an option's name.
 	Confirm bool
+	// No is the key a Confirm question's n and no answer.
+	No string
 	// InlineSecondary lists Secondary on one line instead of one per line.
 	InlineSecondary bool
 	// ReadAnswer can enforce an existing bound using the shared buffered reader.
@@ -235,7 +240,11 @@ func (r *promptRenderer) begin(m promptModel, resetColumn ...bool) ownedPromptRe
 	}
 	if m.Confirm {
 		b.WriteString(s.hang("? ", strings.TrimSpace(m.Question)+" "+confirmChoices(m)) + "\n")
-		if line := inlineActions(m.Secondary); line != "" {
+		for _, h := range m.Helpers {
+			b.WriteString(s.hang("  ", h) + "\n")
+		}
+		others := slices.DeleteFunc(slices.Clone(m.Secondary), func(o actionOption) bool { return o.Key == m.No })
+		if line := inlineActions(others); line != "" {
 			b.WriteString(s.hang("  ", "or "+line) + "\n")
 		}
 		b.WriteString("\n" + cursor + " ")
@@ -305,7 +314,10 @@ func (r *promptRenderer) emit(c promptCapabilities, failures uint64, text string
 	}
 	_, cursorColumns := lineMetrics(text[strings.LastIndex(text, "\n")+1:], c.Width)
 	// Styles do not move the cursor, and displayLines already skips them.
-	plain := ansiEscape.ReplaceAllString(text, "")
+	plain := text
+	if strings.ContainsRune(text, '\x1b') {
+		plain = ansiEscape.ReplaceAllString(text, "")
+	}
 	return ownedPromptRegion{caps: c, rows: displayLines(text, c.Width), cursorColumns: cursorColumns, generation: r.writer.generation.Load(), epoch: r.epoch.Load(), valid: c.Redraw && c.InputTerminal && c.OutputTerminal && r.suspended == 0 && !ambiguousPromptWidth(plain) && r.writer.failures.Load() == failures}
 }
 
@@ -396,6 +408,7 @@ func (p *prompter) guidedChoice(m promptModel) (string, error) {
 	for _, o := range m.Secondary {
 		availableDefault = availableDefault || o.Key == m.Default
 	}
+	availableDefault = availableDefault || m.Confirm && m.No != "" && m.Default == m.No
 	if !availableDefault {
 		m.Default = ""
 	}
@@ -413,26 +426,7 @@ func (p *prompter) guidedChoice(m promptModel) (string, error) {
 		for _, o := range m.Secondary {
 			choices = append(choices, option{o.Key, o.Label})
 		}
-		key := ""
-		if answer == "" {
-			key = m.Default
-		} else if n, err := strconv.Atoi(answer); err == nil {
-			for i, o := range m.Primary {
-				if m.number(i) == n {
-					key = o.Key
-					break
-				}
-			}
-		} else {
-			for _, o := range m.Secondary {
-				if answer == strings.ToLower(o.Shortcut) && o.Shortcut != "" {
-					key = o.Key
-				}
-			}
-			if key == "" {
-				key, _ = matchOption(answer, append(choices, m.Aliases...))
-			}
-		}
+		key := m.answerKey(answer, choices)
 		if key != "" {
 			if m.Validate != nil {
 				if err := m.Validate(key); err != nil {
@@ -441,6 +435,9 @@ func (p *prompter) guidedChoice(m promptModel) (string, error) {
 				}
 			}
 			receipt := key
+			if key == m.No && m.Confirm {
+				receipt = "No"
+			}
 			for _, o := range choices {
 				if o.Key == key {
 					receipt = o.Label
@@ -520,12 +517,56 @@ func (p *prompter) guidedText(m promptModel) (string, error) {
 	}
 }
 
-// confirmChoices is a Confirm question's "[Y/n]", capitalizing Enter's answer.
-func confirmChoices(m promptModel) string {
-	if len(m.Primary) > 0 && m.Default == m.Primary[0].Key {
-		return "[Y/n]"
+// answerKey resolves a lowercased, trimmed answer to an option's key: Enter
+// to Default, a Confirm question's yes or no, a stable number, a shortcut,
+// or a key or alias (abbreviated, except Primary and Aliases of a Confirm
+// question). It is "" when nothing matches.
+func (m promptModel) answerKey(answer string, choices []option) string {
+	if answer == "" {
+		return m.Default
 	}
-	return "[y/N]"
+	if yes, ok := confirmAnswers[answer]; m.Confirm && ok && len(m.Primary) > 0 {
+		if yes {
+			return m.Primary[0].Key
+		}
+		return m.No
+	}
+	if n, err := strconv.Atoi(answer); err == nil {
+		for i, o := range m.Primary {
+			if m.number(i) == n {
+				return o.Key
+			}
+		}
+		return ""
+	}
+	for _, o := range m.Secondary {
+		if answer == strings.ToLower(o.Shortcut) && o.Shortcut != "" {
+			return o.Key
+		}
+	}
+	if !m.Confirm {
+		return matchOption(answer, append(choices, m.Aliases...))
+	}
+	for _, o := range slices.Concat(m.Primary, m.Aliases) {
+		if answer == o.Key {
+			return o.Key
+		}
+	}
+	return matchOption(answer, choices[len(m.Primary):])
+}
+
+// confirmAnswers are a Confirm question's yes and no answers.
+var confirmAnswers = map[string]bool{"y": true, "yes": true, "n": false, "no": false}
+
+// confirmChoices is a Confirm question's "[y/n]", capitalizing Enter's answer.
+func confirmChoices(m promptModel) string {
+	switch {
+	case len(m.Primary) > 0 && m.Default == m.Primary[0].Key:
+		return "[Y/n]"
+	case m.No != "" && m.Default == m.No:
+		return "[y/N]"
+	}
+	return "[y/n]"
 }
 
 // inlineActions lists actions on one line: "[p] print  [c] copy".

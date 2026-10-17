@@ -29,8 +29,10 @@ import (
 )
 
 // SearchSummary is a private projection of published metadata. It deliberately
-// excludes source references, counts, payloads, history and transcripts.
+// excludes source references, payloads, history and transcripts. Only the
+// nullable prompt count needed by handoff policy is retained.
 type SearchSummary struct {
+	Turns           *int                      `json:"Turns"`
 	SessionID       string                    `json:"SessionID"`
 	NativeSessionID string                    `json:"NativeSessionID"`
 	MachineID       string                    `json:"MachineID"`
@@ -60,7 +62,7 @@ type SearchSummary struct {
 
 // Metadata returns the search/display projection, never a complete body.
 func (s SearchSummary) Metadata() archive.Metadata {
-	return archive.Metadata{SessionID: s.SessionID, NativeSessionID: s.NativeSessionID, MachineID: s.MachineID, ProjectID: s.ProjectID, ProjectName: s.ProjectName, RepoKey: s.RepoKey, Name: s.Name, Title: s.Title, Branch: s.Branch, NativeChild: s.NativeChild, ParentSessionID: s.ParentSessionID, StartedAt: s.StartedAt, CapturedAt: s.CapturedAt, EndedAt: s.EndedAt, Harness: s.Harness, Parser: s.Parser, Origin: s.Origin, Replay: s.Replay, Models: s.Models, SkillsAvailable: s.SkillsAvailable, SkillsUsed: s.SkillsUsed, SkillDetection: s.SkillDetection, CaptureGaps: s.CaptureGaps, PullRequests: s.PullRequests, GitActivity: s.GitActivity}
+	return archive.Metadata{Counts: archive.Counts{Turns: s.Turns}, SessionID: s.SessionID, NativeSessionID: s.NativeSessionID, MachineID: s.MachineID, ProjectID: s.ProjectID, ProjectName: s.ProjectName, RepoKey: s.RepoKey, Name: s.Name, Title: s.Title, Branch: s.Branch, NativeChild: s.NativeChild, ParentSessionID: s.ParentSessionID, StartedAt: s.StartedAt, CapturedAt: s.CapturedAt, EndedAt: s.EndedAt, Harness: s.Harness, Parser: s.Parser, Origin: s.Origin, Replay: s.Replay, Models: s.Models, SkillsAvailable: s.SkillsAvailable, SkillsUsed: s.SkillsUsed, SkillDetection: s.SkillDetection, CaptureGaps: s.CaptureGaps, PullRequests: s.PullRequests, GitActivity: s.GitActivity}
 }
 
 func summarize(m archive.Metadata) SearchSummary {
@@ -83,7 +85,7 @@ func summarize(m archive.Metadata) SearchSummary {
 	if m.Replay != nil {
 		replay = &archive.Replay{}
 	}
-	return SearchSummary{SessionID: m.SessionID, NativeSessionID: m.NativeSessionID, MachineID: m.MachineID, ProjectID: m.ProjectID, ProjectName: m.ProjectName, RepoKey: m.RepoKey, Name: m.Name, Title: m.Title, Branch: m.Branch, NativeChild: m.NativeChild, ParentSessionID: m.ParentSessionID, StartedAt: m.StartedAt, CapturedAt: m.CapturedAt, EndedAt: m.EndedAt, Harness: m.Harness, Parser: m.Parser, Origin: m.Origin, Replay: replay, Models: m.Models, SkillsAvailable: m.SkillsAvailable, SkillsUsed: m.SkillsUsed, SkillDetection: m.SkillDetection, CaptureGaps: gaps, PullRequests: prs, GitActivity: events}
+	return SearchSummary{Turns: m.Counts.Turns, SessionID: m.SessionID, NativeSessionID: m.NativeSessionID, MachineID: m.MachineID, ProjectID: m.ProjectID, ProjectName: m.ProjectName, RepoKey: m.RepoKey, Name: m.Name, Title: m.Title, Branch: m.Branch, NativeChild: m.NativeChild, ParentSessionID: m.ParentSessionID, StartedAt: m.StartedAt, CapturedAt: m.CapturedAt, EndedAt: m.EndedAt, Harness: m.Harness, Parser: m.Parser, Origin: m.Origin, Replay: replay, Models: m.Models, SkillsAvailable: m.SkillsAvailable, SkillsUsed: m.SkillsUsed, SkillDetection: m.SkillDetection, CaptureGaps: gaps, PullRequests: prs, GitActivity: events}
 }
 
 // SessionCatalog indexes summaries after a fresh complete canonical discovery.
@@ -210,10 +212,7 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS catalog_state (id INTEGER PRIMARY KEY CHECK(id=1), generation INTEGER NOT NULL, epoch TEXT NOT NULL, complete INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS sessions (key TEXT PRIMARY KEY, etag TEXT NOT NULL, hash TEXT NOT NULL, capture TEXT NOT NULL, activity TEXT NOT NULL, summary BLOB NOT NULL, search TEXT NOT NULL, lowerid TEXT NOT NULL, unlabeled INTEGER NOT NULL, summary_hash TEXT NOT NULL); CREATE INDEX IF NOT EXISTS sessions_capture ON sessions(capture DESC,key); CREATE INDEX IF NOT EXISTS sessions_activity ON sessions(activity DESC,capture DESC,key)`)
-	if err == nil {
-		err = initializeCatalogState(ctx, db)
-	}
+	err = initializeCatalogLayout(ctx, db)
 	if err != nil {
 		_ = db.Close()
 		var damaged *sqlite.Error
@@ -231,6 +230,41 @@ func openSessionCatalog(ctx context.Context, cache *MetadataCache, store storage
 	}
 	opts.Cache = cache
 	return &SQLiteSessionCatalog{db: db, store: store, opts: opts, namespace: catalogStoreNamespace(store)}, nil
+}
+
+// initializeCatalogLayout prepares a disposable projection before it can bind a view.
+func initializeCatalogLayout(ctx context.Context, db *sql.DB) error {
+	if err := rebuildCatalogLayout(ctx, db); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS catalog_state (id INTEGER PRIMARY KEY CHECK(id=1), generation INTEGER NOT NULL, epoch TEXT NOT NULL, complete INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS sessions (key TEXT PRIMARY KEY, etag TEXT NOT NULL, hash TEXT NOT NULL, capture TEXT NOT NULL, activity TEXT NOT NULL, summary BLOB NOT NULL, search TEXT NOT NULL, lowerid TEXT NOT NULL, unlabeled INTEGER NOT NULL, summary_hash TEXT NOT NULL); CREATE INDEX IF NOT EXISTS sessions_capture ON sessions(capture DESC,key); CREATE INDEX IF NOT EXISTS sessions_activity ON sessions(activity DESC,capture DESC,key)`); err != nil {
+		return err
+	}
+	return initializeCatalogState(ctx, db)
+}
+
+// catalogLayoutVersion identifies the complete private projection, including
+// native identity candidates and handoff eligibility. It is never a wire version.
+const catalogLayoutVersion = 1
+
+// rebuildCatalogLayout retires incomplete older projections atomically. Neither
+// their rows nor remote provenance can authorize queries before fresh discovery.
+func rebuildCatalogLayout(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var version int
+	if err = tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return err
+	}
+	if version != catalogLayoutVersion {
+		if _, err = tx.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS sessions; DROP TABLE IF EXISTS catalog_state; DROP TABLE IF EXISTS remote_root; PRAGMA user_version = %d", catalogLayoutVersion)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func lockCatalogOpen(dir string) (func(), error) {
@@ -355,7 +389,7 @@ func DiscoverCatalogHeaders(ctx context.Context, store storage.ObjectStore, opts
 	known := opts.Cache.keys("sessions/")
 	scan.Count("cached keys", len(known))
 	scan.End()
-	objects, err := listObjects(ctx, store, "sessions/", known)
+	objects, err := listObjects(ctx, store, "sessions/", known, opts.Cache)
 	if err != nil {
 		return HeaderSnapshot{}, err
 	}
@@ -379,7 +413,23 @@ func ListMetadataFromSnapshot(ctx context.Context, store storage.ObjectStore, sn
 	if !snapshot.CanonicalComplete {
 		return nil, errors.New("metadata fallback requires complete canonical discovery")
 	}
-	return listMetadataFromHeaders(ctx, store, filter, opts, snapshot.Canonical, snapshot.knownCanonical)
+	objects, known := snapshot.Canonical, snapshot.knownCanonical
+	if prefix := listPrefixFor("sessions/", filter.Harness); prefix != "sessions/" {
+		// Discovery remains complete for catalog refreshes. Narrow only this
+		// hydration view, including the keys whose absence permits eviction.
+		objects, known = nil, nil
+		for _, object := range snapshot.Canonical {
+			if strings.HasPrefix(object.Key, prefix) {
+				objects = append(objects, object)
+			}
+		}
+		for _, key := range snapshot.knownCanonical {
+			if strings.HasPrefix(key, prefix) {
+				known = append(known, key)
+			}
+		}
+	}
+	return listMetadataFromHeaders(ctx, store, filter, opts, objects, known)
 }
 
 // Refresh reconciles current canonical revisions. Proven absence is retired
@@ -525,6 +575,8 @@ func prepareCanonicalCatalog(ctx context.Context, tx *sql.Tx, canonicalNamespace
 
 // canonicalCatalogRows closes its cursor before the caller uses the single connection again.
 func canonicalCatalogRows(ctx context.Context, tx *sql.Tx) (map[string]string, map[string]bool, error) {
+	span := trace.Start("catalog refresh validation")
+	defer span.End()
 	rows, err := tx.QueryContext(ctx, "SELECT key,etag,hash,capture,activity,summary,search,lowerid,unlabeled,summary_hash FROM sessions")
 	if err != nil {
 		return nil, nil, err
@@ -536,6 +588,10 @@ func canonicalCatalogRows(ctx context.Context, tx *sql.Tx) (map[string]string, m
 		var record catalogRecord
 		if err = record.scan(rows); err != nil {
 			return nil, nil, err
+		}
+		span.Count("rows-scanned", 1)
+		if record.checksum != "" {
+			span.Count("summary-B-hashed", len(record.summary))
 		}
 		prior[record.key] = record.etag
 		validSummary[record.key] = record.valid()
@@ -762,6 +818,8 @@ func (c *SQLiteSessionCatalog) Query(ctx context.Context, q CatalogQuery) (Catal
 // fillCatalogPage validates candidates before applying final typed filtering.
 // Root-child queries require the complete non-date inventory before trimming.
 func fillCatalogPage(rows *sql.Rows, q CatalogQuery, offset int, filterSummaries bool, page *CatalogPage) error {
+	span := trace.Start("catalog candidate decoding")
+	defer span.End()
 	filter := q.Metadata.Filter
 	if q.Metadata.IncludeRootChildren {
 		filter.From, filter.To = time.Time{}, time.Time{}
@@ -773,6 +831,10 @@ func fillCatalogPage(rows *sql.Rows, q CatalogQuery, offset int, filterSummaries
 		if err := record.scan(rows); err != nil {
 			return err
 		}
+		span.Count("rows-scanned", 1)
+		if record.checksum != "" {
+			span.Count("summary-B-hashed", len(record.summary))
+		}
 		if !record.valid() {
 			return errors.New("invalid session catalog summary checksum")
 		}
@@ -780,6 +842,7 @@ func fillCatalogPage(rows *sql.Rows, q CatalogQuery, offset int, filterSummaries
 		if err := json.Unmarshal(record.summary, &row.Summary); err != nil {
 			return fmt.Errorf("invalid session catalog: %w", err)
 		}
+		span.Count("summaries-decoded", 1)
 		m := row.Summary.Metadata()
 		if !matches(m, filter) || q.Metadata.TopLevelOnly && m.IsChild() {
 			continue
@@ -842,7 +905,10 @@ func catalogQueryPredicates(q CatalogQuery) (string, string, []any) {
 	clauses.WriteString(where)
 	for _, word := range q.Words {
 		word = strings.ToLower(word)
-		clauses.WriteString(" AND (instr(search,?) > 0 OR instr(lowerid,?) = 1 OR instr(search,?) > 0 OR unlabeled = 1)")
+		// Ambiguity tables count every linked child of their parents, even
+		// when that child does not match the query. Retain these summaries
+		// so word pushdown cannot change parent hints or picker rows.
+		clauses.WriteString(" AND (instr(search,?) > 0 OR instr(lowerid,?) = 1 OR instr(search,?) > 0 OR unlabeled = 1 OR json_extract(summary,'$.ParentSessionID') != '')")
 		// Leading zeros still denote the same PR in the CLI matcher. Keep
 		// original text/ID candidates and OR a canonical numeric candidate.
 		args = append(args, word, word, catalogPRCandidate(word))
@@ -892,7 +958,8 @@ func catalogWhere(q MetadataQuery) (string, []any) {
 	add := func(clause string, value any) { clauses = append(clauses, clause); args = append(args, value) }
 	f := q.Filter
 	if f.Harness != "" {
-		add("json_extract(summary,'$.Harness.name') = ?", f.Harness)
+		add("key >= ?", "sessions/"+f.Harness+"/")
+		add("key < ?", "sessions/"+f.Harness+"0")
 	}
 	if !q.IncludeRootChildren && !f.From.IsZero() {
 		add("capture >= ?", catalogTime(f.From))
@@ -917,6 +984,11 @@ func catalogWhere(q MetadataQuery) (string, []any) {
 // word predicates because their configured project label exists only at query.
 func catalogSearch(s SearchSummary) string {
 	texts := []string{s.Name, s.Title, s.Branch, s.ProjectName, s.Harness.Name}
+	// Native IDs use the same eligibility as sessionFields.ids. Substring
+	// candidates are deliberately broader than the final Go prefix matcher.
+	if native := s.NativeSessionID; native != "" && !strings.Contains(native, ":") && !strings.EqualFold(native, s.SessionID) {
+		texts = append(texts, native)
+	}
 	for _, pr := range s.PullRequests {
 		texts = append(texts, strconv.Itoa(pr.Number), "#"+strconv.Itoa(pr.Number))
 	}
@@ -977,8 +1049,9 @@ func (r *catalogRecord) scan(row interface{ Scan(...any) error }) error {
 }
 
 // catalogRecordFormat versions the disposable projection. Earlier checksummed
-// rows omitted native child ownership and must reload from complete headers.
-const catalogRecordFormat = "session-catalog-native-child-v1"
+// rows omitted handoff eligibility and native-ID candidates and must reload
+// from complete headers.
+const catalogRecordFormat = "session-catalog-handoff-native-id-v1"
 
 // catalogRecordChecksum uses length-prefix framing to keep tuple boundaries
 // unambiguous. It hashes raw summary bytes without decoding every warm row.

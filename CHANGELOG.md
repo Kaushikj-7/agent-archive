@@ -10,6 +10,13 @@ follow [Semantic Versioning](https://semver.org/).
   or failed effect bodies. These private bodies are still omitted; they do not
   establish tool success, errors or parallel execution.
 
+- `stats` names each model by its exact version: cost by model, the models
+  view, the favorite model, `--json` and `--html` show `opus-5.5`, `opus-5`,
+  `gpt-6.1-sol` and `gpt-6-luna` as separate rows instead of grouping them
+  under `opus` or `gpt-6`. Only two names of one model share a row (the
+  `gpt-5.6` alias with `gpt-5.6-sol`). Bar colors still follow the family. The
+  built-in price table is now version `2026-10.1`; its prices are unchanged.
+
 - `agent-archive handoff` names the session above `Continue in`: its title,
   agent, when it was last active, and the handoff's size. When only one other
   agent is installed, the question is yes or no (`Continue in Claude Code?
@@ -17,22 +24,43 @@ follow [Semantic Versioning](https://semver.org/).
   stay on the line below. With several agents, print, copy, write, and quit
   share one line.
 
+- Read-path benchmarks now account for provider LIST pages and transferred
+  headers, including range overread. Content-free trace counts distinguish
+  local catalog validation and decoding from remote discovery costs.
+
 - Muse local handoff previews now read only their reserved head/tail windows,
   avoiding whole-file hashes while browsing large histories. Selected sessions
   retain complete filtering and independent content verification.
+
+- Caching a session for the first time skips a redundant directory scan.
+  Rewritten metadata still prunes old cache versions, and bounded maintenance
+  remains the backstop for concurrent writers.
 
 - Interrupted history privacy preparation now reads each retained revision's
   original parent before applying a later resolved parent. Older pending
   journals can resume without replacing the original provenance.
 
+- Legacy archive discovery balances complete header listings with private
+  key-range hints for sessions and both listing indexes, under one 16-request
+  budget. S3 ranges stop at an exact page boundary without an extra request.
+
 - Pending-publication cleanup refuses malformed JSON inside records it scans
   without retaining, preserving damaged journals for recovery while keeping
   the bounded-memory checks used for large Codex histories.
+
+- Interactive legacy reads overlap fresh header discovery with independent
+  local preparation. Registration reads use eight workers, and handoff reuses
+  the picker's storage client. Scoped native-read rules remain unchanged.
 
 - When Codex discovery is unavailable but every published automatic session has
   recorded read-back verification, status says “discovery unknown; archive
   verified at recorded time”. Restore source access and run sync to check
   current capture health.
+
+- Warm handoff selection can use the private summary catalog. Show and handoff
+  queries retain distinct native-ID matches, complete ambiguity choices and
+  parent child-count hints. Older private projections rebuild automatically;
+  model filters retain complete metadata matching when summaries lack evidence.
 
 - A long Codex thread whose history spans more than one rollout needs far less
   read memory to capture, so it is captured at sizes that were recorded as too
@@ -45,6 +73,11 @@ follow [Semantic Versioning](https://semver.org/).
   current source is prepared from the candidate it was frozen from rather than
   decoded again. Capturing such a thread's growth needs about 5 times its
   filtered size in read memory instead of about 12.
+
+- Cached catalog-v4 complete-summary reads reuse verified root deltas and local
+  queries. No-cache and model-evidence fallbacks remain complete, and selected
+  metadata retains its pinned revision and hash checks. Provider activation
+  gates are unchanged.
 
 - Protected Cursor backfill can stage selected root chats from a live WAL using
   a bounded private SQLite image. Scratch capacity is reserved before copying,

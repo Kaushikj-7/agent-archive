@@ -96,7 +96,7 @@ var statsAgentCodes = map[string]string{
 }
 
 // statsModelCodes is the color of each model family, matched as a prefix of
-// the family's label ("opus", "gpt-5", "claude-opus-5" when unpriced). The
+// the model's label ("opus-5.5", "gpt-6.1-sol", "claude-opus-5" when unpriced). The
 // first prefix that matches wins. A family the table does not know is drawn
 // without color.
 var statsModelCodes = []struct {
@@ -111,15 +111,15 @@ var statsModelCodes = []struct {
 	{"codex", "32"},
 }
 
-// statsFamilyOf reduces a model label to the family a color goes by: a full
-// Claude model id ("claude-opus-5") to "opus".
+// statsFamilyOf reduces a model label to the text a color's prefix is matched
+// against: a full Claude model id ("claude-opus-5") to "opus-5".
 func statsFamilyOf(label string) string {
 	lower := strings.ToLower(label)
 	lower = strings.TrimPrefix(lower, "claude-")
 	return lower
 }
 
-// modelCode is the color of a model family's label, or "" for none.
+// modelCode is the color of a model's label (by its family), or "" for none.
 func modelCode(label string) string {
 	family := statsFamilyOf(label)
 	for _, m := range statsModelCodes {

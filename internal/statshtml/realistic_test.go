@@ -13,11 +13,11 @@ const realisticPrices = `{
   "version": "golden-2",
   "as_of": "2026-09-29",
   "models": [
-    {"id": "claude-opus-5",   "family": "opus",   "input_per_mtok": 5,    "output_per_mtok": 25, "cache_read_per_mtok": 0.5,   "cache_write_per_mtok": 6.25},
-    {"id": "claude-fable-5",  "family": "fable",  "input_per_mtok": 10,   "output_per_mtok": 50, "cache_read_per_mtok": 1,     "cache_write_per_mtok": 12.5},
-    {"id": "claude-sonnet-5", "family": "sonnet", "input_per_mtok": 2,    "output_per_mtok": 10, "cache_read_per_mtok": 0.2,   "cache_write_per_mtok": 2.5},
-    {"id": "claude-haiku-4-5",  "family": "haiku",  "input_per_mtok": 1,    "output_per_mtok": 5,  "cache_read_per_mtok": 0.1,   "cache_write_per_mtok": 1.25},
-    {"id": "gpt-5.6-sol",     "family": "gpt-5.6","input_per_mtok": 1.25, "output_per_mtok": 10, "cache_read_per_mtok": 0.125, "cache_write_per_mtok": 0}
+    {"id": "claude-opus-5",   "family": "opus-5",   "input_per_mtok": 5,    "output_per_mtok": 25, "cache_read_per_mtok": 0.5,   "cache_write_per_mtok": 6.25},
+    {"id": "claude-fable-5",  "family": "fable-5",  "input_per_mtok": 10,   "output_per_mtok": 50, "cache_read_per_mtok": 1,     "cache_write_per_mtok": 12.5},
+    {"id": "claude-sonnet-5", "family": "sonnet-5", "input_per_mtok": 2,    "output_per_mtok": 10, "cache_read_per_mtok": 0.2,   "cache_write_per_mtok": 2.5},
+    {"id": "claude-haiku-4-5",  "family": "haiku-4.5",  "input_per_mtok": 1,    "output_per_mtok": 5,  "cache_read_per_mtok": 0.1,   "cache_write_per_mtok": 1.25},
+    {"id": "gpt-5.6-sol",     "family": "gpt-5.6-sol","input_per_mtok": 1.25, "output_per_mtok": 10, "cache_read_per_mtok": 0.125, "cache_write_per_mtok": 0}
   ]
 }`
 

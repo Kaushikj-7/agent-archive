@@ -123,6 +123,43 @@ func TestGuidedChoicesResolveDefaultsShortcutsAliasesAndStableNumbers(t *testing
 	}
 }
 
+func TestGuidedConfirmAnswersYesNoAndEnter(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		def     string
+		input   string
+		key     string
+		choices string
+	}{
+		{"enter takes yes", "go", "\n", "go", "[Y/n]"},
+		{"enter takes no", "stop", "\n", "stop", "[y/N]"},
+		{"y", "stop", "Y\n", "go", "[y/N]"},
+		{"yes", "stop", "yes\n", "go", "[y/N]"},
+		{"n", "go", "n\n", "stop", "[Y/n]"},
+		{"no", "go", "no\n", "stop", "[Y/n]"},
+		{"no default asks again", "", "\ny\n", "go", "[y/n]"},
+		{"a shortcut", "go", "h\n", "help", "[Y/n]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out := &promptScreen{}
+			p := newPrompter(strings.NewReader(tc.input), out)
+			got, err := p.guidedChoice(promptModel{Question: "Go?", Helpers: []string{"Going is final."}, Confirm: true, No: "stop", Default: tc.def,
+				Primary: []option{{"go", "Go"}}, Secondary: []actionOption{{"help", "h", "help"}, {"stop", "s", "stop"}}})
+			must(t, err)
+			if got != tc.key {
+				t.Fatalf("key %q, want %q\n%s", got, tc.key, out.String())
+			}
+			for _, want := range []string{"? Go? " + tc.choices + "\n", "  Going is final.\n", "  or [h] help\n"} {
+				if !strings.Contains(out.String(), want) {
+					t.Fatalf("missing %q:\n%s", want, out.String())
+				}
+			}
+		})
+	}
+}
+
 func TestGuidedTextValidatesBeforeReceiptAndSharesBufferedInput(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer

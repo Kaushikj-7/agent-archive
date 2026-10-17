@@ -15,8 +15,8 @@ Aug 31                                               Sep 29
 
 WHERE IT WENT
 By project                                By model
-proj-api       ███████████████     $96    opus               █████████      $136
-agent-archive  ██████████          $62    sonnet             █               $22
+proj-api       ███████████████     $96    opus-5             █████████      $136
+agent-archive  ██████████          $62    sonnet-5           █               $22
 dotfiles       █                $5.69+    gpt-5              █             $5.69
                                           codex-auto-review             unpriced
 

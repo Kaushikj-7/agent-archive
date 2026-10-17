@@ -1,6 +1,13 @@
 # Muse Q0 qualification
 
-Status: **reproducibility delivered; authority gates OPEN; capture unavailable**.
+Current implementation: see the canonical plan’s
+[delivered local subset and residual ownership](../../proposals/muse-integration.md#delivered-local-subset-and-residual-ownership).
+Strict qualified local source/filter, retained parsing and handoff are implemented;
+public capture/first-owner admission remain unavailable. Qualified nonempty
+enriched sources can expose observed committed invocation counts; this does not
+qualify approval-free read sessions, unknown-ID startup, or full parity.
+
+Historical Q0 status: **reproducibility delivered; authority gates OPEN; capture unavailable**.
 This campaign supports the [integration spec](../../proposals/muse-integration.md)
 at source base `37609182169b658c380e9113888b0cd11d387c05`. It does not implement
 an adapter, setup, publication, retained filter or capture permission.
@@ -137,7 +144,11 @@ recovers the pinned v1 byte recipe. The [initial-root contract](root-creation.md
 qualifies reserved logical-start semantics for strict observed 1.4.9 roots. The complete production validator
 and admission gates remain unimplemented and capture unavailable.
 
-## Support and refusal matrix
+## Historical Q0 support and refusal matrix
+
+The dispositions below describe the pinned Q0 campaign, not current decoder
+implementation status. Later local support is described by the current-status
+link above; original reports, campaign observations, corpus and hashes stay frozen.
 
 | Lane | Qualified observation | Gate / safe production behavior |
 | --- | --- | --- |

@@ -134,18 +134,18 @@ func TestMultiAgentMultiModelCursorUnknown(t *testing.T) {
 	if !near(claude.SessionShare, 1.0/3) {
 		t.Fatalf("session share = %v", claude.SessionShare)
 	}
-	// By model, grouped under price families, costliest first.
+	// By model, one row per exact model version, costliest first.
 	labels := []string{}
 	for _, r := range got.Models {
 		labels = append(labels, r.Label)
 	}
-	if len(labels) != 3 || labels[0] != "opus" || labels[1] != "sonnet" || labels[2] != "gpt-5.6" {
+	if len(labels) != 3 || labels[0] != "opus-5.5" || labels[1] != "sonnet-5.5" || labels[2] != "gpt-5.6-terra" {
 		t.Fatalf("model rows = %v", labels)
 	}
-	if v := modelRow(t, got, "opus").Cost.USD; !near(*v, 0.134) {
+	if v := modelRow(t, got, "opus-5.5").Cost.USD; !near(*v, 0.134) {
 		t.Fatalf("opus cost = %v", *v)
 	}
-	if got.Highlights.FavoriteModel == nil || got.Highlights.FavoriteModel.Label != "opus" || got.Highlights.FavoriteModel.By != "cost" {
+	if got.Highlights.FavoriteModel == nil || got.Highlights.FavoriteModel.Label != "opus-5.5" || got.Highlights.FavoriteModel.By != "cost" {
 		t.Fatalf("favorite = %+v", got.Highlights.FavoriteModel)
 	}
 	// Top projects by tokens: alpha has them, beta's are unknown.
@@ -268,8 +268,8 @@ func TestSubagentSessionsRollUpIntoTheirParent(t *testing.T) {
 		t.Fatalf("costliest = %+v", got.Highlights.CostliestSession)
 	}
 	// Both subagent model rows are in cost by model.
-	if modelRow(t, got, "sonnet").Tokens != 3200 {
-		t.Fatalf("sonnet tokens = %d", modelRow(t, got, "sonnet").Tokens)
+	if modelRow(t, got, "sonnet-5.5").Tokens != 3200 {
+		t.Fatalf("sonnet tokens = %d", modelRow(t, got, "sonnet-5.5").Tokens)
 	}
 }
 
@@ -326,7 +326,7 @@ func TestSessionsBeforeParser014ArePricedAtTheMainModelAndFlagged(t *testing.T) 
 	if got.Coverage.SessionsBeforeParser014 != 1 || got.Coverage.SessionsPricedAtMainModel != 1 || got.Coverage.SessionsWithoutToolErrors != 1 {
 		t.Fatalf("coverage = %+v", got.Coverage)
 	}
-	if len(got.Models) != 1 || got.Models[0].Label != "opus" || got.Models[0].Tokens != 121500 {
+	if len(got.Models) != 1 || got.Models[0].Label != "opus-5.5" || got.Models[0].Tokens != 121500 {
 		t.Fatalf("models = %+v", got.Models)
 	}
 	if !got.Agents[0].Cost.Approximate {
