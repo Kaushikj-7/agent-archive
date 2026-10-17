@@ -7,9 +7,11 @@ session ID or a project-latest fallback. Launching a supported destination
 agent removes exactly these two Muse session variables, retaining configuration,
 provider and XDG variables.
 
-Only the Runtime operation is registered. Muse cannot be selected for setup,
-capture or destination launch. No native transcript is opened, native command
-is run or installed version is probed by this detector. Native integrity and
+The presence subset registered only Runtime. Separate
+[installed-version and skill providers](runtime-skills.md) now add fixed bounded
+version inspection and installed-only skill inventory. Muse cannot be selected
+for capture setup or destination launch. This detector opens no native
+transcript, runs no native command and probes no installed version. Native integrity and
 original-creation gates in the [qualification record](README.md) remain open.
 
 ## Evidence

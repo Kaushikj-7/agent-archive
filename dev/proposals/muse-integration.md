@@ -26,7 +26,13 @@ unpriced summary. Local snapshots supply exact content proofs and provisional
 startup facts; protected binding v2 supports prepared validation checkpoints,
 while real capture and empty-locator resolution remain unavailable.
 Source/Filter, Parser, Runtime and local handoff Discovery/NativeHeaders/Preview
-are bound. Collection remains
+are bound. Installed-version inspection uses a fixed bounded update-disabled
+CLI probe and exact release/R-build grammar; it does not stamp child versions or
+supply a binary SHA. Skills share the existing managed installation and bounded
+installed-only inventory for exact injected config/shared/foreign/project roots.
+Native skill trust, activation, eligibility and invocation/read evidence remain
+unavailable; plugin/builtin locations are not guessed. Exact thread identity,
+children and replay remain separately unqualified. Collection remains
 refused before native reads/filtering/PUT, including injected registrations.
 No durable binding or consent is created. The synthetic 1.4.9 exec held-out has
 two own turns; 1.4.9 MSP root evidence has zero turns. Conversational MSP
