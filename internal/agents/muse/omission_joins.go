@@ -52,23 +52,12 @@ type familyState struct {
 	effects      map[effectKey]effectIdentity
 	ended        map[effectKey]bool
 	tasks        map[taskKey]bool
+	readEffects  map[effectKey]effectIdentity
+	tools        *toolObservations
 }
 
-func validateNewFamilies(rows []retained) error {
-	s := familyState{runs: map[string]bool{}, pending: map[pendingKey]pendingIdentity{}, taskPending: map[taskCallKey]pendingKey{}, reviews: map[reviewKey]bool{}, completed: map[reviewKey]bool{}, reviewOwners: map[runIdentity]pendingKey{}, decisions: map[pendingKey]bool{}, waits: map[pendingKey]bool{}, terminals: map[pendingKey]bool{}, effects: map[effectKey]effectIdentity{}, ended: map[effectKey]bool{}, tasks: map[taskKey]bool{}}
-	for _, r := range rows {
-		run := str(r.Fields["run_id"])
-		if r.Type == payloadRuntimeUserIntentMaterialized {
-			s.runs[run] = true
-		}
-		if !newFamily(r) {
-			continue
-		}
-		if !s.runs[run] || s.observe(r) != nil {
-			return errFormat
-		}
-	}
-	return nil
+func newFamilyState(tools *toolObservations) familyState {
+	return familyState{tools: tools, readEffects: map[effectKey]effectIdentity{}, runs: map[string]bool{}, pending: map[pendingKey]pendingIdentity{}, taskPending: map[taskCallKey]pendingKey{}, reviews: map[reviewKey]bool{}, completed: map[reviewKey]bool{}, reviewOwners: map[runIdentity]pendingKey{}, decisions: map[pendingKey]bool{}, waits: map[pendingKey]bool{}, terminals: map[pendingKey]bool{}, effects: map[effectKey]effectIdentity{}, ended: map[effectKey]bool{}, tasks: map[taskKey]bool{}}
 }
 
 func (s *familyState) observe(r retained) error {
@@ -82,7 +71,7 @@ func (s *familyState) observe(r retained) error {
 	case omittedWait:
 		return s.wait(pk, ek, f)
 	case omittedTool:
-		return s.effect(run, ek, f)
+		return s.effect(r, run, ek, f)
 	case omittedRun:
 		return nil
 	case omittedTask:
@@ -102,6 +91,9 @@ func (s *familyState) approval(pk pendingKey, ek string, f map[string]any) error
 			return errFormat
 		}
 		identity := pendingIdentity{str(f["task_id"]), str(f["tool_call_id"])}
+		if effectOverlap(s.readEffects, pk.run, identity.task, identity.call) {
+			return errFormat
+		}
 		key := taskCallKey{pk.run, identity.task, identity.call}
 		if _, duplicate := s.taskPending[key]; duplicate {
 			return errFormat
@@ -151,7 +143,7 @@ func (s *familyState) wait(pk pendingKey, ek string, f map[string]any) error {
 	return nil
 }
 
-func (s *familyState) effect(run, ek string, f map[string]any) error {
+func (s *familyState) effect(r retained, run, ek string, f map[string]any) error {
 	key := effectKey{run, str(f["effect_id"])}
 	identity := effectIdentity{str(f["task_id"]), str(f["tool_call_id"]), num(f["model_call_index"])}
 	if ek == "started" {
@@ -159,7 +151,16 @@ func (s *familyState) effect(run, ek string, f map[string]any) error {
 			return errFormat
 		}
 		pending, matched := s.taskPending[taskCallKey{run, identity.task, identity.call}]
-		if !matched || !s.terminals[pending] {
+		if _, marked := f["effect_join"]; marked {
+			if pendingOverlap(s.pending, run, identity.task, identity.call) {
+				return errFormat
+			}
+			ref, exists := s.tools.calls[toolCallIdentity{r.Stream.ID, run, identity.call}]
+			if !exists || ref.record >= int(r.Sequence-1) {
+				return errFormat
+			}
+			s.readEffects[key] = identity
+		} else if !matched || !s.terminals[pending] {
 			return errFormat
 		}
 		s.effects[key] = identity
@@ -184,6 +185,8 @@ type nativeBodyJoins struct {
 	firstMetadata map[string]any
 	sourceInvalid bool
 	hasNew        bool
+	tools         toolObservations
+	readEffects   map[effectKey]effectIdentity
 }
 
 func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
@@ -193,6 +196,7 @@ func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
 		s.taskIDs = map[taskKey]bool{}
 		s.sources = map[runIdentity]bool{}
 		s.lastSource = map[string]int64{}
+		s.readEffects = map[effectKey]effectIdentity{}
 	}
 	if r.Sequence == 3 && r.Type == payloadRuntimeSessionMetadata {
 		s.firstMetadata = p
@@ -207,6 +211,11 @@ func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
 	s.hasNew = s.hasNew || nativeNewFamily(r, p)
 	if s.hasNew && s.sourceInvalid {
 		return errFormat
+	}
+	if enrichedTools(r.Fields) && str(r.Fields["event_kind"]) == string(eventAssistantToolCallsCommitted) {
+		if err := s.tools.registerCalls(r, int(r.Sequence-1), nil, p); err != nil {
+			return err
+		}
 	}
 	if !nativeNewFamily(r, p) {
 		return nil
@@ -233,7 +242,9 @@ func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
 			}
 		}
 		if !match {
-			return errFormat
+			if r.Type != payloadToolBatchStarted || s.readStart(r, p, rec) != nil {
+				return errFormat
+			}
 		}
 	}
 	return nil
@@ -263,6 +274,9 @@ func (s *nativeBodyJoins) approval(run, ek string, e map[string]any) error {
 	switch approvalEvent(ek) {
 	case approvalRequested:
 		if requested != nil {
+			return errFormat
+		}
+		if effectOverlap(s.readEffects, run, str(e["task_id"]), str(e["tool_call_id"])) {
 			return errFormat
 		}
 		s.requested[pk] = e
@@ -336,4 +350,42 @@ func equalPendingCopy(requested, copyPending map[string]any) bool {
 		}
 	}
 	return true
+}
+
+const committedFileReadJoin = "committed_file_read_v1"
+
+func effectOverlap(effects map[effectKey]effectIdentity, run, task, call string) bool {
+	for key, identity := range effects {
+		if key.run == run && (identity.task == task || identity.call == call) {
+			return true
+		}
+	}
+	return false
+}
+
+func pendingOverlap(pending map[pendingKey]pendingIdentity, run, task, call string) bool {
+	for key, identity := range pending {
+		if key.run == run && (identity.task == task || identity.call == call) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *nativeBodyJoins) readStart(r retained, p, rec map[string]any) error {
+	run, task, call := str(p["run_id"]), str(rec["task_id"]), str(rec["call_id"])
+	for key, request := range s.requested {
+		if key.run == run && (request["task_id"] == task || request["tool_call_id"] == call) {
+			return errFormat
+		}
+	}
+	profile := object(rec["parallel_profile"])
+	ref, exists := s.tools.calls[toolCallIdentity{r.Stream.ID, run, call}]
+	if !s.taskIDs[taskKey{run, task}] || !exists || !ref.nativeRead || ref.record >= int(r.Sequence-1) || str(rec["tool_name"]) != "read_file" || !keys(profile, "kind", "subject") || str(profile["kind"]) != "file_read" || !stringFields(profile, "subject") {
+		return errFormat
+	}
+	s.readEffects[effectKey{run, str(rec["effect_id"])}] = effectIdentity{task, call, num(rec["model_call_index"])}
+	// Fields is the projected map owned by this row, never the native payload.
+	r.Fields["effect_join"] = committedFileReadJoin
+	return nil
 }

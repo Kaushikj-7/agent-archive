@@ -851,12 +851,17 @@
         "effect_id",
         "task_id",
         "tool_call_id",
-        "model_call_index"
+        "model_call_index",
+        "effect_join"
       ],
       "fixed_fields": {
         "kind": "tool_batch_effect",
-        "event_kind": "started"
-      }
+        "event_kind": "started",
+        "effect_join": "committed_file_read_v1"
+      },
+      "optional_fields": [
+        "effect_join"
+      ]
     },
     {
       "type": "tool_batch.effect.terminal",

@@ -295,3 +295,35 @@ interrupted, empty and refused attempts retain unsuccessful report entries.
 The later campaign must pin its actual runner/source/binary and private evidence
 hashes; offline passing tests are not native status evidence or production parser,
 privacy, wire-format, capture or accounting qualification.
+
+## Committed file-read effect classification
+
+The synthetic `synthetic-committed-read-effects` fixture exercises full bounded
+Filter → Parser → metadata/eval/handoff/transcript → retained-only refilter.
+The only new retained value is start-only `effect_join: committed_file_read_v1`.
+Exact raw `read_file`/`read_file`, a closed `file_read`/string-subject profile,
+prior own committed call and prior native task are required. Prior and later
+approval overlaps sharing run/task or run/call refuse the new lane. Existing
+approved fixtures and committed result associations retain their old behavior.
+
+The raw and retained passes use separate instances of the existing call map.
+The raw reference stores only IDs, positions and a finite private name class;
+no native name, payload map or callback survives it. A bounded 1024-byte batch
+plus 1024-byte call charge is reserved before physical decoding releases its
+charge. Private joins are cleared before retained validation; charges are
+conservatively held until the output lease ends. Existing pass/cache/scope and
+record limits remain unchanged. Tests cover refusal, partial allocation,
+cancellation and idempotent transfer/release, with charged peaks in the test log.
+
+Retained proof covers the earlier own committed call/materialized/source graph,
+fixed classification and exact effect tuple. It cannot reconstruct the erased
+prior native proposed-task ID, names or profile. Model indexes establish only
+bounded nonnegative values and start/terminal equality, never batch slots.
+Effects supply no result/error, file, MCP, Git or parallel facts, and do not
+establish one effect per call. New readers accept old unmarked approved sources;
+`filter29-retained.schema.json` freezes the actual previous strict schema.
+Historical Q0 qualification artifacts remain byte-frozen. Separate pinned-old
+production Parser and Refilter execution is required for executable refusal
+claims. Selected native graph evidence is not full pipeline acceptance; all
+three controlled source files still need root-reviewed immutable-source full
+Filter/Parser/metadata/refilter acceptance. Capture remains a separate gate.

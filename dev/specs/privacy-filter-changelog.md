@@ -5,6 +5,22 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 30
+
+Global and Muse adapter 0.30.0 accompany this change; Muse parser is 0.6.0.
+
+- A tool-batch effect start may retain exactly the archive-only classification
+  `effect_join: committed_file_read_v1`. This requires an earlier unique own
+  committed call, exact private `read_file` names, the closed `file_read` profile,
+  a prior native task and no prior or later overlapping approval request.
+- Private names, profiles, subjects and arguments remain discarded. Retained
+  readers rebuild prior call and materialized/source authority independently;
+  old unmarked approved effects retain their existing interpretation.
+- The marker changes no tool result/error, file, Git, MCP or parallel facts.
+  Older strict schemas and older Muse executable readers refuse marked sources;
+  previously erased private profiles cannot be reconstructed by refiltering.
+  Source2/Metadata1 and private protocols remain unchanged.
+
 ## Source filter version 29
 
 Global and Muse adapter 0.29.0 accompany this change.

@@ -14,14 +14,36 @@ import (
 
 func TestMuseCommittedToolsUseExistingArchiveConsumersAfterNativeLoss(t *testing.T) {
 	t.Parallel()
+	for _, fixture := range []struct {
+		name                 string
+		calls                int
+		result, observations bool
+		callID               string
+	}{
+		{"synthetic-own-tools.jsonl", 3, true, true, "call_synthetic_0"},
+		{"synthetic-committed-read-effects.jsonl", 1, false, false, "synthetic-call"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			t.Parallel()
+			testMuseArchiveToolConsumers(t, fixture.name, fixture.calls, fixture.result, fixture.observations, fixture.callID)
+		})
+	}
+}
+
+func testMuseArchiveToolConsumers(t *testing.T, fixture string, calls int, result, observations bool, callID string) {
+	t.Helper()
 	env, data, workspace, counter := museNativeEnv(t)
-	raw := museNativeFixtureBytes(t, "synthetic-own-tools.jsonl", museSyntheticID, workspace)
+	raw := museNativeFixtureBytes(t, fixture, museSyntheticID, workspace)
 	path := writeMuseNative(t, data, museSyntheticID, raw)
 	var selected archive.FilteredTranscript
 	counter.after = func(out archive.FilteredTranscript) { selected = out }
 	local, stderr, code := runHandoff(t, env, "--latest", "--source", "local", "--harness", "muse", "--format", "json")
 	if code != 0 || counter.calls.Load() != 1 || !strings.Contains(local, "tool_results_unavailable") {
 		t.Fatalf("local handoff %d %s", code, stderr)
+	}
+	explicit, stderr, code := runHandoff(t, env, "--file", path, "--harness", "muse", "--format", "json")
+	if code != 0 || !strings.Contains(explicit, "tool_results_unavailable") {
+		t.Fatalf("explicit handoff %d %s", code, stderr)
 	}
 	f := newHandoffFixture(t, false)
 	reg := archive.SessionRegistration{ArchiveSessionID: f.id, NativeSessionID: museSyntheticID, ProjectID: "local", ProjectRoot: workspace, Harness: archive.Harness{Name: "muse"}, SessionStartedAt: selected.NativeStartAt}
@@ -38,7 +60,7 @@ func TestMuseCommittedToolsUseExistingArchiveConsumersAfterNativeLoss(t *testing
 	m, err := archive.BuildMetadataWithAnalysis(b, a, nil, "synthetic-machine", selected.NativeStartAt, env.Now(), archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}, archive.ParserInfo{Name: "muse", Version: parser.Version()})
 	must(t, err)
 	summary := stats.Compute([]archive.Metadata{m}, stats.Options{Now: m.CapturedAt, Days: 1, Location: time.UTC, PriceTable: stats.DefaultPriceTable()})
-	if summary.Overview.Cost.Value != nil || summary.Overview.Tokens.Value != nil || summary.Highlights.ToolErrors != nil || summary.Coverage.SessionsWithoutToolErrors != 1 || summary.TokenObservations == nil {
+	if summary.Overview.Cost.Value != nil || summary.Overview.Tokens.Value != nil || summary.Highlights.ToolErrors != nil || summary.Coverage.SessionsWithoutToolErrors != 1 || (summary.TokenObservations != nil) != observations {
 		t.Fatal("stats invented tool status or priced observations")
 	}
 	mraw, err := json.Marshal(m)
@@ -77,7 +99,7 @@ func TestMuseCommittedToolsUseExistingArchiveConsumersAfterNativeLoss(t *testing
 		} `json:"tool_results"`
 	}
 	must(t, decoder.Decode(&old))
-	if len(old.ToolCalls) != 3 || len(old.ToolResults) != 0 || old.ToolCalls[0].ResultRecordIndex == nil {
+	if len(old.ToolCalls) != calls || len(old.ToolResults) != 0 || (old.ToolCalls[0].ResultRecordIndex != nil) != result {
 		t.Fatal("normalized show lost occurrence")
 	}
 	for _, c := range old.ToolCalls {
@@ -91,7 +113,7 @@ func TestMuseCommittedToolsUseExistingArchiveConsumersAfterNativeLoss(t *testing
 			t.Fatalf("eval %s %d %s", detail, code, stderr)
 		}
 		counts := records[0]["counts"].(map[string]any)
-		if counts["tool_calls"] != float64(3) || counts["tool_results"] != nil || counts["tool_errors"] != nil || counts["files_touched"] != nil || records[0]["tools_used"] != nil || records[0]["mcp_calls"] != nil {
+		if counts["tool_calls"] != float64(calls) || counts["tool_results"] != nil || counts["tool_errors"] != nil || counts["files_touched"] != nil || records[0]["tools_used"] != nil || records[0]["mcp_calls"] != nil {
 			t.Fatal("eval fabricated tool detail")
 		}
 	}
@@ -134,13 +156,13 @@ func TestMuseCommittedToolsUseExistingArchiveConsumersAfterNativeLoss(t *testing
 	n := normalizedOutput{ToolCalls: a.View.ToolCalls, ToolResults: a.View.ToolResults}
 	clone := cloneNormalized(n)
 	dropOldestRecords(&clone, 1)
-	if len(n.ToolCalls) != 3 || len(clone.ToolResults) != 0 {
+	if len(n.ToolCalls) != calls || len(clone.ToolResults) != 0 {
 		t.Fatal("clone/trim changed source identity or invented results")
 	}
 	// Actual normalized document encoder preserves nullable individual facts.
 	docs, err := normalizedDocuments(sessionView{Metadata: m}, n)
 	must(t, err)
-	if !bytes.Contains(docs, []byte(`"call_synthetic_0"`)) || bytes.Contains(docs, []byte(`"is_error"`)) || bytes.Contains(docs, []byte(`"output_bytes"`)) {
+	if !bytes.Contains(docs, []byte(`"`+callID+`"`)) || bytes.Contains(docs, []byte(`"is_error"`)) || bytes.Contains(docs, []byte(`"output_bytes"`)) {
 		t.Fatal("normalized document wire")
 	}
 }

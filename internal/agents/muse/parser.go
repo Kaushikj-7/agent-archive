@@ -14,7 +14,7 @@ import (
 type Parser struct{}
 
 // Version identifies the Muse retained analysis policy.
-func (Parser) Version() string { return "0.5.0" }
+func (Parser) Version() string { return "0.6.0" }
 
 // Parse interprets the complete validated Muse ordinary/omission union.
 func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {
@@ -79,6 +79,7 @@ func conversation(rows []retained) (archive.NormalizedView, error) {
 func conversationObserved(rows []retained) (archive.NormalizedView, *archive.TokenObservationSummary, error) {
 	var observations archive.ObservationAccumulator
 	var tools toolObservations
+	families := newFamilyState(&tools)
 	view := archive.NormalizedView{}
 	accepted := map[string]retained{}
 	started := map[string]int{}
@@ -91,6 +92,13 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 	for i, r := range rows {
 		if r.Version == 0 {
 			continue
+		}
+		run := str(r.Fields["run_id"])
+		if r.Type == payloadRuntimeUserIntentMaterialized {
+			families.runs[run] = true
+		}
+		if newFamily(r) && (!families.runs[run] || families.observe(r) != nil) {
+			return view, nil, errFormat
 		}
 		ts := time.UnixMicro(r.Timestamp).UTC()
 		if ts.After(view.LatestRecordAt) {

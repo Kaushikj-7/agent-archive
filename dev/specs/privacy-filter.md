@@ -510,9 +510,35 @@ outcome accepts `task_completion: {kind: complete}` alongside the existing
 `output_ref_count`. The other accepted outcome is exactly
 `{kind: failed, reason: string}`. Unknown keys, tags and types refuse. Subject,
 reason, completion and profile tags are discarded without inferring parallelism,
-success, tool-error attribution or cancellation. These input forms use the
+success, tool-error attribution or cancellation. For previously valid approved effects, these input forms use the
 unchanged omission projection and all existing identity, causality, join and
 resource bounds.
+
+
+Filter 30 adds only the optional archive-only start classification
+`effect_join: committed_file_read_v1`. Raw input cannot supply it. Both the
+private committed and effect tool names must be exactly `read_file`, the profile
+exactly `{kind: file_read, subject: string}`, and an earlier unique committed
+call must belong to the same session and materialized run. Raw validation also
+requires the existing prior task observation. Any approval request sharing the
+run/task or run/call identity, before or after the read, excludes this lane.
+The unmarked approved lane preserves its previous request/name checks and does
+not acquire a prior committed-call requirement.
+
+Retained parsing/refiltering independently rebuilds the prior own call and
+materialized/source graph and checks the fixed marker and exact start/terminal
+stream/effect/task/call/model-index tuple. The earlier native proposed-task ID
+was erased; retained validation proves the tuple and existing task-output family
+joins, not that private earlier task ID. `model_call_index` is only an exact
+bounded nonnegative integer with start/terminal equality; it is independent of
+the committed batch slot. Terminal fields remain unchanged. Multiple effects
+may reference one committed call; effects establish no result count, status,
+output, file, Git, MCP or parallel fact. Every private leaf stays discarded.
+
+Old unmarked approved rows remain readable without reclassification. New marked
+sources require an upgraded reader; old strict schemas and Muse executables
+refuse the new field. Previously erased names/profiles cannot be recovered from
+retained rows. No capture, execution permission or full native parity is enabled.
 
 Only minimal new-family identities survive: run/source record for reasoning;
 run/pending/task/call for requests and wait starts; run/pending/review for review
