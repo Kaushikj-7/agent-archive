@@ -159,12 +159,13 @@ func museAcceptanceCollect(t *testing.T, f museRootCaptureFixture, remote *museA
 
 func TestMuseWarmUnchangedCohortsConsumeNoFilterInputUploadOrStorageListing(t *testing.T) {
 	// Sequential: trace is process-wide. Full campaign explicitly selects the
-	// larger durable-hook cohorts; an ordinary CI skip is never their evidence.
-	for _, owners := range []int{1, 128, 512} {
+	// larger durable-hook cohorts; their absence is never passing evidence.
+	cohorts := []int{1}
+	if os.Getenv("AGENT_ARCHIVE_PERF") != "" {
+		cohorts = append(cohorts, 128, 512)
+	}
+	for _, owners := range cohorts {
 		t.Run(fmt.Sprintf("owners%d", owners), func(t *testing.T) {
-			if owners > 1 && os.Getenv("AGENT_ARCHIVE_PERF") == "" {
-				t.Skip("full cohort requires the separately bounded acceptance campaign")
-			}
 			f := newMuseRootCaptureFixture(t)
 			museAcceptanceQueue(t, f, owners)
 			remote := &museAcceptanceStore{MemoryStore: storagetest.NewMemoryStore()}

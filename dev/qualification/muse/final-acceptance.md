@@ -193,7 +193,9 @@ synthetic native fixture encoder, real hook queue, builtin Filter and shared
 inventory. It does not manufacture admission or replace the concrete leased
 source objects. The warm test selects one owner in ordinary CI; its 128- and
 512-owner children require `AGENT_ARCHIVE_PERF=1` in a separately bounded
-campaign. An ordinary skipped child supplies no qualification evidence.
+campaign. Full acceptance must require all three exact children (`owners1`,
+`owners128`, `owners512`) in the raw test evidence; absent children remain
+UNVERIFIED. Ordinary CI selects only `owners1` and does not invent skips.
 
 The warm assertions cover three settled ticks with zero native Filter input
 bytes, zero storage PUTs, zero calls through all three listing entry points,
