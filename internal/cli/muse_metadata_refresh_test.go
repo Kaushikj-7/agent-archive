@@ -119,6 +119,9 @@ func TestMuseRetainedMetadataRefreshReachesWarmConsumers(t *testing.T) {
 	must(t, err)
 	expected, err := analyzeSource(t.Context(), registry, bundle)
 	must(t, err)
+	parser, _ := registry.LookupParser("muse")
+	expectedMetadata, err := archive.BuildMetadataWithAnalysis(bundle, expected, nil, prior.MachineID, prior.StartedAt, prior.MetadataDerivedAt, prior.SourceBundle, archive.ParserInfo{Name: "muse", Version: parser.Version()})
+	must(t, err)
 	labels, _ := archive.LabelsFromAnalysis(expected)
 	if labels.Name != "Current synthetic name" {
 		t.Fatal("retained name fixture did not establish the current label")
@@ -151,8 +154,7 @@ func TestMuseRetainedMetadataRefreshReachesWarmConsumers(t *testing.T) {
 	}
 	next, err := reader.ReadMetadata(t.Context(), cloud, key)
 	must(t, err)
-	parser, _ := registry.LookupParser("muse")
-	if next.Name != labels.Name || next.Title != labels.Title || next.SourceBundle != prior.SourceBundle || !next.CapturedAt.Equal(prior.CapturedAt) || !next.MetadataDerivedAt.Equal(now) || next.Parser.Version != parser.Version() || !reflect.DeepEqual(next.Counts, prior.Counts) {
+	if next.Name != labels.Name || next.Title != labels.Title || next.SourceBundle != prior.SourceBundle || !next.CapturedAt.Equal(prior.CapturedAt) || !next.MetadataDerivedAt.Equal(now) || next.Parser.Version != parser.Version() || !reflect.DeepEqual(next.Counts, prior.Counts) || !reflect.DeepEqual(next.Models, expectedMetadata.Models) {
 		t.Fatal("retained refresh changed source/activity age or failed to refresh derivation")
 	}
 	afterSource, err := cloud.Get(t.Context(), next.SourceBundle.Key)
@@ -176,16 +178,17 @@ func TestMuseRetainedMetadataRefreshReachesWarmConsumers(t *testing.T) {
 	}
 	var oldModel statsDocument
 	must(t, json.Unmarshal([]byte(mustRunStats(t, f.env, 0, "--harness", "muse", "--model", "synthetic-prior-model", "--json")), &oldModel))
-	if oldModel.Coverage.Sessions != 0 || len(next.Models) == 0 {
+	if oldModel.Coverage.Sessions != 0 {
 		t.Fatal("model filter retained stale attribution")
 	}
-	model := next.Models[0].Attributes["gen_ai.request.model"]
+	// Startup model presence does not establish per-turn model attribution.
+	// Current builtin analysis may truthfully remove the old model altogether.
 	var current statsDocument
-	must(t, json.Unmarshal([]byte(mustRunStats(t, f.env, 0, "--harness", "muse", "--model", model, "--json")), &current))
-	if model == "" || current.Coverage.Sessions != 1 || current.Overview.Cost.Value != nil {
-		t.Fatal("refreshed model disappeared or unavailable usage became priced")
+	must(t, json.Unmarshal([]byte(mustRunStats(t, f.env, 0, "--harness", "muse", "--json")), &current))
+	if current.Coverage.Sessions != 1 || current.Overview.Cost.Value != nil || current.Overview.Tokens.Value != nil {
+		t.Fatal("ordinary session disappeared or unavailable usage became priced")
 	}
-	page := mustRunStats(t, f.env, 0, "--harness", "muse", "--model", model, "--html", "--include-names")
+	page := mustRunStats(t, f.env, 0, "--harness", "muse", "--html", "--include-names")
 	checkPageAgainstJSON(t, parsePage(t, page), current)
 	for _, detail := range []string{"metadata", "full"} {
 		records, errOut, code := evalLines(t, f.env, next.SessionID, "--harness", "muse", "--detail", detail)
