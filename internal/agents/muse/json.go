@@ -43,13 +43,19 @@ func decodeObject(raw []byte) (map[string]any, []string, error) {
 }
 
 type jsonReader struct {
-	decoder *json.Decoder
-	nodes   int
+	decoder     *json.Decoder
+	nodes       int
+	nodeLimit   int
+	memberLimit int
 }
 
 func (r *jsonReader) value(depth int) (any, []string, error) {
 	r.nodes++
-	if depth > maxDepth || r.nodes > maxNodes {
+	limit := r.nodeLimit
+	if limit == 0 {
+		limit = maxNodes
+	}
+	if depth > maxDepth || r.nodes > limit {
 		return nil, nil, errFormat
 	}
 	t, e := r.decoder.Token()
@@ -85,6 +91,9 @@ func (r *jsonReader) object(depth int) (any, []string, error) {
 	m := map[string]any{}
 	var keys []string
 	for r.decoder.More() {
+		if r.memberLimit > 0 && len(m) >= r.memberLimit {
+			return nil, nil, errFormat
+		}
 		k, e := r.decoder.Token()
 		if e != nil {
 			return nil, nil, errFormat
@@ -112,6 +121,9 @@ func (r *jsonReader) object(depth int) (any, []string, error) {
 func (r *jsonReader) array(depth int) (any, []string, error) {
 	a := []any{}
 	for r.decoder.More() {
+		if r.memberLimit > 0 && len(a) >= r.memberLimit {
+			return nil, nil, errFormat
+		}
 		v, _, e := r.value(depth + 1)
 		if e != nil {
 			return nil, nil, e

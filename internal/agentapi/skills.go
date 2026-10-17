@@ -100,3 +100,35 @@ type SkillsLookup interface {
 	LookupSkills(string) (SkillProvider, bool)
 	SkillAgents() []string
 }
+
+// SkillInventoryInput declares one installed catalog relative to a qualified
+// native boundary. It is not a process command or an arbitrary read callback.
+type SkillInventoryInput struct {
+	Boundary string
+	Registry string
+}
+
+// SkillInstalledPackage contains bounded private locator facts, never an
+// uploaded package-integrity or activation assessment.
+type SkillInstalledPackage struct {
+	ID             string
+	Version        string
+	Directory      string
+	ManifestSHA256 string
+}
+
+// SkillInstalledInventory distinguishes an incomplete supported subset from a
+// complete empty registry. Unsupported records never become absent packages.
+type SkillInstalledInventory struct {
+	Packages   []SkillInstalledPackage
+	Incomplete bool
+}
+
+// SkillInventoryInterpreter is an optional pure companion to SkillProvider.
+// Shared observation owns all catalog, manifest and declared-body I/O under one
+// allowance. Implementations cannot request additional arbitrary read stages.
+type SkillInventoryInterpreter interface {
+	InventoryInput(SkillLocations) (SkillInventoryInput, bool)
+	InterpretInventory([]byte) (SkillInstalledInventory, error)
+	InterpretManifest(SkillInventoryInput, SkillInstalledPackage, []byte) (SkillRoot, error)
+}

@@ -34,13 +34,19 @@ documents additional config-local, foreign and plugin sources. Project trust and
 activation affect availability; foreign personal roots have configuration and
 rollout gates. Config-local and foreign filesystem inventory now uses exact injected locations;
 project trust and native activation remain unknown. The builtin filesystem layout was observed in the isolated pinned native
-1.4.9-R6297.1 case, and is now declared explicitly. General plugin installed roots
-remain uninspected until their installed catalog locator/schema/provenance are
-qualified; no scratch package is treated as an installed plugin. The existing
+1.4.9-R6297.1 case, and is now declared explicitly. The private provider-free native-local install experiment qualified the exact
+version1 `muse/plugins/installed.json` wire locator and relative digest-addressed
+cache layout. Production interprets only that observed `muse`/`native-local`
+subset, verifies the raw cached manifest hash and observes declared skill files.
+Unknown provenance, versions and authority fields remain incomplete; no scratch
+package is treated as an installed plugin. The existing
 observer supports finite tagged manifest-file declarations, preserving package
 confinement, installed-only coverage, physical-read deduplication and one shared
-byte/declaration allowance. This is infrastructure for qualified provenance, not
-a test-only claim of production plugin coverage. Production observation never
+byte/declaration allowance. The registry/manifest bytes share its per-call allowance and are never retained
+in uploaded evidence. Package scope is the stable logical `muse-plugin:<id>`;
+raw package digests stay private and do not claim whole-package verification.
+Private owned/no-symlink registry, manifest, body and ancestor checks fail closed;
+ownership qualification is unavailable on unsupported platforms. Production observation never
 executes native CLI commands.
 Inventory proves installation; it does not prove eligibility, invocation or a
 read. Unknown coverage must remain unavailable, never observed-no-use. Optional metadata installed declaration identities preserve logical scope/id

@@ -10,7 +10,8 @@ follow [Semantic Versioning](https://semver.org/).
   Skill installation shares `.agents/skills` with Codex and Cursor. Muse skill
   evidence follows the existing `none`, `metadata` and `body` settings, with
   filtered installed inventory, including the exact bundled Muse skill root
-  under the caller-qualified data home. Native eligibility and use remain unknown.
+  under the caller-qualified data home and declared files from the supported
+  native-local installed plugin registry. Native eligibility and use remain unknown.
   Metadata preserves distinct installed declaration identities even when skills
   share a name and content hash. Exact runtime identity and public capture remain gated.
 

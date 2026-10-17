@@ -180,8 +180,11 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   Builtin inventory uses only the caller-qualified effective data home plus
   `muse/skills/bundled/muse-core/skills`. The data home is fixed once per Muse
   observation pass, using the existing injected XDG data-location policy; no
-  provider guesses another location. Plugin installed provenance remains
-  unqualified and plugin sources remain uninspected. Inventory proves installation only;
+  provider guesses another location. Native-local plugin inventory reads the exact
+  `muse/plugins/installed.json` version-1 registry under that same data home,
+  derives its local cache location, checks the manifest's raw hash, and reads
+  only its finite declared skill files. Other registry versions, provenance
+  families and ambiguous declarations remain incomplete. Inventory proves installation only;
   project trust, native activation, eligibility and invocation/read use remain
   unknown. Skill presence cannot activate Muse capture.
 
@@ -192,7 +195,14 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   project is skipped. The shared observer also supports finite caller-qualified
   manifest file declarations: only the declared regular files inside that exact
   package can be read, with no recursive search or undeclared neighbors. This
-  does not supply missing native plugin installation provenance. User roots share
+  requires installed registry provenance for native plugins; a scratch manifest
+  alone supplies no installed authority. Registry and manifest reads are each
+  limited to 256 KB and together to 1 MB, included in the existing allowance;
+  no more than 256 packages and 256 declared files are admitted. Only private,
+  current-user-owned regular files under the exact installed boundary are read;
+  unsupported ownership platforms remain unavailable. Raw package/manifest
+  digests, source paths, settings and non-skill capabilities are not uploaded.
+  User roots share
   one 4 MB allowance and physical-file cache per observation; each project's roots
   have a separate 4 MB allowance and cache. One file is limited to 1 MB and an
   archived body to 16 KB. Sessions imported with `backfill`

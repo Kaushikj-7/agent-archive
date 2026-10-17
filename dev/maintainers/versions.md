@@ -411,7 +411,9 @@ identities; default0.21.0 and other parsers/configuration/source/
 metadata schemas remain unchanged. Installation deduplicates the shared root.
 The same unreleased31 allocation includes exact qualified DataHome builtin
 inventory and bounded declared-file infrastructure for original PR10 installed
-plugin scope; production plugin catalog wiring still requires native provenance.
+plugin scope, including the qualified version1 native-local installed registry,
+raw manifest-hash join and finite package-confined declarations. Unknown wire
+versions/provenance remain incomplete; raw locator digests stay local.
 Each user observation and each project observation retains its separate4MiB
 allowance/cache, with no extra native process path and existing Body/Metadata/None
 policy. No derived eligibility or use is introduced. Muse-only installed declaration

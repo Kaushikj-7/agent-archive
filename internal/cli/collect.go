@@ -606,7 +606,17 @@ func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegis
 				}
 				dataHome = museDataHome
 			}
-			userScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: harness, UserHome: userHome, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, harness, agentapi.SkillLocations{UserHome: userHome, DataHome: dataHome, Environment: museEnvironment})})
+			locations := agentapi.SkillLocations{UserHome: userHome, DataHome: dataHome, Environment: museEnvironment}
+			options := evidence.SkillOptions{Harness: harness, UserHome: userHome, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, harness, locations)}
+			if provider, found := env.agentRegistry().LookupSkills(harness); found {
+				if interpreter, implemented := provider.(agentapi.SkillInventoryInterpreter); implemented {
+					if input, available := interpreter.InventoryInput(locations); available {
+						options.Inventory = interpreter
+						options.InventoryInput = input
+					}
+				}
+			}
+			userScope, err = evidence.ObserveSkills(options)
 			if err != nil {
 				return nil, err
 			}

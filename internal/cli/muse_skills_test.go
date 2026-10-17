@@ -68,8 +68,8 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 		t.Fatalf("environment snapshot reads: %v", calls)
 	}
 	// Real typed declaration observer feeds the existing native Source/Filter
-	// bundle and analysis path; this is synthetic caller-qualified input, not
-	// a claim that the held native plugin catalog producer has been implemented.
+	// bundle and analysis path. This collision fixture is independent of the
+	// installed-registry producer exercised by the separate plugin pipeline test.
 	var declaredRoots []agentapi.SkillRoot
 	for index, ids := range [][]string{{"first", "second"}, {"first"}} {
 		root := t.TempDir()

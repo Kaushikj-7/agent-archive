@@ -7,20 +7,29 @@ records the filter version that produced it (`filter_version`).
 
 ## Source filter version 31
 
-Global and Muse adapter 0.31.0 accompany this change; parsers are unchanged.
+Global and Muse adapter 0.31.0 accompany this change. Muse parser0.7.0
+separately derives optional installed declaration identities; other parsers stay unchanged.
 
 - Muse supplemental skill evidence now uses the existing bounded shared
   filesystem inventory and privacy-filtered snapshots, according to the selected
   `none`, `metadata` or `body` mode. Imports receive no current skill inventory.
 - Installation uses the shared `.agents/skills` destination. Inventory covers
   shared, project, Claude-foreign and exact injected Muse config/Codex roots.
-  Unknown, empty or invalid configured roots are unavailable; plugin/builtin
-  roots are not guessed. Paths used for native observation remain local.
+  Unknown, empty or invalid configured roots are unavailable. The caller-qualified
+  data home supplies the exact bundled root and version1 native-local plugin
+  registry. Cache paths are derived from validated installed records; manifest
+  hashes join declared confined skills. Unsupported records remain incomplete.
+  Raw paths, package/manifest hashes, activation/trust fields and other package
+  capabilities remain local. No native subprocess runs during observation.
 - Coverage stays `installed_only`; inventory does not establish trust,
   activation, eligibility, invocation, read inference or observed-no-use.
   Existing secret redaction, filtered-body hashes and snapshot limits apply.
-  No native transcript fields, parser policy, public schemas or capture authority
-  change. Previously frozen pending bytes retain their original provenance.
+  No native transcript fields or capture authority change. Optional metadata
+  installed identities preserve distinct bounded logical scope/id pairs within
+  existing content groups; absent-identity bytes remain unchanged. Source2,
+  metadata1 and history2 remain additive-compatible with ordinary typed readers;
+  old strict metadata schemas refuse the optional field. Previously frozen
+  pending bytes retain their original provenance.
 
 ## Source filter version 30
 
