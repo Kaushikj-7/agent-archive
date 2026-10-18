@@ -737,18 +737,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 		terminal.Println(stdout)
 	}
 
-	switch {
-	case u.pendingCount() == 0:
-		terminal.Printf(stdout, "Uploaded %s (%s).\n", countNoun(u.total, "session"), backfill.FormatSize(u.totalBytes))
-	case interrupt.requested():
-		terminal.Printf(stdout, "Stopped. The remaining %s will be uploaded by the background collector.\n", u.pendingDescription())
-	case errors.Is(passErr, errPaused):
-		terminal.Printf(stdout, "Collection is paused. The remaining %s will be uploaded after agent-archive resume.\n", u.pendingDescription())
-	case u.policyBlocked+u.childrenPolicyBlocked > 0:
-		terminal.Printf(stdout, "%s retained but not remotely verified because current policy prevents publication. Review the configuration, then run agent-archive backfill again with the same options.\n", importPendingDescription(u.policyBlocked, u.childrenPolicyBlocked))
-	default:
-		terminal.Printf(stdout, "%s not uploaded yet. The background collector keeps trying; run agent-archive status to follow it.\n", u.pendingDescription())
-	}
+	u.printCompletion(stdout, passErr, interrupt.requested())
 	printImportHints(stdout, batchID)
 	if interrupt.requested() || errors.Is(passErr, errPaused) {
 		return 0
@@ -761,6 +750,25 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 		return 1
 	}
 	return 0
+}
+
+// printCompletion treats a failed zero census as unknown, never success.
+// Known counts keep their existing policy, pause and interruption messages.
+func (u *upload) printCompletion(stdout io.Writer, passErr error, interrupted bool) {
+	switch {
+	case passErr != nil && u.pendingCount() == 0 && !errors.Is(passErr, errPaused) && !interrupted:
+		terminal.Println(stdout, "Import publication is unfinished.")
+	case u.pendingCount() == 0:
+		terminal.Printf(stdout, "Uploaded %s (%s).\n", countNoun(u.total, "session"), backfill.FormatSize(u.totalBytes))
+	case interrupted:
+		terminal.Printf(stdout, "Stopped. The remaining %s will be uploaded by the background collector.\n", u.pendingDescription())
+	case errors.Is(passErr, errPaused):
+		terminal.Printf(stdout, "Collection is paused. The remaining %s will be uploaded after agent-archive resume.\n", u.pendingDescription())
+	case u.policyBlocked+u.childrenPolicyBlocked > 0:
+		terminal.Printf(stdout, "%s retained but not remotely verified because current policy prevents publication. Review the configuration, then run agent-archive backfill again with the same options.\n", importPendingDescription(u.policyBlocked, u.childrenPolicyBlocked))
+	default:
+		terminal.Printf(stdout, "%s not uploaded yet. The background collector keeps trying; run agent-archive status to follow it.\n", u.pendingDescription())
+	}
 }
 
 // upload tracks a batch's sessions while they upload.
@@ -833,6 +841,16 @@ func (u *upload) refresh() error {
 		if waiting {
 			u.pending[reg.ArchiveSessionID] = size
 		}
+	}
+	batch, err := uploadBatch(u.home, u.batch)
+	if err != nil {
+		return err
+	}
+	children, blocked, err := pendingImportChildren(store, cfg, regs, batch)
+	u.childrenPending += children
+	u.childrenPolicyBlocked += blocked
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -1009,7 +1027,11 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 // has newer work to upload.
 func batchUploadState(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, b backfill.Batch, latest bool) (string, error) {
 	registered, subagents, waiting, rechecking, updating := 0, 0, 0, 0, 0
-	staged, verified, childrenPending := 0, 0, 0
+	childrenPending, _, err := pendingImportChildren(store, cfg, regs, b)
+	if err != nil {
+		return "", err
+	}
+	staged, verified := 0, 0
 	for _, reg := range regs {
 		if !reg.InBatch(b.ID) {
 			continue
@@ -1148,7 +1170,7 @@ func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.St
 			return reg.InBatch(batchID)
 		}, HistoricalProjectLabel: current.HistoricalProjectLabel, SkillEvidence: current.EffectiveSkillEvidence(), RequireSkillUse: current.RequireSkillUse, CursorDatabase: env.cursorDatabase(), CodexRollouts: lookup, ConfiguredCodexHomes: readHomes, NativeRoots: current.NativeRoots, RepoKey: env.repoKey, Stop: stop})
 		defer result.CloseStagedResults()
-		_, issueErr := recordSelectedPassSessionIssues(store, result, previous)
+		issueErr := recordSelectedPassSessionIssues(store, result, previous)
 		reportErr := errors.Join(reportImportCapacityDrain(stdout, result, err), issueErr)
 		if stop != nil && stop() {
 			return errors.Join(backfill.ErrStopped, reportErr)

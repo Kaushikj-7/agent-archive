@@ -135,6 +135,11 @@ ongoing imports keep their normal configuration filtering. This adds no persiste
 field or permission and leaves the existing expiry-deferral rule unchanged.
 A matching empty-plan continuation resumes retained admission and publication,
 including a completed registration batch whose first publication is pending.
+Selected linked children that remain queued before registration are also pending.
+Completion reads only their exact batch IDs, existing admitted parent and matching
+retained stage. Read-only history never quarantines candidate evidence; unknown
+selected evidence reports an error, while unrelated and ordinary hook candidates
+do not join that import. Registered children retain their own Outstanding census.
 
 The existing five-second discovery/lookup allowance protects background
 responsiveness. It is not a whole-foreground-command deadline, a cumulative
@@ -240,6 +245,13 @@ work and a continuation action without discarding admitted evidence. Dry-run and
 background modes must not secretly upload to make capacity available. Dry-run
 may use private disposable content-free scratch/cache, but creates no admission,
 retained transcript stage, configuration change or remote object.
+
+First publication rebuilt from an ordinary retained stage reuses the actual
+validated stage's capture instant, including a later retry after native deletion.
+Admission time and the collector's current clock are not substitutes. Unknown
+selected child obligations report unfinished publication before zero-count
+success. Already frozen pending-publication bytes and the existing native,
+privacy and relationship validation remain unchanged.
 
 For a genuinely over-limit record, history graph or individual source, report the
 actual limit and preserve the remaining eligible sessions. Follow the separate
@@ -421,9 +433,9 @@ action under `related_history_pending`. It describes unfinished lookup work,
 not a source resource or format refusal. Source raw-byte and individual-record
 refusals retain `source_size_limit` and `source_record_limit`; named graph,
 aggregate-history and evidence refusals retain their existing details. Skip
-precedence and admission decisions are unchanged. Foreground planning now
-selects renewable native preparation and inspection; confirmed staging,
-admission and publication retain their existing policy. A bounded failed native
+precedence and admission decisions are unchanged. Explicit import planning and
+staging select renewable native preparation and inspection; foreground admission
+publishes verified owned groups within the existing quota. A bounded failed native
 I/O unit keeps `lookup_io_timeout` with retry advice, independently of scheduling
 allowance. Read-only inventory commits each bounded directory batch before
 yielding. Stalled or cycling opaque directory cookies return

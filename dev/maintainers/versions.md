@@ -79,7 +79,12 @@ Confirmed backfill continuation and group publication use the existing import
 stage, batch, pending-publication and readback formats. The fresh confirmed-stage
 policy check adds no durable fields or permission. Native selection, privacy
 filtering and metadata derivation are unchanged, so no filter, adapter, parser,
-schema or permanent writer version changes apply.
+schema or permanent writer version changes apply. Retrying an ordinary first
+import stage also reuses that validated stage's original capture instant through
+envelope construction, rather than assigning the later collector clock. This
+restores already-selected capture provenance without changing native filtering,
+adapter output, parser algorithms or persisted fields. Already frozen pending
+publication bytes and proofs are retried unchanged.
 
 - **Any change to filtered output** — a key kept or dropped, a redaction
   pattern, a new block type — bumps `FilterVersion` and adds a section to the

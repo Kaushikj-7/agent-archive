@@ -590,7 +590,14 @@ func (s *Store) hasReferencedImportStage(reg archive.SessionRegistration) (prese
 	if reg.StagedImportSHA256 == "" {
 		return false, nil
 	}
-	if !safeFileComponent(reg.ArchiveSessionID) {
+	return s.HasImportStage(reg.ArchiveSessionID)
+}
+
+// HasImportStage observes only whether one selected ID still has stage bytes.
+// It never decodes payloads or grants registration, publication or release
+// authority. Unsafe paths and unreadable state return errors, never absence.
+func (s *Store) HasImportStage(id string) (present bool, err error) {
+	if !safeFileComponent(id) {
 		return false, ErrDurableStorageRecovery
 	}
 	home, err := local.OpenRootedHome(s.home)
@@ -598,7 +605,7 @@ func (s *Store) hasReferencedImportStage(reg archive.SessionRegistration) (prese
 		return false, err
 	}
 	defer func() { err = errors.Join(err, home.Close()) }()
-	root, err := privateDirectory(home.Root, filepath.Dir(importStageRelative(reg.ArchiveSessionID)), false)
+	root, err := privateDirectory(home.Root, filepath.Dir(importStageRelative(id)), false)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}

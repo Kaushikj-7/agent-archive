@@ -76,7 +76,8 @@ Explicit imports renew bounded native lookup work during preparation and staging
 including with `--background`. Before the first durable selection, repository,
 native dependency locations and current policy are checked again, including
 before each fresh child payload. After complete group preparation, retained
-evidence supplies recovery even when native files are gone.
+evidence supplies recovery even when native files are gone. A later first upload
+keeps that staged evidence's original capture time, rather than the retry time.
 Run the same options again to finish registration and foreground publication;
 matching mapping files can be renamed or reordered without changing batch identity.
 
@@ -94,7 +95,8 @@ input limit. A source that exceeds these bounds is rejected before admission;
 completed groups stay recoverable. `backfill history` distinguishes staged/admitted sessions from
 remotely verified uploads. Uploaded means the collector has read back the
 selected remote sources and metadata and committed its local completion state.
-Linked subagent transcripts keep their own pending publication obligations.
+Linked subagent transcripts keep their own pending registration and publication
+obligations.
 An import reports completion only after those transcripts finish too; rerunning
 the same options retries their retained evidence after native deletion.
 An already recorded remote publication can still be waiting for local release

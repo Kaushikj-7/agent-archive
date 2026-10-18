@@ -345,7 +345,7 @@ architecture, or signed-installer acceptance; see [releasing](../maintainers/rel
 The [Extended workflow](../../.github/workflows/extended.yml) uses separate
 daily `17 8 * * 1-6` and weekly `17 8 * * 0` cron events, avoiding a duplicate
 daily campaign on Sunday. Daily runs all Linux representative race bodies plus
-the four named full restorations, native Darwin platform smoke, expanded native
+the five named full restorations, native Darwin platform smoke, expanded native
 config/catalog/capture/source-I/O integration and the pinned
 published writer, actual systemd scheduler/setup/timer/uninstall, five seconds
 of mutations on every discovered fuzz target and expanded purge cases. Weekly

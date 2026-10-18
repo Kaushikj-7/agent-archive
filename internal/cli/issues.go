@@ -260,10 +260,10 @@ func recordSessionIssues(localStore *state.Store, sessionErrs map[string]error, 
 // recordSelectedPassSessionIssues consumes the collector's merged owner codes,
 // including untouched non-backoff failures. The caller holds collector.lock
 // across the prior snapshot, collection and this aggregate-summary replacement.
-func recordSelectedPassSessionIssues(localStore *state.Store, result collector.Result, previous state.Status) (string, error) {
+func recordSelectedPassSessionIssues(localStore *state.Store, result collector.Result, previous state.Status) error {
 	current, err := localStore.LoadStatus()
 	if err != nil {
-		return "", err
+		return err
 	}
 	isSubagent := subagentLookup(localStore)
 	issues := classifySessions(result.Errors, isSubagent)
@@ -271,7 +271,8 @@ func recordSelectedPassSessionIssues(localStore *state.Store, result collector.R
 	prior := classifySessions(nil, isSubagent)
 	prior.carryCodes(previous.SessionIssues, isSubagent)
 	current.ReplaceLastError(collector.FailedSessionsProblem(len(result.Errors)), "")
-	return saveSessionIssues(localStore, current, issues, prior.summary())
+	_, err = saveSessionIssues(localStore, current, issues, prior.summary())
+	return err
 }
 
 func (i sessionIssues) carryCodes(codes map[string]string, isSubagent func(string) bool) {

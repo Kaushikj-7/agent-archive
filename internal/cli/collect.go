@@ -312,8 +312,7 @@ func recordImportPass(home string, cfg config.Config, env Env, store *state.Stor
 			return err
 		}
 	}
-	_, err := recordSelectedPassSessionIssues(store, result, previous)
-	return err
+	return recordSelectedPassSessionIssues(store, result, previous)
 }
 
 func collectorNeedsGuard(cfg config.Config) bool {
