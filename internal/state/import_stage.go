@@ -1104,6 +1104,12 @@ func (s *Store) importStageAbsentDescriptor(ctx context.Context, id string) (Imp
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return ImportStage{}, false, e
 	}
+	// Progress without its immutable receipt is incomplete recovery evidence,
+	// never an empty/cancelled stage. Present malformed controls also refuse.
+	var progress stagedReleaseProgress
+	if err := s.readStagedControl(id, stagedReleaseProgressName, &progress); !errors.Is(err, os.ErrNotExist) {
+		return ImportStage{}, false, errors.Join(ErrDurableStorageRecovery, err)
+	}
 	var cancel importCancellation
 	if e := s.readImportControl(importCancelRelative(id), &cancel); e == nil {
 		if _, e := hex.DecodeString(cancel.SHA256); e != nil || len(cancel.SHA256) != 64 {
