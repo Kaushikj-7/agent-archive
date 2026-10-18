@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
 // Every remote.origin.url value is read: one that normalizes is the identity
@@ -52,7 +53,8 @@ func TestProjectKeyReadsEveryOriginValue(t *testing.T) {
 }
 
 // A real checkout whose last origin URL is a local path still has the key of
-// its other origin URL, and its identity is not keyless.
+// its other origin URL for annotations. Recovery separately requires the local
+// target to resolve; the portable value cannot hide its missing evidence.
 func TestProjectKeyWithLocalLastOriginValue(t *testing.T) {
 	git := gitOrSkip(t)
 	root := initRepo(t, git, "https://example.test/acme/repo.git")
@@ -67,7 +69,7 @@ func TestProjectKeyWithLocalLastOriginValue(t *testing.T) {
 	if _, _, nonportable := projectKey(t.Context(), root, nil); nonportable {
 		t.Fatal("checkout with a real origin classified keyless")
 	}
-	if id := observeProjectIdentity(t.Context(), root); !id.Known || id.Key != want {
+	if id := observeProjectIdentity(t.Context(), root); id.Known || id.Failure != sourcefacts.RecoveryOriginMissing {
 		t.Fatalf("identity %+v", id)
 	}
 }

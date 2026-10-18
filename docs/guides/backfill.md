@@ -267,22 +267,26 @@ prove that a transcript is too large. Repeating a command or narrowing its
 date/project output filter does not guarantee completion, because native proof
 preparation can still inspect the wider inventory.
 
-A configured local clone whose origin is a filesystem path can block automatic
-deleted-worktree recovery even when other repositories are accessible. The path
-may lead to another clone of the recorded repository; a stable local origin alone
-cannot prove that the repositories differ. Reviewed exact mappings or a mapping
-file can resolve supported individual assignments without deleting the clone,
-changing its origin or removing its project rules.
-Mappings solve attribution; native-history evidence still needs to pass its own
-checks. Excluded projects remain part of automatic recovery evidence.
+Local Git origins use bounded, read-only chain resolution for both proposed and
+configured projects. Absolute/relative paths and local `file://` URLs can lead to
+a portable repository identity through another checkout or bare repository.
+Every origin value must resolve consistently. Two physical clones of the same
+repository remain competitors, even when one points at the other. Excluded
+projects remain part of automatic recovery evidence.
+
+Cycles, missing or unreadable targets, conflicting identities, unsupported
+references, keyless chain terminals and traversal limits keep recovery pending
+with a specific `project_origin_*` diagnostic. The observer compares at most 16
+repository directories and 128 dependencies for one chain graph. Git is never
+asked to fetch, and configuration is unchanged. Reviewed exact mappings or a
+mapping file can resolve supported assignments independently of unrelated
+uncertain clones. Mappings still respect exclusions and target identity; native
+history must pass its own checks.
 
 The [large-backfill completion plan](../../dev/proposals/large-backfill-completion.md)
-addresses these limitations. Its renewable foreground work and recovery
-assistance are planned behavior, not additional options available in this build.
-The plan requires sufficient local-origin identity evidence for affected automatic
-recovery, or a reviewed assignment when ownership remains unknown or ambiguous.
-It preserves distinct clones and exclusions; it does not simply ignore local
-origins. Existing supported mappings and historical destinations remain available.
+tracks remaining foreground work renewal, larger inventories and recovery
+assistance. Those future options are not available in this build. Existing
+supported mappings and historical destinations remain available.
 
 For Codex history refusals, `diagnostics` preserves fixed source reason codes
 when available: a missing or duplicated rollout a thread continues from, no

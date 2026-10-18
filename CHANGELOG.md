@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Deleted-worktree recovery resolves local Git origin chains consistently before
+  and after project configuration. Every origin and traversed dependency must
+  agree and remain current; physical clones remain distinct competitors. Cyclic,
+  missing, unreadable, conflicting or unresolved chains report specific reasons
+  and remain available for reviewed exact project assignments.
+
 - Prepare guarded capture of newly started Muse sessions, with explicit home,
   project and capture-window checks before ownership. Public setup remains
   disabled pending native acceptance; existing Muse local reading is unchanged.
