@@ -371,7 +371,7 @@ func (f boundaryReadFile) ReadAt(p []byte, off int64) (int, error) {
 	return n, err
 }
 
-func boundaryNative(t *testing.T, path string, family string, target int64, digest string) archive.FilteredTranscript {
+func boundaryNative(t *testing.T, path string, family string, target int64, digest string) archive.SourceBundle {
 	t.Helper()
 	budget := agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
 	end := budget.BeginScope(boundarySessionBytes)
@@ -397,7 +397,7 @@ func boundaryNative(t *testing.T, path string, family string, target int64, dige
 		if !errors.As(err, &raw) || raw.Size != target || raw.Limit != archive.MaxRawTranscriptBytes || snapshot != nil {
 			t.Fatalf("real raw gate: snapshot=%v error=%v", snapshot, err)
 		}
-		return archive.FilteredTranscript{}
+		return archive.SourceBundle{}
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -412,7 +412,7 @@ func boundaryNative(t *testing.T, path string, family string, target int64, dige
 		if !ok || snapshot.Input().File.Length() != target || actual.proof.Boundary != target || hex.EncodeToString(actual.proof.SHA256[:]) != digest || reads.bytes < target {
 			t.Fatal("real snapshot hash/boundary mismatch")
 		}
-		return archive.FilteredTranscript{}
+		return archive.SourceBundle{}
 	}
 	beforeFilter := *reads
 	out, release, err := (Filter{}).FilterLeased(t.Context(), snapshot.Input(), agentapi.FilterContext{Limits: agentapi.ReadLimits{ReadBudget: budget}, StartedAt: time.Unix(2000000100, 0)}, budget)
@@ -426,12 +426,14 @@ func boundaryNative(t *testing.T, path string, family string, target int64, dige
 		if !budget.ScopeExceeded() || filterBytes <= 0 || filterBytes >= target {
 			t.Fatal("record did not refuse at session scope before reading the large record")
 		}
-		return archive.FilteredTranscript{}
+		return archive.SourceBundle{}
 	}
 	if err != nil || len(out.Records) == 0 || len(out.SessionIDs) != 1 {
 		t.Fatalf("small real Filter positive: %v", err)
 	}
-	return out
+	// bundleFor JSON-roundtrips into detached records while the Filter loan is
+	// still live. Only then may the deferred release and ledger check run.
+	return bundleFor(t, out)
 }
 
 func boundarySmallBundle(t *testing.T) archive.SourceBundle {
@@ -446,7 +448,7 @@ func boundarySmallBundle(t *testing.T) archive.SourceBundle {
 	if err := os.WriteFile(path, raw.Bytes(), 0600); err != nil {
 		t.Fatal(err)
 	}
-	bundle := bundleFor(t, boundaryNative(t, path, "small", 0, ""))
+	bundle := boundaryNative(t, path, "small", 0, "")
 	if bundle.History != nil {
 		t.Fatal("unexpected history; do not erase codec provenance")
 	}
