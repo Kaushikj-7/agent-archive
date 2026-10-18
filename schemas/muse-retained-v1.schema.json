@@ -2453,6 +2453,65 @@
           "type": "null"
         }
       }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "source_run_record_id",
+            "source_run_record_sequence",
+            "skill_id",
+            "evidence_kind",
+            "observed_at_sequence"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "skill_read_observed"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "source_run_record_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "source_run_record_sequence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "skill_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$"
+            },
+            "evidence_kind": {
+              "const": "read_skill_tool"
+            },
+            "observed_at_sequence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      }
     }
   ]
 }

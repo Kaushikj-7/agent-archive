@@ -11,7 +11,11 @@ follow [Semantic Versioning](https://semver.org/).
   evidence follows the existing `none`, `metadata` and `body` settings, with
   filtered installed inventory, including the exact bundled Muse skill root
   under the caller-qualified data home and declared files from the supported
-  native-local installed plugin registry. Native eligibility and use remain unknown.
+  native-local installed plugin registry. A qualified own native
+  `skill_read_observed` report can identify a harness skill read independently
+  of eligible inventory. Its original-file hash is erased, and metadata omits
+  the skill hash. Eligibility, activation and privacy-safe read-hash association
+  remain unqualified.
   Metadata preserves distinct installed declaration identities even when skills
   share a name and content hash. Exact runtime identity and public capture remain gated.
 

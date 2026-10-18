@@ -10,6 +10,19 @@ records the filter version that produced it (`filter_version`).
 Global and Muse adapter 0.31.0 accompany this change. Muse parser0.7.0
 separately derives optional installed declaration identities; other parsers stay unchanged.
 
+- Muse's exact own `skill_read_observed`/`read_skill_tool` event retains a
+  bounded canonical native skill ID, owning run/source provenance and a
+  self-source sequence. Only an already materialized own run with unique,
+  increasing source identity can derive existing `native_invocation` evidence.
+  This means the native harness explicitly reports a skill read; it does not
+  establish eligibility, activation or a successful tool-result join. The
+  native `sha256:<64lowerhex>` digest is validated then erased because it
+  hashes original bytes while shared snapshots hash redacted bytes. Metadata
+  omits SHA256. Unknown tags, keys, types, aliases and changed private identity
+  refuse. Older strict Muse readers refuse this new closed variant. The same
+  unreleased Muse parser0.7.0 derives this evidence without changing other
+  parsers, shared source/metadata/history schemas or pending provenance.
+
 - An approval-free exact native committed `read_skill` start with exact
   `broad_read` profile can retain the separate omission-only marker
   `effect_join: committed_broad_read_v1`. It requires earlier own committed

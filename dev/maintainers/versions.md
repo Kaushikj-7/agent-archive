@@ -394,6 +394,17 @@ Metadata1/history2 and other agent/default parser versions do not change.
 This is inside the exclusively allocated unpublished PR10 tuple, with no
 additional allocation. Frozen pending bytes preserve original provenance.
 
+The same exclusive unreleased31/global and Muse adapter0.31.0/Muse parser0.7.0
+tuple includes the closed own `skill_read_observed`/`read_skill_tool` event.
+Strict native digest validation precedes erasure; only native ID/run/source and
+self-source sequence survive. Existing `NativeSkillUses` derives positive
+`native_invocation` evidence with SHA256 omitted, independent of eligible
+inventory. It reports a native harness read, not tool-result success. Shared
+source/metadata/history versions and other/default parser versions do not
+change. Older strict Muse readers refuse the new variant. Privacy-safe product
+read-hash association and full runtime/trust/activation/eligibility acceptance
+remain open.
+
 Muse effect-body compatibility accepts the closed native `file_read` profile,
 `complete` task completion and `failed` outcome forms. Only validation of private
 omitted bodies changes: equivalent old and new bodies yield byte-identical

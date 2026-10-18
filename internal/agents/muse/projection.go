@@ -331,6 +331,9 @@ func projectRuntimeSession(r retained, p map[string]any) (map[string]any, error)
 	event := object(p["event"])
 	ek := runtimeEvent(str(event["kind"]))
 	f["event_kind"] = string(ek)
+	if kind == roleRun && ek == eventSkillReadObserved {
+		return projectSkillRead(r, p, event)
+	}
 	if kind == roleRun && (ek == eventAssistantToolCallsCommitted || ek == eventToolResultBatchCommitted) {
 		return projectTools(r, p, event)
 	}

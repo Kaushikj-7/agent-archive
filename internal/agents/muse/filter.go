@@ -409,6 +409,9 @@ var _ agentapi.TranscriptParser = Parser{}
 var retainedKeys = func() map[string]bool {
 	keys := strings.Fields("v pos line child id stream kind seq ts_us schema type payload_schema record_type durability causation_id fields schema_version format permission_epoch cause workspace_root provider_id model_id tool_surface_version session_id resume selection publication_id command_id command_kind activation_source cwd intent_id source_session_id surface semantic_kind envelope_record_id envelope_sequence run_id run_started_session_record_id run_started_source_record_id outcome_kind new_name previous_name source operation_id root_agent_id root_session_id event_kind source_run_record_id source_run_record_sequence prompt message_id response_id text position sequence marker omitted_record payload_type payload_schema_version payload_kind omission_class pending_action_id task_id tool_call_id review_id effect_id model_call_index model input_tokens output_tokens tool_calls call_id batch_id results tool_call_index effect_join")
 	out := map[string]bool{}
+	for _, key := range []string{"skill_id", "evidence_kind", "observed_at_sequence"} {
+		out[key] = true
+	}
 	for _, key := range keys {
 		out[key] = true
 	}

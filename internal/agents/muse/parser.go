@@ -139,6 +139,10 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 				if observeCompletion(r, joined, lastSequence, sourceRecords, &observations) != nil {
 					return view, nil, errFormat
 				}
+			case eventSkillReadObserved:
+				if observeSkillRead(r, joined, lastSequence, sourceRecords, &view) != nil {
+					return view, nil, errFormat
+				}
 			case eventAssistantToolCallsCommitted, eventToolResultBatchCommitted:
 				if observeCommittedTools(r, i, joined, lastSequence, sourceRecords, &tools, &view) != nil {
 					return view, nil, errFormat

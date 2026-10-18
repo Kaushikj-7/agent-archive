@@ -53,13 +53,40 @@ read. Unknown coverage must remain unavailable, never observed-no-use. Optional 
 provenance when multiple declarations share a name and filtered content hash.
 They remain attached to the existing content group and do not create duplicate
 legacy rows, eligible coverage or use. Muse parser0.7.0 stamps this derivation;
-other agent/default parser versions are unchanged. Invocation
-and read attribution additionally require exact owning conversation and skill
-identity/hash qualification.
+other agent/default parser versions are unchanged. Positive native read evidence
+requires exact owning conversation and skill identity; a content-hash association
+requires additional privacy-safe byte-domain qualification.
+
+The closed native `runtime.session` schema1/run event `skill_read_observed`
+with exactly `skill_id`, `evidence_kind: read_skill_tool`, `evidence_hash` and
+`observed_at_sequence` is supported as an explicit native harness read report.
+The pinned1.4.9-R6297.1 isolated controlled read corroborated the historical
+1.4.8 event: native ID equaled the installed inert `pr10-local` ID, sequence
+equaled the event's own run-source sequence, and the prefixed SHA256 decoded to
+the exact102-byte skill file hash rather than the969-byte rendered tool result.
+No tool-result numeric join was established. This shape must still pass the
+complete owning-source, materialized own-run, unique source and increasing
+sequence validators. IDs are bounded portable lowercase logical tokens;
+case/path/namespace aliases, extra keys, unknown tags and invalid types refuse.
+
+Production validates the exact `sha256:<64lowerhex>` native hash then erases
+it. Shared filesystem snapshots hash redacted file bytes, so the original-byte
+native digest cannot safely be retained or associated by name/hash alone.
+The existing `NativeSkillUses`/`SkillUse` path derives `native_invocation` with
+SHA256 omitted: the native harness explicitly reports a skill read. It does
+not infer eligibility, membership, activation, successful result status or
+native failure/no-op behavior. Installed inventory, call/result bodies,
+`read_file` and broad-read omission markers alone cannot create this evidence.
+Privacy-safe product read-hash association remains a separate open requirement.
+Older strict Muse retained readers refuse the new closed event variant.
 
 ## Validation scope
 
 Deterministic parser and shared planner conformance tests use synthetic inputs.
-They cannot qualify native trust/activation, skill use, child identity, supported
-platforms or safe native version execution. These gates remain pending; no capture
-or default setup enablement follows from skill presence.
+They cannot qualify native trust/activation, failed/no-op skill behavior, child
+identity or supported platforms. The controlled producer/diagnostic facts above
+qualify only the stated native event grammar and byte-domain observation;
+complete uninstrumented current Source.Filter-to-metadata qualification remains
+pending. Exact-thread identity, eligible inventory and privacy-safe read-hash
+association remain open. No capture or default setup enablement follows from
+skill presence.

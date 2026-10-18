@@ -185,8 +185,14 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   derives its local cache location, checks the manifest's raw hash, and reads
   only its finite declared skill files. Other registry versions, provenance
   families and ambiguous declarations remain incomplete. Inventory proves installation only;
-  project trust, native activation, eligibility and invocation/read use remain
-  unknown. Skill presence cannot activate Muse capture.
+  project trust, native activation and eligibility remain unknown. Skill presence
+  cannot activate Muse capture. Separately, an exact qualified own native
+  `skill_read_observed` report can retain its canonical skill ID and owning
+  run/source sequence and derive positive harness skill-read evidence. It does
+  not establish a successful tool-result join. The original-file digest is
+  validated then erased; metadata omits that skill hash because filesystem
+  snapshots hash privacy-filtered bytes. Privacy-safe read-hash association
+  remains unavailable.
 
   Only each folder's immediate `<skill>/SKILL.md` files are read (up to 256
   per folder), never other files in them. In a user-level folder a

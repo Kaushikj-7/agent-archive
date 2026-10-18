@@ -931,6 +931,26 @@
         "kind": "run",
         "event_kind": "tool_result_batch_committed"
       }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind",
+        "run_id",
+        "source_run_record_id",
+        "source_run_record_sequence",
+        "skill_id",
+        "evidence_kind",
+        "observed_at_sequence"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "skill_read_observed",
+        "evidence_kind": "read_skill_tool"
+      },
+      "cross_record_policy": "Explicit native harness skill-read report only: own materialized run, unique increasing source record and observed_at_sequence equal to self source sequence. Native original-file digest validated then erased; no eligibility/hash or result-status inference."
     }
   ],
   "privacy": "Shared policy applies to every retained string/key; changed authority refuses; no raw record_json, permission bodies, native checksums, provider/context or native binding paths",
