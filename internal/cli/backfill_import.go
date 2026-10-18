@@ -47,6 +47,9 @@ const (
 	// with backfill.
 	setupImportCollectorWait = 20 * time.Second
 	backfillHooksWait        = 5 * time.Second
+	// Eight maximum-sized (32 MiB) stages leave publication headroom within
+	// the shared quota. Capacity recovery never evicts unrelated owners.
+	publicationGroupSize = 8
 )
 
 // importPlan runs steps 4 to 6 of a confirmed import: it commits the
@@ -265,13 +268,9 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 		return reg, err
 	}
 	var onCapacity func(context.Context) error
-	// Eight maximum-sized (32 MiB) stages stay below half the shared quota's
-	// charged payload space, leaving room for one publication's pending wire.
-	// OnCapacity still handles unrelated occupancy without evicting its owners.
-	const publicationGroupSize = 8
-	groupRegistered := 0
 	if capacityUploads {
-		onCapacity = importCapacityDrain(env, stdout, home, store, batch.ID, collectorGuard, lookup, readHomes, interrupt.requested)
+		capacityOut := &pausingWriter{w: stdout, stop: stopRegister}
+		onCapacity = importCapacityDrain(env, capacityOut, home, store, batch.ID, collectorGuard, lookup, readHomes, interrupt.requested)
 	}
 	registration := backfill.Registration{
 		HistoricalSourcePolicy: func(current config.Config) func(string) bool {
@@ -290,26 +289,8 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 		Sources: env.agentRegistry(),
 		Home:    home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
 		MaxHoldSteps: env.backfillHoldSteps, CursorDatabase: env.cursorDatabase(), RepoKey: env.repoKeyResolver(),
-		AfterHold: func(sessions, subagents []string) error {
-			batch.AddSessions(sessions, subagents)
-			if err := backfill.SaveBatch(home, batch); err != nil {
-				return err
-			}
-			if err := env.checkpoint("registered"); err != nil {
-				return err
-			}
-			// Settle this owned group before preparing the next one. Waiting
-			// until the quota is full can leave history/child stages no room
-			// to freeze their pending publication. Background import never
-			// invokes this callback's publication path.
-			groupRegistered += len(sessions) + len(subagents)
-			if onCapacity != nil && groupRegistered >= publicationGroupSize {
-				groupRegistered = 0
-				return onCapacity(registrationCtx)
-			}
-			return nil
-		},
-		Stop: interrupt.requested,
+		AfterHold: recordImportGroup(env, home, &batch, registrationCtx, onCapacity),
+		Stop:      interrupt.requested,
 	}
 	result, err := registration.Run(candidates)
 	reg.batch, reg.result = batch, result
@@ -337,6 +318,27 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	reg.activity.clear()
 	releaseCollector()
 	return reg, nil
+}
+
+func recordImportGroup(env Env, home string, batch *backfill.Batch, ctx context.Context, publish func(context.Context) error) func([]string, []string) error {
+	registered := 0
+	return func(sessions, subagents []string) error {
+		batch.AddSessions(sessions, subagents)
+		if err := backfill.SaveBatch(home, *batch); err != nil {
+			return err
+		}
+		if err := env.checkpoint("registered"); err != nil {
+			return err
+		}
+		// Publish owned groups before quota pressure can prevent freezing the
+		// next pending publication. Background imports supply no publisher.
+		registered += len(sessions) + len(subagents)
+		if publish != nil && registered >= publicationGroupSize {
+			registered = 0
+			return publish(ctx)
+		}
+		return nil
+	}
 }
 
 // completeBatch rebuilds the batch's sessions from the registrations, which
@@ -412,7 +414,7 @@ func finishInterruptedBatch(env Env, stdout, stderr io.Writer, home string, plan
 		if err := pending.refresh(); err != nil {
 			return err
 		}
-		if len(pending.pending) == 0 {
+		if pending.pendingCount() == 0 {
 			return nil
 		}
 		releaseCollector()
@@ -679,8 +681,8 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 
 	var passErr error
 	lastProgress := time.Now()
-	for len(u.pending) > 0 && !stop() {
-		before := len(u.pending)
+	for u.pendingCount() > 0 && !stop() {
+		before := u.pendingCount()
 		result, err := runPass(env, false, passOptions{progress: u.observe, stop: stop, importBatch: batchID})
 		result.CloseStagedResults()
 		u.stopFinishing()
@@ -690,7 +692,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 		// Child publication can enqueue relationship evidence for a parent
 		// published earlier in this pass. Its pending count stays unchanged,
 		// but the exact completed publications allow the next pass to settle it.
-		progressed := len(u.pending) < before || len(result.Published) > 0
+		progressed := u.pendingCount() < before || len(result.Published) > 0
 		if progressed {
 			lastProgress = time.Now()
 		}
@@ -728,16 +730,16 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 	}
 
 	switch {
-	case len(u.pending) == 0:
+	case u.pendingCount() == 0:
 		terminal.Printf(stdout, "Uploaded %s (%s).\n", countNoun(u.total, "session"), backfill.FormatSize(u.totalBytes))
 	case interrupt.requested():
-		terminal.Printf(stdout, "Stopped. The remaining %s will be uploaded by the background collector.\n", countNoun(len(u.pending), "session"))
+		terminal.Printf(stdout, "Stopped. The remaining %s will be uploaded by the background collector.\n", u.pendingDescription())
 	case errors.Is(passErr, errPaused):
-		terminal.Printf(stdout, "Collection is paused. The remaining %s will be uploaded after agent-archive resume.\n", countNoun(len(u.pending), "session"))
-	case u.policyBlocked > 0:
-		terminal.Printf(stdout, "%s retained but not remotely verified because current policy prevents publication. Review the configuration, then run agent-archive backfill again with the same options.\n", countNoun(u.policyBlocked, "session"))
+		terminal.Printf(stdout, "Collection is paused. The remaining %s will be uploaded after agent-archive resume.\n", u.pendingDescription())
+	case u.policyBlocked+u.childrenPolicyBlocked > 0:
+		terminal.Printf(stdout, "%s retained but not remotely verified because current policy prevents publication. Review the configuration, then run agent-archive backfill again with the same options.\n", importPendingDescription(u.policyBlocked, u.childrenPolicyBlocked))
 	default:
-		terminal.Printf(stdout, "%s not uploaded yet. The background collector keeps trying; run agent-archive status to follow it.\n", countNoun(len(u.pending), "session"))
+		terminal.Printf(stdout, "%s not uploaded yet. The background collector keeps trying; run agent-archive status to follow it.\n", u.pendingDescription())
 	}
 	printImportHints(stdout, batchID)
 	if interrupt.requested() || errors.Is(passErr, errPaused) {
@@ -747,7 +749,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 		terminal.Printf(stderr, "agent-archive: backfill: upload: %v\n", passErr)
 		return 1
 	}
-	if len(u.pending) > 0 {
+	if u.pendingCount() > 0 {
 		return 1
 	}
 	return 0
@@ -771,6 +773,10 @@ type upload struct {
 	total         int
 	totalBytes    int64
 	policyBlocked int
+	// Linked children have their own publication obligations, but do not add
+	// independent sessions to the existing displayed parent totals.
+	childrenPending       int
+	childrenPolicyBlocked int
 	// pending maps each session still to upload to its size.
 	pending map[string]int64
 }
@@ -790,18 +796,28 @@ func (u *upload) refresh() error {
 	if err != nil {
 		return err
 	}
-	u.total, u.totalBytes, u.policyBlocked, u.pending = 0, 0, 0, map[string]int64{}
+	u.total, u.totalBytes, u.policyBlocked, u.childrenPending, u.pending = 0, 0, 0, 0, map[string]int64{}
+	u.childrenPolicyBlocked = 0
 	for _, reg := range regs {
-		if !reg.InBatch(u.batch) || !independentImportedSession(reg) {
+		if !reg.InBatch(u.batch) {
+			continue
+		}
+		owed, err := importOutstanding(store, cfg, reg)
+		if err != nil {
+			return err
+		}
+		if !independentImportedSession(reg) {
+			if owed.Pending() {
+				u.childrenPending++
+				if owed.StagedImport && !cfg.AcceptSession(reg) {
+					u.childrenPolicyBlocked++
+				}
+			}
 			continue
 		}
 		size := u.size(reg)
 		u.total++
 		u.totalBytes += size
-		owed, err := importOutstanding(store, cfg, reg)
-		if err != nil {
-			return err
-		}
 		waiting := owed.Pending()
 		if waiting && owed.StagedImport && !cfg.AcceptSession(reg) {
 			u.policyBlocked++
@@ -811,6 +827,23 @@ func (u *upload) refresh() error {
 		}
 	}
 	return nil
+}
+
+func (u *upload) pendingCount() int { return len(u.pending) + u.childrenPending }
+
+func (u *upload) pendingDescription() string {
+	return importPendingDescription(len(u.pending), u.childrenPending)
+}
+
+func importPendingDescription(sessions, children int) string {
+	var parts []string
+	if sessions > 0 {
+		parts = append(parts, countNoun(sessions, "session"))
+	}
+	if children > 0 {
+		parts = append(parts, countNoun(children, "subagent transcript"))
+	}
+	return strings.Join(parts, " and ")
 }
 
 func (u *upload) size(reg archive.SessionRegistration) int64 {
@@ -840,7 +873,7 @@ func (u *upload) observe(p collector.Progress) {
 		return
 	}
 	delete(u.pending, p.ArchiveSessionID)
-	if len(u.pending) == 0 {
+	if u.pendingCount() == 0 {
 		// Live terminals replace the count line with a finishing spinner
 		// while the pass wraps up. Non-TTY keeps one count line per pass
 		// (drawn after runPass returns), so a mid-pass empty pending set
@@ -968,13 +1001,20 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 // has newer work to upload.
 func batchUploadState(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, b backfill.Batch, latest bool) (string, error) {
 	registered, subagents, waiting, rechecking, updating := 0, 0, 0, 0, 0
-	staged, verified := 0, 0
+	staged, verified, childrenPending := 0, 0, 0
 	for _, reg := range regs {
 		if !reg.InBatch(b.ID) {
 			continue
 		}
 		if !independentImportedSession(reg) {
 			subagents++
+			owed, err := importOutstanding(store, cfg, reg)
+			if err != nil {
+				return "", err
+			}
+			if owed.Pending() {
+				childrenPending++
+			}
 			continue
 		}
 		registered++
@@ -1008,22 +1048,7 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 		}
 	}
 	if b.UndoneAt != nil {
-		projects := 0
-		for _, p := range cfg.Archive.Projects {
-			// A project undo kept for another import is that import's now.
-			if p.Included && slices.Contains(b.ProjectsAdded, p.ProjectID) && !slices.Contains(b.ProjectsExcluded, p.ProjectID) && !slices.Contains(b.ProjectsKept, p.ProjectID) {
-				projects++
-			}
-		}
-		switch {
-		case registered > 0:
-			return fmt.Sprintf("partly undone; %s left", countNoun(registered, "session")), nil
-		case subagents > 0:
-			return fmt.Sprintf("partly undone; %s left", countNoun(subagents, "subagent transcript")), nil
-		case projects > 0:
-			return fmt.Sprintf("partly undone; %s left", countNoun(projects, "project")), nil
-		}
-		return "undone", nil
+		return undoneBatchUploadState(cfg, b, registered, subagents), nil
 	}
 	switch {
 	case b.CompletedAt == nil && latest && len(b.StagedSessions) > 0:
@@ -1037,7 +1062,33 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 	case registered == 0:
 		return "removed", nil
 	}
-	return batchUploadSummary(registered, staged, verified, waiting, rechecking, updating), nil
+	summary := batchUploadSummary(registered, staged, verified, waiting, rechecking, updating)
+	if childrenPending > 0 {
+		if waiting+rechecking+updating == 0 {
+			summary = fmt.Sprintf("%d registered; %d remotely verified", registered, verified)
+		}
+		summary += "; " + countNoun(childrenPending, "subagent transcript") + " waiting"
+	}
+	return summary, nil
+}
+
+func undoneBatchUploadState(cfg config.Config, b backfill.Batch, registered, subagents int) string {
+	projects := 0
+	for _, p := range cfg.Archive.Projects {
+		// A project undo kept for another import is that import's now.
+		if p.Included && slices.Contains(b.ProjectsAdded, p.ProjectID) && !slices.Contains(b.ProjectsExcluded, p.ProjectID) && !slices.Contains(b.ProjectsKept, p.ProjectID) {
+			projects++
+		}
+	}
+	switch {
+	case registered > 0:
+		return fmt.Sprintf("partly undone; %s left", countNoun(registered, "session"))
+	case subagents > 0:
+		return fmt.Sprintf("partly undone; %s left", countNoun(subagents, "subagent transcript"))
+	case projects > 0:
+		return fmt.Sprintf("partly undone; %s left", countNoun(projects, "project"))
+	}
+	return "undone"
 }
 
 // batchUploadSummary keeps first-publication progress separate from later work.

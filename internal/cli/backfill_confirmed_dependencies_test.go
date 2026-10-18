@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -70,8 +71,8 @@ func (f confirmedFilterMutation) NamingOnlyChange(previous, candidate archive.So
 
 func TestBackfillConfirmedRenewsRequiredMiddleDependencyAfterFiltering(t *testing.T) {
 	for _, retarget := range []bool{false, true} {
-		t.Run(fmt.Sprint(retarget), func(t *testing.T) {
-			f, bucket, mapping := newHistoricalOnlyFixture(t)
+		t.Run(strconv.FormatBool(retarget), func(t *testing.T) {
+			f, bucket, _ := newHistoricalOnlyFixture(t)
 			// This timing control uses canonical trusted homes. Raw index paths
 			// through a platform home alias have a separate, reproduced lookup
 			// ownership refusal and cannot reach this post-filter boundary.
@@ -85,7 +86,7 @@ func TestBackfillConfirmedRenewsRequiredMiddleDependencyAfterFiltering(t *testin
 			f.env.repoKey = func(string) string { t.Fatal("historical import invoked Git"); return "" }
 			must(t, os.RemoveAll(filepath.Join(f.userHome, ".claude")))
 			original := filepath.Join(f.userHome, "vanished-service")
-			mapping = writeHistoricalMapping(t, original)
+			mapping := writeHistoricalMapping(t, original)
 			allowed, excluded := filepath.Join(f.userHome, "allowed"), filepath.Join(f.userHome, "excluded")
 			must(t, os.MkdirAll(allowed, 0700))
 			must(t, os.MkdirAll(excluded, 0700))

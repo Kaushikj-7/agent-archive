@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -21,7 +22,7 @@ import (
 
 func TestBackfillSelectedParentStillRequiresCurrentPublicationPolicy(t *testing.T) {
 	for _, excluded := range []bool{false, true} {
-		t.Run(fmt.Sprint(excluded), func(t *testing.T) {
+		t.Run(strconv.FormatBool(excluded), func(t *testing.T) {
 			f, bucket := newImportFixture(t)
 			changed := false
 			f.env.backfillCheckpoint = func(step string) error {
@@ -139,11 +140,11 @@ func TestBackfillForegroundGroupsPreserveOtherImportEvidence(t *testing.T) {
 }
 
 func TestBackfillConfirmedResumesFrozenStagesWithoutNativeInput(t *testing.T) {
-	for _, checkpoint := range []string{"batch saved", "committed", "staged", "registered", "uploading"} {
-		t.Run(checkpoint, func(t *testing.T) {
+	for _, checkpoint := range []historicalImportCheckpoint{historicalBatchSaved, historicalCommitted, historicalStaged, historicalRegistered, historicalUploading} {
+		t.Run(string(checkpoint), func(t *testing.T) {
 			f, bucket, mapping := newHistoricalOnlyFixture(t)
 			f.env.backfillCheckpoint = func(step string) error {
-				if step == checkpoint {
+				if step == string(checkpoint) {
 					return errors.New("synthetic durable-boundary interruption")
 				}
 				return nil
@@ -153,7 +154,7 @@ func TestBackfillConfirmedResumesFrozenStagesWithoutNativeInput(t *testing.T) {
 			if code != 1 || !strings.Contains(stderr, "synthetic durable-boundary interruption") {
 				t.Fatal("boundary not reached", code, stderr)
 			}
-			if checkpoint == "staged" || checkpoint == "registered" || checkpoint == "uploading" {
+			if checkpoint == historicalStaged || checkpoint == historicalRegistered || checkpoint == historicalUploading {
 				must(t, os.RemoveAll(filepath.Join(f.userHome, ".claude")))
 			}
 			f.env.backfillCheckpoint = nil
@@ -194,7 +195,7 @@ func TestBackfillConfirmedCompletesMixedNativeWindows(t *testing.T) {
 		counts = append(counts, 513)
 	}
 	for _, count := range counts {
-		t.Run(fmt.Sprint(count), func(t *testing.T) { checkConfirmedMixedNativeWindows(t, count) })
+		t.Run(strconv.Itoa(count), func(t *testing.T) { checkConfirmedMixedNativeWindows(t, count) })
 	}
 }
 

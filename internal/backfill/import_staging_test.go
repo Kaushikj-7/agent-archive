@@ -896,22 +896,31 @@ func TestConfirmedSourceCwdsRenewEveryPhysicalDependency(t *testing.T) {
 	}
 }
 
+type confirmedImportPolicyChange string
+
+const (
+	importPolicyExcluded    confirmedImportPolicyChange = "excluded project"
+	importPolicyDestination confirmedImportPolicyChange = "destination"
+	importPolicyPrivacy     confirmedImportPolicyChange = "privacy mode"
+	importPolicyPaused      confirmedImportPolicyChange = "paused"
+)
+
 func TestConfirmedStageChecksChangedPolicyAfterFiltering(t *testing.T) {
-	for _, change := range []string{"excluded project", "destination", "privacy mode", "paused"} {
-		t.Run(change, func(t *testing.T) {
+	for _, change := range []confirmedImportPolicyChange{importPolicyExcluded, importPolicyDestination, importPolicyPrivacy, importPolicyPaused} {
+		t.Run(string(change), func(t *testing.T) {
 			r, c, cfg := stagingFixture(t)
 			checks := 0
 			c.projectResolutionCurrent = func() bool {
 				checks++
 				if checks == 3 {
 					switch change {
-					case "excluded project":
+					case importPolicyExcluded:
 						cfg.Archive.Projects[0].Included = false
-					case "destination":
+					case importPolicyDestination:
 						cfg.Storage.Bucket = "different-synthetic-bucket"
-					case "privacy mode":
+					case importPolicyPrivacy:
 						cfg.SkillEvidence = config.SkillEvidenceNone
-					case "paused":
+					case importPolicyPaused:
 						cfg.Paused = true
 					}
 					if err := config.Save(r.Home, cfg); err != nil {

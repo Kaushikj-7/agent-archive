@@ -169,22 +169,7 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 		if r.MaxHoldSteps > 0 {
 			limit = r.MaxHoldSteps
 		}
-		validationCtx := ctx
-		cancelValidation := func() {}
-		if r.Context == nil {
-			validationCtx, cancelValidation = context.WithTimeout(ctx, 30*time.Second)
-		}
-		for _, w := range works[i : i+min(limit, len(works)-i)] {
-			if w.stagedSHA256 == "" && w.c.projectResolutionReset != nil {
-				w.c.projectResolutionReset(validationCtx)
-			}
-		}
-		for _, w := range works[i : i+min(limit, len(works)-i)] {
-			if w.stagedSHA256 == "" && w.c.projectResolutionCurrent != nil {
-				w.projectEvidenceStale = !w.c.projectResolutionCurrent()
-			}
-		}
-		cancelValidation()
+		r.validateGroupProof(ctx, works[i:i+min(limit, len(works)-i)])
 		if err := r.stageGroup(ctx, works[i:i+min(limit, len(works)-i)]); err != nil {
 			if ctx.Err() != nil || (r.Stop != nil && r.Stop()) {
 				return result, errors.Join(ErrStopped, err, r.cancelPrepared(works))
@@ -213,6 +198,25 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 		}
 	}
 	return result, nil
+}
+
+func (r Registration) validateGroupProof(ctx context.Context, works []*parentWork) {
+	validationCtx := ctx
+	cancel := func() {}
+	if r.Context == nil {
+		validationCtx, cancel = context.WithTimeout(ctx, 30*time.Second)
+	}
+	defer cancel()
+	for _, w := range works {
+		if w.stagedSHA256 == "" && w.c.projectResolutionReset != nil {
+			w.c.projectResolutionReset(validationCtx)
+		}
+	}
+	for _, w := range works {
+		if w.stagedSHA256 == "" && w.c.projectResolutionCurrent != nil {
+			w.projectEvidenceStale = !w.c.projectResolutionCurrent()
+		}
+	}
 }
 
 // checkChats checks, before hooks.lock is taken, whether each Cursor
@@ -589,26 +593,7 @@ func (r Registration) stage(ctx context.Context, w *parentWork) error {
 		sourceAllowed = r.HistoricalSourcePolicy(cfg)
 	}
 	observedCwds := confirmedSourceCwds{}
-	bundle, preserved, selectedBinding, err := collector.ReadImportSourceSelection(ctx, reg, r.AdmittedAt, collector.Options{HistoricalSourceAllowed: func(cwd string) bool {
-		canonical, current := observedCwds.observe(cwd)
-		if !current {
-			return false
-		}
-		if sourceAllowed != nil && !sourceAllowed(cwd) {
-			return false
-		}
-		if reg.HistoricalProject != nil {
-			for _, path := range uniquePaths(filepath.Clean(cwd), canonical) {
-				if !slices.Contains(reg.HistoricalProject.SourceCwds, path) {
-					reg.HistoricalProject.SourceCwds = append(reg.HistoricalProject.SourceCwds, path)
-				}
-			}
-			if len(reg.HistoricalProject.SourceCwds) > 2*archive.MaxHistorySpans {
-				return false
-			}
-		}
-		return true
-	}, Sources: r.Sources, CursorDatabase: r.CursorDatabase, CodexRollouts: r.CodexRollouts, ConfiguredCodexHomes: r.ConfiguredCodexHomes})
+	bundle, preserved, selectedBinding, err := collector.ReadImportSourceSelection(ctx, reg, r.AdmittedAt, collector.Options{HistoricalSourceAllowed: observedCwds.policy(reg, sourceAllowed), Sources: r.Sources, CursorDatabase: r.CursorDatabase, CodexRollouts: r.CodexRollouts, ConfiguredCodexHomes: r.ConfiguredCodexHomes})
 	if err != nil {
 		return fmt.Errorf("stage imported evidence before admission: %w", err)
 	}
@@ -688,6 +673,26 @@ func (r Registration) renewStageProof(ctx context.Context, w *parentWork, observ
 // Keep raw spellings until renewed so parent traversal cannot hide a changed
 // physical dependency. The frozen historical proof keeps canonical evidence.
 type confirmedSourceCwds map[string]string
+
+func (c confirmedSourceCwds) policy(reg archive.SessionRegistration, allowed func(string) bool) func(string) bool {
+	return func(cwd string) bool {
+		canonical, current := c.observe(cwd)
+		if !current || allowed != nil && !allowed(cwd) {
+			return false
+		}
+		if reg.HistoricalProject != nil {
+			for _, path := range uniquePaths(filepath.Clean(cwd), canonical) {
+				if !slices.Contains(reg.HistoricalProject.SourceCwds, path) {
+					reg.HistoricalProject.SourceCwds = append(reg.HistoricalProject.SourceCwds, path)
+				}
+			}
+			if len(reg.HistoricalProject.SourceCwds) > 2*archive.MaxHistorySpans {
+				return false
+			}
+		}
+		return true
+	}
+}
 
 func (c confirmedSourceCwds) observe(cwd string) (string, bool) {
 	canonical, err := local.ResolveExistingSymlinks(cwd)

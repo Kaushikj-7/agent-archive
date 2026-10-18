@@ -358,10 +358,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if state.SessionIndexRecoveryInterrupted(recoveryErr) {
 		recoveryErr = nil
 	}
-	var replayErr error
-	if opts.SelectSession == nil {
-		replayErr = capture.ReplayAdmissionIntentsWithin(ctx, local.Home(), now, opts.Decoders)
-	}
+	replayErr := replayPassAdmissions(ctx, local, now, opts)
 	// The caller holds the collector lock, so this pass is the only writer
 	// of the files it owns and may move a corrupt one aside.
 	local = local.ForCollectorPass()
@@ -439,6 +436,13 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		return p.result, err
 	}
 	return p.result, p.saveStatus()
+}
+
+func replayPassAdmissions(ctx context.Context, local *state.Store, now time.Time, opts Options) error {
+	if opts.SelectSession != nil {
+		return nil
+	}
+	return capture.ReplayAdmissionIntentsWithin(ctx, local.Home(), now, opts.Decoders)
 }
 
 func resumeImportAdmissionsForPass(ctx context.Context, local *state.Store, opts Options) error {

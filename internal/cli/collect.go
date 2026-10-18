@@ -187,21 +187,13 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		recordPreflightError(localStore, recoveryErr)
 	}
 	recoveryCancel()
-	openRollouts := passCodexRollouts
-	if pass.importBatch != "" {
-		openRollouts = foregroundCodexRollouts
-	}
-	rollouts, readHomes, err := openRollouts(ctx, localStore, cfg, env)
+	rollouts, readHomes, err := collectorRollouts(ctx, localStore, cfg, env, pass)
 	if err != nil {
 		recordPreflightError(localStore, err)
 		return collector.Result{}, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, rollouts.Close()) }()
-	observer := &gitremote.IdentityObserver{}
-	var discoveryErr error
-	if pass.importBatch == "" {
-		_, discoveryErr = discovery.Run(ctx, localStore, cfg, discovery.Options{Sources: registryFor(env), Now: env.Now, Stop: stop, Rollouts: rollouts, RepositoryIdentity: observer.Lookup, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
-	}
+	discoveryErr := discoverCollectorPass(ctx, localStore, cfg, env, pass, stop, rollouts)
 	if discoveryErr != nil {
 		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
 	}
@@ -227,17 +219,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 	if previous, err := localStore.LoadStatus(); err == nil {
 		previousScanAt = previous.LastScanAt
 	}
-	labelHomes := []string{}
-	if cfg.Discovery != nil {
-		labelHomes = append(labelHomes, cfg.Discovery.CodexHomes...)
-	}
-	if len(labelHomes) == 0 {
-		if userHome, err := env.userHomeDir(); err == nil {
-			if file := env.hookFiles(userHome)["codex"]; file != "" {
-				labelHomes = append(labelHomes, filepath.Dir(file))
-			}
-		}
-	}
+	labelHomes := collectorLabelHomes(cfg, env)
 	var selectSession func(archive.SessionRegistration) bool
 	if pass.importBatch != "" {
 		selectSession = func(reg archive.SessionRegistration) bool { return reg.InBatch(pass.importBatch) }
@@ -285,13 +267,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		// Imported publications already verify their exact source set and
 		// metadata before acknowledging requests or releasing selected staging.
 		// Global verification and retention belong to ordinary collection.
-		if health := passStorageHealth(result); health != "not_checked" {
-			if err := recordStorageHealth(home, cfg, env, quietOnBusy, health); err != nil {
-				return result, err
-			}
-		}
-		_, err := recordPassSessionIssues(localStore, result)
-		return result, err
+		return result, recordImportPass(home, cfg, env, localStore, quietOnBusy, result)
 	}
 
 	summary, verifyErr, err := verifyAndRecordPass(ctx, home, cfg, env, localStore, objectStore, quietOnBusy, result)
@@ -300,6 +276,47 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 	}
 
 	return finishPassWithRetention(home, env, cfg, localStore, objectStore, previousScanAt, result, summary, verifyErr)
+}
+
+func collectorRollouts(ctx context.Context, store *state.Store, cfg config.Config, env Env, pass passOptions) (*discovery.CodexRolloutLookup, []string, error) {
+	if pass.importBatch != "" {
+		return foregroundCodexRollouts(ctx, store, cfg, env)
+	}
+	return passCodexRollouts(ctx, store, cfg, env)
+}
+
+func discoverCollectorPass(ctx context.Context, store *state.Store, cfg config.Config, env Env, pass passOptions, stop func() bool, rollouts *discovery.CodexRolloutLookup) error {
+	if pass.importBatch != "" {
+		return nil
+	}
+	observer := &gitremote.IdentityObserver{}
+	_, err := discovery.Run(ctx, store, cfg, discovery.Options{Sources: registryFor(env), Now: env.Now, Stop: stop, Rollouts: rollouts, RepositoryIdentity: observer.Lookup, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
+	return err
+}
+
+func collectorLabelHomes(cfg config.Config, env Env) []string {
+	homes := []string{}
+	if cfg.Discovery != nil {
+		homes = append(homes, cfg.Discovery.CodexHomes...)
+	}
+	if len(homes) == 0 {
+		if userHome, err := env.userHomeDir(); err == nil {
+			if file := env.hookFiles(userHome)["codex"]; file != "" {
+				homes = append(homes, filepath.Dir(file))
+			}
+		}
+	}
+	return homes
+}
+
+func recordImportPass(home string, cfg config.Config, env Env, store *state.Store, quietOnBusy bool, result collector.Result) error {
+	if health := passStorageHealth(result); health != "not_checked" {
+		if err := recordStorageHealth(home, cfg, env, quietOnBusy, health); err != nil {
+			return err
+		}
+	}
+	_, err := recordPassSessionIssues(store, result)
+	return err
 }
 
 func collectorNeedsGuard(cfg config.Config) bool {

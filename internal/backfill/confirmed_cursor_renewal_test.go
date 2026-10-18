@@ -24,6 +24,15 @@ type confirmedCursorMutation struct {
 	after func()
 }
 
+type confirmedCursorStageChange string
+
+const (
+	cursorStageProof       confirmedCursorStageChange = "proof"
+	cursorStageDestination confirmedCursorStageChange = "destination"
+	cursorStagePrivacy     confirmedCursorStageChange = "privacy"
+	cursorStagePaused      confirmedCursorStageChange = "paused"
+)
+
 func (s confirmedCursorMutation) CaptureSettledCursor(request *nativefacts.CaptureRequest) (*nativecapture.Proof, error) {
 	proof, err := s.settledCapturePort.CaptureSettledCursor(request)
 	if err == nil {
@@ -44,8 +53,8 @@ func TestConfirmedCursorRenewsAuthorityAfterCapture(t *testing.T) {
 	for _, live := range []bool{false, true} {
 		name := map[bool]string{false: "settled", true: "live"}[live]
 		t.Run(name, func(t *testing.T) {
-			for _, mutation := range []string{"proof", "destination", "privacy", "paused"} {
-				t.Run(mutation, func(t *testing.T) {
+			for _, mutation := range []confirmedCursorStageChange{cursorStageProof, cursorStageDestination, cursorStagePrivacy, cursorStagePaused} {
+				t.Run(string(mutation), func(t *testing.T) {
 					r, c, cfg, database := settledCursorFixture(t)
 					if live {
 						writer := startCursorWriter(t, database, true)
@@ -56,16 +65,16 @@ func TestConfirmedCursorRenewsAuthorityAfterCapture(t *testing.T) {
 					r.Sources = confirmedCursorMutation{SourcesLookup: testSources, settledCapturePort: testSources, liveCapturePort: testSources, after: func() {
 						captured = true
 						switch mutation {
-						case "proof":
+						case cursorStageProof:
 							current = false
-						case "destination":
+						case cursorStageDestination:
 							cfg.Storage.Bucket = "changed-synthetic-destination"
-						case "privacy":
+						case cursorStagePrivacy:
 							cfg.SkillEvidence = config.SkillEvidenceNone
-						case "paused":
+						case cursorStagePaused:
 							cfg.Paused = true
 						}
-						if mutation != "proof" {
+						if mutation != cursorStageProof {
 							if err := config.Save(r.Home, cfg); err != nil {
 								t.Fatal(err)
 							}

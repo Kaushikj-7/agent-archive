@@ -226,6 +226,11 @@ func (s *Store) ResumeImportAdmissions(ctx context.Context) error {
 			return err
 		}
 	}
+	// Recovery still visits every selected stage. An unchanged scheduling
+	// hint needs no durable rewrite, including a settled repeated backfill.
+	if cursor.After == next {
+		return nil
+	}
 	cursor.After = next
 	return local.Write(filepath.Join(s.home, "import-stage-cursor.json"), cursor)
 }
@@ -471,10 +476,8 @@ func (s *Store) savePreparedImportStagePolicy(ctx context.Context, reg archive.S
 			return nil
 		}
 		if confirmed {
-			cfg, present, err := s.loadConfig()
-			stalePolicy := reg.ProjectResolution != nil && reg.ProjectResolution.PolicyContext != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean)
-			if err != nil || !present || stalePolicy || cfg.Paused || !cfg.Archive.Enabled || !cfg.AcceptSession(reg) || cfg.DestinationID() != reg.DestinationID || cfg.EffectiveSkillEvidence() != stage.SkillEvidence {
-				return errors.Join(ErrDurableStorageRecovery, errors.New("import policy changed before durable staging; run backfill again with the same options"), err)
+			if err := s.checkConfirmedImportPolicy(reg, stage.SkillEvidence); err != nil {
+				return err
 			}
 		}
 		if stage.Version == 3 {
@@ -488,6 +491,15 @@ func (s *Store) savePreparedImportStagePolicy(ctx context.Context, reg archive.S
 		return s.writeDurableGuardHeadroom(ctx, g, importStageRelative(reg.ArchiveSessionID), stage, nil, stage.publicationHeadroom())
 	})
 	return digest, err
+}
+
+func (s *Store) checkConfirmedImportPolicy(reg archive.SessionRegistration, mode config.SkillEvidence) error {
+	cfg, present, err := s.loadConfig()
+	stalePolicy := reg.ProjectResolution != nil && reg.ProjectResolution.PolicyContext != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean)
+	if err != nil || !present || stalePolicy || cfg.Paused || !cfg.Archive.Enabled || !cfg.AcceptSession(reg) || cfg.DestinationID() != reg.DestinationID || cfg.EffectiveSkillEvidence() != mode {
+		return errors.Join(ErrDurableStorageRecovery, errors.New("import policy changed before durable staging; run backfill again with the same options"), err)
+	}
+	return nil
 }
 
 // publicationHeadroom classifies only the complete, already validated selected
