@@ -68,7 +68,9 @@ After confirmation, backfill stores the selected privacy-filtered evidence in
 private local staging before admitting each session. Setup's recent import and
 `--background` use the same protection. Once staged, an import can finish even
 if the apps delete their native files. A source that disappears before staging
-finishes is reported for retry; it is not counted as admitted.
+finishes is reported for retry; it is not counted as admitted. Run
+`agent-archive sync` to retry an interrupted staged upload, including supported
+protected legacy imports whose native files have already disappeared.
 
 Staging and pending publication share a 1 GiB local quota. Foreground imports
 upload completed groups to free capacity; setup and background imports preserve

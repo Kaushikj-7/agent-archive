@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `sync` and scheduled collection can publish supported protected legacy imports
+  from their frozen staged evidence after native deletion. They acquire the real
+  collector guard required for exact publication and recovery.
+
 - `backfill review-projects --output FILE` offers a private terminal review of
   observed missing original cwd groups, repository evidence, compatible exact
   configured assignments and import-only historical destinations. Export requires
