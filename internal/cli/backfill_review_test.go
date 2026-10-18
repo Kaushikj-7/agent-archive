@@ -461,8 +461,10 @@ func TestRecoveryReviewMakesOneDecisionForAllKeysAtExactCwd(t *testing.T) {
 			data, err := os.ReadFile(secondPath)
 			must(t, err)
 			must(t, os.WriteFile(secondPath, bytes.ReplaceAll(data, []byte("https://example.test/acme/repo"), []byte("https://example.test/other/repo")), 0600))
-			input := "new\nRetired mixed identities\nexport\n"
+			input := ""
 			switch choice {
+			case reviewHistoricalDestination:
+				input = "new\nRetired mixed identities\nexport\n"
 			case reviewSkippedDestination:
 				input = "skip\n"
 			case reviewConfiguredDestination:
