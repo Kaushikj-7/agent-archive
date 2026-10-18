@@ -56,8 +56,11 @@ type skillContentJoin struct {
 	closed      bool
 }
 
+// SkillContentJoinFor reports whether the adapter is the Muse Filter.
 func (Filter) SkillContentJoinFor(a archive.Adapter) bool { _, ok := a.(Filter); return ok }
 
+// FilterSkillContentLeased filters native input and returns its optional skill-content join.
+// The transcript and join borrow the returned release's lifetime; finalize the join before release.
 func (f Filter) FilterSkillContentLeased(ctx context.Context, in agentapi.NativeInput, c agentapi.FilterContext, budget *agentapi.NativeReadBudget) (archive.FilteredTranscript, agentapi.SkillContentJoin, func(), error) {
 	var join *skillContentJoin
 	out, release, err := f.filterLeased(ctx, in, c, budget, &join)
