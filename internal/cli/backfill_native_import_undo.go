@@ -26,7 +26,7 @@ func (cmd undoCommand) runNativeImportUndo() int {
 		if session.Detached {
 			status = "already detached"
 		}
-		terminal.Printf(cmd.stdout, "  %s  native %s  project %s  %s\n", archive.DisplayLine(session.ArchiveID), archive.DisplayLine(session.NativeID), archive.DisplayLine(session.ProjectID), status)
+		terminal.Printf(cmd.stdout, "  %s  project %s  %s\n", archive.DisplayLine(session.ArchiveID), archive.DisplayLine(session.ProjectID), status)
 	}
 	terminal.Printf(cmd.stdout, "%d selected entries have no admitted owner; %d independent owners are preserved.\n", absent, independent)
 	terminal.Println(cmd.stdout, "This stops further registration by this batch. Stored sources, published objects, native files, later requests and configuration are preserved.")

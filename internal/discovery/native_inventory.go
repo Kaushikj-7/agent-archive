@@ -3,7 +3,6 @@ package discovery
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -103,24 +102,27 @@ type nativeProgress struct {
 // pages are trusted installation-produced historical observations, never current
 // uniqueness or consent. Only live checks mint tokens, kept in this object.
 type NativeInventory struct {
-	ctx       context.Context
-	root      archive.NativeRoot
-	budget    *agentapi.NativeReadBudget
-	validate  NativeLocatorValidator
-	path      string
-	expected  []byte
-	progress  nativeProgress
-	eligible  []string
-	purposes  []uint8
-	counts    NativeInventoryCounts
-	remaining time.Duration
-	deadline  time.Time
-	charge    int64
-	tokens    map[string]nativeSelection
-	nonce     string
-	stopped   bool
-	closed    bool
-	err       error
+	ctx        context.Context
+	root       archive.NativeRoot
+	budget     *agentapi.NativeReadBudget
+	validate   NativeLocatorValidator
+	path       string
+	expected   []byte
+	progress   nativeProgress
+	eligible   []string
+	purposes   []uint8
+	counts     NativeInventoryCounts
+	remaining  time.Duration
+	deadline   time.Time
+	charge     int64
+	tokens     map[string]nativeSelection
+	nonce      string
+	stopped    bool
+	closed     bool
+	err        error
+	historical bool
+	projected  bool
+	complete   bool
 }
 
 type nativeSelection struct {
@@ -133,19 +135,12 @@ type nativeSelection struct {
 // The caller owns the collector lock and must Close after source leases/passes.
 // No native traversal occurs when no supported pending queries exist.
 func NewNativeInventory(ctx context.Context, home string, roots []archive.NativeRoot, queries []agentapi.LocatorRequest, budget *agentapi.NativeReadBudget, validate NativeLocatorValidator) (*NativeInventory, error) {
-	if err := ctx.Err(); err != nil {
+	constructorStart := time.Now()
+	l, err := newNativeInventory(ctx, roots, budget, validate)
+	if err != nil {
 		return nil, err
 	}
-	constructorStart := time.Now()
-	if budget == nil || validate == nil {
-		return nil, agentapi.ErrInvalidSourceBinding
-	}
-	root, rootErr := nativeInventoryRoot(roots)
-	if rootErr != nil {
-		return nil, rootErr
-	}
-
-	l := &NativeInventory{ctx: ctx, root: root, path: filepath.Join(home, "discovery-catalog.json"), budget: budget, validate: validate, remaining: Budget, tokens: map[string]nativeSelection{}}
+	l.path = filepath.Join(home, "discovery-catalog.json")
 	if len(queries) > maxCatalog {
 		return nil, errCatalogTooLarge
 	}
@@ -229,11 +224,9 @@ func NewNativeInventory(ctx context.Context, home string, roots []archive.Native
 	} else {
 		l.reset(owners, query)
 	}
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
+	if err := l.setNonce(); err != nil {
 		return nil, l.failConstruction(err)
 	}
-	l.nonce = hex.EncodeToString(nonce[:])
 	return l, nil
 }
 
@@ -251,6 +244,9 @@ func (l *NativeInventory) reset(owners []string, query string) {
 }
 
 func (l *NativeInventory) resetCoverage() {
+	if l.historical {
+		l.stopped, l.complete = true, false
+	}
 	next := l.progress.Next
 	l.reset(l.progress.Owners, l.progress.Query)
 	l.progress.Next = next
@@ -667,6 +663,7 @@ func (l *NativeInventory) acquire(ctx context.Context, directory func(string) (*
 		}
 		prior := *d
 		priorPages, priorChildren, priorMatches, priorDirectories := len(d.Pages), len(d.Children), len(d.Matches), len(l.progress.Directories)
+		priorOwners := l.progress.Owners
 		d.Generation = g
 		kind := nativeCompletePage
 		if n == 0 {
@@ -680,11 +677,14 @@ func (l *NativeInventory) acquire(ctx context.Context, directory func(string) (*
 				child := filepath.ToSlash(filepath.Join(d.Path, name))
 				d.Children = append(d.Children, child)
 				children = append(children, nativeDirectory{Path: child})
-			} else if nativeDepth(d.Path) == 3 && slices.Contains(l.progress.Owners, name) {
+			} else if nativeDepth(d.Path) == 3 && (slices.Contains(l.progress.Owners, name) || l.historical && nativeOwner(name)) {
 				d.Matches = append(d.Matches, name)
 			}
 		}
 		l.progress.Directories = append(l.progress.Directories, children...)
+		if l.historical {
+			l.collectImportOwners()
+		}
 		if !l.withinRetainedLimits() {
 			l.counts.UncommittedNames += int64(len(names))
 			prior.Pages = prior.Pages[:priorPages]
@@ -692,6 +692,7 @@ func (l *NativeInventory) acquire(ctx context.Context, directory func(string) (*
 			prior.Matches = prior.Matches[:priorMatches]
 			l.progress.Directories = l.progress.Directories[:priorDirectories]
 			l.progress.Directories[index] = prior
+			l.progress.Owners = priorOwners
 			l.stopped = true
 			return nil
 		}
@@ -839,7 +840,12 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 	}
 	n := sort.SearchStrings(l.eligible, request.NativeID)
 	mask := uint8(1)
-	if request.Purpose == agentapi.LocatorStartupCandidate {
+	if l.historical {
+		if request.Purpose != agentapi.LocatorHistoricalImport || !l.complete {
+			return agentapi.LocatorResult{Status: agentapi.LocatorRefused}, nil
+		}
+		mask = 4
+	} else if request.Purpose == agentapi.LocatorStartupCandidate {
 		mask = 2
 	} else if request.Purpose != agentapi.LocatorAdmittedOwner {
 		return agentapi.LocatorResult{Status: agentapi.LocatorRefused}, nil
@@ -847,7 +853,7 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 	if request.Root != l.root || request.Parent != nil || n == len(l.eligible) || l.eligible[n] != request.NativeID || l.purposes[n]&mask == 0 {
 		return agentapi.LocatorResult{Status: agentapi.LocatorRefused}, nil
 	}
-	if !slices.Contains(l.progress.Owners, request.NativeID) || l.stopped || l.progress.Next == len(l.progress.Owners) || request.NativeID != l.progress.Owners[l.progress.Next] {
+	if !slices.Contains(l.progress.Owners, request.NativeID) || l.stopped || !l.historical && (l.progress.Next == len(l.progress.Owners) || request.NativeID != l.progress.Owners[l.progress.Next]) {
 		return pending, nil
 	}
 	start := time.Now()
@@ -875,8 +881,10 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 		l.stopped = true
 		return pending, err
 	}
-	l.progress.Next++
-	l.skipInactive()
+	if !l.historical {
+		l.progress.Next++
+		l.skipInactive()
+	}
 	ref, stamp, n, err := l.candidate(ctx, request.NativeID)
 	if err != nil {
 		l.stopped = true
@@ -940,7 +948,7 @@ func (l *NativeInventory) Close() error {
 	}
 	l.closed = true
 	defer l.release()
-	if len(l.progress.Owners) == 0 || l.ctx.Err() != nil {
+	if l.historical || len(l.progress.Owners) == 0 || l.ctx.Err() != nil {
 		return nil
 	}
 	if l.remaining <= 0 {

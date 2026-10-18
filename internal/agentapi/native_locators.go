@@ -25,6 +25,8 @@ const (
 	LocatorAdmittedOwner LocatorPurpose = ""
 	// LocatorStartupCandidate supplies an explicitly guarded startup query.
 	LocatorStartupCandidate LocatorPurpose = "startup_candidate"
+	// LocatorHistoricalImport supplies observations only to an ephemeral import inventory.
+	LocatorHistoricalImport LocatorPurpose = "historical_import"
 )
 
 // LocatorRequest scopes lookup to the committed root. Observed only locates

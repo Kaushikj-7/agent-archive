@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Explicit `backfill --harness muse` previews bounded historical ordinary roots,
+  confirms their exact dates/projects/source checkpoints, and stages them before
+  registration for the normal collector. Preview and cancellation write no state
+  and open no storage. Exact batch undo detaches only its memberships. Child
+  coverage and missing-worktree/mapping overrides remain unavailable.
+
 - `list --source local` and `show --source local` inspect bounded native sessions
   before setup, including qualified Muse roots with `--harness muse`. Selected
   sources receive complete privacy validation. These reads do not open storage,

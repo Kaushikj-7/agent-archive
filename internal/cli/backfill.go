@@ -109,6 +109,13 @@ func printInterruptedImport(out io.Writer, home string, plan backfill.Plan, cfg 
 // imports them (see dev/specs/backfill.md). `--dry-run [--json]` prints
 // the plan and writes nothing, locally or remotely.
 func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
+	if explicitNativeImport(args, env) {
+		opts, ok := parseBackfillOptions(args, stderr, env)
+		if !ok {
+			return 2
+		}
+		return runNativeImportCommand(stdin, stdout, stderr, env, opts)
+	}
 	// A copy of Cursor's database a killed backfill or collector left in the
 	// temporary folder goes first, whatever this command is (history, undo,
 	// and --dry-run included). A copy in use is never removed.
@@ -212,7 +219,7 @@ func chooseBackfillPlanAction(opts backfillCommandOptions, plan backfill.Plan) b
 func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCommandOptions, bool) {
 	fs := env.newCommandFlags("backfill", stderr)
 	var harnesses, projects, mappings stringList
-	fs.Var(&harnesses, "harness", "only sessions from this app (claude, codex, cursor); repeatable")
+	fs.Var(&harnesses, "harness", "only sessions from this app (claude, codex, cursor, muse); repeatable")
 	fs.Var(&projects, "project", "only sessions in this project directory; repeatable")
 	fs.Var(&mappings, "map-project", "map exact missing OLD_CWD=CONFIGURED_ROOT for this import; repeatable")
 	mappingFile := fs.String("mapping-file", "", "bounded JSON file assigning exact original cwds to configured or historical projects")
@@ -242,6 +249,21 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 	if err != nil {
 		return usageError("--until: " + err.Error())
 	}
+	museOnly := false
+	for _, name := range harnesses {
+		canonical, known := env.agentRegistry().CanonicalDiscovery(name)
+		if known && canonical == "muse" {
+			museOnly = true
+		}
+	}
+	if museOnly {
+		if len(harnesses) != 1 {
+			return usageError("Muse historical import requires --harness muse alone; run separate imports for other apps")
+		}
+		if len(mappings) > 0 || *mappingFile != "" || *includeHome || *includeTemp || *includeRemoved {
+			return usageError("Muse historical import currently requires configured included physical projects; mapping and --include-* overrides are unavailable")
+		}
+	}
 	projectMappings, err := backfill.ParseProjectMappings(mappings)
 	if err != nil {
 		return usageError(err.Error())
@@ -258,7 +280,11 @@ func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCom
 		}
 		filters.MappingFile = *mappingFile
 	}
-	filters, err = filters.Canonicalize(selectedDiscoveryApps{DiscoveryLookup: env.agentRegistry(), apps: env.backfillDiscoveryAgents()})
+	if museOnly {
+		filters, err = filters.Canonicalize(env.agentRegistry())
+	} else {
+		filters, err = filters.Canonicalize(selectedDiscoveryApps{DiscoveryLookup: env.agentRegistry(), apps: env.backfillDiscoveryAgents()})
+	}
 	if err != nil {
 		return usageError(err.Error())
 	}

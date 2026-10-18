@@ -9,6 +9,28 @@ probed on a working Mac for their layout and field names only, never their
 content. Phase 1 imports transcript files. Phase 2 adds Cursor chats that exist
 only in Cursor's SQLite database.
 
+## Purpose-specific historical Muse route
+
+Explicit `--harness muse` uses the same bounded native inventory census in an
+ephemeral read-only mode, with observation-only historical locator requests.
+The ordinary collector mode retains its existing query scheduling and durable
+catalog behavior. Historical preview never restores or writes that catalog and
+never binds the generic import adapter. Its native IDs, locators, source
+checkpoints and binding facts remain private; public preview uses entry ordinals,
+configured project facts, dates, refusals and explicit unavailable child coverage.
+
+A confirmed exact UTC/project/root/destination/source scope is minted in the
+existing closed Batch control after the durable sticky historical writer fence.
+Actual first ownership still requires the Store-bound opaque confirmation and
+concrete source snapshot/filter/proof/currentness. The existing state transaction
+writes the typed stage before its distinct import reservation and owner. Recovery
+uses the exact stage/control/index authority without native rereads. Public
+history and normal collector publication reuse the existing paths. Purpose-specific
+undo stops the batch and CAS-detaches only its exact membership; acknowledged and
+independent effects survive. There is no live-window/startup-intent substitution.
+Missing worktrees/mappings and child admission remain unavailable until their
+independent source authority is qualified.
+
 ## Problem
 
 The archive captures only sessions that start after their project is activated

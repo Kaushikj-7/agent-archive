@@ -23,6 +23,50 @@ agent-archive backfill undo          # remove the latest import from the bucket
 agent-archive backfill undo ID --project DIR
 ```
 
+## Explicit historical Muse import
+
+Muse is selected only with `--harness muse` alone; omitting `--harness` keeps the
+ordinary three-app import. Start with:
+
+```sh
+agent-archive backfill --harness muse --project /existing/configured/project --since 30d --dry-run
+agent-archive backfill --harness muse --project /existing/configured/project --since 30d --dry-run --json
+agent-archive backfill --harness muse --project /existing/configured/project --since 30d
+```
+
+This route requires an existing setup with a configured Muse native root and
+included physical project. It imports qualified ordinary root conversations;
+child/descendant coverage is **unavailable**, never inferred from paths. Mixed
+harnesses, project mappings, missing worktrees and `--include-*` overrides refuse
+explicitly. Projects outside current configured inclusion remain refused. Unknown
+native formats, duplicate sources, incomplete namespaces and exhausted bounds
+remain visible as refusals or unavailable observations.
+
+The preview shows opaque entry numbers, exact original timestamps, configured
+project facts, the destination and resolved UTC date bounds. It contains no native
+session IDs, source paths or conversation content. JSON has
+`source: "historical-muse-import"`, explicit `identity_complete` and
+`child_coverage: "unavailable"`; ordinary backfill JSON is unchanged. Preview and
+cancellation use read-only archive access, create no catalog/cache/state, and
+never open storage. Enter defaults to No. `--yes` confirms the displayed frozen
+scope without a prompt. Nothing enables live Muse capture.
+
+After confirmation, the source is checked again and filtered through the normal
+Muse filter. Configuration saves the historical import writer protections, then
+a closed batch records the exact selected source checkpoints. Each filtered
+stage becomes durable before its index reservation and registration. The normal
+collector uploads and reads back that staged source; `--background` returns after
+registration, while the foreground command runs a normal sync. Bounds or quota
+pressure preserve completed work: run `sync`, then retry the same explicit
+filters to resume its existing exact batch. Source changes require a new reviewed
+selection; native files disappearing after staging do not destroy recovery.
+
+`backfill history` uses the existing import history. `backfill undo ID --yes`
+stops the batch and detaches only its exact registration memberships. It keeps
+native files, stored sources, acknowledged objects, independent later requests
+and configuration. It resumes safely after interruption. It never uses generic
+session deletion for historical Muse owners.
+
 While planning on a live terminal, backfill shows the current step and progress
 counts. Discovery shows a running count of sessions found; once transcript checking
 starts, it shows completed/total sessions and a percentage.
