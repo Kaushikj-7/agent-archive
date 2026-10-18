@@ -10,9 +10,18 @@ records the filter version that produced it (`filter_version`).
 Global and Muse adapter 0.31.0 accompany this change. Muse parser0.7.0
 separately derives optional installed declaration identities; other parsers stay unchanged.
 
+- An approval-free exact native committed `read_skill` start with exact
+  `broad_read` profile can retain the separate omission-only marker
+  `effect_join: committed_broad_read_v1`. It requires earlier own committed
+  call/run identity, a known native task and no prior/later approval overlap.
+  Retained readers independently check prior own call/materialized run and
+  start/terminal tuple order. Erased native names/tasks are not reconstructed.
+  This retains no skill name, arguments, body/hash or eligibility/use fact;
+  existing file-read classification bytes stay unchanged. Older strict Muse
+  readers refuse the new closed enum.
 - Muse validates the exact native omitted-body profile `{kind: broad_read}`.
-  Extra keys and unknown tags refuse. Its tag is erased and contributes no
-  committed file-read join, eligibility, invocation or use.
+  Extra keys and unknown tags refuse. Its tag is erased and cannot satisfy
+  the separate committed file-read lane or infer eligibility, invocation/use.
 - Muse supplemental skill evidence now uses the existing bounded shared
   filesystem inventory and privacy-filtered snapshots, according to the selected
   `none`, `metadata` or `body` mode. Imports receive no current skill inventory.
@@ -27,7 +36,7 @@ separately derives optional installed declaration identities; other parsers stay
 - Coverage stays `installed_only`; inventory does not establish trust,
   activation, eligibility, invocation, read inference or observed-no-use.
   Existing secret redaction, filtered-body hashes and snapshot limits apply.
-  No retained native transcript fields or capture authority change. Optional metadata
+  Capture authority does not change. Optional metadata
   installed identities preserve distinct bounded logical scope/id pairs within
   existing content groups; absent-identity bytes remain unchanged. Source2,
   metadata1 and history2 remain additive-compatible with ordinary typed readers;

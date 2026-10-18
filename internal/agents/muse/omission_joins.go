@@ -365,6 +365,8 @@ func equalPendingCopy(requested, copyPending map[string]any) bool {
 
 const committedFileReadJoin = "committed_file_read_v1"
 
+const committedBroadReadJoin = "committed_broad_read_v1"
+
 // effectJoinIndex keeps task and call identity domains separate. Approval and
 // read overlap checks remain constant-time as unrelated families accumulate.
 type effectJoinIndex struct {
@@ -397,12 +399,16 @@ func (s *nativeBodyJoins) readStart(r retained, p, rec map[string]any) error {
 	}
 	profile := object(rec["parallel_profile"])
 	ref, exists := s.tools.calls[toolCallIdentity{r.Stream.ID, run, call}]
-	if !s.taskIDs[taskKey{run, task}] || !exists || !ref.nativeRead || ref.record >= int(r.Sequence-1) || str(rec["tool_name"]) != "read_file" || !keys(profile, "kind", "subject") || str(profile["kind"]) != "file_read" || !stringFields(profile, "subject") {
+	if !s.taskIDs[taskKey{run, task}] || !exists || ref.record >= int(r.Sequence-1) {
+		return errFormat
+	}
+	join, ok := nativeCommittedReadJoin(ref, rec, profile)
+	if !ok {
 		return errFormat
 	}
 	s.readEffects.add(run, task, call)
 	// Fields is the projected map owned by this row, never the native payload.
-	r.Fields["effect_join"] = committedFileReadJoin
+	r.Fields["effect_join"] = join
 	return nil
 }
 
@@ -425,4 +431,16 @@ func (s *familyState) observeRow(r retained) error {
 		return errFormat
 	}
 	return s.observe(r)
+}
+
+// Both classes validate private native copies before erasure. Neither class
+// retains names/arguments or supplies skill eligibility, invocation or use.
+func nativeCommittedReadJoin(ref toolCallRef, rec, profile map[string]any) (string, bool) {
+	if ref.nativeRead && str(rec["tool_name"]) == "read_file" && keys(profile, "kind", "subject") && str(profile["kind"]) == "file_read" && stringFields(profile, "subject") {
+		return committedFileReadJoin, true
+	}
+	if ref.nativeBroadRead && str(rec["tool_name"]) == "read_skill" && tagged(profile, "broad_read") {
+		return committedBroadReadJoin, true
+	}
+	return "", false
 }

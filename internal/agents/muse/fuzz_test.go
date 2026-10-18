@@ -40,6 +40,12 @@ func FuzzMuseNative(f *testing.F) {
 			f.Add(bytes.Replace(read, []byte(`"task_completion":{"kind":"terminal","terminal":{"kind":"completed"}}`), []byte(`"task_completion":{"kind":"complete"}`), 1))
 			f.Add(bytes.Replace(read, []byte(`"outcome":{"kind":"completed","output_ref_count":1,"task_completion":{"kind":"terminal","terminal":{"kind":"completed"}}}`), []byte(`"outcome":{"kind":"failed","reason":"PRIVATE_EFFECT_REASON_SENTINEL"}`), 1))
 		}
+		if name == "synthetic-committed-read-effects.jsonl" {
+			broad := bytes.ReplaceAll(raw, []byte(`"read_file"`), []byte(`"read_skill"`))
+			// The exact profile is substituted without retaining a subject.
+			broad = bytes.Replace(broad, []byte(`"parallel_profile":{"kind":"file_read","subject":"PRIVATE_EFFECT_SUBJECT_SENTINEL"}`), []byte(`"parallel_profile":{"kind":"broad_read"}`), 1)
+			f.Add(broad)
+		}
 		if name == "synthetic-exec-empty.jsonl" {
 			f.Add(bytes.Replace(raw, []byte(`,"model_id":"synthetic-model"`), nil, 1))
 		}

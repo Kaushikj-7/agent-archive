@@ -536,6 +536,23 @@ run/task or run/call identity, before or after the read, excludes this lane.
 The unmarked approved lane preserves its previous request/name checks and does
 not acquire a prior committed-call requirement.
 
+Filter31 additionally permits the separate omission-only start classification
+`effect_join: committed_broad_read_v1`. Both private native names must be exactly
+`read_skill`, with exactly `{kind: broad_read}`, a known prior native task and
+an earlier unique own session/materialized-run/call committed native item. No
+prior or later approval may overlap the run/task or run/call. Raw input cannot
+supply the marker. Terminals retain the existing exact start tuple and ordering.
+The existing `committed_file_read_v1` lane and bytes are unchanged.
+
+Retained validation independently checks the closed marker, owned materialized
+run, prior committed call, start task/effect/call tuple and terminal order. It
+cannot reconstruct erased native tool names, profiles or proposed-task events;
+those were required during raw validation. Unknown markers, extra fields,
+foreign/later/duplicate calls and overlapping approvals refuse. Neither class
+retains skill names, arguments, bodies or hashes, nor derives eligibility,
+invocation, skill use or result success. Older strict Muse readers refuse the
+new marker. Existing source proof and capture admission remain separate.
+
 Retained parsing/refiltering independently rebuilds the prior own call and
 materialized/source graph and checks the fixed marker and exact start/terminal
 stream/effect/task/call/model-index tuple. The earlier native proposed-task ID

@@ -387,7 +387,7 @@ func effectFieldShape(r retained) (int64, []string, bool) {
 	}
 	names := []string{"kind", "event_kind", "run_id", "effect_id", "task_id", "tool_call_id", "model_call_index"}
 	if value, present := f["effect_join"]; present {
-		if r.Type != payloadToolBatchStarted || value != committedFileReadJoin {
+		if r.Type != payloadToolBatchStarted || (value != committedFileReadJoin && value != committedBroadReadJoin) {
 			return 0, nil, false
 		}
 		names = append(names, "effect_join")

@@ -2178,7 +2178,10 @@
               "maximum": 9007199254740991
             },
             "effect_join": {
-              "const": "committed_file_read_v1"
+              "enum": [
+                "committed_file_read_v1",
+                "committed_broad_read_v1"
+              ]
             }
           }
         }

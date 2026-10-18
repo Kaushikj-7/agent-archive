@@ -380,10 +380,19 @@ ToolResults/ToolErrors remain unavailable. Ordinary unaffected rows, other-agent
 parsers, Source2/metadata1 and private writer formats do not change. This finite
 observation lane does not enable capture or qualify rich tool/status parity.
 
-The unreleased PR10 filter31/Muse adapter0.31.0 scope also validates exactly
-`{kind: broad_read}` in private tool-batch start bodies. The tag is erased, does
-not satisfy the committed file-read profile, and derives no skill-use or
-eligibility facts. Muse parser0.7.0 and other allocated versions stay unchanged.
+The unreleased PR10 filter31/Muse adapter0.31.0 and Muse parser0.7.0 scope also
+validates exactly `{kind: broad_read}` and a separate closed omission-only
+`effect_join: committed_broad_read_v1` for qualified earlier own native
+`read_skill` starts. Native task/call/name/profile and prior/later approval
+absence are required before erasure. Retained proof independently validates
+the prior own committed call/materialized run and start/terminal task tuple;
+erased names/proposed-task facts cannot be reconstructed. The marker derives
+no skill-use/read-hash/eligibility facts, and does not satisfy the existing
+committed file-read class. Its previous file-read bytes and semantics stay
+unchanged. Older strict Muse schemas/readers refuse the new enum; Source2,
+Metadata1/history2 and other agent/default parser versions do not change.
+This is inside the exclusively allocated unpublished PR10 tuple, with no
+additional allocation. Frozen pending bytes preserve original provenance.
 
 Muse effect-body compatibility accepts the closed native `file_read` profile,
 `complete` task completion and `failed` outcome forms. Only validation of private

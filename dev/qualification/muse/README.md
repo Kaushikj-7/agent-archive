@@ -353,3 +353,32 @@ create committed_file_read_v1, skill eligibility, invocation, read-hash attribut
 usage or capture admission. Deterministic native-shaped regression and a fuzz
 seed cover this compatibility change. Actual full-source qualification and
 read-skill use attribution remain open pending separate checks.
+
+## Committed broad-read omission compatibility
+
+A further bounded diagnostic of the same synthetic 1.4.9-R6297.1 source
+isolated record52's refusal to the existing native committed-call class check.
+The exact keyed earlier own session/run/call native item and its start both
+matched `read_skill`; task-known and earlier-call checks were true, pending
+approval overlap false, and the profile exactly `{kind: broad_read}`. The
+source checksum and complete77-record framing remained unchanged. Fixed report
+SHA `216a0b87e944d2b0366f4a3e753fe6218e4fd96eab907f148c68dd3b5377d491`
+contains only closed booleans and the bounded shape. It is a diagnosis;
+original full Source/Filter qualification remains failed until a later exact
+current-source consumer succeeds.
+
+The new `committed_broad_read_v1` marker is an omission-only compatibility
+class under existing effect_join, separate from committed_file_read_v1. Raw
+validation requires the exact observed native names/profile, known native task,
+earlier own call/run and no prior or later overlapping approval. Retained
+validation independently checks owned materialized run/prior committed call,
+start task/effect/call tuple and terminal order. It cannot recover erased
+native names/profile/proposed-task evidence. Native payload values do not
+survive; no skill name, arguments, body/hash, eligibility, invocation, use or
+result success is derived. The frozen previous file-read-only strict schema
+refuses the new marker and still accepts prior file-read starts.
+
+Synthetic full-pipeline, malformed/foreign/later/duplicate/overlap, retained
+marker/refilter, privacy, resource/cancellation and unchanged file-read golden
+regressions cover the boundary. The added fuzz seed is synthetic. These tests
+are not fresh native qualification, runtime identity or capture admission.
