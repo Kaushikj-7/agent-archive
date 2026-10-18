@@ -52,7 +52,7 @@ changes app settings.
    evidence the import lacks.
 7. Every supported, authorized, recoverable session can finish importing,
    regardless of how many work slices the inventory needs. Scheduler allowances,
-   disposable-cache limits and unrelated known nonportable origins must not
+   disposable-cache limits and repository evidence resolved as unrelated must not
    permanently remove eligible sessions from a foreground backfill.
 
 ## Large-backfill completion contract
@@ -123,28 +123,39 @@ continuation hints, never admission authority or permission to capture new work.
 ### Repository evidence and recovery assistance
 
 Represent these cases separately: a usable normalized repository key; a
-successfully observed checkout with no portable origin key; conflicting origin
-keys; and evidence that could not be observed completely. A local-only origin
-must be observed and renewed as such, not inferred from a folder name or a failed
-Git call. Read every origin value and retain the current multi-origin conflict
-rules. A configured root and an otherwise identical proposed root must have the
-same evidentiary classification; importing a live session must not turn its
-known nonportable checkout into an inventory-wide unknown on the next backfill.
+successfully observed local-only origin whose repository ownership is unresolved;
+conflicting origin keys; and evidence that could not be observed completely. A
+local-only origin must be observed and renewed as such, not inferred from a folder
+name or a failed Git call. Its stable filesystem spelling is not negative
+ownership evidence: it may point to another clone of the recorded repository.
+A configured root and an otherwise identical proposed root must have the same
+classification and ownership requirements; neither may be ignored merely because
+its directly observed origin has no portable key.
 
-A completely observed nonportable checkout is non-matching evidence for a
-portable recorded key. Renew its checkout top level, complete origin
-classification and executable/config observation scope during admission. Gaining
-a portable key, becoming unreadable, moving or conflicting invalidates the proof.
-Known nonportable does not authorize imports from that root, override an original
-cwd or ancestor exclusion, resolve a missing subtree, or turn an inaccessible
-repository into a harmless non-match. Genuine unknown/conflicting evidence still
-prevents an automatic uniqueness claim when it could affect that claim.
+For automatic recovery affected by a local-only origin, resolve supported local
+origin chains through bounded, read-only Git observation, without network access
+or native configuration changes. Read every origin value at each step; resolve
+supported filesystem references without guessing path semantics, detect cycles
+and aliases, and bound traversal work. Unsupported references, unreadability,
+unfinished traversal and conflicting reachable keys remain uncertainty. An
+unresolved terminal with no portable key also remains uncertain. Only sufficient
+resolved identity evidence can establish a match or non-match for the recorded
+key; a completed observation of the local path alone cannot certify uniqueness.
 
-Bounded following of local clone origins may later provide more attribution
-evidence, with cycle/change/access checks and no network. It is not a prerequisite
-for the initial fix and must not silently canonicalize distinct clones or invent
-permission. A clone shown to share a portable key may make attribution ambiguous;
-a reviewed exact mapping remains the route to selecting the intended project.
+Keep each physical clone distinct even when a chain reaches the same portable
+key or another observed clone. Those clones compete in the uniqueness proof;
+origin following must not collapse them into one owner. Renew the checkout
+identity, all origin values, traversed dependencies and executable/config
+observation scope before admission. A changed chain, source or policy invalidates
+the affected proof. Original cwd, target and source/ancestor exclusions remain
+binding; origin evidence cannot resolve a missing subtree or confer permission.
+
+Where chain evidence remains unknown or ambiguous, require a reviewed exact/bulk
+assignment to a compatible configured target or a supported historical
+destination. Keep these existing assignment routes usable before full chain or
+larger-window work lands: an exact assignment does not require proving automatic
+uniqueness over unrelated roots. It still cannot override exclusions or usable
+conflicting identity.
 
 Build recovery assistance on the existing exact mapping-file and historical
 project contracts. Offer grouped suggestions by original cwd and recorded
@@ -719,16 +730,17 @@ matching rule wins.
    uniqueness. One exception applies to proposed (not yet configured) roots
    only: when Git reports a checkout top level and prints an origin that yields
    no repository key (for example a clone whose origin is a local path to a
-   deleted worktree), that root cannot own any recorded key and is non-owning
+   deleted worktree), the current implementation treats that root as non-owning
    rather than unknown, so it does not make recovery unavailable for other
    sessions. It must still be a keyless checkout at the same top level when
    evidence is renewed. A proposed root that Git could not observe, whose
    origin read failed, or whose observation exhausted its budget, still blocks, and every configured root
    keeps the strict rule ([Recorded project recovery](#recorded-project-recovery)).
-   This is the current implementation. The approved
-   [completion target](#repository-evidence-and-recovery-assistance) replaces the
-   proposed/configured distinction for completely observed nonportable evidence;
-   unreadable/conflicting evidence remains uncertain.
+   This exception has an ownership gap: a stable local origin can lead to the
+   recorded repository. The approved
+   [completion target](#repository-evidence-and-recovery-assistance) requires
+   resolved ownership evidence or a reviewed assignment for both proposed and
+   configured local-only roots; it does not extend the blanket exception.
    Exact mappings continue to require configured targets.
    A Cursor database chat with no folder evidence at all (no folder, no
    workspace reference, no message folder; for example a subagent composer)
@@ -1406,25 +1418,29 @@ pass allows at most 128 identity lookups; completed sweeps refresh next pass,
 and cached prefix metadata is validated before a resumed sweep. Unavailable
 entries cannot certify uniqueness. Backfill's proposed roots are the only
 exception: a proposed root whose completed, within-budget lookup found a
-checkout top level and an origin value that yields no repository key is
-non-owning; a failed origin read is unknown, not keyless. Every
-`remote.origin.url` value is read (`git config --get` reports only the last):
+checkout top level and an origin value that yields no repository key is treated
+as non-owning by the current implementation; a failed origin read is unknown,
+not keyless. Every `remote.origin.url` value is read (`git config --get` reports
+only the last):
 the checkout is keyless only when no value yields a key; a value that yields
 one is the checkout's key wherever it appears; values that yield different
-keys leave the identity unknown, neither keyless nor matched. It cannot match a
-recorded key, so a match elsewhere stays unique among the identifiable roots.
+keys leave the identity unknown, neither keyless nor matched. The current
+resolver omits a keyless proposed root from competing matches. This is an
+ownership gap: a filesystem origin may lead to the same recorded repository,
+even while its directly observed value remains unchanged.
 It has no dependency stamps, so every admission slice observes it again
 (sharing the coalesced semantic sweep) and requires the same keyless top level
 and observer scope; gaining a key or becoming unobservable invalidates the proof.
 Unobserved or budget-exhausted proposed roots, and all configured roots, remain
 uncertainty in the current implementation. The approved
-[completion target](#repository-evidence-and-recovery-assistance) requires the
-same classification and renewed proof for an observed nonportable root before
-and after it becomes configured. This extension is not yet implemented.
-A keyless origin that is a `url.insteadOf` shorthand for the same
-repository is the accepted residual: it is never normalized, so it could not
-match the recorded key even if configured. Bounded Git config origin names identify
-metadata dependencies; no partial Git configuration parser interprets remotes.
+[completion target](#repository-evidence-and-recovery-assistance) requires
+resolved local-origin ownership evidence or a reviewed assignment before and
+after configuration. This correction is not yet implemented.
+A keyless origin that is a `url.insteadOf` shorthand for the same repository is
+also unresolved identity; failure to normalize it is not proof of a non-match.
+The current proposed-root exception can omit it as well. Bounded Git config
+origin names identify metadata dependencies; no partial Git configuration parser
+interprets remotes.
 Source and Git reads run outside admission locks. Under-lock scope digests and
 permission generations reject configuration changes.
 
@@ -1458,8 +1474,10 @@ session into one included checkout of its own repository, configured or
 proposed, when it actually ran in a second, unconfigured clone known only to
 the app with the gap, instead of leaving it unresolved. It is never an
 excluded root, a root inside one, or a root no witness could propose; it is
-the same residual as a keyless clone and a
-`url.insteadOf` origin. The plan reports it: `recovery_evidence_gaps` in JSON
+also a possible outcome of the current keyless-clone exception described above.
+The completion target closes that known local-origin ownership gap; it does not
+claim a census of clones hidden by another app's missing evidence. The plan
+reports per-app gaps: `recovery_evidence_gaps` in JSON
 (each `app`, `cause`, and the `blocked` and `recovered_without` session counts
 by app) and a "Project recovery evidence" note in text. An app's own gaps
 still block its sessions as defense in depth. Witnesses from an incomplete
@@ -1541,8 +1559,9 @@ configuration only:
   the same repository makes the recovery ambiguous; its renewal accepts
   appends. Found after planning (confirmation or an admission slice), the new
   root's key is read and every recorded-key recovery of that key fails; a
-  keyless root (as a proposed root above) or a repository without a key
-  matches none.
+  keyless root (as a proposed root above) or a repository without a key is
+  currently treated as matching none. The target requires resolved ownership
+  evidence or reviewed assignment for a local-only root here too.
 - An added transcript whose folder cannot be told (no folder, a header that is
   not understood or whose IDs disagree, a Cursor project folder no planned chat
   had, a root whose key cannot be read), and a store that can no longer be

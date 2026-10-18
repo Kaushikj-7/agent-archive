@@ -27,9 +27,11 @@ Source inspection and content-free local diagnostics found two reproducible
 mechanisms. A local clone can be imported and become a configured project,
 then block later automatic recovery because its observed local-only origin is
 represented as unknown. The existing proposed-root exception and configured-root
-strict rule intentionally differ. Also, native preparation/inspection/admission
-reuse lookup allowances intended to protect background work; allowance exhaustion
-can become a generic source-limit skip.
+strict rule intentionally differ. That exception is not a safe fix to extend:
+a filesystem origin may lead to another clone of the recorded repository, so
+its stable local spelling does not establish a non-match. Also, native
+preparation/inspection/admission reuse lookup allowances intended to protect
+background work; allowance exhaustion can become a generic source-limit skip.
 
 These findings do not establish that every refusal in a real inventory has the
 same cause. One primary skip can hide another. Metadata counts do not prove
@@ -54,12 +56,15 @@ the initial experiment does not implement restart, staging or remote publication
    cumulative five-second command or session ceiling. Retain bounded individual
    I/O. Do not solve this by globally increasing constants or adding a required
    timeout-tuning flag.
-3. **Known nonportable and unknown are different.** Classify a successfully
-   observed local-only origin consistently before and after project configuration.
-   Renew all origin values, checkout identity and observation scope. Genuine
-   access failures, conflicting normalized keys and unfinished observations
-   cannot prove automatic uniqueness. Existing source/ancestor exclusions still
-   apply. Local-origin-chain following is optional later work, not a prerequisite.
+3. **Observed local origins need ownership evidence.** Classify them consistently
+   before and after project configuration, but never treat a stable local-only
+   origin as a non-match by itself. Automatic recovery requires sufficient bounded
+   local-origin-chain resolution; unresolved or ambiguous ownership requires a
+   reviewed assignment. Read and renew all origin values, traversed dependencies,
+   checkout identity and observation scope, without network access or config
+   mutation. Cycles, unreadability, conflicts and incomplete traversal stay
+   uncertain. Same-repository physical clones remain distinct competitors and
+   existing source/ancestor exclusions remain binding.
 4. **Review is a supported recovery mechanism.** Reuse exact bulk mappings and
    historical-only projects. Produce grouped suggestions with evidence/conflicts;
    no filename guess, silent global fallback or configuration deletion supplies
@@ -86,7 +91,7 @@ its own current-head review, required checks and accurate user documentation.
 | PR | Scope and concrete result | Depends on | Exit evidence |
 | --- | --- | --- | --- |
 | 1 | Preserve `lookup_allowance_spent`; distinguish scheduling exhaustion, actual source limits and missing evidence. Add focused regressions and baseline counters for phases/scopes/unfinished candidates. | This contract | No generic limit for a known allowance cause; unchanged privacy/admission decisions; source-size refusals remain specific. |
-| 2 | Classify and renew fully observed nonportable repository evidence consistently for configured/proposed roots. Keep unknown/conflicting roots strict and exact mappings available. | This contract; reuse recovery foundations | First import followed by a second backfill does not manufacture a new global blocker. Gaining a key, moving, unreadability, multiple origins, excluded cwd/ancestor and actual duplicate clones are covered through real synthetic Git. |
+| 2 | Classify configured/proposed local-only origins consistently; add bounded, renewed local-origin-chain identity evidence for automatic recovery. Keep unresolved/conflicting roots uncertain and existing reviewed assignments usable independently. | This contract; reuse recovery foundations | Real synthetic Git covers an unrelated resolved chain, a local-origin clone of the portable-key repository remaining a distinct competing clone, first/second import, cycles, missing/unreadable targets, chain changes, multiple origins and exclusions. Unresolved/ambiguous cases recover only through supported reviewed assignments. |
 | 3 | Give foreground native preparation and inspection renewable work policies/continuations. Deduplicate requested identities, reuse validated facts, release idle caches, advance fairly and report progress/no-progress. | PR 1 | Real CLI cold/warm dry runs above 256 probes finish; deterministic allowance rollover, cancellation, one source requiring over five seconds and a moving index retain selection validation. |
 | 4 | Carry continuation through confirmed staging/admission and publication; renew proofs in the correct ownership scope; resume exact batch/mapping identity after restart; drain settled groups under staging pressure. | PRs 1 and 3 | Preview-successful supported sessions also stage, register, publish and read back. Interrupt before/after each durable step; delete native evidence after staging; saturate quota and preserve outstanding owners. |
 | 5 | Remove inventory-window completion ceilings with paged/spooled content-free source/project/revision work and bounded decision/report windows. Retain full relevant uniqueness/exclusion evidence across windows. | PRs 2–4 | 5k/50k candidate inventories, over 1,024 witness roots and inventories over disposable catalog/listing windows complete without changing source safety limits or asserting partial uniqueness. |
@@ -97,6 +102,9 @@ its own current-head review, required checks and accurate user documentation.
 PRs 2 and 3 can be developed independently after their shared contract is fixed.
 PR 4 must not wait for fragment support, mapping assistance or broad performance
 optimizations: existing exact mapping files can provide the early recovery route.
+Those mappings and historical destinations must not wait for local-origin-chain
+resolution or PR 5's larger-window work. PR 2 may enable an automatic case only
+after its ownership evidence is sufficient; unresolved roots remain uncertain.
 PR 5 provides the larger-than-one-window guarantee. PR 6 improves the operator
 experience; its first useful grouped suggestions can precede full paging.
 
@@ -123,7 +131,7 @@ installed, and archive/config state remained unchanged in each CLI dry run.
 | Three valid child sessions with a fresh allowance | 3 planned | 3 planned |
 | 512 tiny child sessions with indexed current rows | Recorded run: 374 planned, 138 generic limit skips; an earlier run planned all 512 | All 512 planned |
 | Three valid children with preparation's time allowance deterministically exhausted before inspection | 0 planned, 3 generic limit skips | All 3 planned |
-| Missing-worktree recovery with an unrelated configured local-only clone | Refused | Recovered to the unique configured target |
+| Missing-worktree recovery with a synthetic configured local-only clone | Refused | Accepted the configured target by ignoring the local-only clone; uniqueness was not established |
 | Exact mapping, unreadability, excluded original cwd and identity change | Mapping succeeds; unreadable/excluded evidence refuses recovery | Same controls hold; a recovered proof is rejected if the clone gains the matching key before admission |
 
 The exhaustion injection models an already-spent allowance without sleeping;
@@ -133,6 +141,15 @@ probes, not matched performance benchmarks. Repository classification was
 injected through the existing observation seam, so actual Git classification,
 multi-origin/exclusion combinations and repeat-import behavior still require
 the implementation regressions in PR 2.
+
+[Ownership review](https://github.com/wangjohn/agent-archive/pull/678#discussion_r4306094199)
+identified a flaw in the blanket proposed/configured-keyless
+overlay: the supposedly unrelated local clone could instead lead to the same
+portable repository, yet the overlay would still ignore it. Reobserving an
+unchanged local origin does not repair that proof. The probe did not exercise
+this case; its successful recovery count is feasibility evidence only, not a
+safe production policy. PR 2 must replace the blanket exception with sufficient
+chain evidence or reviewed assignment for proposed and configured roots alike.
 
 The experimental resets are insufficient as a production solution: they do not
 continue a single source needing multiple scopes, implement durable restart or
@@ -193,7 +210,7 @@ reinterpret an already admitted session's provenance or extend its capture age.
 
 | Tier | Inventory and scenario | Required observation |
 | --- | --- | --- |
-| Focused short | 3 sessions; exact mappings; known local clone; unreadable/excluded/identity-changing controls; deterministic spent allowance | Actual CLI dry-run decisions, unchanged archive/config state, precise causes and revalidation. |
+| Focused short | 3 sessions; exact mappings; resolved unrelated and same-repository local-origin chains; cyclic/unreadable/conflicting/excluded/identity-changing controls; deterministic spent allowance | Actual CLI decisions, distinct physical-clone ambiguity, reviewed recovery for unresolved ownership, unchanged dry-run archive/config state, precise causes and revalidation. |
 | Window boundary | 512 native children/forks and mixed ordinary sessions, cold and warm | Every eligible logical session reaches a plan and confirmed publication across multiple scopes; >256 probes is not a source refusal. |
 | Representative | 5,000 sessions, shared ancestors, duplicates/revisions, local origins and multiple projects | Bounded descriptors/charged memory; no starvation; cancellation/restart and quota-draining publication preserve exact identity. |
 | Extended | 50,000 candidates; >1,024 witness roots; large current indexes, flat/day stores and inventories over cache/listing windows | Complete reconciliation without cache-sized result ceilings, repeated whole-inventory source reads or partial uniqueness claims. |

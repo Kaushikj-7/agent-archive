@@ -268,15 +268,21 @@ date/project output filter does not guarantee completion, because native proof
 preparation can still inspect the wider inventory.
 
 A configured local clone whose origin is a filesystem path can block automatic
-deleted-worktree recovery even when other repositories are accessible. Reviewed
-exact mappings or a mapping file can resolve supported individual assignments
-without deleting the clone, changing its origin or removing its project rules.
+deleted-worktree recovery even when other repositories are accessible. The path
+may lead to another clone of the recorded repository; a stable local origin alone
+cannot prove that the repositories differ. Reviewed exact mappings or a mapping
+file can resolve supported individual assignments without deleting the clone,
+changing its origin or removing its project rules.
 Mappings solve attribution; native-history evidence still needs to pass its own
 checks. Excluded projects remain part of automatic recovery evidence.
 
 The [large-backfill completion plan](../../dev/proposals/large-backfill-completion.md)
 addresses these limitations. Its renewable foreground work and recovery
 assistance are planned behavior, not additional options available in this build.
+The plan requires sufficient local-origin identity evidence for affected automatic
+recovery, or a reviewed assignment when ownership remains unknown or ambiguous.
+It preserves distinct clones and exclusions; it does not simply ignore local
+origins. Existing supported mappings and historical destinations remain available.
 
 For Codex history refusals, `diagnostics` preserves fixed source reason codes
 when available: a missing or duplicated rollout a thread continues from, no
