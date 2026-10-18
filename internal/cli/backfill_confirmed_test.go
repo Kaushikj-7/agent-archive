@@ -189,7 +189,11 @@ func TestBackfillConfirmedResumesFrozenStagesWithoutNativeInput(t *testing.T) {
 }
 
 func TestBackfillConfirmedCompletesMixedNativeWindows(t *testing.T) {
-	for _, count := range []int{3, 513} {
+	counts := []int{3, 17}
+	if !testing.Short() {
+		counts = append(counts, 513)
+	}
+	for _, count := range counts {
 		t.Run(fmt.Sprint(count), func(t *testing.T) { checkConfirmedMixedNativeWindows(t, count) })
 	}
 }

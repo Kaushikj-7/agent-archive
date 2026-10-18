@@ -92,6 +92,18 @@
     },
     {
       "package": "internal/cli",
+      "test": "TestBackfillConfirmedCompletesMixedNativeWindows",
+      "restore": "daily",
+      "pr": "3/17-session representatives; full 513-session body NOT RUN",
+      "full_children": [
+        "3",
+        "17",
+        "513"
+      ],
+      "full_fixture": "513 mixed native child, fork and ordinary sessions; actual confirmed CLI publication/readback, exact logical ownership, unchanged native input and bounded owned staging"
+    },
+    {
+      "package": "internal/cli",
       "test": "TestDefaultRepositoryScopeBodyBudgetAndEmptyFallback",
       "restore": "weekly",
       "pr": "representative; full matrix/scale NOT RUN"
