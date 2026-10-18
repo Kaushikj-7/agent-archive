@@ -86,7 +86,13 @@ Deterministic parser and shared planner conformance tests use synthetic inputs.
 They cannot qualify native trust/activation, failed/no-op skill behavior, child
 identity or supported platforms. The controlled producer/diagnostic facts above
 qualify only the stated native event grammar and byte-domain observation;
-complete uninstrumented current Source.Filter-to-metadata qualification remains
-pending. Exact-thread identity, eligible inventory and privacy-safe read-hash
+the same controlled source (145,600 bytes) passed complete uninstrumented production
+Source/Filter, bundle Parse, two refilter/Parse/metadata rounds and exact positive
+`pr10-local`/`native_invocation` evidence with SHA256 omitted on commit `44c6bd87`.
+The known source checksum and same-descriptor identity remained stable; that
+consumer ran no native producer or raw tool-result decoder and retained no raw
+result reference. Original failed attempts and the lost original endpoint result
+(969 bytes) remain distinct.
+Exact-thread identity, eligible inventory and privacy-safe read-hash
 association remain open. No capture or default setup enablement follows from
 skill presence.

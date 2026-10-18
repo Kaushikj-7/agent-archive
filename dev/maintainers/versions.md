@@ -21,13 +21,18 @@ affects.
 | List JSON | `cli.listSchemaVersion` | `list --json` `schema_version` | 4 | The script-facing list document changes incompatibly. Version 3 removed `unavailable`; version 4 makes exact-count knowledge explicit. |
 | Status JSON | `statusView.Version` in `internal/cli/status.go` | `status --json` `schema_version` | 4 | Status output changes incompatibly; schema 4 separates discovery from actual hook evidence. |
 
-Muse uses its independent parser 0.6.0 and archive-native `muse-jsonl` mixed ordinary-v1/native-omission-v2
+Muse uses its independent parser 0.7.0 and archive-native `muse-jsonl` mixed ordinary-v1/native-omission-v2
 ([inner union schema](../../schemas/muse-retained-record.schema.json)). Explicit-file
 and bounded automatic local handoff are supported; this does not alter outer
 bundle schemas or
 registration authority. Handoff builders now prefer existing `NativeStartedAt`
 facts over first prompts/file observations, also correcting Codex handoff start.
-The original native-start correction did not change metadata derivation.
+The original native-start correction did not change metadata derivation. The
+unreleased filter 31 and global/Muse adapter 0.31.0 tuple additionally covers installed
+declaration identities and qualified positive native harness skill-read reports.
+The latter erase original-file digests and derive SHA-omitted evidence;
+eligibility, activation, exact-thread identity and privacy-safe read-hash
+association remain unqualified.
 
 Claude uses the common parser version; Cursor uses parser 0.23.0.
 

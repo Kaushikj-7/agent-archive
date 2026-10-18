@@ -29,9 +29,15 @@ Source/Filter, Parser, Runtime and local handoff Discovery/NativeHeaders/Preview
 are bound. Installed-version inspection uses a fixed bounded update-disabled
 CLI probe and exact release/R-build grammar; it does not stamp child versions or
 supply a binary SHA. Skills share the existing managed installation and bounded
-installed-only inventory for exact injected config/shared/foreign/project roots.
-Native skill trust, activation, eligibility and invocation/read evidence remain
-unavailable; plugin/builtin locations are not guessed. Exact thread identity,
+installed-only inventory for exact injected config/shared/foreign/project roots,
+the qualified builtin data-home location and the supported native-local plugin
+registry subset. A closed own native `skill_read_observed`/`read_skill_tool`
+report now derives existing `native_invocation` evidence independently of eligible
+inventory. Its original-file digest is validated then erased, and metadata omits
+SHA256; this reports a native harness read, not tool-result success. The pinned
+controlled source passed complete Source/Filter, bundle Parse/refilter and metadata
+on production commit `44c6bd87`. Native skill trust, activation, eligibility and privacy-safe
+product read-hash association remain unavailable. Exact thread identity,
 children and replay remain separately unqualified. Collection remains
 refused before native reads/filtering/PUT, including injected registrations.
 No durable binding or consent is created. The synthetic 1.4.9 exec held-out has

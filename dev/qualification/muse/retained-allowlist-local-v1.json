@@ -1,7 +1,7 @@
 {
   "version": 1,
   "format": "muse-jsonl",
-  "status": "Explicit local own conversation, input/output observations and committed tool identity only; capture unavailable",
+  "status": "Explicit local own conversation, input/output observations, committed tool identity and qualified positive native harness skill-read reports; capture, eligibility and read-hash association unavailable",
   "record_schema": "schemas/muse-retained-record.schema.json",
   "envelope": [
     "v",
