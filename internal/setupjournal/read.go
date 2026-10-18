@@ -1,6 +1,7 @@
 package setupjournal
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 )
@@ -25,5 +26,18 @@ func Read(home string, journal *Journal) (err error) {
 	if err != nil {
 		return err
 	}
-	return journal.UnmarshalJSON(raw)
+	decodeErr := journal.UnmarshalJSON(raw)
+	if decodeErr == nil || errors.Is(decodeErr, ErrUnsupportedRecoveryAuthority) {
+		return decodeErr
+	}
+	// The raw boundary must run first to preserve protected malformed records.
+	// For unprotected invalid JSON, retain the generic reader's SyntaxError so
+	// legacy recovery can still offer its existing move-aside way out. The empty
+	// destination cannot retain snapshot payloads or assign to the receiver.
+	var discarded struct{}
+	var syntaxErr *json.SyntaxError
+	if fallbackErr := json.Unmarshal(raw, &discarded); errors.As(fallbackErr, &syntaxErr) {
+		return fallbackErr
+	}
+	return decodeErr
 }

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 func TestNativeProtectedMalformedJournalRecoverPreservesRecord(t *testing.T) {
@@ -131,4 +133,57 @@ func TestNativeJournalWhitespaceClassifierPreservesRefusal(t *testing.T) {
 	if nativeJournalAuthorityPresent(ordinary) {
 		t.Fatal("unprotected fields and trailing whitespace acquired authority")
 	}
+}
+
+func TestNativeRawJournalLegacySyntaxCompatibility(t *testing.T) {
+	t.Parallel()
+	for name, raw := range map[string][]byte{
+		"truncated":      []byte(`{"changes":[`),
+		"empty":          {},
+		"garbled":        []byte(`not json`),
+		"selector-value": []byte(`{"note":"native_import_protection","changes":[`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			must(t, os.WriteFile(JournalPath(home), raw, 0600))
+			receiver := Journal{Backend: "unchanged"}
+			err := Read(home, &receiver)
+			if !state.IsUndecodable(err) || errors.Is(err, ErrUnsupportedRecoveryAuthority) {
+				t.Fatal("unprotected garbage lost legacy syntax classification", err)
+			}
+			if receiver.Backend != "unchanged" {
+				t.Fatal("syntax normalization assigned receiver")
+			}
+			err = Recover(home, nil, func() (func(), error) {
+				t.Fatal("undecodable record reached recovery mutation")
+				return nil, errors.New("unexpected recovery")
+			})
+			var blocked *RecoveryBlockedError
+			if !errors.As(err, &blocked) {
+				t.Fatal("legacy garbage lost recoverable way out", err)
+			}
+			got, err := os.ReadFile(JournalPath(home))
+			must(t, err)
+			if !bytes.Equal(got, raw) {
+				t.Fatal("syntax refusal changed record")
+			}
+		})
+	}
+	t.Run("valid-unsupported", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(`{"schema_version":999,"changes":[],"files_only":false}`)
+		var direct Journal
+		original := direct.UnmarshalJSON(raw)
+		if original == nil || errors.Is(original, ErrUnsupportedRecoveryAuthority) || state.IsUndecodable(original) {
+			t.Fatal("fixture is not a closed valid-wire refusal", original)
+		}
+		home := t.TempDir()
+		must(t, os.WriteFile(JournalPath(home), raw, 0600))
+		receiver := Journal{Backend: "unchanged"}
+		err := Read(home, &receiver)
+		if err == nil || err.Error() != original.Error() || state.IsUndecodable(err) || receiver.Backend != "unchanged" {
+			t.Fatal("valid unsupported wire was accepted, reclassified or assigned", err)
+		}
+	})
 }
