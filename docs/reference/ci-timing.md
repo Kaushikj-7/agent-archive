@@ -930,7 +930,11 @@ worker count, schedules, test selection and token permissions are unchanged.
 Artifacts keep the existing seven-day retention. To preserve observations longer,
 collect their small receipts during that window; this change adds no scheduler.
 
-GitHub can remove `pull_requests` associations from completed runs after merge.
+GitHub can remove `pull_requests` associations after merge, even while a run is
+still active. The live performance gate downloads its current attempt's original
+identity ZIP using the upload action's artifact ID and authenticates it with the
+same checks below when the PR association is empty. The workflow passes the
+`ID:ZIP` pair through `CI_PERFORMANCE_IDENTITY_ARCHIVE`.
 Explicit run IDs alone still cannot authorize pairing an empty-association run.
 Supply its original downloaded identity ZIP using:
 
