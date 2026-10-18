@@ -6,11 +6,42 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+)
+
+type homeAliasLocatorCase string
+
+const (
+	homeAliasOutside     homeAliasLocatorCase = "outside"
+	homeAliasWrongHome   homeAliasLocatorCase = "wrong_home"
+	homeAliasUnapproved  homeAliasLocatorCase = "unapproved_alias"
+	homeAliasTraversal   homeAliasLocatorCase = "traversal"
+	homeAliasDescendant  homeAliasLocatorCase = "descendant_escape"
+	homeAliasFileSymlink homeAliasLocatorCase = "file_symlink"
+	homeAliasWrongThread homeAliasLocatorCase = "wrong_thread"
+)
+
+type homeAliasChangeCase string
+
+const (
+	homeAliasMissing   homeAliasChangeCase = "missing_alias"
+	homeAliasRetarget  homeAliasChangeCase = "retarget_alias"
+	homeAliasReplaced  homeAliasChangeCase = "replaced_root"
+	homeAliasSecondary homeAliasChangeCase = "secondary_alias"
+)
+
+type homeAliasSelectionCase string
+
+const (
+	homeAliasIndexMove  homeAliasSelectionCase = "index_move"
+	homeAliasSourceMove homeAliasSelectionCase = "source_move"
+	homeAliasCancel     homeAliasSelectionCase = "cancel"
+	homeAliasPressure   homeAliasSelectionCase = "pressure"
 )
 
 // An index can retain the spelling of an approved native home through a symlink.
@@ -62,7 +93,7 @@ func TestRolloutLookupUsesTrustedHomeAlias(t *testing.T) {
 func TestRolloutLookupHomeAliasDoesNotAuthorizeOtherLocators(t *testing.T) {
 	t.Parallel()
 	for _, policy := range []CodexLookupPolicy{BackgroundLookup, ForegroundLookup} {
-		for _, mode := range []string{"outside", "wrong_home", "unapproved_alias", "traversal", "descendant_escape", "file_symlink", "wrong_thread"} {
+		for _, mode := range []homeAliasLocatorCase{homeAliasOutside, homeAliasWrongHome, homeAliasUnapproved, homeAliasTraversal, homeAliasDescendant, homeAliasFileSymlink, homeAliasWrongThread} {
 			t.Run(fmt.Sprintf("%d/%s", policy, mode), func(t *testing.T) {
 				t.Parallel()
 				store, cfg, at, root := fixture(t)
@@ -77,30 +108,30 @@ func TestRolloutLookupHomeAliasDoesNotAuthorizeOtherLocators(t *testing.T) {
 				path := filepath.Join(alias, "sessions", name)
 				homes := []string{alias}
 				switch mode {
-				case "outside":
+				case homeAliasOutside:
 					path = filepath.Join(other, "sessions", name)
-				case "wrong_home":
+				case homeAliasWrongHome:
 					homes = append(homes, other)
 					path = filepath.Join(other, "sessions", name)
-				case "unapproved_alias":
+				case homeAliasUnapproved:
 					unapproved := filepath.Join(t.TempDir(), "other-spelling")
 					if err := os.Symlink(root, unapproved); err != nil {
 						t.Fatal(err)
 					}
 					path = filepath.Join(unapproved, "sessions", name)
-				case "traversal":
+				case homeAliasTraversal:
 					path = alias + "/sessions/../sessions/" + name
-				case "descendant_escape":
+				case homeAliasDescendant:
 					if err := os.Symlink(filepath.Join(other, "sessions"), filepath.Join(root, "sessions", "escape")); err != nil {
 						t.Fatal(err)
 					}
 					path = filepath.Join(alias, "sessions", "escape", name)
-				case "file_symlink":
+				case homeAliasFileSymlink:
 					if err := os.Symlink(filepath.Join(other, "sessions", name), filepath.Join(root, "sessions", "link.jsonl")); err != nil {
 						t.Fatal(err)
 					}
 					path = filepath.Join(alias, "sessions", "link.jsonl")
-				case "wrong_thread":
+				case homeAliasWrongThread:
 					otherID := writeRollout(t, root, cfg.Archive.Projects[0].Root, at, 2, "sessions")
 					path = filepath.Join(alias, "sessions", "rollout-2026-10-01T12-00-00-"+otherID+".jsonl")
 				}
@@ -125,8 +156,8 @@ func TestRolloutLookupHomeAliasDoesNotAuthorizeOtherLocators(t *testing.T) {
 
 func TestRolloutLookupHomeAliasChangesInvalidateCachedSelection(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"missing_alias", "retarget_alias", "replaced_root", "secondary_alias"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []homeAliasChangeCase{homeAliasMissing, homeAliasRetarget, homeAliasReplaced, homeAliasSecondary} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			store, cfg, at, root := fixture(t)
 			id := writeRollout(t, root, cfg.Archive.Projects[0].Root, at, 1, "sessions")
@@ -136,7 +167,7 @@ func TestRolloutLookupHomeAliasChangesInvalidateCachedSelection(t *testing.T) {
 			}
 			homes := []string{root, alias}
 			changed := alias
-			if mode == "secondary_alias" {
+			if mode == homeAliasSecondary {
 				changed = filepath.Join(t.TempDir(), "second-home-spelling")
 				if err := os.Symlink(root, changed); err != nil {
 					t.Fatal(err)
@@ -158,7 +189,7 @@ func TestRolloutLookupHomeAliasChangesInvalidateCachedSelection(t *testing.T) {
 			if err != nil || set.Current == nil {
 				t.Fatal("initial alias selection failed", set, err)
 			}
-			if mode == "replaced_root" {
+			if mode == homeAliasReplaced {
 				if err := os.Rename(root, root+"-previous"); err != nil {
 					t.Fatal(err)
 				}
@@ -174,7 +205,7 @@ func TestRolloutLookupHomeAliasChangesInvalidateCachedSelection(t *testing.T) {
 				if err := os.Remove(changed); err != nil {
 					t.Fatal(err)
 				}
-				if mode != "missing_alias" {
+				if mode != homeAliasMissing {
 					if err := os.Symlink(t.TempDir(), changed); err != nil {
 						t.Fatal(err)
 					}
@@ -263,8 +294,8 @@ func TestRolloutLookupHomeAliasFencesConstructorApproval(t *testing.T) {
 
 func TestRolloutLookupHomeAliasKeepsSelectionAndResourceChecks(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"index_move", "source_move", "cancel", "pressure"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []homeAliasSelectionCase{homeAliasIndexMove, homeAliasSourceMove, homeAliasCancel, homeAliasPressure} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			store, cfg, at, root := fixture(t)
 			id := writeRollout(t, root, cfg.Archive.Projects[0].Root, at, 1, "sessions")
@@ -291,7 +322,7 @@ func TestRolloutLookupHomeAliasKeepsSelectionAndResourceChecks(t *testing.T) {
 			ctx := t.Context()
 			var release func()
 			switch mode {
-			case "index_move":
+			case homeAliasIndexMove:
 				other := writeRollout(t, root, cfg.Archive.Projects[0].Root, at, 2, "sessions")
 				path := filepath.Join(root, "sessions", "rollout-2026-10-01T12-00-00-"+other+".jsonl")
 				raw, err := os.ReadFile(path)
@@ -304,15 +335,15 @@ func TestRolloutLookupHomeAliasKeepsSelectionAndResourceChecks(t *testing.T) {
 				if _, err := db.ExecContext(ctx, "UPDATE threads SET rollout_path=? WHERE id=?", filepath.Join(alias, "sessions", filepath.Base(path)), id); err != nil {
 					t.Fatal(err)
 				}
-			case "source_move":
+			case homeAliasSourceMove:
 				if err := os.Rename(filepath.Join(root, "sessions", name), filepath.Join(root, "sessions", "moved.jsonl")); err != nil {
 					t.Fatal(err)
 				}
-			case "cancel":
+			case homeAliasCancel:
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
-			case "pressure":
+			case homeAliasPressure:
 				pressure := lookup.readBudget.Available()
 				if !lookup.readBudget.ReserveUnscoped(pressure) {
 					t.Fatal("pressure reservation failed")
@@ -323,7 +354,7 @@ func TestRolloutLookupHomeAliasKeepsSelectionAndResourceChecks(t *testing.T) {
 			if release != nil {
 				release()
 			}
-			if mode == "cancel" && !errors.Is(err, context.Canceled) || mode == "pressure" && agentapi.Failure(err) != agentapi.Limit || (mode == "index_move" || mode == "source_move") && agentapi.Failure(err) != agentapi.Changed {
+			if mode == homeAliasCancel && !errors.Is(err, context.Canceled) || mode == homeAliasPressure && agentapi.Failure(err) != agentapi.Limit || (mode == homeAliasIndexMove || mode == homeAliasSourceMove) && agentapi.Failure(err) != agentapi.Changed {
 				t.Fatal("alias bypassed existing selection/resource refusal", err)
 			}
 			if err := lookup.CloseReadOnly(); err != nil {
@@ -339,7 +370,7 @@ func TestRolloutLookupHomeAliasKeepsSelectionAndResourceChecks(t *testing.T) {
 func TestRolloutLookupHomeAliasKeepsSchedulingPolicy(t *testing.T) {
 	t.Parallel()
 	for _, foreground := range []bool{false, true} {
-		t.Run(fmt.Sprint(foreground), func(t *testing.T) {
+		t.Run(strconv.FormatBool(foreground), func(t *testing.T) {
 			t.Parallel()
 			store, cfg, at, root := fixture(t)
 			id := writeRollout(t, root, cfg.Archive.Projects[0].Root, at, 1, "sessions")

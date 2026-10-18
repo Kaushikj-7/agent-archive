@@ -19,21 +19,29 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
+type trustedHomeSpelling string
+
+const (
+	trustedHomePhysical trustedHomeSpelling = "physical"
+	trustedHomeSymlink  trustedHomeSpelling = "symlink"
+	trustedHomePlatform trustedHomeSpelling = "platform"
+)
+
 // Exercise the production registry and command through planning, confirmed
 // admission and verified readback, using synthetic native files and storage.
 func TestBackfillImportsHistoryThroughTrustedHomeAlias(t *testing.T) {
 	// Run owns process-wide trace counters, so command tests stay sequential.
-	for _, spelling := range []string{"physical", "symlink", "platform"} {
-		t.Run(spelling, func(t *testing.T) {
+	for _, spelling := range []trustedHomeSpelling{trustedHomePhysical, trustedHomeSymlink, trustedHomePlatform} {
+		t.Run(string(spelling), func(t *testing.T) {
 			canonical := func(path string) string { p, err := filepath.EvalSymlinks(path); must(t, err); return p }
 			data, rawUser := canonical(t.TempDir()), t.TempDir()
 			physicalUser := canonical(rawUser)
 			user := physicalUser
 			switch spelling {
-			case "symlink":
+			case trustedHomeSymlink:
 				user = filepath.Join(t.TempDir(), "trusted-home")
 				must(t, os.Symlink(physicalUser, user))
-			case "platform":
+			case trustedHomePlatform:
 				user = rawUser
 				if user == physicalUser {
 					t.Skip("temporary home has no platform alias")
