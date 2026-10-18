@@ -333,10 +333,14 @@ func (s *Store) validateStagedSelectionWithSource(ctx context.Context, p Pending
 	if err := s.validateStagedSourceWithFact(ctx, stage, p, fact); err != nil {
 		return err
 	}
+	admission, err := s.nativeImportStagedAdmissionDigest(ctx, reg, q)
+	if err != nil || admission != q.Core.AdmissionContext {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
 	checks := []struct {
 		value any
 		want  string
-	}{{reg, q.Core.AdmissionContext}, {stage.Children, q.RosterSHA256}, {p.Bundle, q.Core.BundleSHA256}, {readyPolicy(p), q.Core.PolicyContext}}
+	}{{stage.Children, q.RosterSHA256}, {p.Bundle, q.Core.BundleSHA256}, {readyPolicy(p), q.Core.PolicyContext}}
 	for _, check := range checks {
 		got, err := s.readyDigest(ctx, check.value)
 		if err != nil || got != check.want {
@@ -456,15 +460,7 @@ func (p *Published) validateStagedPublished(ctx context.Context, next *published
 			return err
 		}
 	}
-	if reg.NativeImport != nil && reg.NativeImport.Membership.State == archive.NativeImportDetached {
-		original, err := p.store.nativeImportReleasedSelection(ctx, reg)
-		if err != nil || !sameStagedSelection(original, *q) {
-			return errors.Join(ErrDurableStorageRecovery, err)
-		}
-		next.PublicationVersion = q.Version
-		return nil
-	}
-	admission, err := p.store.readyDigest(ctx, reg)
+	admission, err := p.store.nativeImportStagedAdmissionDigest(ctx, reg, q)
 	if err != nil || admission != q.Core.AdmissionContext {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}

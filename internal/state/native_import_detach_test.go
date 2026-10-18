@@ -177,6 +177,10 @@ func TestNativeImportExactUndoPreservesInitialACKAndFrozenStage(t *testing.T) {
 	if err != nil || !found || !slices.Contains(request.Reasons, "later-independent") {
 		t.Fatal("undo/release lost later request", found, err)
 	}
+	rawRequest, err := os.ReadFile(reopened.requestPath(current.ArchiveSessionID))
+	if err != nil || !bytes.Equal(rawRequest, before[s.requestPath(current.ArchiveSessionID)]) {
+		t.Fatal("old ACK changed later request token or bytes", err)
+	}
 }
 
 func TestNativeImportExactUndoBeforeACKCannotAuthorizePublication(t *testing.T) {
@@ -275,5 +279,100 @@ func TestNativeImportExactUndoRefusesOwnerReplacementBeforeCAS(t *testing.T) {
 	after, readErr := os.ReadFile(path)
 	if readErr != nil || !bytes.Equal(future, after) {
 		t.Fatal("future owner overwritten", readErr)
+	}
+}
+
+func TestNativeImportDetachedACKRefusesChangedOwnerStageAndSelection(t *testing.T) {
+	for _, mode := range []string{"owner", "receipt", "stage", "ack", "missing-ack"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			f, reg := nativeImportCommitForUndo(t)
+			s := f.native.store
+			pending := nativeImportSelectingACK(t, s, reg)
+			markActualNativeImportUndone(t, s, reg)
+			if changed, err := s.DetachNativeImportBatchMembership(t.Context(), reg.NativeImport.Confirmation.BatchID, reg.ArchiveSessionID, reg.NativeImport.Membership.ReceiptID); err != nil || !changed {
+				t.Fatal(changed, err)
+			}
+			current, found, err := s.LoadRegistration(reg.ArchiveSessionID)
+			if err != nil || !found {
+				t.Fatal(found, err)
+			}
+			switch mode {
+			case "owner":
+				current.RegisteredAt = current.RegisteredAt.Add(time.Nanosecond)
+				if err := local.Write(s.registrationPath(current.ArchiveSessionID), current); err != nil {
+					t.Fatal(err)
+				}
+			case "receipt":
+				receipt := *current.NativeImport
+				receipt.Confirmation.BatchInstance = strings.Repeat("f", 32)
+				current.NativeImport = &receipt
+				if err := local.Write(s.registrationPath(current.ArchiveSessionID), current); err != nil {
+					t.Fatal(err)
+				}
+			case "stage":
+				stage, found, err := s.LoadImportStage(t.Context(), current)
+				if err != nil || !found {
+					t.Fatal(found, err)
+				}
+				stage.Bundle.Capture.AdapterVersion += "-tampered"
+				if err := local.Write(filepath.Join(s.home, importStageRelative(current.ArchiveSessionID)), stage); err != nil {
+					t.Fatal(err)
+				}
+			case "ack":
+				var ack publishedState
+				if err := s.readRegistrationJSON(s.publishedPath(current.ArchiveSessionID), &ack); err != nil {
+					t.Fatal(err)
+				}
+				ack.MetadataBytes = append(ack.MetadataBytes, ' ')
+				if err := local.Write(s.publishedPath(current.ArchiveSessionID), ack); err != nil {
+					t.Fatal(err)
+				}
+			case "missing-ack":
+				if err := os.Remove(s.publishedPath(current.ArchiveSessionID)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.RemoveAll(f.candidate.Root.Canonical); err != nil {
+				t.Fatal(err)
+			}
+			paths := []string{s.registrationPath(current.ArchiveSessionID), filepath.Join(s.home, importStageRelative(current.ArchiveSessionID)), s.pendingPath(current.ArchiveSessionID), s.requestPath(current.ArchiveSessionID)}
+			if mode != "missing-ack" {
+				paths = append(paths, s.publishedPath(current.ArchiveSessionID))
+			}
+			before := map[string][]byte{}
+			for _, path := range paths {
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before[path] = raw
+			}
+			restarted, err := Open(s.home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			publication, err := restarted.LoadPublishedStateContext(t.Context(), current.ArchiveSessionID)
+			if err == nil {
+				err = publication.ValidateNativeImportReadAuthority(current)
+			}
+			if err == nil {
+				t.Fatal("changed immutable ACK authority became readable")
+			}
+			guard, err := local.LockCollectorGuard(s.home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer guard.Release()
+			if err := restarted.VerifyAndBeginStagedRelease(t.Context(), current.ArchiveSessionID, stagedRemote(pending), guard); err == nil {
+				t.Fatal("changed immutable ACK authority authorized cleanup")
+			}
+			for path, raw := range before {
+				after, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(raw, after) {
+					t.Fatal("refusal changed retained evidence", path, err)
+				}
+			}
+		})
 	}
 }

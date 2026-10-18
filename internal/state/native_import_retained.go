@@ -92,7 +92,7 @@ func (p *Published) ValidateNativeImportReadAuthority(reg archive.SessionRegistr
 	if err != nil || !found || stage.Version != 2 || !stage.TypedSelection || stage.SHA256 != q.StageSHA256 {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	owner, err := read.readyDigest(ctx, reg)
+	owner, err := read.nativeImportStagedAdmissionDigest(ctx, reg, q)
 	if err != nil || owner != q.Core.AdmissionContext {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}

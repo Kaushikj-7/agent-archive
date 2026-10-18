@@ -233,8 +233,19 @@ func (s *Store) finishStagedRelease(ctx context.Context, id string, q *StagedSel
 	if err != nil {
 		return err
 	}
+	coveredRequest := requested
 	if requested && (!q.HadRequest || current.Token != q.CoveredToken) {
-		return ErrReadySelectionFrozen
+		reg, found, err := s.LoadRegistration(id)
+		if err != nil || !found || reg.NativeImport == nil {
+			return errors.Join(ErrReadySelectionFrozen, err)
+		}
+		digest, err := s.nativeImportStagedAdmissionDigest(ctx, reg, q)
+		if err != nil || digest != q.Core.AdmissionContext {
+			return errors.Join(ErrReadySelectionFrozen, err)
+		}
+		// Only the old selecting ACK is being finished. This later independent
+		// request remains byte-for-byte untouched and is never covered by that ACK.
+		coveredRequest = false
 	}
 	stage, staged, err := s.loadPreparedImportStage(ctx, id)
 	if err != nil {
@@ -253,7 +264,7 @@ func (s *Store) finishStagedRelease(ctx context.Context, id string, q *StagedSel
 	} else if progress.Phase != stagedReleaseLocalComplete {
 		return ErrDurableStorageRecovery
 	}
-	if requested {
+	if coveredRequest {
 		if err = s.removeCoveredStagedRequest(id); err != nil {
 			return err
 		}
@@ -590,7 +601,7 @@ func (s *Store) validateFinalStagedAuthority(ctx context.Context, id string, q *
 	if err := validateNativeImportSelectionAuthority(reg, q.Core); err != nil {
 		return err
 	}
-	admission, err := s.readyDigest(ctx, reg)
+	admission, err := s.nativeImportStagedAdmissionDigest(ctx, reg, q)
 	if err != nil || admission != q.Core.AdmissionContext {
 		return errors.Join(ErrReadySelectionFrozen, err)
 	}
