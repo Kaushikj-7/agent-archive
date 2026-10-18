@@ -153,6 +153,71 @@ func TestMuseSourceHandoffToEachAgentUsesFilteredArtifact(t *testing.T) {
 	}
 }
 
+func TestMuseFileHandoffKeepsRelativeSourceAcrossLaunchDirectory(t *testing.T) {
+	t.Parallel()
+	original := museLocalFixture(t, "synthetic-exec-conversation")
+	sourceDir := filepath.Join(t.TempDir(), "λ 'source' $(touch unexpected) `literal`")
+	must(t, os.Mkdir(sourceDir, 0o700))
+	source := filepath.Join(sourceDir, "conversation.jsonl")
+	raw, err := os.ReadFile(original)
+	must(t, err)
+	must(t, os.WriteFile(source, raw, 0o600))
+	cwd, err := os.Getwd()
+	must(t, err)
+	relative, err := filepath.Rel(cwd, source)
+	must(t, err)
+	if filepath.IsAbs(relative) {
+		t.Fatal("source argument is not relative")
+	}
+	project := filepath.Join(t.TempDir(), "λ 'checkout' $(touch unexpected) `literal`")
+	must(t, os.Mkdir(project, 0o700))
+	home := filepath.Join(t.TempDir(), "not-configured")
+	env := testEnv(t, home, time.Now())
+	env.LookPath = func(name string) (string, error) { return "/synthetic/bin/" + name, nil }
+	env.Environ = func() []string { return nil }
+	env.Executable = func() (string, error) { return "/synthetic/agent-archive", nil }
+	env.WorkingDir = func() (string, error) { return project, nil }
+	var opened termlaunch.Spec
+	env.OpenTerminal = func(spec termlaunch.Spec) (string, error) {
+		opened = spec
+		return "a synthetic terminal", nil
+	}
+	_, stderr, code := runHandoff(t, env, "--file", relative, "--harness", "muse", "--to", "muse")
+	if code != 0 || opened.Dir != project || len(opened.Argv) != 4 || opened.Argv[2] != project {
+		t.Fatalf("relative source launch %d: %s spec=%+v", code, stderr, opened)
+	}
+	artifact := handoffPathFromPrompt(t, launchSpec{Args: opened.Argv[1:]})
+	content, err := os.ReadFile(artifact)
+	if err != nil || !filepath.IsAbs(artifact) || !strings.Contains(string(content), "Explain the synthetic parser.") || strings.Contains(string(content), "PRIVATE CONTEXT MUST NOT SURVIVE") {
+		t.Fatalf("unsafe or missing absolute context artifact: %v", err)
+	}
+	const prefix = "For the complete filtered local record, run "
+	_, rest, ok := strings.Cut(string(content), prefix)
+	if !ok {
+		t.Fatal("missing retrieval instruction")
+	}
+	command, _, ok := strings.Cut(rest, ".\n\n")
+	if !ok {
+		t.Fatal("missing retrieval instruction terminator")
+	}
+	// Parse the actual instruction from the different destination directory;
+	// the source must remain absolute and every metacharacter must stay literal.
+	parse := exec.CommandContext(t.Context(), "/bin/sh", "-c", "set -- "+command+"; printf '%s\\0' \"$@\"")
+	parse.Dir, parse.Env = project, []string{"PATH=/usr/bin:/bin"}
+	parsed, err := parse.Output()
+	must(t, err)
+	want := []string{"agent-archive", "handoff", "--file", source, "--harness", "muse", "--max-bytes", "0"}
+	if string(parsed) != strings.Join(want, "\x00")+"\x00" {
+		t.Fatalf("retrieval changed the source after launch: %q", parsed)
+	}
+	if _, err := os.Stat(filepath.Join(project, "unexpected")); !os.IsNotExist(err) {
+		t.Fatalf("a source or directory metacharacter ran a command: %v", err)
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Fatalf("handoff created setup or capture state: %v", err)
+	}
+}
+
 func TestMuseTerminalCommandPreservesArgumentsAndReadsArtifact(t *testing.T) {
 	t.Parallel()
 	f := newHandoffFixture(t, false)

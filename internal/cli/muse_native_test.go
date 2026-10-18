@@ -546,21 +546,51 @@ func TestMuseSelectedSourceChangesCloseAllHandlesAndCreateNoArtifact(t *testing.
 
 func TestMuseAutomaticHandoffToSupportedDestinations(t *testing.T) {
 	t.Parallel()
-	env, data, workspace, counter := museNativeEnv(t)
-	writeMuseNative(t, data, museSyntheticID, museNativeBytes(t, "exec", museSyntheticID, workspace))
-	env.LookPath = func(name string) (string, error) { return "/opt/bin/" + name, nil }
-	env.Environ = func() []string { return nil }
-	env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
-	var spec termlaunch.Spec
-	var tmux []string
-	env.OpenTerminal = openInFakeTmux(&spec, &tmux)
-	_, errOut, code := runHandoff(t, env, museSyntheticID, "--harness", "muse", "--to", "codex")
-	if code != 0 || len(tmux) == 0 || counter.calls.Load() != 1 {
-		t.Fatalf("launch %d %s", code, errOut)
-	}
-	_, errOut, code = runHandoff(t, env, museSyntheticID, "--harness", "muse", "--to", "muse")
-	if code != 0 || counter.calls.Load() != 2 || len(spec.Argv) != 4 || spec.Argv[0] != "/opt/bin/muse" || spec.Argv[1] != "--workspace" || spec.Argv[2] != workspace || spec.Dir != workspace {
-		t.Fatalf("Muse launch %d %s spec=%+v", code, errOut, spec)
+	for _, destination := range []handoffDestination{handoffDestinationClaude, handoffDestinationCodex, handoffDestinationCursor, handoffDestinationMuse} {
+		t.Run(string(destination), func(t *testing.T) {
+			t.Parallel()
+			env, data, workspace, counter := museNativeEnv(t)
+			raw := museNativeBytes(t, "exec", museSyntheticID, workspace)
+			source := writeMuseNative(t, data, museSyntheticID, raw)
+			env.LookPath = func(name string) (string, error) { return "/opt/bin/" + name, nil }
+			env.Environ = func() []string { return nil }
+			env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
+			var spec termlaunch.Spec
+			var tmux []string
+			env.OpenTerminal = openInFakeTmux(&spec, &tmux)
+			_, errOut, code := runHandoff(t, env, museSyntheticID, "--harness", "muse", "--to", string(destination))
+			binary := string(destination)
+			if destination == handoffDestinationCursor {
+				binary = "agent"
+			}
+			if code != 0 || len(tmux) == 0 || counter.calls.Load() != 1 || len(spec.Argv) < 2 || spec.Argv[0] != "/opt/bin/"+binary || spec.Dir != workspace {
+				t.Fatalf("launch %d %s spec=%+v filters=%d", code, errOut, spec, counter.calls.Load())
+			}
+			artifact := handoffPathFromPrompt(t, launchSpec{Args: spec.Argv[1:]})
+			content, err := os.ReadFile(artifact)
+			if err != nil || !strings.Contains(string(content), "Explain the synthetic parser.") || !strings.Contains(string(content), "It validates bounded native records") || strings.Contains(string(content), "PRIVATE CONTEXT MUST NOT SURVIVE") {
+				t.Fatalf("unsafe or missing normalized Muse context: %v", err)
+			}
+			for path, mode := range map[string]os.FileMode{artifact: 0o600, filepath.Dir(artifact): 0o700} {
+				info, err := os.Stat(path)
+				if err != nil || info.Mode().Perm() != mode {
+					t.Fatalf("private context permissions: %v %v", info, err)
+				}
+			}
+			if destination == handoffDestinationClaude && (spec.Argv[1] != "--add-dir" || spec.Argv[2] != filepath.Dir(artifact)) {
+				t.Fatalf("Claude received a directory other than the artifact folder: %q", spec.Argv)
+			}
+			if destination == handoffDestinationMuse && (len(spec.Argv) != 4 || spec.Argv[1] != "--workspace" || spec.Argv[2] != workspace) {
+				t.Fatalf("Muse workspace arguments: %q", spec.Argv)
+			}
+			after, err := os.ReadFile(source)
+			if err != nil || !bytes.Equal(after, raw) {
+				t.Fatalf("handoff changed the native source: %v", err)
+			}
+			if _, err := os.Stat(museNativeArchiveHome(t, env)); !os.IsNotExist(err) {
+				t.Fatalf("handoff created setup or capture state: %v", err)
+			}
+		})
 	}
 }
 
