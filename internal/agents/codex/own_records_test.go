@@ -11,6 +11,13 @@ import (
 	"github.com/wangjohn/agent-archive/internal/codexmeta"
 )
 
+type ownRecordJSONField string
+
+const (
+	ownRecordJSONFieldExported ownRecordJSONField = "OwnRecords"
+	ownRecordJSONFieldSnake    ownRecordJSONField = "own_records"
+)
+
 func TestAdmissionOwnRecordsDescribeOnlyValidatedNativeSnapshot(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
@@ -74,7 +81,7 @@ func TestAdmissionOwnRecordsDescribeOnlyValidatedNativeSnapshot(t *testing.T) {
 				switch value := value.(type) {
 				case map[string]any:
 					for key, child := range value {
-						if key == "OwnRecords" || key == "own_records" {
+						if field := ownRecordJSONField(key); field == ownRecordJSONFieldExported || field == ownRecordJSONFieldSnake {
 							t.Errorf("ephemeral own-record field %q entered serialized proof", key)
 						}
 						checkOwnRecordKeys(child)

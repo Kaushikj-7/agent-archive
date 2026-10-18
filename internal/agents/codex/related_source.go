@@ -1630,12 +1630,12 @@ func (s *historySnapshot) AdmissionEvidence(ctx context.Context, admission agent
 	if err != nil {
 		return agentapi.AdmissionEvidence{}, err
 	}
-	evidence := agentapi.AdmissionEvidence{Binding: agentapi.SourceBinding{Codex: &binding}, Task: task}
 	err = s.check(ctx)
+	var ownRecords agentapi.OwnRecordState
 	if err == nil {
-		evidence.OwnRecords = s.ownRecordState()
+		ownRecords = s.ownRecordState()
 	}
-	return evidence, err
+	return agentapi.AdmissionEvidence{Binding: agentapi.SourceBinding{Codex: &binding}, Task: task, OwnRecords: ownRecords}, err
 }
 
 // ownRecordState uses only the existing validated spans. It interprets no native

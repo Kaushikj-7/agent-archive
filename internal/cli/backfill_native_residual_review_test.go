@@ -11,6 +11,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/backfill"
 )
 
+type reviewJSONField string
+
+const (
+	reviewJSONFieldNativeResiduals reviewJSONField = "NativeResiduals"
+	reviewJSONFieldNativeSnake     reviewJSONField = "native_residuals"
+	reviewJSONFieldRecoveryReview  reviewJSONField = "RecoveryReview"
+	reviewJSONFieldRecoverySnake   reviewJSONField = "recovery_review"
+)
+
 func TestRecoveryReviewUsesFinalNativeResidualsAfterExactMapping(t *testing.T) {
 	// The existing synthetic Git fixture isolates process HOME and Git settings.
 	f := newRecoveryReviewFixture(t)
@@ -67,8 +76,8 @@ func TestRecoveryReviewUsesFinalNativeResidualsAfterExactMapping(t *testing.T) {
 		switch value := value.(type) {
 		case map[string]any:
 			for key, child := range value {
-				switch key {
-				case "NativeResiduals", "native_residuals", "RecoveryReview", "recovery_review":
+				switch reviewJSONField(key) {
+				case reviewJSONFieldNativeResiduals, reviewJSONFieldNativeSnake, reviewJSONFieldRecoveryReview, reviewJSONFieldRecoverySnake:
 					t.Errorf("ordinary JSON exposed private field %q", key)
 				}
 				checkPrivateKeys(child)
@@ -84,8 +93,12 @@ func TestRecoveryReviewUsesFinalNativeResidualsAfterExactMapping(t *testing.T) {
 	if after != before {
 		// Snapshot entries contain relative names, type/mode, size, mtime and
 		// digest, never file contents. Report only changed entries.
-		for _, snapshot := range []struct{ phase, value, other string }{{"before", before, after}, {"after", after, before}} {
-			for _, line := range strings.Split(snapshot.value, "\n") {
+		for _, snapshot := range []struct {
+			phase string
+			value string
+			other string
+		}{{"before", before, after}, {"after", after, before}} {
+			for line := range strings.SplitSeq(snapshot.value, "\n") {
 				if line != "" && !strings.Contains("\n"+snapshot.other+"\n", "\n"+line+"\n") {
 					t.Logf("changed archive entry %s: %s", snapshot.phase, line)
 				}
