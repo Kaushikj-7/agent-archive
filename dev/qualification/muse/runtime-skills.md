@@ -78,9 +78,17 @@ may add the existing safe SHA256 from an actual authorized observer read only
 when full RedactText leaves bytes unchanged and no literal `[REDACTED]` occurs.
 It compares no original digest from rejected/redacted candidates and creates no
 native-ID/install-name alias. Private native hashes are erased on terminal
-operation/release; safe digests share the existing user/own-project cache values
-and loans. Exact prior-event proof restores before the activity probe without
-filesystem work; only the existing active observation gate can add proof. The
+operation/release. Evidence alone is cached per user/own-project pass; private
+safe digests belong only to the actual cache-miss observation and its callback
+view through Finalize or error. The first user/project reads may both match;
+a later new project can match only its newly read content. Cache hits remain
+hashless without filesystem rereads. Optional capacity refusal drops the whole
+current companion without withholding ordinary evidence or changing scope
+pressure flags. Finalize preflights optional scratch and encoding capacity before
+mutation and preserves the exact restored output when either does not fit.
+Required Restore and source/output/cancellation failures remain strict. Exact
+prior-event proof restores before the activity probe without filesystem work;
+only the existing active observation gate can add proof. The
 closed eight/ten-field variant uses existing producer-evidence trust, not
 coherent-forgery authentication. This new implementation checkpoint still needs
 fresh deterministic and actual consumer qualification. It does

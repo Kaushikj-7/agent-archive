@@ -569,32 +569,27 @@ func configuredArchiveStore(format destination.ArchiveFormat, remote storage.Obj
 //
 // An imported session gets no observation: today's skills attached to a
 // session that ran before them would be false evidence.
-// The content companion shares these exact cache values and their pass lifetime.
+// Evidence alone shares this pass lifetime. Optional content witnesses belong
+// only to a cache-miss observation and end with the returned callback view.
 type skillObservationPass struct {
-	observe  func(context.Context, archive.SessionRegistration, time.Time, *agentapi.NativeReadBudget, bool) (skillObservationViews, error)
-	releases []func()
-	owner    *agentapi.NativeReadBudget
-	ownerSet bool
-	closed   bool
+	observe func(context.Context, archive.SessionRegistration, time.Time, *agentapi.NativeReadBudget, bool) (skillObservationViews, func(), error)
+	closed  bool
 }
 
-func (p *skillObservationPass) read(ctx context.Context, options evidence.SkillOptions, budget *agentapi.NativeReadBudget, content bool) (agentapi.SkillContentObservation, error) {
+func (p *skillObservationPass) read(ctx context.Context, options evidence.SkillOptions, budget *agentapi.NativeReadBudget, content bool) (agentapi.SkillContentObservation, func(), error) {
 	if content {
-		out, release, err := evidence.ObserveSkillsWithContent(ctx, options, budget)
-		if err == nil {
-			p.releases = append(p.releases, release)
-		}
-		return out, err
+		return evidence.ObserveSkillsWithContent(ctx, options, budget)
 	}
 	items, err := evidence.ObserveSkills(options)
-	return agentapi.SkillContentObservation{Evidence: items}, err
+	return agentapi.SkillContentObservation{Evidence: items}, func() {}, err
 }
 
 func (p *skillObservationPass) Observe(reg archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
 	if p.closed {
 		return nil, agentapi.ErrClosed
 	}
-	out, err := p.observe(context.Background(), reg, at, nil, false)
+	out, release, err := p.observe(context.Background(), reg, at, nil, false)
+	release()
 	return out.Evidence, err
 }
 
@@ -609,23 +604,37 @@ func (p *skillObservationPass) ObserveWithContent(ctx context.Context, reg archi
 	if p.closed {
 		return out, release, agentapi.ErrClosed
 	}
-	view, err := p.observe(ctx, reg, at, budget, true)
+	view, releasePrivate, err := p.observe(ctx, reg, at, budget, true)
 	if err != nil {
+		releasePrivate()
 		return out, release, err
 	}
 	out.Evidence = view.Evidence
+	if err := ctx.Err(); err != nil {
+		releasePrivate()
+		return agentapi.SkillContentObservation{}, release, err
+	}
 	n := int64(len(view.user)+len(view.project)) * 32
 	if n == 0 {
+		releasePrivate()
 		return out, release, nil
 	}
-	n += 128 // borrowed slice header and its terminal release closure
+	n += 128 // scoped combined slice/header and its terminal release closure
 	reservation := budget.Reservation()
+	if n > reservation.Available() {
+		releasePrivate()
+		if err := ctx.Err(); err != nil {
+			return agentapi.SkillContentObservation{}, release, err
+		}
+		return out, release, nil
+	}
 	if !reservation.Reserve(n) {
-		return out, release, agentapi.ReadBudgetLimit(errors.New("skill content view unavailable"))
+		releasePrivate()
+		return out, release, agentapi.ReadBudgetLimit(errors.New("skill content view changed during serialized reservation"))
 	}
 	out.Digests = append(append(make([]agentapi.SkillContentDigest, 0, len(view.user)+len(view.project)), view.user...), view.project...)
 	digests := out.Digests
-	release = func() { clear(digests); digests = nil; reservation.Release(n); n = 0 }
+	release = func() { clear(digests); digests = nil; reservation.Release(n); n = 0; releasePrivate() }
 	return out, release, nil
 }
 
@@ -634,10 +643,6 @@ func (p *skillObservationPass) Close() {
 		return
 	}
 	p.closed = true
-	for i := len(p.releases) - 1; i >= 0; i-- {
-		p.releases[i]()
-	}
-	p.releases = nil
 	p.observe = nil
 }
 
@@ -647,27 +652,27 @@ func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegis
 
 func newSkillObservationPass(env Env, mode config.SkillEvidence) *skillObservationPass {
 	pass := &skillObservationPass{}
-	userCache := map[string]agentapi.SkillContentObservation{}
-	projectCache := map[string]agentapi.SkillContentObservation{}
+	userCache := map[string][]archive.SupplementalEvidence{}
+	projectCache := map[string][]archive.SupplementalEvidence{}
 	var museEnvironment *agentapi.RuntimeEnvironment
 	var museDataHome string
 	var museDataHomeSet bool
-	pass.observe = func(ctx context.Context, reg archive.SessionRegistration, at time.Time, budget *agentapi.NativeReadBudget, content bool) (skillObservationViews, error) {
+	pass.observe = func(ctx context.Context, reg archive.SessionRegistration, at time.Time, budget *agentapi.NativeReadBudget, content bool) (view skillObservationViews, release func(), err error) {
+		releaseUser, releaseProject := func() {}, func() {}
+		release = func() { releaseProject(); releaseUser() }
+		defer func() {
+			if err != nil {
+				release()
+			}
+		}()
 		if err := ctx.Err(); err != nil {
-			return skillObservationViews{}, err
+			return view, release, err
 		}
 		if pass.closed {
-			return skillObservationViews{}, agentapi.ErrClosed
-		}
-		if content {
-			if !pass.ownerSet {
-				pass.owner, pass.ownerSet = budget, true
-			} else if pass.owner != budget {
-				content = false
-			}
+			return view, release, agentapi.ErrClosed
 		}
 		if reg.Imported() || mode == config.SkillEvidenceNone {
-			return skillObservationViews{}, nil
+			return view, release, nil
 		}
 		harness := reg.Harness.Name
 		if archive.CanonicalHarness(harness) == "muse" {
@@ -679,11 +684,12 @@ func newSkillObservationPass(env Env, mode config.SkillEvidence) *skillObservati
 		if harness != "muse" {
 			content = false
 		}
-		userScope, ok := userCache[harness]
+		userEvidence, ok := userCache[harness]
+		var userDigests []agentapi.SkillContentDigest
 		if !ok {
 			userHome, err := env.userHomeDir()
 			if err != nil {
-				return skillObservationViews{}, err
+				return view, release, err
 			}
 			dataHome := ""
 			if harness == "muse" {
@@ -693,45 +699,51 @@ func newSkillObservationPass(env Env, mode config.SkillEvidence) *skillObservati
 				}
 				dataHome = museDataHome
 			}
-			locations := agentapi.SkillLocations{UserHome: userHome, DataHome: dataHome, Environment: museEnvironment}
-			roots := skillEvidenceRoots(env, harness, locations)
-			var inventory agentapi.SkillInventoryInterpreter
-			var inventoryInput agentapi.SkillInventoryInput
-			if provider, found := env.agentRegistry().LookupSkills(harness); found {
-				if interpreter, implemented := provider.(agentapi.SkillInventoryInterpreter); implemented {
-					if input, available := interpreter.InventoryInput(locations); available {
-						inventory = interpreter
-						inventoryInput = input
-					}
-				}
-			}
-			options := evidence.SkillOptions{Harness: harness, UserHome: userHome, ObservedAt: at, Mode: mode, Locations: roots, Inventory: inventory, InventoryInput: inventoryInput}
-			userScope, err = pass.read(ctx, options, budget, content)
+			options := skillUserObservationOptions(env, harness, userHome, dataHome, museEnvironment, at, mode)
+			var observed agentapi.SkillContentObservation
+			observed, releaseUser, err = pass.read(ctx, options, budget, content)
 			if err != nil {
-				return skillObservationViews{}, err
+				return view, release, err
 			}
-			userCache[harness] = userScope
+			userEvidence, userDigests = observed.Evidence, observed.Digests
+			userCache[harness] = userEvidence
 		}
 		projectKey := harness + "\x00" + reg.ProjectRoot
-		projectScope, ok := projectCache[projectKey]
+		projectEvidence, ok := projectCache[projectKey]
+		var projectDigests []agentapi.SkillContentDigest
 		if !ok {
-			var err error
-			projectScope, err = pass.read(ctx, evidence.SkillOptions{Harness: harness, ProjectRoot: reg.ProjectRoot, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, harness, agentapi.SkillLocations{ProjectRoot: reg.ProjectRoot, Environment: museEnvironment})}, budget, content)
+			var observed agentapi.SkillContentObservation
+			observed, releaseProject, err = pass.read(ctx, evidence.SkillOptions{Harness: harness, ProjectRoot: reg.ProjectRoot, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, harness, agentapi.SkillLocations{ProjectRoot: reg.ProjectRoot, Environment: museEnvironment})}, budget, content)
 			if err != nil {
-				return skillObservationViews{}, err
+				return view, release, err
 			}
-			projectCache[projectKey] = projectScope
+			projectEvidence, projectDigests = observed.Evidence, observed.Digests
+			projectCache[projectKey] = projectEvidence
 		}
 		if err := ctx.Err(); err != nil {
-			return skillObservationViews{}, err
+			return view, release, err
 		}
-		var userDigests, projectDigests []agentapi.SkillContentDigest
-		if content {
-			userDigests, projectDigests = userScope.Digests, projectScope.Digests
-		}
-		return skillObservationViews{Evidence: append(append([]archive.SupplementalEvidence(nil), userScope.Evidence...), projectScope.Evidence...), user: userDigests, project: projectDigests}, nil
+		return skillObservationViews{Evidence: append(append([]archive.SupplementalEvidence(nil), userEvidence...), projectEvidence...), user: userDigests, project: projectDigests}, release, nil
 	}
 	return pass
+}
+
+// This is the existing user-root/interpreter declaration composition, without
+// observation or private witness state. The pass snapshots its inputs once.
+func skillUserObservationOptions(env Env, harness, userHome, dataHome string, environment *agentapi.RuntimeEnvironment, at time.Time, mode config.SkillEvidence) evidence.SkillOptions {
+	locations := agentapi.SkillLocations{UserHome: userHome, DataHome: dataHome, Environment: environment}
+	roots := skillEvidenceRoots(env, harness, locations)
+	var inventory agentapi.SkillInventoryInterpreter
+	var inventoryInput agentapi.SkillInventoryInput
+	if provider, found := env.agentRegistry().LookupSkills(harness); found {
+		if interpreter, implemented := provider.(agentapi.SkillInventoryInterpreter); implemented {
+			if input, available := interpreter.InventoryInput(locations); available {
+				inventory = interpreter
+				inventoryInput = input
+			}
+		}
+	}
+	return evidence.SkillOptions{Harness: harness, UserHome: userHome, ObservedAt: at, Mode: mode, Locations: roots, Inventory: inventory, InventoryInput: inventoryInput}
 }
 
 type skillEnvironmentKey string

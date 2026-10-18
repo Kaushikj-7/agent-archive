@@ -2,11 +2,16 @@ package muse
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -143,5 +148,90 @@ func TestProductionAllowlistAndSchemaMatchClosedRetainedDispatch(t *testing.T) {
 	const unsupportedRole runtimeRole = "future_authority"
 	if optionalRuntime(unsupportedRole, eventTerminal) {
 		t.Fatal("unknown runtime kind inherited optional policy")
+	}
+}
+
+func TestSkillReadSchemaRequiresNullCausation(t *testing.T) {
+	t.Parallel()
+	compiler := jsonschema.NewCompiler()
+	var id string
+	for _, name := range []string{"muse-retained-v1.schema.json", "muse-retained-marker-v2.schema.json", "muse-retained-record.schema.json"} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "..", "schemas", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		id = doc.(map[string]any)["$id"].(string)
+		if err = compiler.AddResource(id, doc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	schema, err := compiler.Compile(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hashed := range []bool{false, true} {
+		raw := skillContentNative(t, "ordinary")
+		out, e := filterBytes(t, raw, agentapi.ReadLimits{})
+		if e != nil {
+			t.Fatal(e)
+		}
+		if hashed {
+			_, join, _ := skillContentOperation(t, raw, nil)
+			if _, e = join.Restore(t.Context(), archive.SourceBundle{}); e != nil {
+				t.Fatal(e)
+			}
+			h := agentapi.SkillContentDigest(sha256.Sum256([]byte("ordinary")))
+			out, e = join.Finalize(t.Context(), []agentapi.SkillContentDigest{h})
+			if e != nil {
+				t.Fatal(e)
+			}
+		}
+		for _, tc := range []struct {
+			name    string
+			value   any
+			missing bool
+			valid   bool
+		}{
+			{name: "null", valid: true},
+			{name: "uuid", value: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},
+			{name: "missing", missing: true},
+			{name: "integer", value: json.Number("1")},
+		} {
+			records := append([][]byte(nil), out.Records...)
+			at := len(records) - 1
+			doc, e := jsonschema.UnmarshalJSON(bytes.NewReader(records[at]))
+			if e != nil {
+				t.Fatal(e)
+			}
+			record := doc.(map[string]any)
+			if str(object(record["fields"])["event_kind"]) != "skill_read_observed" {
+				t.Fatal("fixture lacks skill-read event")
+			}
+			if tc.missing {
+				delete(record, "causation_id")
+			} else {
+				record["causation_id"] = tc.value
+			}
+			schemaErr := schema.Validate(record)
+			if (schemaErr == nil) != tc.valid {
+				t.Fatal("schema causation mismatch", hashed, tc.name, schemaErr)
+			}
+			records[at], e = json.Marshal(record)
+			if e != nil {
+				t.Fatal(e)
+			}
+			changed := out
+			changed.Records = records
+			b := bundleFor(t, changed)
+			_, parseErr := (Parser{}).Parse(t.Context(), b)
+			_, refilterErr := (Filter{}).Refilter(t.Context(), b, time.Time{})
+			if (parseErr == nil) != tc.valid || (refilterErr == nil) != tc.valid {
+				t.Fatal("Go/schema causation disagreement", hashed, tc.name, parseErr, refilterErr)
+			}
+		}
 	}
 }

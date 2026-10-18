@@ -24,7 +24,12 @@ separately derives optional installed declaration identities; other parsers stay
   only the existing safe observer digest is compared, with no original observer
   hash, native-name alias, origin or eligibility inference. Prior exact-event
   proof restores before activity without I/O; new proof finalizes only at the
-  existing active observation gate. Closed eight/ten-field retained variants
+  existing active observation gate. Private safe digests are operation-scoped
+  through that callback's finalization/error; pass caches keep evidence only.
+  Cache hits do not supply a digest or reread files. Optional capacity refusal
+  discards the whole current companion and keeps ordinary evidence/restored
+  output; required restoration and source/output/cancellation failures remain
+  strict. Closed eight/ten-field retained variants require null causation and
   follow the existing producer-evidence trust model, not authentication against
   coherent retained forgery. Unknown tags, keys, types, aliases and changed private identity
   refuse. Older strict Muse readers refuse this new closed variant. The same

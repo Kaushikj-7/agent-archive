@@ -2,7 +2,6 @@ package evidence
 
 import (
 	"encoding/hex"
-	"errors"
 	"sort"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -10,33 +9,39 @@ import (
 )
 
 // This companion shares the observation's existing reads. Only safe S enters
-// this pass cache; rejected/redacted candidates never get an original hash.
+// this operation; rejected/redacted candidates never get an original hash.
 type skillContentDigests struct {
-	budget          *agentapi.NativeReadBudget
+	reservation     *agentapi.NativeReadReservation
 	held            int64
 	values          map[agentapi.SkillContentDigest]bool
 	acceptedDigests []agentapi.SkillContentDigest
 	closed          bool
 }
 
-func (s *skillContentDigests) charge(n int64) error {
-	if s.closed || !s.budget.ReserveUnscopedRequired(n) {
-		return agentapi.ReadBudgetLimit(errors.New("skill content companion exceeds existing pass budget"))
+// Observers run on the serialized scan owner. Preflight optional growth before
+// Reserve so capacity refusal cannot poison the owner's pressure flags.
+func (s *skillContentDigests) charge(n int64) bool {
+	if s.closed {
+		return false
+	}
+	if n > s.reservation.Available() || !s.reservation.Reserve(n) {
+		s.close()
+		return false
 	}
 	s.held += n
-	return nil
+	return true
 }
 
 func (s *skillContentDigests) add(d agentapi.SkillContentDigest) error {
-	if s.values[d] {
+	if s.closed || s.values[d] {
 		return nil
 	}
 	n := int64(128)
 	if s.values == nil {
 		n += 1024
 	}
-	if err := s.charge(n); err != nil {
-		return err
+	if !s.charge(n) {
+		return nil
 	}
 	if s.values == nil {
 		s.values = make(map[agentapi.SkillContentDigest]bool)
@@ -49,8 +54,8 @@ func (s *skillContentDigests) accepted(evidence []archive.SupplementalEvidence) 
 	if len(s.values) == 0 {
 		return nil, nil
 	}
-	if err := s.charge(int64(len(s.values)) * 32); err != nil {
-		return nil, err
+	if !s.charge(int64(len(s.values)) * 32) {
+		return nil, nil
 	}
 	out := make([]agentapi.SkillContentDigest, 0, len(s.values))
 	accept := func(payload map[string]any) {
@@ -99,7 +104,7 @@ func (s *skillContentDigests) close() {
 	clear(s.acceptedDigests)
 	s.acceptedDigests = nil
 	s.values = nil
-	s.budget.ReleaseUnscoped(s.held)
+	s.reservation.Release(s.held)
 	s.held = 0
 }
 

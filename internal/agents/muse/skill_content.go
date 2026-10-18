@@ -293,6 +293,12 @@ func (s *skillContentJoin) Finalize(ctx context.Context, safe []agentapi.SkillCo
 		return s.out, nil
 	}
 	n := int64(len(safe))*128 + int64(len(s.pending))*128 + 2048
+	if n > s.reservation.Available() {
+		if err := ctx.Err(); err != nil {
+			return archive.FilteredTranscript{}, err
+		}
+		return s.out, nil
+	}
 	if err := s.charge(n); err != nil {
 		return archive.FilteredTranscript{}, err
 	}
@@ -307,6 +313,13 @@ func (s *skillContentJoin) Finalize(ctx context.Context, safe []agentapi.SkillCo
 			proofs[k] = hex.EncodeToString(pending.digest[:])
 		}
 	}
+	enrichment, _ := s.enrichmentCharge(proofs)
+	if enrichment > s.reservation.Available() {
+		if err := ctx.Err(); err != nil {
+			return archive.FilteredTranscript{}, err
+		}
+		return s.out, nil
+	}
 	return s.enrich(ctx, proofs)
 }
 
@@ -314,14 +327,7 @@ func (s *skillContentJoin) enrich(ctx context.Context, proofs map[skillContentKe
 	if len(proofs) == 0 {
 		return s.out, nil
 	}
-	n := int64(len(s.rows)) * 24
-	changed := 0
-	for i, row := range s.rows {
-		if row.ordinary != nil && proofs[skillContentIdentity(*row.ordinary)] != "" && str(row.ordinary.Fields["sha256"]) == "" {
-			changed++
-			n += int64(len(s.out.Records[i])+256)*8 + 1024
-		}
-	}
+	n, changed := s.enrichmentCharge(proofs)
 	if changed == 0 {
 		return s.out, nil
 	}
@@ -371,4 +377,21 @@ func (s *skillContentJoin) enrich(ctx context.Context, proofs map[skillContentKe
 	}
 	s.out = out
 	return out, nil
+}
+
+// enrichmentCharge is the unchanged retained-encoding allowance. Optional
+// Finalize preflights it; required Restore uses the strict charge in enrich.
+func (s *skillContentJoin) enrichmentCharge(proofs map[skillContentKey]string) (int64, int) {
+	n := int64(len(s.rows)) * 24
+	changed := 0
+	for i, row := range s.rows {
+		if row.ordinary != nil && proofs[skillContentIdentity(*row.ordinary)] != "" && str(row.ordinary.Fields["sha256"]) == "" {
+			changed++
+			n += int64(len(s.out.Records[i])+256)*8 + 1024
+		}
+	}
+	if changed == 0 {
+		return 0, 0
+	}
+	return n, changed
 }

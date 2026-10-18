@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -170,7 +171,8 @@ func TestSkillContentCancelBudgetAndAttestation(t *testing.T) {
 	for _, cancelNow := range []bool{false, true} {
 		budget := agentapi.NewNativeReadBudget(8 << 20)
 		_, join, releaseObservation := skillContentOperation(t, skillContentNative(t, "ordinary"), budget)
-		if _, err := join.Restore(t.Context(), archive.SourceBundle{}); err != nil {
+		restored, err := join.Restore(t.Context(), archive.SourceBundle{})
+		if err != nil {
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithCancel(t.Context())
@@ -185,15 +187,18 @@ func TestSkillContentCancelBudgetAndAttestation(t *testing.T) {
 			}
 		}
 		h := agentapi.SkillContentDigest(sha256.Sum256([]byte("ordinary")))
-		_, err := join.Finalize(ctx, []agentapi.SkillContentDigest{h})
+		out, err := join.Finalize(ctx, []agentapi.SkillContentDigest{h})
 		cancel()
 		block.Release(n)
-		want := agentapi.ErrReadBudget
 		if cancelNow {
-			want = context.Canceled
+			if !errors.Is(err, context.Canceled) {
+				t.Fatal("cancellation downgraded", err)
+			}
+		} else if err != nil || !reflect.DeepEqual(out, restored) || budget.ScopeExceeded() || budget.ScopePressured() {
+			t.Fatal("optional capacity changed restored output", err)
 		}
-		if !errors.Is(err, want) || len(join.(*skillContentJoin).pending) != 0 {
-			t.Fatal("failed finalization kept private state", err)
+		if len(join.(*skillContentJoin).pending) != 0 {
+			t.Fatal("terminal finalization kept private state")
 		}
 		releaseObservation()
 		releaseObservation()
@@ -345,5 +350,123 @@ func TestSkillContentDispatchUsesExactVariant(t *testing.T) {
 				t.Fatalf("event exact-variant predicate = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSkillContentOptionalFinalizePressure(t *testing.T) {
+	t.Parallel()
+	for _, room := range []int64{0, 4096} {
+		t.Run(fmt.Sprint(room), func(t *testing.T) {
+			t.Parallel()
+			budget := agentapi.NewNativeReadBudget(8 << 20)
+			end := budget.BeginScope(8 << 20)
+			defer end()
+			_, join, release := skillContentOperation(t, skillContentNative(t, "ordinary"), budget)
+			restored, err := join.Restore(t.Context(), archive.SourceBundle{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocker := budget.Reservation()
+			n := blocker.Available() - room
+			if n < 0 || !blocker.Reserve(n) {
+				t.Fatal("pressure setup")
+			}
+			h := agentapi.SkillContentDigest(sha256.Sum256([]byte("ordinary")))
+			out, err := join.Finalize(t.Context(), []agentapi.SkillContentDigest{h})
+			if err != nil || !reflect.DeepEqual(out, restored) || len(join.(*skillContentJoin).pending) != 0 {
+				t.Fatal("optional proof partially changed restored output", err)
+			}
+			if budget.ScopeExceeded() || budget.ScopePressured() {
+				t.Fatal("optional finalization set refusal flags")
+			}
+			parsed, err := (Parser{}).Parse(t.Context(), bundleFor(t, out))
+			if err != nil || len(parsed.View.NativeSkillUses) != 1 || parsed.View.NativeSkillUses[0].SHA256 != "" {
+				t.Fatal("capacity fallback lost positive hashless invocation", err)
+			}
+			blocker.Release(n)
+			release()
+			if used, _ := budget.Charged(); used != 0 {
+				t.Fatal("optional finalization charge leaked")
+			}
+		})
+	}
+}
+
+func TestSkillContentRequiredRestoreAndOutputRemainStrict(t *testing.T) {
+	t.Parallel()
+	h := agentapi.SkillContentDigest(sha256.Sum256([]byte("ordinary")))
+	_, initial, _ := skillContentOperation(t, skillContentNative(t, "ordinary"), nil)
+	if _, err := initial.Restore(t.Context(), archive.SourceBundle{}); err != nil {
+		t.Fatal(err)
+	}
+	enriched, err := initial.Finalize(t.Context(), []agentapi.SkillContentDigest{h})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior := bundleFor(t, enriched)
+	budget := agentapi.NewNativeReadBudget(8 << 20)
+	_, required, release := skillContentOperation(t, skillContentNative(t, "ordinary"), budget)
+	blocker := budget.Reservation()
+	n := blocker.Available()
+	if !blocker.Reserve(n) {
+		t.Fatal("required pressure setup")
+	}
+	if _, err := required.Restore(t.Context(), prior); !errors.Is(err, agentapi.ErrReadBudget) {
+		t.Fatal("required published proof silently dropped", err)
+	}
+	blocker.Release(n)
+	release()
+	if used, _ := budget.Charged(); used != 0 {
+		t.Fatal("required refusal leaked")
+	}
+	_, limited, _ := skillContentOperation(t, skillContentNative(t, "ordinary"), nil)
+	restored, err := limited.Restore(t.Context(), archive.SourceBundle{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	limited.(*skillContentJoin).limits.FilteredBytes = int64(restored.Boundary.RetainedBytes)
+	if _, err := limited.Finalize(t.Context(), []agentapi.SkillContentDigest{h}); !errors.Is(err, archive.ErrRecordTooLarge) {
+		t.Fatal("output ceiling downgraded to hashless success", err)
+	}
+}
+
+func TestSkillContentPressurePreservesRestoredProof(t *testing.T) {
+	t.Parallel()
+	h := agentapi.SkillContentDigest(sha256.Sum256([]byte("ordinary")))
+	_, first, _ := skillContentOperation(t, skillContentNative(t, "ordinary"), nil)
+	if _, err := first.Restore(t.Context(), archive.SourceBundle{}); err != nil {
+		t.Fatal(err)
+	}
+	old, err := first.Finalize(t.Context(), []agentapi.SkillContentDigest{h})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior := bundleFor(t, old)
+	raw := nativeSkillReads(t, 2, func(m map[string]any) {
+		object(object(m["payload"])["event"])["evidence_hash"] = "sha256:" + hex.EncodeToString(h[:])
+	})
+	budget := agentapi.NewNativeReadBudget(8 << 20)
+	_, join, release := skillContentOperation(t, raw, budget)
+	restored, err := join.Restore(t.Context(), prior)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocker := budget.Reservation()
+	n := blocker.Available()
+	if !blocker.Reserve(n) {
+		t.Fatal("pressure setup")
+	}
+	out, err := join.Finalize(t.Context(), []agentapi.SkillContentDigest{h})
+	if err != nil || !reflect.DeepEqual(out, restored) || !(Filter{}).EvidenceExtends(prior, bundleFor(t, out)) {
+		t.Fatal("optional pressure changed published prefix", err)
+	}
+	parsed, err := (Parser{}).Parse(t.Context(), bundleFor(t, out))
+	if err != nil || len(parsed.View.NativeSkillUses) != 2 || parsed.View.NativeSkillUses[0].SHA256 == "" || parsed.View.NativeSkillUses[1].SHA256 != "" {
+		t.Fatal("restored proof lost or new proof partially added", err)
+	}
+	blocker.Release(n)
+	release()
+	if used, _ := budget.Charged(); used != 0 {
+		t.Fatal("restored fallback leaked")
 	}
 }

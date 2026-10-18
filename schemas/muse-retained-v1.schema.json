@@ -2510,6 +2510,9 @@
               "maximum": 9007199254740991
             }
           }
+        },
+        "causation_id": {
+          "type": "null"
         }
       }
     },
@@ -2578,6 +2581,9 @@
               "const": "marker_free_skill_content_v1"
             }
           }
+        },
+        "causation_id": {
+          "type": "null"
         }
       }
     }

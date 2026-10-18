@@ -196,7 +196,14 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   compares only that existing safe digest, never an original hash from redacted
   candidates. Native identity stays separate from installed display identity;
   no origin, trust or eligibility is inferred. Credential-bearing, literal-marker
-  and otherwise unmatched skills remain hashless. Exact prior-event safe proof
+  and otherwise unmatched skills remain hashless. Only ordinary evidence is
+  cached across the pass: private safe digests end with the current callback
+  view after finalization or error. The first actual user/project reads can
+  match; later project reads can match only their own new content, and cached
+  evidence supplies no digest or filesystem reread. Optional witness capacity
+  refusal preserves ordinary evidence and the exact already-restored output;
+  required restoration, source, output and cancellation failures still refuse.
+  Exact prior-event safe proof
   restores before activity comparison without filesystem access; only the normal
   active observation gate can add new proof. Private native digests die with the
   leased operation and never enter evidence, state or diagnostics. The closed

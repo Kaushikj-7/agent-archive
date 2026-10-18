@@ -104,9 +104,9 @@ func ObserveSkills(options SkillOptions) ([]archive.SupplementalEvidence, error)
 }
 
 // ObserveSkillsWithContent borrows only safe fixed-point digests from the same
-// observation. The caller closes their pass-lifetime charge; no raw hash leaves.
+// observation. The caller closes their operation-scoped charge; no raw hash leaves.
 func ObserveSkillsWithContent(ctx context.Context, options SkillOptions, budget *agentapi.NativeReadBudget) (out agentapi.SkillContentObservation, release func(), err error) {
-	content := &skillContentDigests{budget: budget}
+	content := &skillContentDigests{reservation: budget.Reservation()}
 	release = content.close
 	defer func() {
 		if err != nil {

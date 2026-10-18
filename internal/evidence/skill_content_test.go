@@ -78,8 +78,9 @@ func TestSkillContentCancellationAndBudgetDiscard(t *testing.T) {
 		ctx   context.Context
 		limit int64
 		want  error
-	}{{ctx, 1 << 20, context.Canceled}, {t.Context(), 1, agentapi.ErrReadBudget}} {
+	}{{ctx, 1 << 20, context.Canceled}, {t.Context(), 1, nil}, {t.Context(), 1152, nil}} {
 		budget := agentapi.NewNativeReadBudget(c.limit)
+		end := budget.BeginScope(c.limit)
 		out, releaseObservation, err := ObserveSkillsWithContent(c.ctx, options, budget)
 		releaseObservation()
 		if !errors.Is(err, c.want) || len(out.Digests) != 0 {
@@ -88,5 +89,15 @@ func TestSkillContentCancellationAndBudgetDiscard(t *testing.T) {
 		if used, _ := budget.Charged(); used != 0 {
 			t.Fatal("failed observation leaked")
 		}
+		if budget.ScopeExceeded() || budget.ScopePressured() {
+			t.Fatal("optional refusal poisoned scope")
+		}
+		if c.want == nil {
+			ordinary, e := ObserveSkills(options)
+			if e != nil || !reflect.DeepEqual(out.Evidence, ordinary) {
+				t.Fatal("capacity fallback changed ordinary evidence", e)
+			}
+		}
+		end()
 	}
 }
