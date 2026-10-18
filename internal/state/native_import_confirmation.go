@@ -49,7 +49,7 @@ func nativeImportScopeProjects(cfg config.Config, scope archive.NativeImportBatc
 	for _, id := range scope.ProjectIDs {
 		matched := false
 		for _, project := range cfg.Archive.Projects {
-			if !project.Included || archive.ProjectID(project.Root) != id {
+			if !project.Included || project.ProjectID != id {
 				continue
 			}
 			// Admission is now, not the historical native birth. The physical
