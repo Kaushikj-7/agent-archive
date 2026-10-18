@@ -35,6 +35,14 @@ type recoveryReviewFixture struct {
 
 type recoveryScenario string
 
+type recoveryReviewDestination string
+
+const (
+	reviewHistoricalDestination recoveryReviewDestination = "historical"
+	reviewConfiguredDestination recoveryReviewDestination = "configured"
+	reviewSkippedDestination    recoveryReviewDestination = "skip"
+)
+
 const (
 	reviewAmbiguousClones   recoveryScenario = "ambiguous clones"
 	reviewUnresolvedChain   recoveryScenario = "unresolved chain"
@@ -442,8 +450,8 @@ func TestRecoveryReviewEscapesMetadataAndPreservesExactExport(t *testing.T) {
 }
 
 func TestRecoveryReviewMakesOneDecisionForAllKeysAtExactCwd(t *testing.T) {
-	for _, choice := range []string{"historical", "configured", "skip"} {
-		t.Run(choice, func(t *testing.T) {
+	for _, choice := range []recoveryReviewDestination{reviewHistoricalDestination, reviewConfiguredDestination, reviewSkippedDestination} {
+		t.Run(string(choice), func(t *testing.T) {
 			f := newRecoveryReviewFixture(t)
 			const first = "11111111-1111-4111-8111-111111111111"
 			const second = "22222222-2222-4222-8222-222222222222"
@@ -455,9 +463,9 @@ func TestRecoveryReviewMakesOneDecisionForAllKeysAtExactCwd(t *testing.T) {
 			must(t, os.WriteFile(secondPath, bytes.ReplaceAll(data, []byte("https://example.test/acme/repo"), []byte("https://example.test/other/repo")), 0600))
 			input := "new\nRetired mixed identities\nexport\n"
 			switch choice {
-			case "skip":
+			case reviewSkippedDestination:
 				input = "skip\n"
-			case "configured":
+			case reviewConfiguredDestination:
 				input = "1\nexport\n"
 			}
 			output := filepath.Join(t.TempDir(), "one-cwd.json")
@@ -465,7 +473,7 @@ func TestRecoveryReviewMakesOneDecisionForAllKeysAtExactCwd(t *testing.T) {
 			if code != 0 || strings.Count(out, "Choose an exact destination") != 1 || strings.Count(out, "Recorded repository key:") != 2 || !strings.Contains(out, "including unlisted identities") || !strings.Contains(out, "skip skips that whole cwd") || !strings.Contains(out, "compatible exact assignment for at least one observed group") || !strings.Contains(out, "project_mapping_conflict") {
 				t.Fatal("cwd-only mapping was presented as key-selective authority", code, out, errout)
 			}
-			if choice == "skip" {
+			if choice == reviewSkippedDestination {
 				if _, err := os.Stat(output); !os.IsNotExist(err) {
 					t.Fatal("skipped cwd exported an assignment", err)
 				}
@@ -475,7 +483,7 @@ func TestRecoveryReviewMakesOneDecisionForAllKeysAtExactCwd(t *testing.T) {
 			must(t, err)
 			var decoded backfill.Filters
 			must(t, backfill.ReadMappingFile(bytes.NewReader(data), &decoded))
-			if len(decoded.HistoricalMappings)+len(decoded.ProjectMappings) != 1 || choice == "historical" && decoded.HistoricalMappings[f.missing] == "" || choice == "configured" && decoded.ProjectMappings[f.missing] != f.target {
+			if len(decoded.HistoricalMappings)+len(decoded.ProjectMappings) != 1 || choice == reviewHistoricalDestination && decoded.HistoricalMappings[f.missing] == "" || choice == reviewConfiguredDestination && decoded.ProjectMappings[f.missing] != f.target {
 				t.Fatal("review failed to export one exact cwd-only assignment", decoded)
 			}
 			out, errout, code = f.command(t, "", "backfill", "--yes", "--background", "--harness", "codex", "--mapping-file", output)
@@ -484,10 +492,10 @@ func TestRecoveryReviewMakesOneDecisionForAllKeysAtExactCwd(t *testing.T) {
 			regs, err := store.LoadRegistrations()
 			must(t, err)
 			want := 2
-			if choice == "configured" {
+			if choice == reviewConfiguredDestination {
 				want = 1
 			}
-			if code != 0 || len(regs) != want || choice == "configured" && regs[0].NativeSessionID != first {
+			if code != 0 || len(regs) != want || choice == reviewConfiguredDestination && regs[0].NativeSessionID != first {
 				t.Fatal("cwd-wide assignment failed to preserve per-source compatibility", code, regs, out, errout)
 			}
 		})
