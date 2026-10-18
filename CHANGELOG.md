@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `sync` and scheduled collection can publish supported protected legacy imports
+  from their frozen staged evidence after native deletion. They acquire the real
+  collector guard required for exact publication and recovery.
+
 - Codex backfill accepts indexed rollout paths through a verified alias of an
   already trusted native home, including macOS temporary-folder aliases. Home
   identity, source confinement and final native selection remain required.
