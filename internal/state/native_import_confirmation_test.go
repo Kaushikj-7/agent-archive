@@ -24,9 +24,17 @@ func nativeImportConfirmationFixture(t *testing.T) (*Store, archive.NativeImport
 	if err != nil {
 		t.Fatal(err)
 	}
+	previous := cfg
+	// Historical confirmation is independent of live capture. Retire the
+	// fixture's live window through the normal committed transition first.
+	cfg.Harnesses = nil
 	cfg.NativeImportProtection, cfg.DurableStorageProtection = true, true
 	cfg.PublicationCompositionProtection, cfg.ImportStagingProtection, cfg.StagedSelectionProtection = true, true, true
 	cfg.ImportedHarnesses = []string{"muse"}
+	cfg, err = config.ReconcileMuseCapture(cfg, previous, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := config.Save(f.store.Home(), cfg); err != nil {
 		t.Fatal(err)
 	}
