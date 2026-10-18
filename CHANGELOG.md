@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Backfill distinguishes exhausted Codex lookup work (`lookup_allowance_spent`,
+  retry) from source byte/record limits and missing history evidence. Pending
+  sessions keep their existing eligibility checks. Content-free traces count
+  lookup scopes, native preparation/inspection attempts and unfinished candidates.
+
 - Prepare guarded capture of newly started Muse sessions, with explicit home,
   project and capture-window checks before ownership. Public setup remains
   disabled pending native acceptance; existing Muse local reading is unchanged.

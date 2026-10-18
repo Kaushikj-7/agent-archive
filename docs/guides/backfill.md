@@ -291,6 +291,27 @@ limits. Text plans show the same counted breakdown. Unknown source reasons
 use a generic unavailable or resource-limit diagnostic; raw errors are never
 printed. These details explain the existing skip and do not change eligibility.
 
+`lookup_allowance_spent` with action `retry` means this run used its time or
+header-read allowance for finding Codex rollouts. Affected sessions remain
+unchecked under `related_history_pending`; this is not evidence of an oversized
+or unsupported source. Retrying starts a new allowance, but this build does not
+yet continue unfinished foreground lookup work automatically, so a large run may
+stop at the same point. Actual source byte and record limits remain
+`source_size_limit` and `source_record_limit`; history graph, aggregate byte and
+record limits keep their specific reasons. Missing native evidence remains a
+separate refusal.
+
+For a content-free planning baseline, use `AGENT_ARCHIVE_TRACE=1` with a dry run.
+The timing tree includes native preparation separately from inventory/recovery
+and inspection. Fixed aggregate counters report `codex_lookup_scopes` (initial
+and explicitly renewed allowances), `backfill_native_preparation_attempts`
+(requested thread lookups), `backfill_native_inspection_attempts` (child or
+related-history inspections), and `backfill_lookup_unfinished_candidates`
+(final candidates left pending specifically by a spent allowance). These count
+attempts and final decisions, not complete histories or published sessions;
+zero counters are omitted. They share the existing bounded trace aggregates and
+retain no individual source records.
+
 File and database-only candidates receive the same diagnostic details. For
 `unsafe_format`, the `source_inspection_unavailable` detail asks you to review
 source access and format support; the skip alone cannot prove which is missing.

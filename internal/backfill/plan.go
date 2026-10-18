@@ -319,6 +319,9 @@ func tracePlanSelection(plan Plan) {
 		if candidate.Skip == "" {
 			selected++
 		}
+		if candidate.Skip == SkipRelatedHistory && candidate.Diagnostic != nil && candidate.Diagnostic.Detail == DetailLookupAllowanceSpent {
+			trace.Add(trace.BackfillLookupUnfinishedCandidates, 1)
+		}
 	}
 	trace.Add(trace.SelectedSessions, int64(selected))
 	trace.Add(trace.SkippedSessions, int64(len(plan.Candidates)-selected))

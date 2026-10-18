@@ -33,6 +33,7 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 		}
 		return out, summary, release, err
 	}
+	trace.Add(trace.BackfillNativeInspectionAttempts, 1)
 	provider, filter, ok := env.Sources.LookupSources(string(w.t.harness))
 	if !ok {
 		return out, summary, release, errors.New("native source capability unavailable")
