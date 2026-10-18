@@ -109,10 +109,13 @@ func (w *AtomicWriteWitness) verify(ctx context.Context, scratch []byte) (err er
 }
 
 type witnessedAtomicCommit struct {
-	ctx     context.Context
-	scratch []byte
-	check   func(*AtomicWriteWitness, func() error) error
-	hash    hash.Hash
+	ctx           context.Context
+	scratch       []byte
+	check         func(*AtomicWriteWitness, func() error) error
+	preverified   func(*AtomicWriteWitness, func() (func() error, error)) error
+	cleanup       func() error
+	beforeDirSync func()
+	hash          hash.Hash
 }
 
 // RootedAtomicWriteWitnessed adds exact transient recognition to the checked
@@ -137,4 +140,57 @@ func newAtomicWriteWitness(root *os.Root, name string, info os.FileInfo, sum []b
 	s.active.Store(true)
 	copy(s.sum[:], sum)
 	return &AtomicWriteWitness{state: s}, nil
+}
+
+// RootedAtomicWritePreverifiedWitnessed prepares one checked temporary. The
+// callback first requests full verification outside policy locks, then receives
+// a one-shot identity-only rename bound to native change time. Cleanup runs only
+// after restoreCleanup succeeds; failure preserves the charged temporary.
+func RootedAtomicWritePreverifiedWitnessed(ctx context.Context, root *os.Root, name string, write func(io.Writer) error, scratch []byte, commit func(*AtomicWriteWitness, func() (func() error, error)) error, restoreCleanup func() error) error {
+	if ctx == nil || len(scratch) == 0 || commit == nil || restoreCleanup == nil {
+		return errAtomicWitness
+	}
+	return rootedAtomicWrite(root, name, write, nil, &witnessedAtomicCommit{ctx: ctx, scratch: scratch, preverified: commit, cleanup: restoreCleanup, hash: sha256.New()})
+}
+
+func (w *AtomicWriteWitness) preverifiedRename(ctx context.Context, scratch []byte, rename func() error) (func() error, error) {
+	before, err := w.state.root.Lstat(w.state.name)
+	if err != nil {
+		return nil, err
+	}
+	sec, nsec, known := atomicChangeIdentity(before)
+	if !known {
+		return nil, errAtomicWitness
+	}
+	if err := w.verify(ctx, scratch); err != nil {
+		return nil, err
+	}
+	after, err := w.state.root.Lstat(w.state.name)
+	if err != nil {
+		return nil, err
+	}
+	a, b, known := atomicChangeIdentity(after)
+	if !known || sec != a || nsec != b || !sameAtomicFile(before, after) {
+		return nil, errAtomicWitness
+	}
+	used := false
+	return func() error {
+		if used {
+			return errAtomicWitness
+		}
+		used = true
+		if err := errors.Join(ctx.Err(), w.Check(w.state.root)); err != nil {
+			return err
+		}
+		current, err := w.state.root.Lstat(w.state.name)
+		if err != nil {
+			return err
+		}
+		a, b, known := atomicChangeIdentity(current)
+		if !known || a != sec || b != nsec || !sameAtomicFile(after, current) {
+			return errAtomicWitness
+		}
+		w.state.active.Store(false)
+		return rename()
+	}, nil
 }

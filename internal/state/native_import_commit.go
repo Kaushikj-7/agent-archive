@@ -290,37 +290,8 @@ func (p *PreparedNativeImport) persistImportStage(ctx context.Context, locks *lo
 		}
 		return nil
 	}
-	return read.withImportStaging(ctx, func(g config.DurableStorageGuard) error {
-		return read.writeDurableGuardWitnessed(ctx, g, importStageRelative(p.reg.ArchiveSessionID), p.stage, func(witness *local.AtomicWriteWitness, rename func() error) error {
-			if err := p.verify(ctx); err != nil {
-				return err
-			}
-			unlock, err := p.store.lockNativeImport(ctx, locks, p.confirmation.control.ID, p.reg.ArchiveSessionID)
-			if err != nil {
-				return err
-			}
-			defer unlock()
-			scoped := *read
-			scoped.atomicWitness = witness
-			if err := p.checkImportHeld(ctx, locks); err != nil {
-				return err
-			}
-			key := agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: p.candidate.NativeID}
-			current, found, err := scoped.readQualifiedIndex(key)
-			if err != nil || found != p.indexFound || found && current != p.index {
-				return errors.Join(errIndexMoved, err)
-			}
-			if _, found, err := scoped.LoadRegistration(p.reg.ArchiveSessionID); err != nil || found {
-				return errors.Join(ErrSessionIdentityConflict, err)
-			}
-			if _, found, err := scoped.LoadImportStage(ctx, p.reg); err != nil || found {
-				return errors.Join(ErrReadySelectionFrozen, err)
-			}
-			if err := errors.Join(ctx.Err(), locks.Check()); err != nil {
-				return err
-			}
-			return rename()
-		})
+	return config.WithNativeImportStorage(ctx, p.store.home, func() config.ReadReservation { return read.readReservation() }, func(preparation config.NativeImportStoragePreparation) error {
+		return p.writeInitialNativeImportStage(ctx, read, locks, preparation)
 	})
 }
 
@@ -372,18 +343,26 @@ func (s *Store) lockNativeImport(ctx context.Context, held *local.RootedHome, ba
 	if err != nil {
 		return nil, err
 	}
-	batchUnlock, err := local.RootedLockWait(held, filepath.Join(importLocksDirectory, batch+".lock"), time.Second)
+	rest, err := s.lockNativeImportAfterHooks(ctx, held, batch, id)
 	if err != nil {
 		hooks()
+		return nil, err
+	}
+	return func() { rest(); hooks() }, nil
+}
+
+// The caller owns hooks; quota may be acquired between hooks and this suffix.
+func (s *Store) lockNativeImportAfterHooks(ctx context.Context, held *local.RootedHome, batch, id string) (func(), error) {
+	batchUnlock, err := local.RootedLockWait(held, filepath.Join(importLocksDirectory, batch+".lock"), time.Second)
+	if err != nil {
 		return nil, err
 	}
 	request, err := local.RootedLockWait(held, requestLockName(id), time.Second)
 	if err != nil {
 		batchUnlock()
-		hooks()
 		return nil, err
 	}
-	unlock := func() { request(); batchUnlock(); hooks() }
+	unlock := func() { request(); batchUnlock() }
 	for _, name := range []string{filepath.Join(importLocksDirectory, batch+".lock"), requestLockName(id)} {
 		if err := checkNativeImportLock(held, name); err != nil {
 			unlock()

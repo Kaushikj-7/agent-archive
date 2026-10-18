@@ -99,6 +99,12 @@ func rootedAtomicWrite(root *os.Root, name string, write func(io.Writer) error, 
 		return err
 	}
 	defer func() {
+		if witnessed != nil && witnessed.cleanup != nil {
+			if e := witnessed.cleanup(); e != nil {
+				err = errors.Join(err, e)
+				return
+			}
+		}
 		e := root.Remove(temp)
 		if !errors.Is(e, os.ErrNotExist) {
 			err = errors.Join(err, e)
@@ -128,6 +134,16 @@ func rootedAtomicWrite(root *os.Root, name string, write func(io.Writer) error, 
 		defer func() { witness.state.active.Store(false) }()
 		commit = func(rename func() error) error {
 			defer witness.state.active.Store(false)
+			if witnessed.preverified != nil {
+				requested := false
+				return witnessed.preverified(witness, func() (func() error, error) {
+					if requested {
+						return nil, errAtomicWitness
+					}
+					requested = true
+					return witness.preverifiedRename(witnessed.ctx, witnessed.scratch, rename)
+				})
+			}
 			return witnessed.check(witness, func() error {
 				if e := witness.verify(witnessed.ctx, witnessed.scratch); e != nil {
 					return e
@@ -162,6 +178,9 @@ func rootedAtomicWrite(root *os.Root, name string, write func(io.Writer) error, 
 		if !renamed {
 			return err
 		}
+	}
+	if witnessed != nil && witnessed.preverified != nil && witnessed.beforeDirSync != nil {
+		witnessed.beforeDirSync()
 	}
 	d, openErr := root.Open(filepath.Dir(name))
 	if openErr != nil {
