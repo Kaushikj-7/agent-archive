@@ -661,6 +661,63 @@ func TestBackfillForegroundPreparationCapacityFailureRemainsFailure(t *testing.T
 	}
 }
 
+func TestBackfillForegroundChildDirectoryCapacityFailureRemainsFailure(t *testing.T) {
+	f, _ := foregroundChildren(t, 3)
+	warmForegroundCatalog(t, f)
+	native := filepath.Join(f.userHome, ".codex")
+	must(t, os.MkdirAll(filepath.Join(native, "sessions", "child"), 0700))
+	// Restore a normal warm catalog at a pending directory boundary. Reusing
+	// its validated headers isolates child queue growth from header allocation.
+	path := filepath.Join(f.data, "discovery-catalog.json")
+	raw, err := os.ReadFile(path)
+	must(t, err)
+	var catalog map[string]json.RawMessage
+	must(t, json.Unmarshal(raw, &catalog))
+	catalog["queue"], err = json.Marshal([]map[string]any{{"root": native, "path": "sessions", "offset": 0}})
+	must(t, err)
+	raw, err = json.Marshal(catalog)
+	must(t, err)
+	must(t, os.WriteFile(path, raw, 0600))
+	var owner *discovery.CodexRolloutLookup
+	var external int64
+	f.env.observeBackfillLookup = func(l *discovery.CodexRolloutLookup) {
+		owner = l
+		// The tiny cursor still fits, but a child queue entry cannot. This
+		// shares the real ledger rather than replacing the production owner.
+		external = l.NativeReadBudget().Available() - 24
+		if !l.NativeReadBudget().ReserveUnscoped(external) {
+			t.Fatal("external reservation failed")
+		}
+	}
+	resources := decorateForegroundSource(t, f, nil)
+	observed := false
+	f.env.observeBackfillPlan = func(backfill.Plan) { observed = true }
+	bucket, err := f.env.OpenStore(mustLoadConfig(t, f.data))
+	must(t, err)
+	before, beforeNative := snapshotTree(t, f.data), snapshotTree(t, f.userHome)
+	var out, errOut bytes.Buffer
+	code := Run([]string{"backfill", "--dry-run", "--json", "--harness", "codex"}, nil, &out, &errOut, f.env)
+	if code != 1 || !strings.Contains(errOut.String(), "source limit") || strings.Contains(errOut.String(), "no progress") || strings.Contains(out.String(), "native_lookup_incomplete") || observed {
+		t.Fatal("child directory capacity returned an incomplete-success plan", code, observed, out.String(), errOut.String())
+	}
+	resources.check(t)
+	if owner == nil {
+		t.Fatal("missing lookup owner")
+	}
+	if used, peak := owner.NativeReadBudget().Charged(); used != external || peak > agentapi.PassReadBudget {
+		t.Fatal("directory capacity refusal leaked or reset another owner", used, external, peak)
+	}
+	owner.NativeReadBudget().ReleaseUnscoped(external)
+	if _, err := owner.Thread(t.Context(), "11111111-1111-4111-8111-000000000000"); !errors.Is(err, agentapi.ErrClosed) {
+		t.Fatal("capacity refusal left lookup open", err)
+	}
+	objects, err := bucket.List(t.Context(), "")
+	must(t, err)
+	if len(objects) != 0 || before != snapshotTree(t, f.data) || beforeNative != snapshotTree(t, f.userHome) {
+		t.Fatal("directory capacity refusal changed config/archive/native/bucket")
+	}
+}
+
 func missingForegroundHistory(t *testing.T, f *backfillFixture) {
 	t.Helper()
 	path := filepath.Join(f.userHome, ".codex", "sessions", "rollout-11111111-1111-4111-8111-000000000000.jsonl")

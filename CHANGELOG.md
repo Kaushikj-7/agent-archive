@@ -10,7 +10,8 @@ follow [Semantic Versioning](https://semver.org/).
   inspection across bounded lookup scopes, including histories needing more
   than five seconds of total lookup work. Native I/O timeouts and inventory
   no-progress results stay specific. Incomplete inventory is reported while
-  independently verified sessions remain eligible. Source safety limits and
+  independently verified sessions remain eligible. Shared native resource
+  exhaustion remains a failure. Source safety limits and
   background work are unchanged; confirmed staging and publication keep their
   existing bounds.
 

@@ -852,6 +852,9 @@ func (s scan) enqueueDirectory(d directory, path string) bool {
 	}
 	next := directory{Root: d.Root, Path: path}
 	if s.rollouts != nil && !s.rollouts.reserveCatalog(directoryByteBound(next)) {
+		if foregroundWork(s.ctx) != nil {
+			s.health.failure = errCatalogBudget
+		}
 		return false
 	}
 	s.catalog.Queue = append(s.catalog.Queue, next)
