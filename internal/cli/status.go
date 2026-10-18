@@ -3071,6 +3071,10 @@ func (sc statusScreen) addCodexDiscoveryRow(row *statusRow, app appStatus) {
 		if app.Discovery.Outcomes[string(sourcefacts.RecoveryInventoryUnavailable)] > 0 || app.Discovery.Outcomes[string(sourcefacts.RecoveryBudgetExhausted)] > 0 {
 			row.notes = append(row.notes, statusNote{sc.info(), "Project repository inventory pending. Restore configured checkout access if needed and ensure local Git supports config path queries, then run sync to advance bounded recovery."})
 		}
+		if projectOriginEvidencePending(app.Discovery.Outcomes) {
+			row.mark = s.warnMark()
+			row.notes = append(row.notes, statusNote{s.warnMark(), "Project Git origin evidence pending. Local origin chains must resolve completely before recovery; run backfill --dry-run for the specific reason, then restore origin access or review an exact --map-project assignment."})
+		}
 	}
 	if discoveryEnabled(app) && (len(app.Discovery.Errors) > 0 || app.Discovery.Outcomes["source_unavailable"] > 0) {
 		row.mark = s.warnMark()

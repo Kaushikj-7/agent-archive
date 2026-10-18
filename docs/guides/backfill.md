@@ -259,12 +259,75 @@ blanket refusal of supported complete histories. Complete native children, forks
 and selected physical revisions use the validated shared history reader and
 durable staging; missing or ambiguous dependencies remain unresolved.
 Summaries contain no transcript paths, native IDs, remote URLs, or content.
+
+Current builds can also leave otherwise supported Codex history pending when
+their shared native lookup allowance is exhausted. There is no backfill flag
+that raises that allowance. The generic resource-limit detail alone does not
+prove that a transcript is too large. Repeating a command or narrowing its
+date/project output filter does not guarantee completion, because native proof
+preparation can still inspect the wider inventory.
+
+Local Git origins use bounded, read-only chain resolution for both proposed and
+configured projects. Absolute/relative paths and local `file://` URLs (empty or
+ASCII `localhost` host, case-insensitive) can lead to a portable repository
+identity through another checkout or bare repository.
+Filesystem names may contain colons when a slash precedes the first colon, as in
+`/work/mirror:backup.git` or `./mirror:backup.git`. Git still treats an unprefixed
+`host:path` as a remote, even if a similarly named local directory exists.
+Paths follow filesystem symlink and parent-directory semantics, and their
+dependencies are checked again before admission. Every origin value must
+resolve consistently. Two physical clones of the same
+repository remain competitors, even when one points at the other. Excluded
+projects remain part of automatic recovery evidence.
+
+Cycles, missing or unreadable targets, conflicting identities, unsupported
+references, keyless chain terminals and traversal limits keep recovery pending
+with a specific `project_origin_*` diagnostic. `status` directs pending automatic
+recovery to `backfill --dry-run` for these reasons and reviewed assignments.
+The observer compares at most 16
+repository directories and 128 dependencies for one chain graph. Git is never
+asked to fetch, and configuration is unchanged. Reviewed exact mappings or a
+mapping file can resolve supported assignments independently of unrelated
+uncertain clones. Mappings still respect exclusions and target identity; native
+history must pass its own checks.
+
+Discovery resumes partial repository sweeps and retries earlier incomplete origin
+observations within its existing lookup allowance. Persistent failures do not
+restart enumeration or prevent later roots from being observed. Restored access
+can require several bounded discovery passes before automatic recovery completes.
+
+The [large-backfill completion plan](../../dev/proposals/large-backfill-completion.md)
+tracks remaining foreground work renewal, larger inventories and recovery
+assistance. Those future options are not available in this build. Existing
+supported mappings and historical destinations remain available.
+
 For Codex history refusals, `diagnostics` preserves fixed source reason codes
 when available: a missing or duplicated rollout a thread continues from, no
 single current rollout, missing dependencies or ownership boundaries, missing or invalid first-own-task evidence, and specific resource
 limits. Text plans show the same counted breakdown. Unknown source reasons
 use a generic unavailable or resource-limit diagnostic; raw errors are never
 printed. These details explain the existing skip and do not change eligibility.
+
+`lookup_allowance_spent` with action `retry` means this run used its time or
+header-read allowance for finding Codex rollouts. Affected sessions remain
+unchecked under `related_history_pending`; this is not evidence of an oversized
+or unsupported source. Retrying starts a new allowance, but this build does not
+yet continue unfinished foreground lookup work automatically, so a large run may
+stop at the same point. Actual source byte and record limits remain
+`source_size_limit` and `source_record_limit`; history graph, aggregate byte and
+record limits keep their specific reasons. Missing native evidence remains a
+separate refusal.
+
+For a content-free planning baseline, use `AGENT_ARCHIVE_TRACE=1` with a dry run.
+The timing tree includes native preparation separately from inventory/recovery
+and inspection. Fixed aggregate counters report `codex_lookup_scopes` (initial
+and explicitly renewed allowances), `backfill_native_preparation_attempts`
+(requested thread lookups), `backfill_native_inspection_attempts` (child or
+related-history inspections), and `backfill_lookup_unfinished_candidates`
+(final candidates left pending specifically by a spent allowance). These count
+attempts and final decisions, not complete histories or published sessions;
+zero counters are omitted. They share the existing bounded trace aggregates and
+retain no individual source records.
 
 File and database-only candidates receive the same diagnostic details. For
 `unsafe_format`, the `source_inspection_unavailable` detail asks you to review

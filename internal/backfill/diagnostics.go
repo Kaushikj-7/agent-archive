@@ -1,9 +1,11 @@
 package backfill
 
 import (
+	"errors"
 	"io"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"sort"
 
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
@@ -50,11 +52,23 @@ const (
 	DetailMappingConflict                              = DiagnosticDetail(sourcefacts.RecoveryMappingConflict)
 	DetailSubtreeUnavailable                           = DiagnosticDetail(sourcefacts.RecoverySubtreeUnavailable)
 	DetailRecoveryUnavailable                          = DiagnosticDetail(sourcefacts.RecoveryUnavailable)
+	DetailOriginCycle                                  = DiagnosticDetail(sourcefacts.RecoveryOriginCycle)
+	DetailOriginMissing                                = DiagnosticDetail(sourcefacts.RecoveryOriginMissing)
+	DetailOriginUnreadable                             = DiagnosticDetail(sourcefacts.RecoveryOriginUnreadable)
+	DetailOriginConflict                               = DiagnosticDetail(sourcefacts.RecoveryOriginConflict)
+	DetailOriginUnsupported                            = DiagnosticDetail(sourcefacts.RecoveryOriginUnsupported)
+	DetailOriginUnresolved                             = DiagnosticDetail(sourcefacts.RecoveryOriginUnresolved)
+	DetailOriginLimit                                  = DiagnosticDetail(sourcefacts.RecoveryOriginLimit)
+	DetailOriginChanged                                = DiagnosticDetail(sourcefacts.RecoveryOriginChanged)
 	DetailWorktreeEvidenceUnavailable DiagnosticDetail = "worktree_evidence_unavailable"
 	DetailHistoryLookupPending        DiagnosticDetail = "history_lookup_pending"
 	DetailSourceChanged               DiagnosticDetail = "source_changed"
 	DetailSourceInspectionUnavailable DiagnosticDetail = "source_inspection_unavailable"
 	DetailSourceSizeLimit             DiagnosticDetail = "source_size_limit"
+	// DetailSourceRecordLimit identifies a record exceeding the source reader's bound.
+	DetailSourceRecordLimit DiagnosticDetail = "source_record_limit"
+	// DetailLookupAllowanceSpent identifies unfinished scheduling work, not a source limit.
+	DetailLookupAllowanceSpent DiagnosticDetail = DiagnosticDetail(agentapi.CauseLookupAllowanceSpent)
 )
 
 // Native refusal diagnostic details retain the public JSON codes.
@@ -158,6 +172,7 @@ var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
 	DetailOwnTaskInvalid:                                   {ActionAwaitSupport, "The first own task lacks valid native identity, execution or timestamp evidence."},
 	DetailOwnTaskBeforeCreation:                            {ActionAwaitSupport, "The first own task predates native session creation."},
 	DetailNativeResourceLimit:                              {ActionAwaitSupport, "The source reader reached a resource limit without a more specific reason."},
+	DetailLookupAllowanceSpent:                             {ActionRetry, "This run's allowance for finding Codex rollouts (time or header reads) ran out; these sessions remain unchecked. Retry backfill; this does not establish a source size or format limit."},
 	DetailNativeSourceUnavailable:                          {ActionReviewSource, "The source reader could not obtain required evidence; no more specific reason was supplied."},
 	DetailAggregateHistoryByteLimit:                        {ActionAwaitSupport, "Aggregate history byte limit."},
 	DetailCurrentRolloutEvidenceUnavailable:                {ActionReviewSource, "Current rollout evidence unavailable."},
@@ -184,6 +199,14 @@ var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
 	// Most recovery limits are fixed (configured roots, dependency stamps,
 	// Cursor catalog rows), so the same plan reaches them again; retrying
 	// clears only a timeout. An exact mapping bypasses the shared inventory.
+	DetailOriginCycle:                 {ActionReviewMapping, "A local Git origin chain contains a cycle; review an exact project mapping."},
+	DetailOriginMissing:               {ActionReviewMapping, "A local Git origin target is missing; restore it or review an exact project mapping."},
+	DetailOriginUnreadable:            {ActionRetry, "Git origin evidence could not be read completely; check repository access, then retry or review an exact project mapping."},
+	DetailOriginConflict:              {ActionReviewMapping, "Git origin values resolve to different repositories; review an exact project mapping."},
+	DetailOriginUnsupported:           {ActionReviewMapping, "A Git origin reference cannot be resolved safely through local repositories; review an exact project mapping."},
+	DetailOriginUnresolved:            {ActionReviewMapping, "A local Git origin chain ends without a portable repository identity; review an exact project mapping."},
+	DetailOriginLimit:                 {ActionReviewMapping, "A local Git origin chain exceeds the bounded repository or dependency allowance; review an exact project mapping."},
+	DetailOriginChanged:               {ActionRetry, "Git origin-chain evidence changed during observation; retry after repositories settle."},
 	DetailRecoveryBudget:              {ActionReviewMapping, "Project recovery reached a fixed work or time limit. Retrying helps only if Git or the disk was slow; otherwise review an exact --map-project assignment."},
 	DetailInventoryUnavailable:        {ActionRetry, "Configured repository evidence is unavailable or changed; check repository access and Git, then retry."},
 	DetailRecoveryExcluded:            {ActionReviewProject, "Recorded repository identity matches an excluded project; review the exclusion."},
@@ -197,6 +220,7 @@ var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
 	DetailSourceChanged:               {ActionRetry, "The source changed during planning; retry after it settles."},
 	DetailSourceInspectionUnavailable: {ActionReviewSource, "The source could not be safely inspected or filtered; check source access and format support."},
 	DetailSourceSizeLimit:             {ActionAwaitSupport, "The source exceeds the supported size limit."},
+	DetailSourceRecordLimit:           {ActionAwaitSupport, "A source record exceeds the supported size limit."},
 	// Recovery gap causes replace project_inventory_unavailable when other
 	// sessions' evidence, not configured repository evidence, is what could
 	// not be observed (see recoveryGaps).
@@ -394,6 +418,12 @@ func sourceRefusalDetail(err error) DiagnosticDetail {
 		if detail := specificRefusalDetail(wrapped.Unwrap()); detail != "" {
 			return detail
 		}
+	}
+	if errors.Is(err, agentapi.ErrRawLimit) {
+		return DetailSourceSizeLimit
+	}
+	if errors.Is(err, archive.ErrRecordTooLarge) {
+		return DetailSourceRecordLimit
 	}
 	if agentapi.HasFailure(err, agentapi.Limit) {
 		return DetailNativeResourceLimit

@@ -456,3 +456,16 @@ concrete binding; it is never sufficient source/admission authority by itself.
 Only exact fresh concrete preparation may reuse a pending reservation. Supported
 cleanup requires a complete matching durable Muse owner/proof/binding; missing,
 mismatched and unsupported pending authority is preserved/refused.
+
+Local-origin-chain recovery changes private repository classification and renewed
+ownership evidence only. Its `local-origin-chain-v1` observer-scope discriminator
+invalidates earlier disposable cached observations, including positive identities
+that did not follow every local origin. The optional closed `Failure` in disposable
+recovery inventory carries only fixed outcomes; older readers may discard it and
+reobserve. Existing admitted ownership, configuration writer fences and published
+proof/source/metadata schemas are unchanged. Public RepoKey/ProjectKey annotation
+algorithms and retained content/metadata derivation are unchanged, so this change
+allocates no filter, adapter, parser or permanent writer version.
+Renewing incomplete entries in existing disposable inventory and recognizing
+unambiguous colon-containing filesystem origins add no persisted fields or
+authority formats; the same version assessment applies.

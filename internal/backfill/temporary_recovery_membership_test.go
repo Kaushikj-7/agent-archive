@@ -72,7 +72,7 @@ func TestTemporaryCloneRemainsRecordedRecoveryMembership(t *testing.T) {
 				env.RepositoryIdentityCurrent = gitremote.ProjectIdentityCurrent
 				p := plan(t, env, nil, cfg, Filters{IncludeTemp: include})
 				missing := candidate(t, p, goneID)
-				want := map[temporaryRecoveryIdentity]sourcefacts.RecoveryOutcome{temporaryRecoverySameKey: sourcefacts.RecoveryAmbiguous, temporaryRecoveryFailedOrigin: sourcefacts.RecoveryInventoryUnavailable, temporaryRecoveryDanglingMarker: sourcefacts.RecoveryInventoryUnavailable}[identity]
+				want := map[temporaryRecoveryIdentity]sourcefacts.RecoveryOutcome{temporaryRecoverySameKey: sourcefacts.RecoveryAmbiguous, temporaryRecoveryKeyless: sourcefacts.RecoveryOriginMissing, temporaryRecoveryFailedOrigin: sourcefacts.RecoveryOriginUnreadable, temporaryRecoveryDanglingMarker: sourcefacts.RecoveryInventoryUnavailable}[identity]
 				if want != "" {
 					if missing.Skip != SkipWorktreeUnresolved || missing.ProjectResolution != nil || missing.ProjectRoot != "" || missing.Diagnostic == nil || missing.Diagnostic.Detail != DiagnosticDetail(want) {
 						t.Fatalf("temporary evidence must prevent false uniqueness (%s): %+v diagnostic %+v", want, missing, missing.Diagnostic)
@@ -103,7 +103,7 @@ func TestTemporaryCloneRemainsRecordedRecoveryMembership(t *testing.T) {
 				if configuredClone != include {
 					t.Fatalf("temporary membership became implicit capture authorization: configured=%v include=%v", configuredClone, include)
 				}
-				if identity == temporaryRecoveryDifferentKey || identity == temporaryRecoveryKeyless {
+				if identity == temporaryRecoveryDifferentKey {
 					temporaryRecoveryGit(t, clone, "config", "remote.origin.url", remote)
 					if err := p.CheckRecovery(t.Context()); err == nil {
 						t.Fatal("temporary clone gained the recorded key without invalidating the unique proof")

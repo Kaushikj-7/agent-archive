@@ -61,6 +61,29 @@ func TestCollectorHasItsOwnLookupAllowanceAfterDiscoverySpendsIt(t *testing.T) {
 	}
 }
 
+func TestReadOnlyPreparationReportsSpentLookupAllowance(t *testing.T) {
+	t.Parallel()
+	for _, remaining := range []time.Duration{0, time.Second} {
+		t.Run(remaining.String(), func(t *testing.T) {
+			t.Parallel()
+			store, _, _, root := fixture(t)
+			lookup, err := NewCodexRolloutLookup(t.Context(), store, []string{root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = lookup.CloseReadOnly() })
+			// No sleeps: model preparation reaching its reserved checkpoint
+			// boundary, including a fully spent allowance, before inspection.
+			lookup.remaining = remaining
+			_, err = lookup.ObserveReadOnly(t.Context())
+			var source *agentapi.SourceError
+			if !errors.As(err, &source) || source.Kind != agentapi.Limit || source.Cause != agentapi.CauseLookupAllowanceSpent {
+				t.Fatalf("preparation lost scheduling cause: %v", err)
+			}
+		})
+	}
+}
+
 // exhaustingLookup spends the pass's whole lookup allowance on the first
 // Thread call it serves, as a slow native index read would.
 type exhaustingLookup struct{ *CodexRolloutLookup }
