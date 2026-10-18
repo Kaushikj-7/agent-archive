@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `backfill review-projects --output FILE` offers a private terminal review of
+  observed missing original cwd groups, repository evidence, compatible exact
+  configured assignments and import-only historical destinations. Export requires
+  explicit confirmation, creates a new 0600 schema-1 mapping file and never
+  overwrites an existing file. Coverage is bounded and incomplete; counts describe
+  project recovery candidates, and native history/source refusals still apply.
+  Review/export changes no configuration, capture policy, stages or archive.
+
 - Deleted-worktree recovery resolves local Git origin chains consistently before
   and after project configuration. Every origin and traversed dependency must
   agree and remain current; physical clones remain distinct competitors. Cyclic,

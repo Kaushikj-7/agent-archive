@@ -296,6 +296,22 @@ func (r *RecoveryResolver) recoverMapped(ctx context.Context, key, target string
 	return proof, RecoveryMappingConflict
 }
 
+// ReviewMapping classifies an exact assignment using the ordinary recovery
+// policy and the same bounded target observations. It returns no admission
+// proof and neither changes mappings nor establishes automatic uniqueness.
+func (r *RecoveryResolver) ReviewMapping(ctx context.Context, cwd, key, target string) RecoveryOutcome {
+	review := *r
+	review.Mappings = map[string]string{filepath.Clean(cwd): target}
+	review.results = nil
+	proof, outcome := review.Recover(ctx, cwd, key)
+	r.Operations = review.Operations
+	r.mappedIdentities = review.mappedIdentities
+	if outcome == "" && proof.Method != "explicit_mapping" {
+		return RecoveryMappingConflict
+	}
+	return outcome
+}
+
 func (r *RecoveryResolver) prepareInventory(ctx context.Context) RecoveryOutcome {
 	if r.Lookup == nil || len(r.Projects) > 1024 {
 		return RecoveryInventoryUnavailable

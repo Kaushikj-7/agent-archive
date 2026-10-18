@@ -154,6 +154,8 @@ type Env struct {
 	// observeBackfillPlan, set only by tests, sees the actual completed plan.
 	// The observer must not mutate it or grant admission authority.
 	observeBackfillPlan func(backfill.Plan)
+	// reviewBackfillProjects enables private observations only for explicit review.
+	reviewBackfillProjects bool
 	// backfillHoldSteps, when positive (only in tests), caps the steps
 	// registration takes per hold of hooks.lock, to force several holds.
 	backfillHoldSteps int

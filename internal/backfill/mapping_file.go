@@ -8,6 +8,8 @@ import (
 	"io"
 	"maps"
 	"path/filepath"
+	"slices"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -37,6 +39,64 @@ type mappingFile struct {
 	SchemaVersion      int                           `json:"schema_version"`
 	HistoricalProjects []HistoricalProjectDefinition `json:"historical_projects"`
 	Mappings           []mappingEntry                `json:"mappings"`
+}
+
+// EncodeMappingFile exports exact reviewed assignments in the existing schema.
+// It validates through the strict reader before returning bounded private bytes.
+func EncodeMappingFile(filters Filters) ([]byte, error) {
+	if len(filters.ProjectMappings)+len(filters.HistoricalMappings) > MappingCountLimit || len(filters.HistoricalProjects) > MappingCountLimit {
+		return nil, errors.New("too many mappings or historical project definitions")
+	}
+	if err := validateExportSize(filters); err != nil {
+		return nil, err
+	}
+	file := mappingFile{SchemaVersion: 1, HistoricalProjects: append([]HistoricalProjectDefinition{}, filters.HistoricalProjects...), Mappings: []mappingEntry{}}
+	for cwd, root := range filters.ProjectMappings {
+		file.Mappings = append(file.Mappings, mappingEntry{Cwd: cwd, ConfiguredRoot: root})
+	}
+	for cwd, id := range filters.HistoricalMappings {
+		file.Mappings = append(file.Mappings, mappingEntry{Cwd: cwd, HistoricalProjectID: id})
+	}
+	slices.SortFunc(file.Mappings, func(a, b mappingEntry) int { return strings.Compare(a.Cwd, b.Cwd) })
+	slices.SortFunc(file.HistoricalProjects, func(a, b HistoricalProjectDefinition) int { return strings.Compare(a.ID, b.ID) })
+	data, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	data = append(data, '\n')
+	var checked Filters
+	if err := ReadMappingFile(bytes.NewReader(data), &checked); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// validateExportSize bounds raw string payload before JSON escaping/indentation.
+// The strict reader separately enforces the exact encoded 4 MiB file limit.
+func validateExportSize(filters Filters) error {
+	payload := 0
+	for cwd, root := range filters.ProjectMappings {
+		if !validMappingPath(cwd) || !validMappingPath(root) {
+			return errors.New("mapping export needs bounded absolute paths")
+		}
+		payload += len(cwd) + len(root)
+	}
+	for cwd, id := range filters.HistoricalMappings {
+		if !validMappingPath(cwd) || !archive.IsHistoricalProjectID(id) {
+			return errors.New("mapping export needs bounded absolute paths and historical identities")
+		}
+		payload += len(cwd) + len(id)
+	}
+	for _, project := range filters.HistoricalProjects {
+		if !archive.IsHistoricalProjectID(project.ID) || !archive.ValidHistoricalProjectLabel(project.Label) {
+			return errors.New("invalid historical project definition")
+		}
+		payload += len(project.ID) + len(project.Label)
+	}
+	if payload > MappingFileLimit {
+		return errors.New("mapping file exceeds 4 MiB")
+	}
+	return nil
 }
 
 // ReadMappingFile decodes bounded strict JSON and merges it with inline mappings.

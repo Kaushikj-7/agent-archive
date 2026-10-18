@@ -883,6 +883,7 @@ Guide: [Import existing sessions](../guides/backfill.md).
 Usage: agent-archive backfill [options]
        agent-archive backfill history
        agent-archive backfill projects list|rename|enable|disable
+       agent-archive backfill review-projects --output FILE
        agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
 
@@ -916,7 +917,7 @@ publication. History reports admitted and remotely verified uploads separately.
   --background          Stage and register sessions, then exit; the background
                         collector verifies and uploads them
 See agent-archive help backfill history, agent-archive help backfill projects,
-and agent-archive help backfill undo.
+agent-archive help backfill review-projects, and agent-archive help backfill undo.
 Example: agent-archive backfill --dry-run --since 30d
 ```
 
@@ -971,6 +972,40 @@ import.
 ```
 
 No flags.
+
+## agent-archive backfill review-projects
+
+Guide: [Private project recovery review](../guides/backfill.md#private-project-recovery-review).
+
+```text
+Usage: agent-archive backfill review-projects --output FILE [options]
+
+Privately review observed missing original cwd groups and export exact project
+assignments in mapping-file schema 1. Terminal input and output are required;
+JSON and piped review are unavailable. Nothing is automatically selected.
+
+Coverage is bounded and incomplete (at most 128 groups); this is not a complete
+inventory or proof of uniqueness. Counts describe project-recovery candidates,
+not promises of importability. Native evidence and source limits still apply.
+
+  --output FILE               New private local assignment file; never overwrite
+  --harness APP               Review one app; repeatable (claude, codex, cursor)
+  --include-temp              Review temporary-directory candidates
+
+Configured choices use existing exact mapping policy; exclusions and conflicting
+usable keys still refuse. Historical destinations are import only. Review and
+export do not change configuration, capture policy, stages or archive. Cancellation,
+EOF or rejected confirmation writes no file. Export uses private mode 0600.
+
+Then run agent-archive backfill --dry-run --mapping-file FILE before a separately
+confirmed import. Keep the reviewed file for exact semantic resume and undo.
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--harness` | a value; repeatable | — |
+| `--include-temp` | no value | — |
+| `--output` | a value | — |
 
 ## agent-archive backfill undo
 
