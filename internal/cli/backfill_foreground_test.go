@@ -239,6 +239,8 @@ type foregroundResources struct {
 	passCloses     int
 	snapshots      int
 	snapshotCloses int
+	failures       []error
+	signatures     map[string]int
 }
 
 type foregroundPass struct {
@@ -246,9 +248,31 @@ type foregroundPass struct {
 	resources *foregroundResources
 }
 
+func (p *foregroundPass) Signature(ctx context.Context, ref agentapi.SourceRef) (agentapi.SourceObservation, error) {
+	if p.resources.signatures == nil {
+		p.resources.signatures = map[string]int{}
+	}
+	p.resources.signatures[ref.Path]++
+	return p.SourcePass.Signature(ctx, ref)
+}
+
+func (p *foregroundPass) ValidateSourceAdmission(ctx context.Context, ref agentapi.SourceRef, facts agentapi.SourceAdmission) error {
+	return p.SourcePass.(agentapi.SourceAdmissionSignature).ValidateSourceAdmission(ctx, ref, facts)
+}
+
 func (p *foregroundPass) Read(ctx context.Context, ref agentapi.SourceRef, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
 	snapshot, err := p.SourcePass.Read(ctx, ref, limits)
+	return p.observe(snapshot, err)
+}
+
+func (p *foregroundPass) ReadRevision(ctx context.Context, ref agentapi.SourceRef, admission agentapi.SourceAdmission, limits agentapi.ReadLimits) (agentapi.SourceSnapshot, error) {
+	snapshot, err := p.SourcePass.(agentapi.SourceRevisions).ReadRevision(ctx, ref, admission, limits)
+	return p.observe(snapshot, err)
+}
+
+func (p *foregroundPass) observe(snapshot agentapi.SourceSnapshot, err error) (agentapi.SourceSnapshot, error) {
 	if err != nil {
+		p.resources.failures = append(p.resources.failures, err)
 		return nil, err
 	}
 	p.resources.snapshots++
@@ -268,7 +292,15 @@ func (s *foregroundSnapshot) Close() error {
 }
 
 func (s *foregroundSnapshot) AdmissionEvidence(ctx context.Context, facts agentapi.SourceAdmission) (agentapi.AdmissionEvidence, error) {
-	return s.SourceSnapshot.(agentapi.SourceAdmissionEvidence).AdmissionEvidence(ctx, facts)
+	evidence, err := s.SourceSnapshot.(agentapi.SourceAdmissionEvidence).AdmissionEvidence(ctx, facts)
+	if err != nil {
+		s.resources.failures = append(s.resources.failures, err)
+	}
+	return evidence, err
+}
+
+func (s *foregroundSnapshot) RevisionCandidates(ctx context.Context) (agentapi.RevisionCandidateSet, error) {
+	return s.SourceSnapshot.(agentapi.SourceRevisionCandidates).RevisionCandidates(ctx)
 }
 
 func (r *foregroundResources) check(t *testing.T) {

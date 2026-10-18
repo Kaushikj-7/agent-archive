@@ -65,6 +65,23 @@ func lockCollectorWait(home, holder string, now time.Time, wait time.Duration) (
 	})
 }
 
+// lockCollectorGuardWait retains the typed publication guard while waiting for
+// the same collector lock used by ordinary import registration.
+func lockCollectorGuardWait(home, holder string, now time.Time, format destination.ArchiveFormat, wait time.Duration) (*local.CollectorGuard, func(), error) {
+	if format != destination.FormatCatalogV4 {
+		unlock, err := lockCollectorWait(home, holder, now, wait)
+		return nil, unlock, err
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		guard, unlock, err := lockCollectorGuard(home, holder, now, format)
+		if !errors.Is(err, local.ErrBusy) || !time.Now().Before(deadline) {
+			return guard, unlock, err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func recordCollectorLock(home, holder string, now time.Time, lock func() (func(), error)) (func(), error) {
 	unlock, err := lock()
 	if err != nil {

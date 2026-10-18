@@ -62,6 +62,12 @@ is re-uploaded unless it changed.
 
 ## Rules for contributors
 
+Confirmed backfill continuation and group publication use the existing import
+stage, batch, pending-publication and readback formats. The fresh confirmed-stage
+policy check adds no durable fields or permission. Native selection, privacy
+filtering and metadata derivation are unchanged, so no filter, adapter, parser,
+schema or permanent writer version changes apply.
+
 - **Any change to filtered output** — a key kept or dropped, a redaction
   pattern, a new block type — bumps `FilterVersion` and adds a section to the
   [filter changelog](../specs/privacy-filter-changelog.md), updates the

@@ -6,14 +6,20 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Confirmed backfill continues supported native preparation and staging across
+  bounded lookup scopes. Foreground imports publish and verify owned groups
+  before preparing more evidence under the shared 1 GiB quota. Rerunning the
+  same options also publishes a retained interrupted import after its native
+  files disappear. Fresh staging renews repository/source observations and
+  current policy; an existing durable selection keeps its frozen provenance.
+
 - Backfill planning and dry runs continue supported Codex preparation and
   inspection across bounded lookup scopes, including histories needing more
   than five seconds of total lookup work. Native I/O timeouts and inventory
   no-progress results stay specific. Incomplete inventory is reported while
   independently verified sessions remain eligible. Shared native resource
   exhaustion remains a failure. Source safety limits and
-  background work are unchanged; confirmed staging and publication keep their
-  existing bounds.
+  scheduled background work are unchanged.
 
 - Deleted-worktree recovery resolves local Git origin chains consistently before
   and after project configuration. Every origin and traversed dependency must

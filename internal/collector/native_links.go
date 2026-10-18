@@ -44,7 +44,9 @@ func (p *pass) reconcileNativeLinks() {
 		parents[key] = reg
 	}
 	for i, reg := range p.registrations {
-		p.reconcileNativeLink(i, reg, parents, ambiguous)
+		if p.opts.selectsSession(reg) {
+			p.reconcileNativeLink(i, reg, parents, ambiguous)
+		}
 	}
 
 }

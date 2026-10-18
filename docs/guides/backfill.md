@@ -66,26 +66,47 @@ completes. Identity conflicts and other archive read errors still stop the plan.
 
 After confirmation, backfill stores the selected privacy-filtered evidence in
 private local staging before admitting each session. Setup's recent import and
-`--background` use the same protection. Once staged, an import can finish even
-if the apps delete their native files. A source that disappears before staging
-finishes is reported for retry; it is not counted as admitted.
+`--background` use the same protection. Once a complete parent and its selected
+children are staged, that group can finish even if the apps delete their native
+files. A child payload written before its parent manifest is complete still needs
+the parent's native input to finish preparation. A source that disappears before
+group staging finishes is reported for retry; it is not counted as admitted.
+
+Explicit imports renew bounded native lookup work during preparation and staging,
+including with `--background`. Before the first durable selection, repository,
+native dependency locations and current policy are checked again, including
+before each fresh child payload. After complete group preparation, retained
+evidence supplies recovery even when native files are gone.
+Run the same options again to finish registration and foreground publication;
+matching mapping files can be renamed or reordered without changing batch identity.
 
 Staging and pending publication share a 1 GiB local quota. Foreground imports
-upload completed groups to free capacity; setup and background imports preserve
-completed work and report a capacity error so you can retry after the collector
-makes room. Each selected revision set and its encoded staging journal has a
-32 MiB upper bound; each child has a separate journal under the same quota.
+upload and verify bounded owned groups before preparing more evidence. Setup and
+background imports preserve completed work and report a capacity error so you
+can retry after the collector makes room. Each selected revision set and its
+encoded staging journal has a 32 MiB upper bound; each child has a separate
+journal under the same quota.
 Encoded expansion and recovery work for large records can lower the practical
 input limit. A source that exceeds these bounds is rejected before admission;
 completed groups stay recoverable. `backfill history` distinguishes staged/admitted sessions from
 remotely verified uploads. Uploaded means the collector has read back the
 selected remote sources and metadata and committed its local completion state.
+An already recorded remote publication can still be waiting for local release
+of its stage and covered request. Current exclusions keep that first import
+pending until its existing release owner can settle it; they grant no upload
+permission. After settlement, ordinary later updates follow current settings.
+An unrelated owner's pending evidence is never uploaded merely to make room for
+this import. Provider failures or unrelated quota occupancy retain completed
+evidence and report a retry action; they do not expand the quota.
 
 Pausing keeps referenced evidence for retry. Updated privacy rules are applied
 again before staged evidence is published. Canceling before admission removes
 unreferenced evidence, with a cleanup journal if interrupted; canceling after
 admission keeps evidence for recovery. Undo removes that import's owned staging
 along with its sessions. Dry-run writes no staging or admission state.
+If policy changes while children are being prepared, unlinked child payloads
+are cleaned up; earlier complete groups remain recoverable. An I/O interruption
+before the parent manifest can leave a child payload for retry with native input.
 
 ## What gets imported
 

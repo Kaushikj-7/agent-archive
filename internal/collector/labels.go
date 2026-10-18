@@ -30,7 +30,7 @@ func labelScope(reg archive.SessionRegistration, env agentapi.LabelEnvironment, 
 }
 
 func (p *pass) observeLabels(ctx context.Context) {
-	if p.opts.Labels == nil || ctx.Err() != nil {
+	if p.opts.Labels == nil || ctx.Err() != nil || p.opts.SelectSession != nil {
 		return
 	}
 	if p.labelLocal == nil {

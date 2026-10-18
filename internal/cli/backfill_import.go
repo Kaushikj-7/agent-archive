@@ -195,7 +195,12 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	if env.importCollectorWait != nil {
 		collectorWait = env.importCollectorWait(collectorWait)
 	}
-	releaseCollector, err := lockCollectorWait(home, "backfill import", env.now(), collectorWait)
+	initialCfg, _, err := config.Load(home)
+	if err != nil {
+		stopWait()
+		return reg, err
+	}
+	collectorGuard, releaseCollector, err := lockCollectorGuardWait(home, "backfill import", env.now(), initialCfg.Storage.EffectiveArchiveFormat(), collectorWait)
 	stopWait()
 	if err != nil {
 		return reg, errCollectorBusy
@@ -236,6 +241,11 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	if err != nil {
 		return reg, fmt.Errorf("open local store: %w", err)
 	}
+	// Prepared evidence may have lost its native source since the previous
+	// invocation. Resume the existing durable admission before fresh selection.
+	if err := store.ResumeAllImportAdmissions(registrationCtx); err != nil {
+		return reg, err
+	}
 	candidates := plan.Imported()
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].StartedAt.Before(candidates[j].StartedAt) })
 	stopRegister := startActivity(stdout, "Registering sessions…")
@@ -244,7 +254,7 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	if err != nil {
 		return reg, err
 	}
-	lookup, readHomes, err := passCodexRollouts(registrationCtx, state.OpenReadOnly(home), cfg, env)
+	lookup, readHomes, err := foregroundCodexRollouts(registrationCtx, state.OpenReadOnly(home), cfg, env)
 	if err != nil {
 		return reg, err
 	}
@@ -255,8 +265,13 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 		return reg, err
 	}
 	var onCapacity func(context.Context) error
+	// Eight maximum-sized (32 MiB) stages stay below half the shared quota's
+	// charged payload space, leaving room for one publication's pending wire.
+	// OnCapacity still handles unrelated occupancy without evicting its owners.
+	const publicationGroupSize = 8
+	groupRegistered := 0
 	if capacityUploads {
-		onCapacity = importCapacityDrain(env, stdout, home, store, lookup, readHomes, interrupt.requested)
+		onCapacity = importCapacityDrain(env, stdout, home, store, batch.ID, collectorGuard, lookup, readHomes, interrupt.requested)
 	}
 	registration := backfill.Registration{
 		HistoricalSourcePolicy: func(current config.Config) func(string) bool {
@@ -280,7 +295,19 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 			if err := backfill.SaveBatch(home, batch); err != nil {
 				return err
 			}
-			return env.checkpoint("registered")
+			if err := env.checkpoint("registered"); err != nil {
+				return err
+			}
+			// Settle this owned group before preparing the next one. Waiting
+			// until the quota is full can leave history/child stages no room
+			// to freeze their pending publication. Background import never
+			// invokes this callback's publication path.
+			groupRegistered += len(sessions) + len(subagents)
+			if onCapacity != nil && groupRegistered >= publicationGroupSize {
+				groupRegistered = 0
+				return onCapacity(registrationCtx)
+			}
+			return nil
 		},
 		Stop: interrupt.requested,
 	}
@@ -328,13 +355,16 @@ func completeBatch(env Env, home string, store *state.Store, batch *backfill.Bat
 // finishInterruptedBatch completes the latest import when it was
 // interrupted, a run with the same options finds nothing left to import,
 // and so no later run would ever complete it.
-func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfill.Plan, cfg config.Config) error {
+func finishInterruptedBatch(env Env, stdout, stderr io.Writer, home string, plan backfill.Plan, cfg config.Config, background bool) error {
 	batches, err := backfill.LoadBatches(home)
 	if err != nil || len(batches) == 0 {
 		return err
 	}
 	last := batches[len(batches)-1]
-	if !last.Continues(plan.BatchFilters(), cfg.DestinationID()) {
+	eligible := func(batch backfill.Batch) bool {
+		return batch.UndoneAt == nil && batch.Matches(plan.BatchFilters(), cfg.DestinationID()) && (!background || batch.CompletedAt == nil)
+	}
+	if !eligible(last) {
 		return nil
 	}
 	release, err := local.NamedLock(home, "setup.lock")
@@ -349,6 +379,7 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 	if err != nil {
 		return errors.New("a collector pass is still running; run backfill again")
 	}
+	releaseCollector = releaseOnce(releaseCollector)
 	defer releaseCollector()
 	// Read the batch again under the locks: an undo or another run may have
 	// changed it since it was checked.
@@ -356,7 +387,7 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 		return err
 	}
 	latest := batches[len(batches)-1]
-	if latest.ID != last.ID || !latest.Continues(plan.BatchFilters(), cfg.DestinationID()) {
+	if latest.ID != last.ID || !eligible(latest) {
 		return nil
 	}
 	last = latest
@@ -370,10 +401,27 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 	if err := store.ResumeAllImportAdmissions(ctx); err != nil {
 		return err
 	}
-	if err := completeBatch(env, home, store, &last); err != nil {
-		return err
+	if last.CompletedAt == nil {
+		if err := completeBatch(env, home, store, &last); err != nil {
+			return err
+		}
+		terminal.Printf(stdout, "\nImport %s, which was interrupted, is complete: %s registered.\n", last.ID, countNoun(len(last.Sessions), "session"))
 	}
-	terminal.Printf(stdout, "\nImport %s, which was interrupted, is complete: %s registered.\n", last.ID, countNoun(len(last.Sessions), "session"))
+	if !background {
+		pending := &upload{env: env, home: home, batch: last.ID, sizes: map[agentmeta.SessionKey]int64{}}
+		if err := pending.refresh(); err != nil {
+			return err
+		}
+		if len(pending.pending) == 0 {
+			return nil
+		}
+		releaseCollector()
+		watch := watchSignals(env, stdout, "Stopping after the current session; press Ctrl-C again to quit.", func() {})
+		defer watch.release()
+		if uploadImport(env, stdout, stderr, home, last.ID, plan, watch, nil) != 0 {
+			return errors.New("retained import publication is unfinished; run agent-archive backfill again with the same options")
+		}
+	}
 	return nil
 }
 
@@ -633,13 +681,17 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 	lastProgress := time.Now()
 	for len(u.pending) > 0 && !stop() {
 		before := len(u.pending)
-		result, err := runPass(env, false, passOptions{progress: u.observe, stop: stop})
+		result, err := runPass(env, false, passOptions{progress: u.observe, stop: stop, importBatch: batchID})
 		result.CloseStagedResults()
 		u.stopFinishing()
 		if refreshErr := u.refresh(); refreshErr != nil && err == nil {
 			err = refreshErr
 		}
-		if len(u.pending) < before {
+		// Child publication can enqueue relationship evidence for a parent
+		// published earlier in this pass. Its pending count stays unchanged,
+		// but the exact completed publications allow the next pass to settle it.
+		progressed := len(u.pending) < before || len(result.Published) > 0
+		if progressed {
 			lastProgress = time.Now()
 		}
 		if errors.Is(err, local.ErrBusy) {
@@ -666,7 +718,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 			break
 		}
 		u.draw(!u.terminal)
-		if len(u.pending) >= before {
+		if !progressed {
 			break
 		}
 	}
@@ -682,6 +734,8 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 		terminal.Printf(stdout, "Stopped. The remaining %s will be uploaded by the background collector.\n", countNoun(len(u.pending), "session"))
 	case errors.Is(passErr, errPaused):
 		terminal.Printf(stdout, "Collection is paused. The remaining %s will be uploaded after agent-archive resume.\n", countNoun(len(u.pending), "session"))
+	case u.policyBlocked > 0:
+		terminal.Printf(stdout, "%s retained but not remotely verified because current policy prevents publication. Review the configuration, then run agent-archive backfill again with the same options.\n", countNoun(u.policyBlocked, "session"))
 	default:
 		terminal.Printf(stdout, "%s not uploaded yet. The background collector keeps trying; run agent-archive status to follow it.\n", countNoun(len(u.pending), "session"))
 	}
@@ -714,8 +768,9 @@ type upload struct {
 	finishMu sync.Mutex
 	finish   *spinner
 
-	total      int
-	totalBytes int64
+	total         int
+	totalBytes    int64
+	policyBlocked int
 	// pending maps each session still to upload to its size.
 	pending map[string]int64
 }
@@ -735,7 +790,7 @@ func (u *upload) refresh() error {
 	if err != nil {
 		return err
 	}
-	u.total, u.totalBytes, u.pending = 0, 0, map[string]int64{}
+	u.total, u.totalBytes, u.policyBlocked, u.pending = 0, 0, 0, map[string]int64{}
 	for _, reg := range regs {
 		if !reg.InBatch(u.batch) || !independentImportedSession(reg) {
 			continue
@@ -743,9 +798,13 @@ func (u *upload) refresh() error {
 		size := u.size(reg)
 		u.total++
 		u.totalBytes += size
-		waiting, err := importPending(store, cfg, reg)
+		owed, err := importOutstanding(store, cfg, reg)
 		if err != nil {
 			return err
+		}
+		waiting := owed.Pending()
+		if waiting && owed.StagedImport && !cfg.AcceptSession(reg) {
+			u.policyBlocked++
 		}
 		if waiting {
 			u.pending[reg.ArchiveSessionID] = size
@@ -927,6 +986,9 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 			}
 			if summary.Published {
 				verified++
+			} else if !cfg.AcceptSession(reg) {
+				waiting++
+				continue
 			}
 		}
 		owed, err := importOutstanding(store, cfg, reg)
@@ -935,6 +997,8 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 		}
 		switch {
 		case !owed.Pending():
+		case owed.StagedImport:
+			waiting++
 		case owed.Rechecking():
 			rechecking++
 		case owed.Published:
@@ -997,8 +1061,11 @@ func batchUploadSummary(registered, staged, verified, waiting, rechecking, updat
 	return upload
 }
 
-func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.Store, lookup agentapi.CodexRolloutLookup, readHomes []string, stop func() bool) func(context.Context) error {
+func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.Store, batchID string, guard *local.CollectorGuard, lookup agentapi.CodexRolloutLookup, readHomes []string, stop func() bool) func(context.Context) error {
 	return func(ctx context.Context) error {
+		if stop != nil && stop() {
+			return backfill.ErrStopped
+		}
 		if trace.Enabled() {
 			started := time.Now()
 			defer func() {
@@ -1017,9 +1084,16 @@ func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.St
 		if err != nil {
 			return err
 		}
-		result, err := collector.Run(ctx, store, remote, collector.Options{Sources: env.agentRegistry(), Parsers: parsersFor(env), Decoders: env.agentRegistry(), MachineID: current.MachineID, Now: env.Now, AcceptSession: current.AcceptSession, HistoricalProjectLabel: current.HistoricalProjectLabel, SkillEvidence: current.EffectiveSkillEvidence(), RequireSkillUse: current.RequireSkillUse, CursorDatabase: env.cursorDatabase(), CodexRollouts: lookup, ConfiguredCodexHomes: readHomes, NativeRoots: current.NativeRoots, RepoKey: env.repoKey, Stop: stop})
+		result, err := collector.Run(ctx, store, remote, collector.Options{CollectorGuard: guard, CatalogDestination: config.DestinationID(current.Storage), Sources: env.agentRegistry(), Parsers: parsersFor(env), Decoders: env.agentRegistry(), MachineID: current.MachineID, Now: env.Now, AcceptSession: current.AcceptSession, PendingOnly: true, SelectSession: func(reg archive.SessionRegistration) bool {
+			return reg.InBatch(batchID)
+		}, HistoricalProjectLabel: current.HistoricalProjectLabel, SkillEvidence: current.EffectiveSkillEvidence(), RequireSkillUse: current.RequireSkillUse, CursorDatabase: env.cursorDatabase(), CodexRollouts: lookup, ConfiguredCodexHomes: readHomes, NativeRoots: current.NativeRoots, RepoKey: env.repoKey, Stop: stop})
 		defer result.CloseStagedResults()
-		return reportImportCapacityDrain(stdout, result, err)
+		_, issueErr := recordPassSessionIssues(store, result)
+		reportErr := errors.Join(reportImportCapacityDrain(stdout, result, err), issueErr)
+		if stop != nil && stop() {
+			return errors.Join(backfill.ErrStopped, reportErr)
+		}
+		return reportErr
 	}
 }
 
@@ -1051,9 +1125,11 @@ func reportImportCapacityDrain(stdout io.Writer, result collector.Result, collec
 }
 
 func prepareImportLookup(registrationCtx context.Context, lookup *discovery.CodexRolloutLookup, candidates []backfill.Candidate) error {
+	seen := map[string]bool{}
 	for _, candidate := range candidates {
-		if candidate.Harness == archive.HarnessCodex {
-			if _, err := lookup.Thread(registrationCtx, candidate.NativeSessionID); err != nil && registrationCtx.Err() != nil {
+		if candidate.Harness == archive.HarnessCodex && !seen[candidate.NativeSessionID] {
+			seen[candidate.NativeSessionID] = true
+			if _, err := lookup.Thread(registrationCtx, candidate.NativeSessionID); err != nil && (registrationCtx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || lookupIOTimeout(err) || agentapi.HasFailure(err, agentapi.Cleanup)) {
 				return err
 			}
 		}
@@ -1061,6 +1137,11 @@ func prepareImportLookup(registrationCtx context.Context, lookup *discovery.Code
 	for {
 		health, err := lookup.ObserveReadOnly(registrationCtx)
 		if err != nil {
+			if registrationCtx.Err() == nil && lookupNoProgressOnly(err) {
+				// Inventory is not source authority. Each new selection still
+				// validates its current complete history while staging.
+				return nil
+			}
 			return err
 		}
 		if !health.Pending {

@@ -1464,16 +1464,24 @@ func importPending(store *state.Store, cfg config.Config, reg archive.SessionReg
 }
 
 // importOutstanding is what an imported session still owes under cfg (see
-// state.Outstanding), or nothing for a session cfg does not publish.
+// state.Outstanding). A first import's unsettled retained stage remains owed
+// when policy holds publication; settled ongoing sessions still follow cfg.
 func importOutstanding(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (state.Outstanding, error) {
-	if !cfg.AcceptSession(reg) {
+	if !cfg.AcceptSession(reg) && reg.StagedImportSHA256 == "" {
 		return state.Outstanding{}, nil
 	}
 	_, requested, err := store.LoadRequest(reg.ArchiveSessionID)
 	if err != nil {
 		return state.Outstanding{}, err
 	}
-	return store.Outstanding(reg, requested)
+	owed, err := store.Outstanding(reg, requested)
+	if err != nil {
+		return owed, err
+	}
+	if !cfg.AcceptSession(reg) && !owed.StagedImport {
+		return state.Outstanding{}, nil
+	}
+	return owed, nil
 }
 
 const (

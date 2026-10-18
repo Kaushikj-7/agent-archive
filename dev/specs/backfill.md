@@ -91,6 +91,39 @@ home/temporary restrictions retain their explicit review choices.
 
 ### Foreground work and continuation
 
+Confirmed explicit imports use the renewable native lookup owner for preparation
+and selected source staging, including explicit `--background` imports. Scheduled
+collection keeps its cumulative pass allowance. Pure inventory no-progress ends
+observation; it does not veto a source that can independently prove its complete
+current native selection. Cancellation, cleanup, byte/record limits and I/O
+timeouts still fail through their original contracts.
+
+Before each fresh parent or child durable stage, transient repository/source
+proof and bounded raw dependency cwd observations are renewed outside `hooks.lock`.
+Current destination, admission and privacy mode are checked by the existing
+durable writer under that lock. The selection format and quota are unchanged.
+Complete prepared groups subsequently use frozen evidence and current policy,
+without requiring the native input to remain present. A child payload alone,
+before the durable parent manifest selects its membership, does not provide
+native-loss recovery for the unstaged parent. Policy refusal cleans unlinked,
+unadmitted child payloads through existing cancellation; I/O interruption can
+retain them for retry with native input. Earlier completed groups remain owned.
+Foreground registration publishes
+and verifies bounded groups of its own batch before staging more. Existing
+capacity recovery remains available, with publication restricted to that batch.
+Settled batch members stay in its ownership selection but do not reopen native
+sources on later capacity passes unless existing outstanding work requires it.
+Staged-release and catalog-removal recovery likewise preserve unselected owners.
+The existing `state.Outstanding` owner derives an unsettled admitted import-stage
+facet from strict rooted presence, without decoding source payloads. Publication
+recording alone does not clear that obligation, including interruption after
+pending unlink but before stage unlink. Explicit import completion/history retain
+that first-stage obligation while current policy refuses publication; settled
+ongoing imports keep their normal configuration filtering. This adds no persisted
+field or permission and leaves the existing expiry-deferral rule unchanged.
+A matching empty-plan continuation resumes retained admission and publication,
+including a completed registration batch whose first publication is pending.
+
 The existing five-second discovery/lookup allowance protects background
 responsiveness. It is not a whole-foreground-command deadline, a cumulative
 per-session eligibility rule, or evidence that a native source is too large.

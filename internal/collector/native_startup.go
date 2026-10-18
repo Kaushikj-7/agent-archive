@@ -28,6 +28,9 @@ type startupCandidate struct {
 }
 
 func (p *pass) loadStartupCandidates() error {
+	if p.opts.SelectSession != nil {
+		return nil
+	}
 	cfg, found, err := config.Load(p.local.Home())
 	if err != nil || !found {
 		return err

@@ -354,7 +354,7 @@ func reportBackfillPlan(env Env, stdout, stderr io.Writer, home string, cfg conf
 		terminal.Println(stdout)
 		backfill.RenderText(stdout, plan)
 		printInterruptedImport(stdout, home, plan, cfg)
-		if err := finishInterruptedBatch(env, stdout, home, plan, cfg); err != nil {
+		if err := finishInterruptedBatch(env, stdout, stderr, home, plan, cfg, opts.background); err != nil {
 			terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
 			return true, 1
 		}

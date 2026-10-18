@@ -76,6 +76,12 @@ type Options struct {
 	// ParserVersion identifies metadata derivation independently of source capture.
 	ParserVersion string
 	AcceptSession func(archive.SessionRegistration) bool
+	// SelectSession optionally restricts this pass to existing owners. It is a
+	// scheduling choice, never admission policy: unselected work stays pending.
+	SelectSession func(archive.SessionRegistration) bool
+	// PendingOnly executes existing outstanding work without reopening settled
+	// sources. Selected parent relationships still govern child materialization.
+	PendingOnly bool
 	// MachineID identifies this machine in published metadata. Required.
 	MachineID string
 	// Now returns the current time. Defaults to time.Now; tests override it
@@ -352,7 +358,10 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if state.SessionIndexRecoveryInterrupted(recoveryErr) {
 		recoveryErr = nil
 	}
-	replayErr := capture.ReplayAdmissionIntentsWithin(ctx, local.Home(), now, opts.Decoders)
+	var replayErr error
+	if opts.SelectSession == nil {
+		replayErr = capture.ReplayAdmissionIntentsWithin(ctx, local.Home(), now, opts.Decoders)
+	}
 	// The caller holds the collector lock, so this pass is the only writer
 	// of the files it owns and may move a corrupt one aside.
 	local = local.ForCollectorPass()
@@ -417,7 +426,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 			p.leaveForNextPass(registrations[i:])
 			break
 		}
-		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
+		if !p.opts.selectsSession(reg) || p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
 		if p.leaveUnopenedForLookupAllowance(reg) {
@@ -451,15 +460,27 @@ func (p *pass) orderedExecutionRegistrations() []archive.SessionRegistration {
 // The full registration census remains available for diagnostics and maintenance.
 func (p *pass) executionRegistrations() []archive.SessionRegistration {
 	registrations := p.registrations
-	if p.opts.AcceptSession != nil {
+	if p.opts.AcceptSession != nil || p.opts.SelectSession != nil || p.opts.PendingOnly {
 		registrations = make([]archive.SessionRegistration, 0, len(p.registrations))
 		for _, reg := range p.registrations {
-			if p.opts.AcceptSession(reg) {
+			if p.opts.selectsSession(reg) && (p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)) {
+				if p.opts.PendingOnly {
+					owed, err := p.local.Outstanding(reg, p.requests[reg.ArchiveSessionID].Token != "")
+					// Unreadable obligations stay eligible for the existing
+					// per-owner scan error and retry handling.
+					if err == nil && !owed.Pending() {
+						continue
+					}
+				}
 				registrations = append(registrations, reg)
 			}
 		}
 	}
 	return registrations
+}
+
+func (o Options) selectsSession(reg archive.SessionRegistration) bool {
+	return o.SelectSession == nil || o.SelectSession(reg)
 }
 
 // resumeStagedReleasesIfActive skips fresh work after ordinary recovery ends.
@@ -475,7 +496,7 @@ func (p *pass) resumeStagedReleasesIfActive(ctx context.Context, local *state.St
 func (p *pass) resumeStagedReleases(ctx context.Context, local *state.Store, store storage.ObjectStore, opts Options) error {
 	if remote, ok := store.(state.StagedReadback); ok {
 		scoped, closeSchedule := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
-		holds, closeDiagnostics, err := scoped.ResumeStagedReleases(ctx, remote, opts.CollectorGuard)
+		holds, closeDiagnostics, err := scoped.ResumeSelectedStagedReleases(ctx, remote, opts.CollectorGuard, opts.SelectSession)
 		if closeDiagnostics != nil {
 			p.result.stagedDiagnostics = &stagedDiagnosticResult{close: closeDiagnostics}
 		}
@@ -1113,6 +1134,9 @@ func (p *pass) repairListingIndex() {
 		reg, found, err := p.local.LoadRegistration(id)
 		if err != nil {
 			p.result.Errors["listing-maintenance"] = err
+			continue
+		}
+		if p.opts.SelectSession != nil && (!found || !p.opts.selectsSession(reg)) {
 			continue
 		}
 		if !found || reg.DestinationID != repair.DestinationID {

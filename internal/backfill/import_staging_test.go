@@ -830,3 +830,104 @@ func TestImportStagingStaleProofAfterReservationMakesProgress(t *testing.T) {
 		})
 	}
 }
+
+func TestImportStagingRenewsProofAfterFiltering(t *testing.T) {
+	r, c, _ := stagingFixture(t)
+	checks := 0
+	c.projectResolutionCurrent = func() bool {
+		checks++
+		return checks < 3 // Reservation and pre-filter proof pass; post-filter fails.
+	}
+	result, err := r.Run([]Candidate{c})
+	if err != nil || result.NotAdmitted != 1 || len(result.Sessions) != 0 || checks != 3 {
+		t.Fatal("post-filter stale proof was admitted", result, err, checks)
+	}
+	stages, _, err := r.Store.ImportStages(t.Context(), "", 50)
+	if err != nil || len(stages) != 0 {
+		t.Fatal("stale filtered evidence became durable", len(stages), err)
+	}
+}
+
+func TestImportPreparedStageDoesNotRenewNativeProof(t *testing.T) {
+	r, c, _ := stagingFixture(t)
+	child := filepath.Join(c.ProjectRoot, "agent-frozen-child.jsonl")
+	if err := os.WriteFile(child, []byte(subagentTranscript(c.NativeSessionID, "frozen-child", fixedNow.Add(-30*time.Second))), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c.Subagents = []Subagent{{Path: child, AgentID: "frozen-child"}}
+	current := true
+	c.projectResolutionCurrent = func() bool { return current }
+	r.AfterStage = func(string) error {
+		current = false
+		return os.Remove(c.TranscriptPath)
+	}
+	result, err := r.Run([]Candidate{c})
+	if err != nil || len(result.Sessions) != 1 || result.NotAdmitted != 0 {
+		t.Fatal("durable selection required vanished native input", result, err)
+	}
+}
+
+func TestConfirmedSourceCwdsRenewEveryPhysicalDependency(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"original", "changed"} {
+		if err := os.Mkdir(filepath.Join(root, name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(filepath.Join(root, "original"), alias); err != nil {
+		t.Fatal(err)
+	}
+	observations := confirmedSourceCwds{}
+	if _, ok := observations.observe(alias); !ok || !observations.current(func(string) bool { return true }) {
+		t.Fatal("current dependency refused")
+	}
+	if observations.current(func(string) bool { return false }) {
+		t.Fatal("changed dependency policy accepted")
+	}
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "changed"), alias); err != nil {
+		t.Fatal(err)
+	}
+	if observations.current(func(string) bool { return true }) {
+		t.Fatal("retargeted dependency accepted")
+	}
+}
+
+func TestConfirmedStageChecksChangedPolicyAfterFiltering(t *testing.T) {
+	for _, change := range []string{"excluded project", "destination", "privacy mode", "paused"} {
+		t.Run(change, func(t *testing.T) {
+			r, c, cfg := stagingFixture(t)
+			checks := 0
+			c.projectResolutionCurrent = func() bool {
+				checks++
+				if checks == 3 {
+					switch change {
+					case "excluded project":
+						cfg.Archive.Projects[0].Included = false
+					case "destination":
+						cfg.Storage.Bucket = "different-synthetic-bucket"
+					case "privacy mode":
+						cfg.SkillEvidence = config.SkillEvidenceNone
+					case "paused":
+						cfg.Paused = true
+					}
+					if err := config.Save(r.Home, cfg); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return true
+			}
+			result, err := r.Run([]Candidate{c})
+			if err == nil || len(result.Sessions) != 0 {
+				t.Fatal("changed policy acquired durable authority", result, err)
+			}
+			stages, _, err := r.Store.ImportStages(t.Context(), "", 50)
+			if err != nil || len(stages) != 0 {
+				t.Fatal("changed policy left durable selection", len(stages), err)
+			}
+		})
+	}
+}

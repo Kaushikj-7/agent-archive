@@ -175,12 +175,12 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 			validationCtx, cancelValidation = context.WithTimeout(ctx, 30*time.Second)
 		}
 		for _, w := range works[i : i+min(limit, len(works)-i)] {
-			if w.c.projectResolutionReset != nil {
+			if w.stagedSHA256 == "" && w.c.projectResolutionReset != nil {
 				w.c.projectResolutionReset(validationCtx)
 			}
 		}
 		for _, w := range works[i : i+min(limit, len(works)-i)] {
-			if w.c.projectResolutionCurrent != nil {
+			if w.stagedSHA256 == "" && w.c.projectResolutionCurrent != nil {
 				w.projectEvidenceStale = !w.c.projectResolutionCurrent()
 			}
 		}
@@ -203,6 +203,9 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 			err = flushErr
 		}
 		if err != nil {
+			if errors.Is(err, ErrStopped) {
+				return result, errors.Join(err, r.cancelPrepared(works))
+			}
 			return result, err
 		}
 		if i < len(works) {
@@ -585,8 +588,12 @@ func (r Registration) stage(ctx context.Context, w *parentWork) error {
 		}
 		sourceAllowed = r.HistoricalSourcePolicy(cfg)
 	}
+	observedCwds := confirmedSourceCwds{}
 	bundle, preserved, selectedBinding, err := collector.ReadImportSourceSelection(ctx, reg, r.AdmittedAt, collector.Options{HistoricalSourceAllowed: func(cwd string) bool {
-		canonical := local.CanonicalPath(cwd)
+		canonical, current := observedCwds.observe(cwd)
+		if !current {
+			return false
+		}
 		if sourceAllowed != nil && !sourceAllowed(cwd) {
 			return false
 		}
@@ -620,7 +627,12 @@ func (r Registration) stage(ctx context.Context, w *parentWork) error {
 			return err
 		}
 		candidate := state.SubagentCandidate{HistoricalProject: reg.HistoricalProject, ArchiveSessionID: childID, NativeSessionID: childNative, ParentArchiveSessionID: w.id, ParentNativeSessionID: w.c.NativeSessionID, ProjectID: reg.ProjectID, ProjectRoot: reg.ProjectRoot, Harness: reg.Harness, AgentID: sub.AgentID, TranscriptPath: sub.Path, ObservedAt: r.AdmittedAt, Origin: archive.SessionOriginImport}
-		childDigest, err := r.stageSelectedChild(ctx, reg, candidate, cfg.EffectiveSkillEvidence())
+		childDigest, current, err := r.stageSelectedChild(ctx, reg, candidate, cfg.EffectiveSkillEvidence(), func() (bool, error) {
+			return r.renewStageProof(ctx, w, observedCwds, cfg.EffectiveSkillEvidence())
+		})
+		if !current {
+			return errors.Join(err, r.cancelUnlinkedChildren(ctx, w))
+		}
 		if err != nil {
 			return err
 		}
@@ -628,7 +640,10 @@ func (r Registration) stage(ctx context.Context, w *parentWork) error {
 		w.stagedChildren[sub.AgentID] = candidate
 		children = append(children, candidate)
 	}
-	digest, err := r.Store.SaveImportSourceSet(ctx, reg, bundle, preserved, cfg.EffectiveSkillEvidence(), children...)
+	if current, err := r.renewStageProof(ctx, w, observedCwds, cfg.EffectiveSkillEvidence()); err != nil || !current {
+		return errors.Join(err, r.cancelUnlinkedChildren(ctx, w))
+	}
+	digest, err := r.Store.SaveConfirmedImportSourceSet(ctx, reg, bundle, preserved, cfg.EffectiveSkillEvidence(), children...)
 	if err != nil {
 		return fmt.Errorf("persist imported evidence before admission: %w", err)
 	}
@@ -639,20 +654,84 @@ func (r Registration) stage(ctx context.Context, w *parentWork) error {
 	return nil
 }
 
-func (r Registration) stageSelectedChild(ctx context.Context, parent archive.SessionRegistration, candidate state.SubagentCandidate, mode config.SkillEvidence) (string, error) {
+// Every fresh parent or child durable stage needs authority newer than its
+// filtering. A frozen stage returns before this transient proof is consulted.
+func (r Registration) renewStageProof(ctx context.Context, w *parentWork, observedCwds confirmedSourceCwds, mode config.SkillEvidence) (bool, error) {
+	if w.c.projectResolutionReset != nil {
+		w.c.projectResolutionReset(ctx)
+	}
+	if w.c.projectResolutionCurrent != nil && !w.c.projectResolutionCurrent() {
+		w.projectEvidenceStale = true
+		return false, nil
+	}
+	currentCfg, found, err := config.Load(r.Home)
+	if err != nil || !found {
+		return false, errors.Join(errors.New("reload import source policy before staging"), err)
+	}
+	stalePolicy := w.c.ProjectResolution != nil && w.c.ProjectResolution.PolicyContext != sourcefacts.RecoveryContext(currentCfg.Archive.Projects, nil, filepath.Clean)
+	if stalePolicy || currentCfg.Paused || !currentCfg.Archive.Enabled || !currentCfg.AcceptSession(r.registration(w.c, w.id, w.repoKey)) || currentCfg.DestinationID() != r.DestinationID || currentCfg.EffectiveSkillEvidence() != mode {
+		w.projectEvidenceStale = true
+		return false, errors.New("import policy changed before durable staging; run backfill again with the same options")
+	}
+	var sourceAllowed func(string) bool
+	if w.c.HistoricalProject != nil {
+		sourceAllowed = r.HistoricalSourcePolicy(currentCfg)
+	}
+	if !observedCwds.current(sourceAllowed) {
+		w.projectEvidenceStale = true
+		return false, nil
+	}
+	return true, ctx.Err()
+}
+
+// confirmedSourceCwds is transient observation state, never durable authority.
+// Keep raw spellings until renewed so parent traversal cannot hide a changed
+// physical dependency. The frozen historical proof keeps canonical evidence.
+type confirmedSourceCwds map[string]string
+
+func (c confirmedSourceCwds) observe(cwd string) (string, bool) {
+	canonical, err := local.ResolveExistingSymlinks(cwd)
+	if err != nil {
+		return "", false
+	}
+	if previous, found := c[cwd]; found {
+		return canonical, previous == canonical
+	}
+	if len(c) >= archive.MaxHistorySpans {
+		return "", false
+	}
+	c[cwd] = canonical
+	return canonical, true
+}
+
+func (c confirmedSourceCwds) current(allowed func(string) bool) bool {
+	for cwd, observed := range c {
+		canonical, err := local.ResolveExistingSymlinks(cwd)
+		if err != nil || canonical != observed || allowed != nil && !allowed(cwd) {
+			return false
+		}
+	}
+	return true
+}
+
+func (r Registration) stageSelectedChild(ctx context.Context, parent archive.SessionRegistration, candidate state.SubagentCandidate, mode config.SkillEvidence, renew func() (bool, error)) (string, bool, error) {
 	owner := parent
 	owner.ArchiveSessionID, owner.NativeSessionID = candidate.ArchiveSessionID, candidate.NativeSessionID
 	owner.ParentSessionID = parent.ArchiveSessionID
 	if stage, found, err := r.Store.LoadImportStage(ctx, owner); err != nil {
-		return "", err
+		return "", true, err
 	} else if found {
-		return stage.SHA256, nil
+		return stage.SHA256, true, nil
 	}
 	reg, bundle, err := collector.ReadImportSubagentBundle(ctx, parent, candidate, collector.Options{Sources: r.Sources, CursorDatabase: r.CursorDatabase})
 	if err != nil {
-		return "", fmt.Errorf("stage imported child: %w", err)
+		return "", true, fmt.Errorf("stage imported child: %w", err)
 	}
-	return r.Store.SaveImportStage(ctx, reg, bundle, mode)
+	if current, err := renew(); err != nil || !current {
+		return "", current, err
+	}
+	digest, err := r.Store.SaveConfirmedImportSourceSet(ctx, reg, bundle, nil, mode)
+	return digest, true, err
 }
 
 func (r Registration) cancelPrepared(works []*parentWork) error {
@@ -760,21 +839,30 @@ func (r Registration) stageSettledCursor(ctx context.Context, w *parentWork, reg
 		return e
 	}
 	defer request.Close()
+	renew := func() (bool, error) {
+		return r.renewStageProof(ctx, w, nil, cfg.EffectiveSkillEvidence())
+	}
 
 	var digest string
 	evidence, e := port.CaptureSettledCursor(request)
 	if e == nil {
 		defer func() { err = errors.Join(err, evidence.Close()) }()
+		if current, e := renew(); e != nil || !current {
+			return e
+		}
 		digest, e = store.SaveSettledCursorImportStage(ctx, reg, request, evidence)
 	} else {
 		if cursorstore.ReasonOf(e) != cursorstore.Locked {
 			return e
 		}
-		digest, e = r.stageLiveCursor(ctx, store, reg, request)
+		digest, e = r.stageLiveCursor(ctx, store, reg, request, renew)
 	}
 
 	if e != nil {
 		return e
+	}
+	if w.projectEvidenceStale {
+		return nil
 	}
 	w.stagedSHA256 = digest
 	if r.AfterStage != nil {
@@ -789,7 +877,7 @@ type settledCapturePort interface {
 
 // stageLiveCursor requires the distinct builtin operation and real state-issued
 // workspace. A generic copied pathname never enters the settled proof route.
-func (r Registration) stageLiveCursor(ctx context.Context, store *state.Store, reg archive.SessionRegistration, original *nativefacts.CaptureRequest) (digest string, err error) {
+func (r Registration) stageLiveCursor(ctx context.Context, store *state.Store, reg archive.SessionRegistration, original *nativefacts.CaptureRequest, renew func() (bool, error)) (digest string, err error) {
 	port, ok := r.Sources.(liveCapturePort)
 	if !ok {
 		return "", state.ErrReadySelectionFrozen
@@ -807,6 +895,9 @@ func (r Registration) stageLiveCursor(ctx context.Context, store *state.Store, r
 		return "", err
 	}
 	defer func() { err = errors.Join(err, evidence.Close()) }()
+	if current, e := renew(); e != nil || !current {
+		return "", e
+	}
 	return store.SaveLiveCursorImportStage(ctx, reg, original, evidence)
 }
 

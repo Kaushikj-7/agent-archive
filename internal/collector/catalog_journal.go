@@ -106,6 +106,15 @@ func recoverCatalogRemovals(ctx context.Context, localStore *state.Store, remote
 		return err
 	}
 	for _, j := range journals {
+		if opts.SelectSession != nil {
+			reg, found, err := localStore.LoadRegistration(j.SessionID)
+			if err != nil {
+				return err
+			}
+			if !found || !opts.selectsSession(reg) {
+				continue
+			}
+		}
 		if j.Destination != opts.CatalogDestination {
 			return state.ErrDurableStorageRecovery
 		}

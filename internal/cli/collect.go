@@ -101,6 +101,9 @@ func runOnePass(env Env, quietOnBusy bool) (collector.Result, error) {
 type passOptions struct {
 	progress func(collector.Progress)
 	stop     func() bool
+	// importBatch restricts explicit import publication to its existing owners.
+	// Ordinary scheduled/sync passes retain discovery and global maintenance.
+	importBatch string
 }
 
 func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, error) {
@@ -184,14 +187,21 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		recordPreflightError(localStore, recoveryErr)
 	}
 	recoveryCancel()
-	rollouts, readHomes, err := passCodexRollouts(ctx, localStore, cfg, env)
+	openRollouts := passCodexRollouts
+	if pass.importBatch != "" {
+		openRollouts = foregroundCodexRollouts
+	}
+	rollouts, readHomes, err := openRollouts(ctx, localStore, cfg, env)
 	if err != nil {
 		recordPreflightError(localStore, err)
 		return collector.Result{}, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, rollouts.Close()) }()
 	observer := &gitremote.IdentityObserver{}
-	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Sources: registryFor(env), Now: env.Now, Stop: stop, Rollouts: rollouts, RepositoryIdentity: observer.Lookup, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
+	var discoveryErr error
+	if pass.importBatch == "" {
+		_, discoveryErr = discovery.Run(ctx, localStore, cfg, discovery.Options{Sources: registryFor(env), Now: env.Now, Stop: stop, Rollouts: rollouts, RepositoryIdentity: observer.Lookup, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
+	}
 	if discoveryErr != nil {
 		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
 	}
@@ -208,7 +218,9 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 
 	// Registration gets an independent budget after capture and retention,
 	// including their failure paths. It cannot cause either to be skipped.
-	defer func() { _ = publishMachineLocked(context.Background(), home, cfg, env, objectStore, false) }()
+	if pass.importBatch == "" {
+		defer func() { _ = publishMachineLocked(context.Background(), home, cfg, env, objectStore, false) }()
+	}
 	// The previous pass's time, read before this pass overwrites it: the
 	// retention sweep checks the clock against it (see retention.Options).
 	var previousScanAt time.Time
@@ -225,6 +237,10 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 				labelHomes = append(labelHomes, filepath.Dir(file))
 			}
 		}
+	}
+	var selectSession func(archive.SessionRegistration) bool
+	if pass.importBatch != "" {
+		selectSession = func(reg archive.SessionRegistration) bool { return reg.InBatch(pass.importBatch) }
 	}
 	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
 		CollectorGuard:           guard,
@@ -245,6 +261,8 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		SupplementalEvidence:     skillObserver(env, cfg.EffectiveSkillEvidence()),
 		SkillEvidence:            cfg.EffectiveSkillEvidence(),
 		AcceptSession:            cfg.AcceptSession,
+		SelectSession:            selectSession,
+		PendingOnly:              pass.importBatch != "",
 		HistoricalProjectLabel:   cfg.HistoricalProjectLabel,
 		Now:                      env.Now,
 		RequireSkillUse:          cfg.RequireSkillUse,
@@ -261,6 +279,18 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		}
 	}
 	if err != nil {
+		return result, err
+	}
+	if pass.importBatch != "" {
+		// Imported publications already verify their exact source set and
+		// metadata before acknowledging requests or releasing selected staging.
+		// Global verification and retention belong to ordinary collection.
+		if health := passStorageHealth(result); health != "not_checked" {
+			if err := recordStorageHealth(home, cfg, env, quietOnBusy, health); err != nil {
+				return result, err
+			}
+		}
+		_, err := recordPassSessionIssues(localStore, result)
 		return result, err
 	}
 
@@ -286,16 +316,22 @@ func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, en
 			return "", verifyErr, err
 		}
 	}
-	if len(result.Errors) > 0 || len(result.RetryLater) > 0 {
-		// In place of collector.Run's own count of the same sessions; the
-		// pass's other problems stay. A session the pass held on its
-		// backoff schedule keeps its issue (see recordSessionIssues).
-		summary, err = recordSessionIssues(localStore, result.Errors, subagentLookup(localStore), collector.FailedSessionsProblem(len(result.Errors)))
-		if err != nil {
-			return "", verifyErr, err
-		}
+	summary, err = recordPassSessionIssues(localStore, result)
+	if err != nil {
+		return "", verifyErr, err
 	}
 	return summary, verifyErr, nil
+}
+
+// recordPassSessionIssues preserves per-owner failures for both scoped import
+// publication and ordinary collection, independently of global maintenance.
+func recordPassSessionIssues(localStore *state.Store, result collector.Result) (string, error) {
+	if len(result.Errors) == 0 && len(result.RetryLater) == 0 {
+		return "", nil
+	}
+	// Replace collector.Run's count while retaining other problems and the
+	// existing backoff issues for sessions not retried on this pass.
+	return recordSessionIssues(localStore, result.Errors, subagentLookup(localStore), collector.FailedSessionsProblem(len(result.Errors)))
 }
 
 // finishPassWithRetention gives cleanup its own deadline after collection.

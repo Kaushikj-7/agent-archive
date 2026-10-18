@@ -149,6 +149,16 @@ func materializeSubagentCandidates(ctx context.Context, local *state.Store, opts
 		outcome.errors[id] = candidateFailure(issue)
 	}
 	for _, candidate := range candidates {
+		if opts.SelectSession != nil {
+			parent, found, err := local.LoadRegistration(candidate.ParentArchiveSessionID)
+			if err != nil {
+				outcome.errors[candidate.ArchiveSessionID] = candidateFailure(err)
+				continue
+			}
+			if !found || !opts.selectsSession(parent) {
+				continue
+			}
+		}
 		err := materializeSubagentCandidate(ctx, local, candidate, opts, now)
 		var rejected subagentRejectedError
 		switch {

@@ -22,6 +22,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/nativefacts"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
 // ImportStage freezes only privacy-filtered selected evidence before admission.
@@ -383,6 +384,17 @@ func (s *Store) SaveImportStage(ctx context.Context, reg archive.SessionRegistra
 
 // SaveImportSourceSet freezes the complete selected filtered revision set and children.
 func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegistration, bundle archive.SourceBundle, preserved []archive.SourceBundle, mode config.SkillEvidence, children ...SubagentCandidate) (string, error) {
+	return s.saveImportSourceSet(ctx, reg, bundle, preserved, mode, false, children...)
+}
+
+// SaveConfirmedImportSourceSet checks current admission policy under hooks.lock
+// before the first durable prepared selection. Existing frozen selections remain
+// recoverable independently of current native input.
+func (s *Store) SaveConfirmedImportSourceSet(ctx context.Context, reg archive.SessionRegistration, bundle archive.SourceBundle, preserved []archive.SourceBundle, mode config.SkillEvidence, children ...SubagentCandidate) (string, error) {
+	return s.saveImportSourceSet(ctx, reg, bundle, preserved, mode, true, children...)
+}
+
+func (s *Store) saveImportSourceSet(ctx context.Context, reg archive.SessionRegistration, bundle archive.SourceBundle, preserved []archive.SourceBundle, mode config.SkillEvidence, confirmed bool, children ...SubagentCandidate) (string, error) {
 	if !safeFileComponent(reg.ArchiveSessionID) {
 		return "", ErrDurableStorageRecovery
 	}
@@ -407,10 +419,14 @@ func (s *Store) SaveImportSourceSet(ctx context.Context, reg archive.SessionRegi
 	}
 
 	stage := ImportStage{Version: version, TypedSelection: typedSelection, Registration: reg, Bundle: bundle, SkillEvidence: mode, Children: children, Preserved: preserved}
-	return s.savePreparedImportStage(ctx, reg, stage)
+	return s.savePreparedImportStagePolicy(ctx, reg, stage, confirmed)
 }
 
 func (s *Store) savePreparedImportStage(ctx context.Context, reg archive.SessionRegistration, stage ImportStage) (string, error) {
+	return s.savePreparedImportStagePolicy(ctx, reg, stage, false)
+}
+
+func (s *Store) savePreparedImportStagePolicy(ctx context.Context, reg archive.SessionRegistration, stage ImportStage, confirmed bool) (string, error) {
 	s, ctx, closeContext := s.withDurableContext(ctx)
 	defer closeContext()
 	if reg.NativeBinding != nil {
@@ -453,6 +469,13 @@ func (s *Store) savePreparedImportStage(ctx context.Context, reg archive.Session
 				return ErrSessionIdentityConflict
 			}
 			return nil
+		}
+		if confirmed {
+			cfg, present, err := s.loadConfig()
+			stalePolicy := reg.ProjectResolution != nil && reg.ProjectResolution.PolicyContext != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean)
+			if err != nil || !present || stalePolicy || cfg.Paused || !cfg.Archive.Enabled || !cfg.AcceptSession(reg) || cfg.DestinationID() != reg.DestinationID || cfg.EffectiveSkillEvidence() != stage.SkillEvidence {
+				return errors.Join(ErrDurableStorageRecovery, errors.New("import policy changed before durable staging; run backfill again with the same options"), err)
+			}
 		}
 		if stage.Version == 3 {
 			if e := s.checkFreshSettledStage(ctx, g, reg, stage.SkillEvidence); e != nil {
@@ -546,6 +569,39 @@ func (s *Store) LoadImportStage(ctx context.Context, reg archive.SessionRegistra
 		return stage, found, err
 	}
 	return stage, true, stage.validateOwner(reg)
+}
+
+// hasReferencedImportStage observes an admitted owner's remaining local bytes.
+// Presence counts unfinished settlement; it grants no read or release authority.
+// Do not decode a source payload for this per-owner progress question.
+func (s *Store) hasReferencedImportStage(reg archive.SessionRegistration) (present bool, err error) {
+	if reg.StagedImportSHA256 == "" {
+		return false, nil
+	}
+	if !safeFileComponent(reg.ArchiveSessionID) {
+		return false, ErrDurableStorageRecovery
+	}
+	home, err := local.OpenRootedHome(s.home)
+	if err != nil {
+		return false, err
+	}
+	defer func() { err = errors.Join(err, home.Close()) }()
+	root, err := privateDirectory(home.Root, filepath.Dir(importStageRelative(reg.ArchiveSessionID)), false)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	info, err := root.Lstat("stage.json")
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil || !info.Mode().IsRegular() {
+		return true, errors.Join(ErrDurableStorageRecovery, err)
+	}
+	return true, nil
 }
 
 func (s *Store) loadPreparedImportStage(ctx context.Context, id string) (stage ImportStage, found bool, err error) {
