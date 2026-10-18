@@ -26,7 +26,8 @@ func readSkillEntries(dir skillDirectory, ctx context.Context) ([]os.DirEntry, e
 	if readErr == nil {
 		entries, readErr = dir.ReadDir(maxSkillsPerRoot + 1)
 	}
-	if readErr == io.EOF {
+	// io.EOF is the subject: do not unwrap the acquired read error.
+	if errors.Is(io.EOF, readErr) {
 		readErr = nil
 	}
 	closeErr := dir.Close()

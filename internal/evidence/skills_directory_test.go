@@ -46,9 +46,12 @@ func (d *countedSkillDirectory) Close() error {
 
 type poisonedSkillEntry struct{}
 
-func (poisonedSkillEntry) Name() string               { panic("overflow Name inspected") }
-func (poisonedSkillEntry) IsDir() bool                { panic("overflow IsDir inspected") }
-func (poisonedSkillEntry) Type() fs.FileMode          { panic("overflow Type inspected") }
+func (poisonedSkillEntry) Name() string { panic("overflow Name inspected") }
+
+func (poisonedSkillEntry) IsDir() bool { panic("overflow IsDir inspected") }
+
+func (poisonedSkillEntry) Type() fs.FileMode { panic("overflow Type inspected") }
+
 func (poisonedSkillEntry) Info() (fs.FileInfo, error) { panic("overflow Info inspected") }
 
 func TestReadSkillEntriesBoundsAcquisitionBeforeInspection(t *testing.T) {
@@ -67,18 +70,27 @@ func TestReadSkillEntriesBoundsAcquisitionBeforeInspection(t *testing.T) {
 	}
 }
 
+type claimingSkillEOF struct{}
+
+func (claimingSkillEOF) Error() string { return "claims EOF" }
+
+func (claimingSkillEOF) Is(target error) bool { return errors.Is(target, io.EOF) }
+
 func TestReadSkillEntriesDistinguishesAcquiredFailureFromAbsence(t *testing.T) {
 	readFailure, closeFailure := errors.New("read failed"), errors.New("close failed")
 	for _, c := range []struct {
-		name        string
-		read, close error
-		want        []error
+		name  string
+		read  error
+		close error
+		want  []error
 	}{
 		{"literal_eof", io.EOF, nil, nil},
 		{"read_not_exist", os.ErrNotExist, nil, []error{os.ErrNotExist}},
 		{"close_not_exist", io.EOF, os.ErrNotExist, []error{os.ErrNotExist}},
 		{"both_failures", readFailure, closeFailure, []error{readFailure, closeFailure}},
 		{"composite_eof", errors.Join(io.EOF, readFailure), nil, []error{io.EOF, readFailure}},
+		{"wrapped_eof", fmt.Errorf("read wrapper: %w", io.EOF), nil, []error{io.EOF}},
+		{"claimed_eof", claimingSkillEOF{}, nil, []error{io.EOF}},
 		{"close_eof", nil, io.EOF, []error{io.EOF}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -168,6 +180,8 @@ func TestObserveSkillsProviderDirectoryBounds(t *testing.T) {
 						inventory = item.Payload
 					case archive.EvidenceKindSkillSnapshot:
 						names = append(names, item.Payload["name"].(string))
+					case archive.EvidenceKindSessionLabels, archive.EvidenceKindSkillDiscovered, archive.EvidenceKindSkillInvocation, archive.EvidenceKindSkillRead, archive.EvidenceKindLifecycleHook, archive.EvidenceKindFinalResponse, archive.EvidenceKindExplicitFeedback, archive.EvidenceKindLinkedSession, archive.EvidenceKindCaptureGap:
+						t.Fatalf("unexpected evidence %s", item.Kind)
 					default:
 						t.Fatalf("unexpected evidence %s", item.Kind)
 					}
