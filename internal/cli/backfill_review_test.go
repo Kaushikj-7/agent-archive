@@ -22,11 +22,27 @@ import (
 )
 
 type recoveryReviewFixture struct {
-	env             Env
-	home, userHome  string
-	target, missing string
-	cfg             config.Config
+	env      Env
+	home     string
+	userHome string
+	target   string
+	missing  string
+	cfg      config.Config
 }
+
+type recoveryScenario string
+
+const (
+	reviewAmbiguousClones   recoveryScenario = "ambiguous clones"
+	reviewUnresolvedChain   recoveryScenario = "unresolved chain"
+	reviewConflictingKey    recoveryScenario = "conflicting key"
+	reviewExcludedTarget    recoveryScenario = "excluded target"
+	reviewUnavailableTarget recoveryScenario = "unavailable target"
+	reviewExcludedOriginal  recoveryScenario = "excluded original"
+	reviewExcludedAncestor  recoveryScenario = "excluded ancestor"
+	reviewParentTraversal   recoveryScenario = "noncanonical excluded traversal"
+	reviewMissingSubtree    recoveryScenario = "missing subtree"
+)
 
 func newRecoveryReviewFixture(t *testing.T) *recoveryReviewFixture {
 	t.Helper()
@@ -174,35 +190,35 @@ func TestRecoveryReviewExportsExactConfiguredAssignmentsAndResumesCanonicalFile(
 }
 
 func TestRecoveryReviewReportsCloneConflictChainAndExclusions(t *testing.T) {
-	for _, scenario := range []string{"ambiguous clones", "unresolved chain", "conflicting key", "excluded target", "unavailable target", "excluded original", "excluded ancestor", "noncanonical excluded traversal", "missing subtree"} {
-		t.Run(scenario, func(t *testing.T) {
+	for _, scenario := range []recoveryScenario{reviewAmbiguousClones, reviewUnresolvedChain, reviewConflictingKey, reviewExcludedTarget, reviewUnavailableTarget, reviewExcludedOriginal, reviewExcludedAncestor, reviewParentTraversal, reviewMissingSubtree} {
+		t.Run(string(scenario), func(t *testing.T) {
 			f := newRecoveryReviewFixture(t)
 			want := ""
 			switch scenario {
-			case "ambiguous clones":
+			case reviewAmbiguousClones:
 				clone := f.repository(t, "b-clone", f.target)
 				f.cfg.Archive.Projects = append(f.cfg.Archive.Projects, archive.ProjectActivation{Root: clone, ProjectID: archive.ProjectID(clone), Included: true})
 				want = "project_ambiguous"
-			case "unresolved chain":
+			case reviewUnresolvedChain:
 				f.git(t, f.target, "config", "remote.origin.url", filepath.Join(f.userHome, "unavailable-chain"))
 				want = "project_origin_missing"
-			case "conflicting key":
+			case reviewConflictingKey:
 				f.git(t, f.target, "config", "remote.origin.url", "https://example.test/acme/other")
 				want = "Rejected configured target: " + f.target + " (project_mapping_conflict)"
-			case "excluded target":
+			case reviewExcludedTarget:
 				f.cfg.Archive.Projects[0].Included = false
 				want = "Rejected configured target: " + f.target + " (project_mapping_conflict)"
-			case "unavailable target":
+			case reviewUnavailableTarget:
 				must(t, os.RemoveAll(f.target))
 				want = "Rejected configured target: " + f.target + " (project_mapping_conflict)"
-			case "excluded original", "excluded ancestor":
+			case reviewExcludedOriginal, reviewExcludedAncestor:
 				root := f.missing
-				if scenario == "excluded ancestor" {
+				if scenario == reviewExcludedAncestor {
 					root = filepath.Dir(root)
 				}
 				f.cfg.Archive.Projects = append(f.cfg.Archive.Projects, archive.ProjectActivation{Root: root, ProjectID: archive.ProjectID(root), Included: false})
 				want = "Assignment unavailable: source restriction excluded_project"
-			case "noncanonical excluded traversal":
+			case reviewParentTraversal:
 				private := filepath.Join(f.userHome, "private")
 				must(t, os.MkdirAll(filepath.Join(private, "child"), 0700))
 				alias := filepath.Join(f.userHome, "alias")
@@ -210,7 +226,7 @@ func TestRecoveryReviewReportsCloneConflictChainAndExclusions(t *testing.T) {
 				f.missing = alias + "/../vanished"
 				f.cfg.Archive.Projects = append(f.cfg.Archive.Projects, archive.ProjectActivation{Root: private, ProjectID: archive.ProjectID(private), Included: false})
 				want = "Original cwd contains parent traversal and requires separate manual review"
-			case "missing subtree":
+			case reviewMissingSubtree:
 				f.cfg.Archive.Projects[0].Root = filepath.Join(f.target, "subtree")
 				f.cfg.Archive.Projects[0].ProjectID = archive.ProjectID(f.cfg.Archive.Projects[0].Root)
 				must(t, os.MkdirAll(f.cfg.Archive.Projects[0].Root, 0700))
@@ -224,10 +240,10 @@ func TestRecoveryReviewReportsCloneConflictChainAndExclusions(t *testing.T) {
 			if code != 0 || !strings.Contains(out, want) {
 				t.Fatal(scenario, code, out, errout)
 			}
-			if scenario == "ambiguous clones" && strings.Count(out, "compatible exact assignment") != 2 {
+			if scenario == reviewAmbiguousClones && strings.Count(out, "compatible exact assignment") != 2 {
 				t.Fatal("distinct compatible clones were hidden or auto-selected", out)
 			}
-			if scenario == "unresolved chain" && strings.Contains(out, "compatible exact assignment") {
+			if scenario == reviewUnresolvedChain && strings.Contains(out, "compatible exact assignment") {
 				t.Fatal("unresolved chain was silently relaxed", out)
 			}
 			if _, err := os.Stat(output); !os.IsNotExist(err) || snapshotTree(t, f.home) != before {
@@ -241,10 +257,11 @@ func TestRecoveryReviewCancellationPrivacyAndNoOverwrite(t *testing.T) {
 	f := newRecoveryReviewFixture(t)
 	f.codex(t, "11111111-1111-4111-8111-111111111111", f.missing, "")
 	for _, tc := range []struct {
-		name, input string
-		args        []string
-		terminal    bool
-		wantCode    int
+		name     string
+		input    string
+		args     []string
+		terminal bool
+		wantCode int
 	}{
 		{"EOF at selection", "", nil, true, 1},
 		{"EOF at export", "1\n", nil, true, 1},
@@ -370,5 +387,23 @@ func TestRecoveryReviewReportsBoundedRepeatedCwdsAndDisabledHistoricalChoice(t *
 	}
 	if _, err := os.Stat(output); !os.IsNotExist(err) {
 		t.Fatal("skipped bounded review exported assignments", err)
+	}
+}
+
+func TestRecoveryReviewRefusesNoninteractiveModeBeforePrivatePlanning(t *testing.T) {
+	for _, variables := range []map[string]string{{envNonInteractive: "1"}, {"CODEX_THREAD_ID": "synthetic-agent"}} {
+		env := withEnvironment(Env{IsTerminal: func(any) bool { return true }, Home: func() (string, error) {
+			t.Fatal("prompts-off review accessed archive state")
+			return "", nil
+		}}, variables)
+		var out, errout bytes.Buffer
+		input := strings.NewReader("new\nPrivate label\nexport\n")
+		output := filepath.Join(t.TempDir(), "not-exported.json")
+		if code := Run([]string{"backfill", "review-projects", "--output", output}, input, &out, &errout, env); code != 1 || !strings.Contains(errout.String(), "terminal input and output") || input.Len() == 0 {
+			t.Fatal("prompts-off review reached private planning or export", code, out.String(), errout.String())
+		}
+		if _, err := os.Stat(output); !os.IsNotExist(err) {
+			t.Fatal("prompts-off review created output", err)
+		}
 	}
 }

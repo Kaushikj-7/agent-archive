@@ -65,10 +65,27 @@ type RecoveryWitness struct {
 	Failure      sourcefacts.RecoveryOutcome
 }
 
-func reviewProjectGroups(r *resolver, items []*work, review *RecoveryReview) {
-	type groupKey struct{ cwd, key string }
+func finishPlanReview(ctx context.Context, env Environment, r *resolver, items []*work, plan Plan) (Plan, error) {
+	if env.ReviewProjects {
+		plan.RecoveryReview = reviewProjects(ctx, r, items)
+		if err := ctx.Err(); err != nil {
+			return Plan{}, err
+		}
+	}
+	tracePlanSelection(plan)
+	return plan, nil
+}
+
+func reviewProjectGroups(ctx context.Context, r *resolver, items []*work, review *RecoveryReview) {
+	type groupKey struct {
+		cwd string
+		key string
+	}
 	groups := map[groupKey]*RecoveryReviewGroup{}
 	for _, w := range items {
+		if ctx.Err() != nil {
+			return
+		}
 		cwd := w.t.cwd
 		if w.vanished || w.evidenceOnly || w.filtered {
 			continue
@@ -162,7 +179,10 @@ func observeRecoveryGroup(r *resolver, g *RecoveryReviewGroup, w *work) {
 
 func reviewProjects(ctx context.Context, r *resolver, items []*work) *RecoveryReview {
 	review := &RecoveryReview{}
-	reviewProjectGroups(r, items, review)
+	reviewProjectGroups(ctx, r, items, review)
+	if ctx.Err() != nil {
+		return review
+	}
 	mapping := r.mappingRecovery
 	if mapping == nil {
 		mapping = r.recovery
@@ -177,6 +197,9 @@ func reviewProjects(ctx context.Context, r *resolver, items []*work) *RecoveryRe
 	for i := range review.Groups {
 		g := &review.Groups[i]
 		for _, p := range targets {
+			if ctx.Err() != nil {
+				return review
+			}
 			if !validMappingPath(p.Root) {
 				continue
 			}
@@ -199,13 +222,12 @@ func reviewProjects(ctx context.Context, r *resolver, items []*work) *RecoveryRe
 			review.OmittedWitnesses++
 			continue
 		}
-		witness := RecoveryWitness{Root: p.Root, Included: p.Included}
-		if i < len(r.recovery.Inventory.Entries) {
-			id := r.recovery.Inventory.Entries[i]
-			witness.Observed, witness.Known, witness.Key, witness.Failure = true, id.Known, id.Key, id.Failure
-			witness.PhysicalRoot = id.Root
+		var id sourcefacts.RepositoryIdentity
+		observed := i < len(r.recovery.Inventory.Entries)
+		if observed {
+			id = r.recovery.Inventory.Entries[i]
 		}
-		review.Witnesses = append(review.Witnesses, witness)
+		review.Witnesses = append(review.Witnesses, RecoveryWitness{Root: p.Root, PhysicalRoot: id.Root, Included: p.Included, Key: id.Key, Observed: observed, Known: id.Known, Failure: id.Failure})
 	}
 	// Source order is independent of map iteration and retained lookup caches.
 	slices.SortFunc(review.Witnesses, func(a, b RecoveryWitness) int {

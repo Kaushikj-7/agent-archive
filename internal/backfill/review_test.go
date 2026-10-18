@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,7 +25,7 @@ func TestRecoveryReviewKeepsExactGroupsPrivateAndReportsBound(t *testing.T) {
 		if i > 1 {
 			original += fmt.Sprintf("-%03d", i)
 		}
-		tr.write(filepath.Join("home/.claude/projects/synthetic", id+".jsonl"), fmt.Sprintf(`{"type":"user","sessionId":%q,"cwd":%q,"timestamp":%q,"message":{"role":"user","content":"Synthetic private transcript"}}`+"\n", id, original, fixedNow.Add(-time.Hour).Format(time.RFC3339)))
+		tr.write(filepath.Join("home", ".claude", "projects", "synthetic", id+".jsonl"), fmt.Sprintf(`{"type":"user","sessionId":%q,"cwd":%q,"timestamp":%q,"message":{"role":"user","content":"Synthetic private transcript"}}`+"\n", id, original, fixedNow.Add(-time.Hour).Format(time.RFC3339)))
 	}
 	env := tr.env()
 	cfg := config.Config{Archive: archive.Config{Enabled: true}}
@@ -147,5 +148,23 @@ func TestRecoveryReviewPreservesRawCwdWithoutQualifyingCleanedTraversal(t *testi
 	g := first.Groups[0]
 	if g.OriginalCwd != raw || g.AssignmentCwd != clean || g.Candidates != 2 || !g.MixedOriginalSpellings || !g.ParentTraversalOriginal || g.SourceRestriction != SkipWorktreeUnresolved {
 		t.Fatal("cleaned spelling was treated as raw traversal evidence", g)
+	}
+}
+
+func TestRecoveryReviewStopsSourceObservationOnCancellation(t *testing.T) {
+	tr := newTree(t)
+	r := newResolver(tr.env(), config.Config{}, Filters{})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	observations := 0
+	r.env.Stat = func(string) (os.FileInfo, error) {
+		observations++
+		cancel()
+		return nil, os.ErrNotExist
+	}
+	items := []*work{{t: &transcript{cwd: tr.path("home/first")}}, {t: &transcript{cwd: tr.path("home/second")}}}
+	review := reviewProjects(ctx, r, items)
+	if observations != 1 || len(review.Groups) != 0 || len(review.Witnesses) != 0 {
+		t.Fatal("cancelled review continued observation or returned partial groups", observations, review)
 	}
 }

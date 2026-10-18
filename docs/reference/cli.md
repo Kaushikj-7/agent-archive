@@ -917,7 +917,8 @@ publication. History reports admitted and remotely verified uploads separately.
   --background          Stage and register sessions, then exit; the background
                         collector verifies and uploads them
 See agent-archive help backfill history, agent-archive help backfill projects,
-agent-archive help backfill review-projects, and agent-archive help backfill undo.
+agent-archive help backfill review-projects, and
+agent-archive help backfill undo.
 Example: agent-archive backfill --dry-run --since 30d
 ```
 
@@ -994,11 +995,11 @@ not promises of importability. Native evidence and source limits still apply.
 
 Configured choices use existing exact mapping policy; exclusions and conflicting
 usable keys still refuse. Historical destinations are import only. Review and
-export do not change configuration, capture policy, stages or archive. Cancellation,
-EOF or rejected confirmation writes no file. Export uses private mode 0600.
+export do not change configuration, capture policy, stages or archive.
+Cancellation, EOF or rejected confirmation writes no file. Export mode is 0600.
 
-Then run agent-archive backfill --dry-run --mapping-file FILE before a separately
-confirmed import. Keep the reviewed file for exact semantic resume and undo.
+Then run agent-archive backfill --dry-run --mapping-file FILE before a
+separately confirmed import. Keep the file for exact semantic resume and undo.
 ```
 
 | Flag | Takes | Default |

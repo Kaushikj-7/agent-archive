@@ -308,14 +308,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	if err := bindRecoveryPolicy(cfg, &plan); err != nil {
 		return Plan{}, err
 	}
-	if env.ReviewProjects {
-		plan.RecoveryReview = reviewProjects(ctx, r, items)
-		if err := ctx.Err(); err != nil {
-			return Plan{}, err
-		}
-	}
-	tracePlanSelection(plan)
-	return plan, nil
+	return finishPlanReview(ctx, env, r, items, plan)
 }
 
 // tracePlanSelection records the completed plan without retaining candidates.

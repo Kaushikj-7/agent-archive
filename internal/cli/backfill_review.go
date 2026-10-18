@@ -36,7 +36,7 @@ func runBackfillReviewProjects(args []string, stdin io.Reader, stdout, stderr io
 		terminal.Printf(stderr, "agent-archive: backfill review-projects: %v. No assignments were exported; archive and configuration were unchanged.\n", err)
 		return 1
 	}
-	if !env.interactive(stdin) || !env.isTerminal(stdout) {
+	if !env.interactive(stdin) || !env.interactive(stdout) {
 		return fail(errors.New("private project review requires terminal input and output; JSON and piped review are unavailable"))
 	}
 	path, err := filepath.Abs(*output)
@@ -82,6 +82,15 @@ type recoveryChoice struct {
 	root       string
 	historical backfill.HistoricalProjectDefinition
 }
+
+type recoveryReviewAction string
+
+const (
+	recoveryReviewBlank  recoveryReviewAction = ""
+	recoveryReviewCancel recoveryReviewAction = "cancel"
+	recoveryReviewSkip   recoveryReviewAction = "skip"
+	recoveryReviewNew    recoveryReviewAction = "new"
+)
 
 func reviewProjectAssignments(p *prompter, cfg config.Config, review *backfill.RecoveryReview, path string) (bool, error) {
 	terminal.Println(p.out, "\nPrivate project recovery review: bounded, incomplete coverage of observed candidates.")
@@ -233,12 +242,12 @@ func promptRecoveryChoice(p *prompter, choices []recoveryChoice) (recoveryChoice
 	if err != nil {
 		return recoveryChoice{}, false, err
 	}
-	switch answer {
-	case "cancel":
+	switch recoveryReviewAction(answer) {
+	case recoveryReviewCancel:
 		return recoveryChoice{}, false, errors.New("review cancelled")
-	case "", "skip":
+	case recoveryReviewBlank, recoveryReviewSkip:
 		return recoveryChoice{}, false, nil
-	case "new":
+	case recoveryReviewNew:
 		label, err := p.line("Historical project label (import only): ")
 		if err != nil {
 			return recoveryChoice{}, false, err
