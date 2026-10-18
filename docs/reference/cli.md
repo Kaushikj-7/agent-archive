@@ -1174,6 +1174,7 @@ given.
                         and the first 8 characters of SESSION_ID)
   -- ARGS               Everything after -- goes to the launched agent, after
                         any arguments set in config.json's handoff.args
+                        For muse, an initial exec selects the headless command
 Example: agent-archive handoff
 Example: agent-archive handoff --to codex
 Example: agent-archive handoff "fix the auth bug" --harness codex --to claude
