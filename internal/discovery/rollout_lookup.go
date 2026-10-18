@@ -22,6 +22,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/trace"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
@@ -93,6 +94,7 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native home limit"))
 	}
 	lookup := &CodexRolloutLookup{store: store, homes: slices.Clone(homes), readBudget: agentapi.NewNativeReadBudget(agentapi.PassReadBudget), roots: roots, deadline: time.Now().Add(Budget), remaining: Budget, observations: map[string]rolloutObservation{}, byThread: map[string]map[string]struct{}{}, byPhysical: map[string]map[string]struct{}{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
+	trace.Add(trace.CodexLookupScopes, 1)
 	var prior catalog
 	if err := lookup.readCatalog(ctx, filepath.Join(store.Home(), "discovery-catalog.json"), &prior); err != nil && !errors.Is(err, os.ErrNotExist) {
 		if errors.Is(err, agentapi.ErrReadBudget) || ctx.Err() != nil {
@@ -233,6 +235,7 @@ func (l *CodexRolloutLookup) AllowanceSpent() bool { return !l.closed && l.remai
 // same pass's validated facts, and every consumer rechecks a locator before
 // using it.
 func (l *CodexRolloutLookup) BeginCollection() {
+	trace.Add(trace.CodexLookupScopes, 1)
 	l.remaining = Budget
 	l.probes = 0
 }

@@ -22,6 +22,11 @@ follow [Semantic Versioning](https://semver.org/).
   Metadata preserves distinct installed declaration identities even when skills
   share a name and content hash. Exact runtime identity and public capture remain gated.
 
+- Backfill distinguishes exhausted Codex lookup work (`lookup_allowance_spent`,
+  retry) from source byte/record limits and missing history evidence. Pending
+  sessions keep their existing eligibility checks. Content-free traces count
+  lookup scopes, native preparation/inspection attempts and unfinished candidates.
+
 - Prepare guarded capture of newly started Muse sessions, with explicit home,
   project and capture-window checks before ownership. Public setup remains
   disabled pending native acceptance; existing Muse local reading is unchanged.

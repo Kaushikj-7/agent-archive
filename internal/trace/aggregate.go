@@ -43,10 +43,18 @@ const (
 	InspectionCacheStored
 	// InspectionCacheFailed counts observations in unavailable persistence batches.
 	InspectionCacheFailed
+	// CodexLookupScopes counts initial and explicitly renewed lookup allowances.
+	CodexLookupScopes
+	// BackfillNativePreparationAttempts counts requested thread lookups before inspection.
+	BackfillNativePreparationAttempts
+	// BackfillNativeInspectionAttempts counts child or related-history source inspections.
+	BackfillNativeInspectionAttempts
+	// BackfillLookupUnfinishedCandidates counts final skips caused by a spent lookup allowance.
+	BackfillLookupUnfinishedCandidates
 	metricCount
 )
 
-var metricNames = [metricCount]string{"header_bytes", "hash_bytes", "filter_input_bytes", "verification_bytes", "adapter_invocations", "worker_us", "byte_budget_wait_us", "peak_workers", "selected_sessions", "skipped_sessions", "capacity_drain_us", "capacity_drain_passes", "inspection_cache_lookups", "inspection_cache_hits", "inspection_cache_queued", "inspection_cache_dropped", "inspection_cache_stored", "inspection_cache_failed"}
+var metricNames = [metricCount]string{"header_bytes", "hash_bytes", "filter_input_bytes", "verification_bytes", "adapter_invocations", "worker_us", "byte_budget_wait_us", "peak_workers", "selected_sessions", "skipped_sessions", "capacity_drain_us", "capacity_drain_passes", "inspection_cache_lookups", "inspection_cache_hits", "inspection_cache_queued", "inspection_cache_dropped", "inspection_cache_stored", "inspection_cache_failed", "codex_lookup_scopes", "backfill_native_preparation_attempts", "backfill_native_inspection_attempts", "backfill_lookup_unfinished_candidates"}
 
 // Add records a local aggregate once its operation completes. With tracing off
 // it performs only the recorder check and retains no measurements.

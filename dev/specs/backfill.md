@@ -9,6 +9,11 @@ probed on a working Mac for their layout and field names only, never their
 content. Phase 1 imports transcript files. Phase 2 adds Cursor chats that exist
 only in Cursor's SQLite database.
 
+The [large-backfill completion contract](#large-backfill-completion-contract)
+below is an approved target recorded 2026-10-17, not a claim that the current
+binary implements it. Its delivery and qualification are tracked in
+[Large backfill completion](../proposals/large-backfill-completion.md).
+
 ## Problem
 
 The archive captures only sessions that start after their project is activated
@@ -45,6 +50,172 @@ changes app settings.
    orphans objects.
 6. Readers can tell an imported session from a captured one, and can see what
    evidence the import lacks.
+7. Every supported, authorized, recoverable session can finish importing,
+   regardless of how many work slices the inventory needs. Scheduler allowances,
+   disposable-cache limits and repository evidence resolved as unrelated must not
+   permanently remove eligible sessions from a foreground backfill.
+
+## Large-backfill completion contract
+
+**Approved target; not yet implemented.** This section governs the planned
+changes to the current resource and project-recovery rules below. Implementation
+must identify its exact supported limits and remaining gaps; this target does not
+enable unshipped CLI options, fragments or writer formats.
+
+### Completion and evidence
+
+Maximize recovery through explicit review and supported evidence, while keeping
+privacy filtering, native identity, own-task attribution, exclusions, destination
+permission, source validation and existing archive ownership intact. Missing Git
+metadata alone must have a reviewed historical-project route. Missing or
+unrecognized own-task evidence must have a specific explanation and a path to
+compatibility work or explicit supported fragments; it must not silently become
+invented native evidence. Empty children/forks that contain inherited context but
+no independent work are accounted for separately from unsupported own-work shapes.
+
+The unit of success is a logical session and its selected source set, not a
+physical file or a created registration. Distinguish candidate files, duplicate
+observations, logical sessions, dependencies and revisions. Track planned,
+durably staged, registered, publication-pending and remotely verified counts
+separately. A successful command cannot imply that all candidates were imported
+when work remains; provide a coverage verdict and resumable state or an action
+for each unresolved class. Preserve current CLI/JSON compatibility through the
+normal version rules when new fields or exit behavior are introduced.
+
+One primary skip reason may hide another problem. Recovery must reconcile the
+remaining work after each repair, without adding overlapping diagnostic counts
+as if they were independently recoverable sessions. Keep already archived owners
+and separately journal any supported enrichment. Intentional removals and
+home/temporary restrictions retain their explicit review choices.
+
+### Foreground work and continuation
+
+The existing five-second discovery/lookup allowance protects background
+responsiveness. It is not a whole-foreground-command deadline, a cumulative
+per-session eligibility rule, or evidence that a native source is too large.
+Foreground planning, source inspection, staging/admission and publication must
+advance through renewable bounded work scopes until completion, cancellation or
+a specific evidence/resource failure. A source requiring more than one scope
+must retain validated progress or use a foreground operation policy that lets it
+finish; restarting the same prefix with five seconds forever is not progress.
+
+Use an explicit foreground policy at the existing lookup/consumer boundary.
+Keep background behavior, hook latency, per-I/O cancellation/timeouts and
+per-record/source/history safety limits independent. An optional user-specified
+foreground deadline would cancel a resumable job; no such flag is currently
+promised. Do not require users to tune an internal five-second constant.
+
+Preparation cannot consume inspection's entire allowance, nor inspection the
+admission or publication allowance. Renew only at safe ownership boundaries;
+do not forgive outstanding memory/disk charges, lose an active snapshot's
+selection token, or retain authority from a previous observation without
+revalidation. A changed current locator, source, project scope or destination
+invalidates the affected work and its proof.
+
+Every renewal must either advance a cursor/completed candidate, produce a
+specific changed-source/evidence outcome, or end with a bounded no-progress
+reason. Repeatedly expensive or changing sessions must not starve unrelated
+sessions. Cancellation must release descriptors, workers and private scratch,
+leave durable admitted evidence recoverable, and retain exact batch ownership.
+On restart, renew private observations before using them; checkpoints are
+continuation hints, never admission authority or permission to capture new work.
+
+### Repository evidence and recovery assistance
+
+Represent these cases separately: a usable normalized repository key; a
+successfully observed local-only origin whose repository ownership is unresolved;
+conflicting origin keys; and evidence that could not be observed completely. A
+local-only origin must be observed and renewed as such, not inferred from a folder
+name or a failed Git call. Its stable filesystem spelling is not negative
+ownership evidence: it may point to another clone of the recorded repository.
+A configured root and an otherwise identical proposed root must have the same
+classification and ownership requirements; neither may be ignored merely because
+its directly observed origin has no portable key.
+
+For automatic recovery affected by a local-only origin, resolve supported local
+origin chains through bounded, read-only Git observation, without network access
+or native configuration changes. Read every origin value at each step; resolve
+supported filesystem references without guessing path semantics, detect cycles
+and aliases, and bound traversal work. Unsupported references, unreadability,
+unfinished traversal and conflicting reachable keys remain uncertainty. An
+unresolved terminal with no portable key also remains uncertain. Only sufficient
+resolved identity evidence can establish a match or non-match for the recorded
+key; a completed observation of the local path alone cannot certify uniqueness.
+
+Keep each physical clone distinct even when a chain reaches the same portable
+key or another observed clone. Those clones compete in the uniqueness proof;
+origin following must not collapse them into one owner. Renew the checkout
+identity, all origin values, traversed dependencies and executable/config
+observation scope before admission. A changed chain, source or policy invalidates
+the affected proof. Original cwd, target and source/ancestor exclusions remain
+binding; origin evidence cannot resolve a missing subtree or confer permission.
+
+Where chain evidence remains unknown or ambiguous, require a reviewed exact/bulk
+assignment to a compatible configured target or a supported historical
+destination. Keep these existing assignment routes usable before full chain or
+larger-window work lands: an exact assignment does not require proving automatic
+uniqueness over unrelated roots. It still cannot override exclusions or usable
+conflicting identity.
+
+Build recovery assistance on the existing exact mapping-file and historical
+project contracts. Offer grouped suggestions by original cwd and recorded
+identity, show evidence/conflicts and affected counts, and require review before
+applying assignments. Suggestions are private metadata, not capture authority.
+Unavailable identity can use an explicitly assigned historical project or a
+compatible exact configured mapping; neither route can override exclusions or
+contradict usable identity. Preserve mappings' invocation scope and canonical
+batch-resume identity; these assignments do not themselves authorize future
+capture. Ordinary explicitly reviewed live-project additions retain their
+documented capture behavior.
+
+### Inventories larger than caches and staging capacity
+
+Bound memory and live descriptors, not the number of sessions that a completed
+job can eventually visit. Page or privately spool content-free inventory and
+decision state when it exceeds a cache/window. Observe all relevant project
+witnesses before asserting unique automatic ownership, including witnesses
+outside output date/project/app filters. A partial scan or a full cache never
+proves absence; renew the complete relevant evidence before admission. This
+project-evidence obligation does not add a native-home-wide absence proof to
+Codex's chain-local history selection.
+
+Distinguish renewable work/cache bounds from semantic per-source limits and true
+physical disk exhaustion. Fixed catalog, witness, mapping and directory windows
+need paging/streaming or a precise independently reviewable partition route;
+merely raising their constants does not meet completion. Mapping partitions must
+retain cross-partition clone/exclusion evidence and exact resume/undo ownership.
+Do not silently truncate a reviewed assignment list or create a partial uniqueness
+proof to fit the existing 1,024-root or disposable-cache windows.
+
+Keep the shared durable staging quota. A foreground import stages a bounded
+group, publishes and verifies eligible retained evidence, safely releases only
+settled owned staging, and continues. A slow/unavailable provider reports pending
+work and a continuation action without discarding admitted evidence. Dry-run and
+background modes must not secretly upload to make capacity available. Dry-run
+may use private disposable content-free scratch/cache, but creates no admission,
+retained transcript stage, configuration change or remote object.
+
+For a genuinely over-limit record, history graph or individual source, report the
+actual limit and preserve the remaining eligible sessions. Follow the separate
+segmented-history and fragment contracts for supported additional recovery;
+lifting scheduler limits must not bypass those format and privacy gates.
+
+### Qualification required before completion claims
+
+Use actual CLI dry-run and confirmed import/publication entry points on isolated
+synthetic fixtures. Cover 512, 5,000 and 50,000 candidates; more roots than one
+witness window; cold/warm caches; work crossing multiple five-second scopes;
+one supported history whose lookup work itself exceeds five seconds; unchanged
+and moving native indexes; cancellation/restart; mapping review; excluded
+ancestors; source deletion after durable admission; staging saturation and
+disposable-provider read-back. Record counts, work scopes, retries, I/O, wall
+time, peak memory, peak charged bytes, peak disk and descriptor cleanup. Short
+representatives complement, but cannot stand in for, full scale acceptance.
+
+Prototype overlays and focused dry runs establish only the behavior actually
+exercised. Completion also needs current-head independent review, required CI,
+supported-platform acceptance and a separately authorized operator import whose
+remaining candidates are reconciled. The implementation plan owns that evidence.
 
 **Non-goals:**
 - Re-importing sessions this machine already registered (see
@@ -198,6 +369,20 @@ action: check access and format support, without assuming a format incompatibili
 Recovery outcomes remain distinct even when their primary skip is
 `worktree_unresolved`; history stays `related_history_pending` with
 `history_lookup_pending` until a shared selection/dependency lookup is available.
+
+A known `lookup_allowance_spent` source cause retains that detail with `retry`
+action under `related_history_pending`. It describes unfinished lookup work,
+not a source resource or format refusal. Source raw-byte and individual-record
+refusals retain `source_size_limit` and `source_record_limit`; named graph,
+aggregate-history and evidence refusals retain their existing details. Skip
+precedence and admission decisions are unchanged. This diagnostic does not
+implement the renewable foreground work target below.
+
+The optional existing trace records native preparation as its own fixed phase.
+Its constant-space aggregates count initial/renewed Codex lookup allowances,
+preparation lookup attempts, related-native inspection attempts and final
+allowance-pending candidates. Attempts are not distinct logical histories or
+publication completion, and no per-source telemetry is retained.
 
 `inventory.unique_candidate_files` counts distinct candidate transcript paths;
 `database_candidates` counts database-only candidates separately. Each file has
@@ -559,12 +744,17 @@ matching rule wins.
    uniqueness. One exception applies to proposed (not yet configured) roots
    only: when Git reports a checkout top level and prints an origin that yields
    no repository key (for example a clone whose origin is a local path to a
-   deleted worktree), that root cannot own any recorded key and is non-owning
+   deleted worktree), the current implementation treats that root as non-owning
    rather than unknown, so it does not make recovery unavailable for other
    sessions. It must still be a keyless checkout at the same top level when
    evidence is renewed. A proposed root that Git could not observe, whose
    origin read failed, or whose observation exhausted its budget, still blocks, and every configured root
    keeps the strict rule ([Recorded project recovery](#recorded-project-recovery)).
+   This exception has an ownership gap: a stable local origin can lead to the
+   recorded repository. The approved
+   [completion target](#repository-evidence-and-recovery-assistance) requires
+   resolved ownership evidence or a reviewed assignment for both proposed and
+   configured local-only roots; it does not extend the blanket exception.
    Exact mappings continue to require configured targets.
    A Cursor database chat with no folder evidence at all (no folder, no
    workspace reference, no message folder; for example a subagent composer)
@@ -1242,21 +1432,29 @@ pass allows at most 128 identity lookups; completed sweeps refresh next pass,
 and cached prefix metadata is validated before a resumed sweep. Unavailable
 entries cannot certify uniqueness. Backfill's proposed roots are the only
 exception: a proposed root whose completed, within-budget lookup found a
-checkout top level and an origin value that yields no repository key is
-non-owning; a failed origin read is unknown, not keyless. Every
-`remote.origin.url` value is read (`git config --get` reports only the last):
+checkout top level and an origin value that yields no repository key is treated
+as non-owning by the current implementation; a failed origin read is unknown,
+not keyless. Every `remote.origin.url` value is read (`git config --get` reports
+only the last):
 the checkout is keyless only when no value yields a key; a value that yields
 one is the checkout's key wherever it appears; values that yield different
-keys leave the identity unknown, neither keyless nor matched. It cannot match a
-recorded key, so a match elsewhere stays unique among the identifiable roots.
+keys leave the identity unknown, neither keyless nor matched. The current
+resolver omits a keyless proposed root from competing matches. This is an
+ownership gap: a filesystem origin may lead to the same recorded repository,
+even while its directly observed value remains unchanged.
 It has no dependency stamps, so every admission slice observes it again
 (sharing the coalesced semantic sweep) and requires the same keyless top level
 and observer scope; gaining a key or becoming unobservable invalidates the proof.
 Unobserved or budget-exhausted proposed roots, and all configured roots, remain
-uncertainty. A keyless origin that is a `url.insteadOf` shorthand for the same
-repository is the accepted residual: it is never normalized, so it could not
-match the recorded key even if configured. Bounded Git config origin names identify
-metadata dependencies; no partial Git configuration parser interprets remotes.
+uncertainty in the current implementation. The approved
+[completion target](#repository-evidence-and-recovery-assistance) requires
+resolved local-origin ownership evidence or a reviewed assignment before and
+after configuration. This correction is not yet implemented.
+A keyless origin that is a `url.insteadOf` shorthand for the same repository is
+also unresolved identity; failure to normalize it is not proof of a non-match.
+The current proposed-root exception can omit it as well. Bounded Git config
+origin names identify metadata dependencies; no partial Git configuration parser
+interprets remotes.
 Source and Git reads run outside admission locks. Under-lock scope digests and
 permission generations reject configuration changes.
 
@@ -1290,8 +1488,10 @@ session into one included checkout of its own repository, configured or
 proposed, when it actually ran in a second, unconfigured clone known only to
 the app with the gap, instead of leaving it unresolved. It is never an
 excluded root, a root inside one, or a root no witness could propose; it is
-the same residual as a keyless clone and a
-`url.insteadOf` origin. The plan reports it: `recovery_evidence_gaps` in JSON
+also a possible outcome of the current keyless-clone exception described above.
+The completion target closes that known local-origin ownership gap; it does not
+claim a census of clones hidden by another app's missing evidence. The plan
+reports per-app gaps: `recovery_evidence_gaps` in JSON
 (each `app`, `cause`, and the `blocked` and `recovered_without` session counts
 by app) and a "Project recovery evidence" note in text. An app's own gaps
 still block its sessions as defense in depth. Witnesses from an incomplete
@@ -1373,8 +1573,9 @@ configuration only:
   the same repository makes the recovery ambiguous; its renewal accepts
   appends. Found after planning (confirmation or an admission slice), the new
   root's key is read and every recorded-key recovery of that key fails; a
-  keyless root (as a proposed root above) or a repository without a key
-  matches none.
+  keyless root (as a proposed root above) or a repository without a key is
+  currently treated as matching none. The target requires resolved ownership
+  evidence or reviewed assignment for a local-only root here too.
 - An added transcript whose folder cannot be told (no folder, a header that is
   not understood or whose IDs disagree, a Cursor project folder no planned chat
   had, a root whose key cannot be read), and a store that can no longer be

@@ -49,6 +49,40 @@ a child reset its counters. Independent own per-call usage remains useful.
 
 ## Shared native catalog
 
+### Foreground backfill work target
+
+**Approved target, 2026-10-17; not yet implemented.** The
+[large-backfill completion contract](backfill.md#large-backfill-completion-contract)
+requires an explicit foreground lookup policy, separate from background pass
+scheduling. The current five-second allowance and 256 header-probe window must
+not be a whole-import deadline or an unrecoverable source classification.
+Foreground preparation, inspection and admission need renewed bounded work
+scopes and continuations; a supported individual history needing over five
+seconds of cumulative lookup work must also be able to complete. Merely giving
+each whole source another five seconds is insufficient if it restarts forever.
+
+Preserve the charged shared ledger, per-operation cancellation, current-row
+revalidation, chain-local ownership, source confinement and semantic per-history
+limits. A scope boundary must not retain a stale selection token as authority,
+lose active native leases, reset outstanding charges, or substitute an incomplete
+inventory for a uniqueness proof. Facts may be reused only under their actual
+observation/selection checks. Cache eviction or a scheduler allowance says
+nothing about whether a source is complete or supported.
+
+Expose allowance exhaustion distinctly from history-depth, raw-byte, record,
+actual capacity, missing-dependency and own-task refusals. Foreground consumers
+continue pending work fairly and detect no progress; background collection keeps
+its independent responsiveness policy. The chain below remains the native
+history proof: this target does not reintroduce a global absence/coverage epoch
+before capture. Project witness completeness remains the separate backfill
+attribution obligation.
+
+Delivery, compatibility review and actual qualification are owned by the
+[completion plan](../proposals/large-backfill-completion.md). No native schema,
+format fence or per-source limit is changed by this specification edit.
+
+### Current lookup and lineage
+
 `discovery.CodexRolloutLookup` owns the pass's native current projection,
 observed rollout facts, rollout directory listings and optional full metadata
 epoch. Ordinary collection and generation preview use the lookup directly.
