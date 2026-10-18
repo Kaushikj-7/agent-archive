@@ -278,13 +278,15 @@ func (r *RecoveryResolver) recoverMapped(ctx context.Context, key, target string
 		if !id.Known {
 			return proof, identityFailure(id)
 		}
-		if key != "" && id.Key != key {
-			return proof, RecoveryMappingConflict
-		}
 		if r.mappedIdentities == nil {
 			r.mappedIdentities = map[string]RepositoryIdentity{}
 		}
+		// Freeze usable target facts independently of this source's key.
+		// A mismatch must not spend another lookup for every review group.
 		r.mappedIdentities[p.Root] = id
+		if key != "" && id.Key != key {
+			return proof, RecoveryMappingConflict
+		}
 		proof.Root = p.Root
 		proof.Method = "explicit_mapping"
 		proof.ValidationMethod = "dependency_stamps"
@@ -294,6 +296,22 @@ func (r *RecoveryResolver) recoverMapped(ctx context.Context, key, target string
 		return proof, ""
 	}
 	return proof, RecoveryMappingConflict
+}
+
+// ReviewMapping classifies an exact assignment using the ordinary recovery
+// policy and the same bounded target observations. It returns no admission
+// proof and neither changes mappings nor establishes automatic uniqueness.
+func (r *RecoveryResolver) ReviewMapping(ctx context.Context, cwd, key, target string) RecoveryOutcome {
+	review := *r
+	review.Mappings = map[string]string{filepath.Clean(cwd): target}
+	review.results = nil
+	proof, outcome := review.Recover(ctx, cwd, key)
+	r.Operations = review.Operations
+	r.mappedIdentities = review.mappedIdentities
+	if outcome == "" && proof.Method != "explicit_mapping" {
+		return RecoveryMappingConflict
+	}
+	return outcome
 }
 
 func (r *RecoveryResolver) prepareInventory(ctx context.Context) RecoveryOutcome {

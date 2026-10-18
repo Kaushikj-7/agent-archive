@@ -127,6 +127,7 @@ var promptSites = classifiedCalls{
 	"setup_flags.go":      {"newPrompter": 1, "prompter{}": 1}, // setup --yes: only reads a secret, guarded in readR2Secret; the literal has no input, it only prints
 	"uninstall.go":        {"newPrompter": 1},                  // runUninstallCommand refuses unless env.interactive(stdin) or --yes
 	"backfill.go":         {"newPrompter": 1},                  // runBackfillCommand refuses unless env.interactive(stdin) or --yes
+	"backfill_review.go":  {"newPrompter": 1},                  // private review requires Env.interactive on both input and output; no noninteractive prompt/export route
 	"backfill_undo.go":    {"newPrompter": 1},                  // runBackfillUndo refuses unless env.interactive(stdin) or --yes
 	"list_browse.go":      {"newPrompter": 1},                  // selectArchivedSession: reached only after browseInteractive
 	"inspect.go":          {"newPrompter": 2},                  // list and show browsers: reached only after browseInteractive

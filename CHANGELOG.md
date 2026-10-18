@@ -22,6 +22,22 @@ follow [Semantic Versioning](https://semver.org/).
   Metadata preserves distinct installed declaration identities even when skills
   share a name and content hash. Exact runtime identity and public capture remain gated.
 
+- `backfill review-projects --output FILE` offers a private terminal review of
+  observed missing original cwd groups, repository evidence, compatible exact
+  configured assignments and import-only historical destinations. Export requires
+  explicit confirmation, creates a new 0600 schema-1 mapping file and never
+  overwrites an existing file. Coverage is bounded and incomplete; counts describe
+  project recovery candidates, and native history/source refusals still apply.
+  Review/export changes no configuration, capture policy, stages or archive.
+  One decision covers all observed keys at an exact cwd; assignments also apply
+  to unlisted identities there under ordinary per-source import checks. Private
+  review safely quotes paths/labels and escapes terminal-active JSON characters.
+  Database-only Cursor chats participate in the same bounded review. Usable
+  configured-target observations are shared across conflicting recorded keys,
+  preserving the lookup allowance for later compatible groups.
+  Database-only chats use historical destinations; mixed-cwd configured choices
+  disclose the database-only candidates they leave unresolved.
+
 - Backfill planning and dry runs continue supported Codex preparation and
   inspection across bounded lookup scopes, including histories needing more
   than five seconds of total lookup work. Native I/O timeouts and inventory
