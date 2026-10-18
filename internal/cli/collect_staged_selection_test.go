@@ -86,14 +86,14 @@ func newStagedSyncFixture(t *testing.T) stagedSyncFixture {
 	return stagedSyncFixture{home: home, env: env, store: store, remote: remote, reg: reg, bundle: bundle}
 }
 
-func (f stagedSyncFixture) sync(t *testing.T) (int, string, string) {
+func (f *stagedSyncFixture) sync(t *testing.T) (int, string, string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
 	code := Run([]string{"sync"}, nil, &out, &errOut, f.env)
 	return code, out.String(), errOut.String()
 }
 
-func (f stagedSyncFixture) assertPublished(t *testing.T) {
+func (f *stagedSyncFixture) assertPublished(t *testing.T) {
 	t.Helper()
 	key := "sessions/claude/" + f.reg.ArchiveSessionID + "/metadata.json"
 	metadata, err := reader.ReadMetadata(t.Context(), f.remote, key)
