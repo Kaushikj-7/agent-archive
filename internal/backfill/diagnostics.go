@@ -1,9 +1,11 @@
 package backfill
 
 import (
+	"errors"
 	"io"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"sort"
 
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
@@ -63,6 +65,10 @@ const (
 	DetailSourceChanged               DiagnosticDetail = "source_changed"
 	DetailSourceInspectionUnavailable DiagnosticDetail = "source_inspection_unavailable"
 	DetailSourceSizeLimit             DiagnosticDetail = "source_size_limit"
+	// DetailSourceRecordLimit identifies a record exceeding the source reader's bound.
+	DetailSourceRecordLimit DiagnosticDetail = "source_record_limit"
+	// DetailLookupAllowanceSpent identifies unfinished scheduling work, not a source limit.
+	DetailLookupAllowanceSpent DiagnosticDetail = DiagnosticDetail(agentapi.CauseLookupAllowanceSpent)
 )
 
 // Native refusal diagnostic details retain the public JSON codes.
@@ -166,6 +172,7 @@ var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
 	DetailOwnTaskInvalid:                                   {ActionAwaitSupport, "The first own task lacks valid native identity, execution or timestamp evidence."},
 	DetailOwnTaskBeforeCreation:                            {ActionAwaitSupport, "The first own task predates native session creation."},
 	DetailNativeResourceLimit:                              {ActionAwaitSupport, "The source reader reached a resource limit without a more specific reason."},
+	DetailLookupAllowanceSpent:                             {ActionRetry, "This run's allowance for finding Codex rollouts (time or header reads) ran out; these sessions remain unchecked. Retry backfill; this does not establish a source size or format limit."},
 	DetailNativeSourceUnavailable:                          {ActionReviewSource, "The source reader could not obtain required evidence; no more specific reason was supplied."},
 	DetailAggregateHistoryByteLimit:                        {ActionAwaitSupport, "Aggregate history byte limit."},
 	DetailCurrentRolloutEvidenceUnavailable:                {ActionReviewSource, "Current rollout evidence unavailable."},
@@ -213,6 +220,7 @@ var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
 	DetailSourceChanged:               {ActionRetry, "The source changed during planning; retry after it settles."},
 	DetailSourceInspectionUnavailable: {ActionReviewSource, "The source could not be safely inspected or filtered; check source access and format support."},
 	DetailSourceSizeLimit:             {ActionAwaitSupport, "The source exceeds the supported size limit."},
+	DetailSourceRecordLimit:           {ActionAwaitSupport, "A source record exceeds the supported size limit."},
 	// Recovery gap causes replace project_inventory_unavailable when other
 	// sessions' evidence, not configured repository evidence, is what could
 	// not be observed (see recoveryGaps).
@@ -410,6 +418,12 @@ func sourceRefusalDetail(err error) DiagnosticDetail {
 		if detail := specificRefusalDetail(wrapped.Unwrap()); detail != "" {
 			return detail
 		}
+	}
+	if errors.Is(err, agentapi.ErrRawLimit) {
+		return DetailSourceSizeLimit
+	}
+	if errors.Is(err, archive.ErrRecordTooLarge) {
+		return DetailSourceRecordLimit
 	}
 	if agentapi.HasFailure(err, agentapi.Limit) {
 		return DetailNativeResourceLimit

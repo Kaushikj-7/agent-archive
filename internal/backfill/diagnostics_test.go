@@ -233,6 +233,12 @@ func TestNativeRefusalDetailsPreserveJoinsPrivacyAndPrecedence(t *testing.T) {
 		err  error
 		want DiagnosticDetail
 	}{
+		{"lookup allowance", agentapi.WithCause(agentapi.Wrap(agentapi.Limit, secret), agentapi.CauseLookupAllowanceSpent), DetailLookupAllowanceSpent},
+		{"wrapped joined lookup allowance", fmt.Errorf("private path: %w", errors.Join(agentapi.WithCause(agentapi.Wrap(agentapi.Limit, secret), agentapi.CauseLookupAllowanceSpent), archive.ErrRelatedHistory)), DetailLookupAllowanceSpent},
+		{"raw source limit", agentapi.RawLimit(65, 64, nil), DetailSourceSizeLimit},
+		{"source record limit", agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge), DetailSourceRecordLimit},
+		{"history record limit", agentapi.WithCause(agentapi.Wrap(agentapi.Limit, secret), agentapi.CauseHistoryRecordLimit), DetailHistoryRecordLimit},
+		{"history graph limit", agentapi.WithCause(agentapi.Wrap(agentapi.Limit, secret), agentapi.CauseRolloutHistoryDepthLimit), DetailRolloutHistoryDepthLimit},
 		{"history base", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseHistoryBaseUnavailable), DetailHistoryBaseUnavailable},
 		{"rollout tip", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseRolloutTipAmbiguous), DetailRolloutTipAmbiguous},
 		{"dependency", errors.Join(agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseHistoryDependencyUnavailable), archive.ErrRelatedHistory), DetailHistoryDependencyUnavailable},
