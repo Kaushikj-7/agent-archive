@@ -21,6 +21,14 @@ platform or signed release acceptance. Step 6a now implements historical-only
 destinations and bulk mappings. Fragment import and remaining scale/release
 gates below remain separate work.
 
+The approved 2026-10-17 [large-backfill completion plan](large-backfill-completion.md)
+adds a focused delivery track for consistent configured/local-only repository
+evidence, renewable foreground lookup work, admission/publication continuation,
+paged inventories and reviewed recovery assistance. Five seconds remains a
+background scheduling allowance; it must not cap an entire foreground import.
+That track reuses the foundations here and does not claim that fragments or
+combined acceptance are already complete.
+
 ## Current implementation and remaining scope
 
 Diagnostics (#345), portable Git recovery (#347), shared rollout lookup (#348),

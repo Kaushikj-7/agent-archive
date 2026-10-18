@@ -9,6 +9,11 @@ probed on a working Mac for their layout and field names only, never their
 content. Phase 1 imports transcript files. Phase 2 adds Cursor chats that exist
 only in Cursor's SQLite database.
 
+The [large-backfill completion contract](#large-backfill-completion-contract)
+below is an approved target recorded 2026-10-17, not a claim that the current
+binary implements it. Its delivery and qualification are tracked in
+[Large backfill completion](../proposals/large-backfill-completion.md).
+
 ## Problem
 
 The archive captures only sessions that start after their project is activated
@@ -45,6 +50,161 @@ changes app settings.
    orphans objects.
 6. Readers can tell an imported session from a captured one, and can see what
    evidence the import lacks.
+7. Every supported, authorized, recoverable session can finish importing,
+   regardless of how many work slices the inventory needs. Scheduler allowances,
+   disposable-cache limits and unrelated known nonportable origins must not
+   permanently remove eligible sessions from a foreground backfill.
+
+## Large-backfill completion contract
+
+**Approved target; not yet implemented.** This section governs the planned
+changes to the current resource and project-recovery rules below. Implementation
+must identify its exact supported limits and remaining gaps; this target does not
+enable unshipped CLI options, fragments or writer formats.
+
+### Completion and evidence
+
+Maximize recovery through explicit review and supported evidence, while keeping
+privacy filtering, native identity, own-task attribution, exclusions, destination
+permission, source validation and existing archive ownership intact. Missing Git
+metadata alone must have a reviewed historical-project route. Missing or
+unrecognized own-task evidence must have a specific explanation and a path to
+compatibility work or explicit supported fragments; it must not silently become
+invented native evidence. Empty children/forks that contain inherited context but
+no independent work are accounted for separately from unsupported own-work shapes.
+
+The unit of success is a logical session and its selected source set, not a
+physical file or a created registration. Distinguish candidate files, duplicate
+observations, logical sessions, dependencies and revisions. Track planned,
+durably staged, registered, publication-pending and remotely verified counts
+separately. A successful command cannot imply that all candidates were imported
+when work remains; provide a coverage verdict and resumable state or an action
+for each unresolved class. Preserve current CLI/JSON compatibility through the
+normal version rules when new fields or exit behavior are introduced.
+
+One primary skip reason may hide another problem. Recovery must reconcile the
+remaining work after each repair, without adding overlapping diagnostic counts
+as if they were independently recoverable sessions. Keep already archived owners
+and separately journal any supported enrichment. Intentional removals and
+home/temporary restrictions retain their explicit review choices.
+
+### Foreground work and continuation
+
+The existing five-second discovery/lookup allowance protects background
+responsiveness. It is not a whole-foreground-command deadline, a cumulative
+per-session eligibility rule, or evidence that a native source is too large.
+Foreground planning, source inspection, staging/admission and publication must
+advance through renewable bounded work scopes until completion, cancellation or
+a specific evidence/resource failure. A source requiring more than one scope
+must retain validated progress or use a foreground operation policy that lets it
+finish; restarting the same prefix with five seconds forever is not progress.
+
+Use an explicit foreground policy at the existing lookup/consumer boundary.
+Keep background behavior, hook latency, per-I/O cancellation/timeouts and
+per-record/source/history safety limits independent. An optional user-specified
+foreground deadline would cancel a resumable job; no such flag is currently
+promised. Do not require users to tune an internal five-second constant.
+
+Preparation cannot consume inspection's entire allowance, nor inspection the
+admission or publication allowance. Renew only at safe ownership boundaries;
+do not forgive outstanding memory/disk charges, lose an active snapshot's
+selection token, or retain authority from a previous observation without
+revalidation. A changed current locator, source, project scope or destination
+invalidates the affected work and its proof.
+
+Every renewal must either advance a cursor/completed candidate, produce a
+specific changed-source/evidence outcome, or end with a bounded no-progress
+reason. Repeatedly expensive or changing sessions must not starve unrelated
+sessions. Cancellation must release descriptors, workers and private scratch,
+leave durable admitted evidence recoverable, and retain exact batch ownership.
+On restart, renew private observations before using them; checkpoints are
+continuation hints, never admission authority or permission to capture new work.
+
+### Repository evidence and recovery assistance
+
+Represent these cases separately: a usable normalized repository key; a
+successfully observed checkout with no portable origin key; conflicting origin
+keys; and evidence that could not be observed completely. A local-only origin
+must be observed and renewed as such, not inferred from a folder name or a failed
+Git call. Read every origin value and retain the current multi-origin conflict
+rules. A configured root and an otherwise identical proposed root must have the
+same evidentiary classification; importing a live session must not turn its
+known nonportable checkout into an inventory-wide unknown on the next backfill.
+
+A completely observed nonportable checkout is non-matching evidence for a
+portable recorded key. Renew its checkout top level, complete origin
+classification and executable/config observation scope during admission. Gaining
+a portable key, becoming unreadable, moving or conflicting invalidates the proof.
+Known nonportable does not authorize imports from that root, override an original
+cwd or ancestor exclusion, resolve a missing subtree, or turn an inaccessible
+repository into a harmless non-match. Genuine unknown/conflicting evidence still
+prevents an automatic uniqueness claim when it could affect that claim.
+
+Bounded following of local clone origins may later provide more attribution
+evidence, with cycle/change/access checks and no network. It is not a prerequisite
+for the initial fix and must not silently canonicalize distinct clones or invent
+permission. A clone shown to share a portable key may make attribution ambiguous;
+a reviewed exact mapping remains the route to selecting the intended project.
+
+Build recovery assistance on the existing exact mapping-file and historical
+project contracts. Offer grouped suggestions by original cwd and recorded
+identity, show evidence/conflicts and affected counts, and require review before
+applying assignments. Suggestions are private metadata, not capture authority.
+Unavailable identity can use an explicitly assigned historical project or a
+compatible exact configured mapping; neither route can override exclusions or
+contradict usable identity. Preserve mappings' invocation scope and canonical
+batch-resume identity; these assignments do not themselves authorize future
+capture. Ordinary explicitly reviewed live-project additions retain their
+documented capture behavior.
+
+### Inventories larger than caches and staging capacity
+
+Bound memory and live descriptors, not the number of sessions that a completed
+job can eventually visit. Page or privately spool content-free inventory and
+decision state when it exceeds a cache/window. Observe all relevant project
+witnesses before asserting unique automatic ownership, including witnesses
+outside output date/project/app filters. A partial scan or a full cache never
+proves absence; renew the complete relevant evidence before admission. This
+project-evidence obligation does not add a native-home-wide absence proof to
+Codex's chain-local history selection.
+
+Distinguish renewable work/cache bounds from semantic per-source limits and true
+physical disk exhaustion. Fixed catalog, witness, mapping and directory windows
+need paging/streaming or a precise independently reviewable partition route;
+merely raising their constants does not meet completion. Mapping partitions must
+retain cross-partition clone/exclusion evidence and exact resume/undo ownership.
+Do not silently truncate a reviewed assignment list or create a partial uniqueness
+proof to fit the existing 1,024-root or disposable-cache windows.
+
+Keep the shared durable staging quota. A foreground import stages a bounded
+group, publishes and verifies eligible retained evidence, safely releases only
+settled owned staging, and continues. A slow/unavailable provider reports pending
+work and a continuation action without discarding admitted evidence. Dry-run and
+background modes must not secretly upload to make capacity available. Dry-run
+may use private disposable content-free scratch/cache, but creates no admission,
+retained transcript stage, configuration change or remote object.
+
+For a genuinely over-limit record, history graph or individual source, report the
+actual limit and preserve the remaining eligible sessions. Follow the separate
+segmented-history and fragment contracts for supported additional recovery;
+lifting scheduler limits must not bypass those format and privacy gates.
+
+### Qualification required before completion claims
+
+Use actual CLI dry-run and confirmed import/publication entry points on isolated
+synthetic fixtures. Cover 512, 5,000 and 50,000 candidates; more roots than one
+witness window; cold/warm caches; work crossing multiple five-second scopes;
+one supported history whose lookup work itself exceeds five seconds; unchanged
+and moving native indexes; cancellation/restart; mapping review; excluded
+ancestors; source deletion after durable admission; staging saturation and
+disposable-provider read-back. Record counts, work scopes, retries, I/O, wall
+time, peak memory, peak charged bytes, peak disk and descriptor cleanup. Short
+representatives complement, but cannot stand in for, full scale acceptance.
+
+Prototype overlays and focused dry runs establish only the behavior actually
+exercised. Completion also needs current-head independent review, required CI,
+supported-platform acceptance and a separately authorized operator import whose
+remaining candidates are reconciled. The implementation plan owns that evidence.
 
 **Non-goals:**
 - Re-importing sessions this machine already registered (see
@@ -565,6 +725,10 @@ matching rule wins.
    evidence is renewed. A proposed root that Git could not observe, whose
    origin read failed, or whose observation exhausted its budget, still blocks, and every configured root
    keeps the strict rule ([Recorded project recovery](#recorded-project-recovery)).
+   This is the current implementation. The approved
+   [completion target](#repository-evidence-and-recovery-assistance) replaces the
+   proposed/configured distinction for completely observed nonportable evidence;
+   unreadable/conflicting evidence remains uncertain.
    Exact mappings continue to require configured targets.
    A Cursor database chat with no folder evidence at all (no folder, no
    workspace reference, no message folder; for example a subagent composer)
@@ -1253,7 +1417,11 @@ It has no dependency stamps, so every admission slice observes it again
 (sharing the coalesced semantic sweep) and requires the same keyless top level
 and observer scope; gaining a key or becoming unobservable invalidates the proof.
 Unobserved or budget-exhausted proposed roots, and all configured roots, remain
-uncertainty. A keyless origin that is a `url.insteadOf` shorthand for the same
+uncertainty in the current implementation. The approved
+[completion target](#repository-evidence-and-recovery-assistance) requires the
+same classification and renewed proof for an observed nonportable root before
+and after it becomes configured. This extension is not yet implemented.
+A keyless origin that is a `url.insteadOf` shorthand for the same
 repository is the accepted residual: it is never normalized, so it could not
 match the recorded key even if configured. Bounded Git config origin names identify
 metadata dependencies; no partial Git configuration parser interprets remotes.

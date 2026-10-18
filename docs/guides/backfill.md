@@ -259,6 +259,25 @@ blanket refusal of supported complete histories. Complete native children, forks
 and selected physical revisions use the validated shared history reader and
 durable staging; missing or ambiguous dependencies remain unresolved.
 Summaries contain no transcript paths, native IDs, remote URLs, or content.
+
+Current builds can also leave otherwise supported Codex history pending when
+their shared native lookup allowance is exhausted. There is no backfill flag
+that raises that allowance. The generic resource-limit detail alone does not
+prove that a transcript is too large. Repeating a command or narrowing its
+date/project output filter does not guarantee completion, because native proof
+preparation can still inspect the wider inventory.
+
+A configured local clone whose origin is a filesystem path can block automatic
+deleted-worktree recovery even when other repositories are accessible. Reviewed
+exact mappings or a mapping file can resolve supported individual assignments
+without deleting the clone, changing its origin or removing its project rules.
+Mappings solve attribution; native-history evidence still needs to pass its own
+checks. Excluded projects remain part of automatic recovery evidence.
+
+The [large-backfill completion plan](../../dev/proposals/large-backfill-completion.md)
+addresses these limitations. Its renewable foreground work and recovery
+assistance are planned behavior, not additional options available in this build.
+
 For Codex history refusals, `diagnostics` preserves fixed source reason codes
 when available: a missing or duplicated rollout a thread continues from, no
 single current rollout, missing dependencies or ownership boundaries, missing or invalid first-own-task evidence, and specific resource
