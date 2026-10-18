@@ -192,11 +192,6 @@ func runLocalShow(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 	if o.full && o.json {
 		return localReadFailure(stderr, "show", errors.New("--full is for the readable transcript"))
 	}
-	canonical, ok := harnessFlagWithCatalog(catalogFor(env), o.harness)
-	if !ok {
-		return localReadFailure(stderr, "show", errors.New(harnessFlagError(o.harness)))
-	}
-	o.harness = canonical
 	ctx, _, stop := nativeCommandContext(env)
 	defer stop()
 	result, err := discoverLocalRead(ctx, env, o)
