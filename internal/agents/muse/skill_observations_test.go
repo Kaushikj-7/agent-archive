@@ -210,13 +210,15 @@ func TestNativeSkillReadRetainedRefusals(t *testing.T) {
 
 func TestNativeSkillReadDoesNotInventEvidence(t *testing.T) {
 	t.Parallel()
-	failedText := changeBroadRead(t, func(rows []map[string]any) []map[string]any {
-		result := readRow(rows, "runtime.session", "tool_result_batch_committed")
-		items := object(object(result["payload"])["event"])["results"].([]any)
+	failedText := mutateToolNative(t, ownTools(t), 1, func(result map[string]any) {
+		event := object(object(result["payload"])["event"])
+		items, ok := event["results"].([]any)
+		if str(result["payload_type"]) != "runtime.session" || str(event["kind"]) != "tool_result_batch_committed" || !ok || len(items) != 2 {
+			t.Fatal("synthetic committed result fixture changed")
+		}
 		for _, item := range items {
 			object(item)["text"] = "Synthetic failed read result text, not typed native status."
 		}
-		return rows
 	})
 	for name, raw := range map[string][]byte{"conversation": completionNative(t, 0, 0, 0), "broad-omission": changeBroadRead(t, nil), "file-read": committedRead(t), "calls-results": ownTools(t), "failed-result-text": failedText} {
 		t.Run(name, func(t *testing.T) {
