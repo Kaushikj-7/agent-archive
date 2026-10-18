@@ -172,7 +172,7 @@ func TestNativeRawJournalLegacySyntaxCompatibility(t *testing.T) {
 	}
 	t.Run("valid-unsupported", func(t *testing.T) {
 		t.Parallel()
-		raw := []byte(`{"schema_version":999,"changes":[],"files_only":false}`)
+		raw := []byte(`{"schema_version":999,"changes":{"files":[]},"jobs":[],"files_only":false}`)
 		var direct Journal
 		original := direct.UnmarshalJSON(raw)
 		if original == nil || errors.Is(original, ErrUnsupportedRecoveryAuthority) || state.IsUndecodable(original) {
