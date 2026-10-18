@@ -39,6 +39,9 @@ func TestNativeImportBatchOrdinaryWireUnchanged(t *testing.T) {
 		t.Fatalf("ordinary wire changed: %s", raw)
 	}
 	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := SaveBatch(home, b); err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +61,9 @@ func TestNativeImportBatchOrdinaryWireUnchanged(t *testing.T) {
 func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	b := confirmedNativeBatchFixture(t)
 	if err := SaveBatch(home, b); !errors.Is(err, archive.ErrUnsupportedNativeImport) {
 		t.Fatal("generic save minted confirmation", err)
@@ -92,6 +98,9 @@ func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
+			if err := os.Chmod(home, 0700); err != nil {
+				t.Fatal(err)
+			}
 			if err := local.Write(batchPath(home, existing.ID), existing); err != nil {
 				t.Fatal(err)
 			}
@@ -141,6 +150,9 @@ func TestNativeImportBatchUnreadableAuthorityPreventsFallback(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
+			if err := os.Chmod(home, 0700); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.MkdirAll(filepath.Join(home, "imports"), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -179,6 +191,9 @@ func TestNativeImportBatchOrdinarySelectorLikeStringsRemainOrdinary(t *testing.T
 		t.Fatal("ordinary value changed")
 	}
 	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := SaveBatch(home, b); err != nil {
 		t.Fatal(err)
 	}
