@@ -52,6 +52,9 @@ type Plan struct {
 	// UnreadableFolders counts the folders in the apps' stores that could not
 	// be listed; the sessions in them were not found.
 	UnreadableFolders int
+	// NativeLookupIncomplete identifies a stopped native preparation inventory;
+	// independently verified candidates retain their own admission decisions.
+	NativeLookupIncomplete *Diagnostic
 	// UnreadableStores are the apps, matching the filters, whose session
 	// store could not be listed at all: none of their sessions were found
 	// (for Codex, when codexArchivedOnly is set, only its archived ones).

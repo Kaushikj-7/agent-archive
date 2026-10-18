@@ -260,12 +260,12 @@ and selected physical revisions use the validated shared history reader and
 durable staging; missing or ambiguous dependencies remain unresolved.
 Summaries contain no transcript paths, native IDs, remote URLs, or content.
 
-Current builds can also leave otherwise supported Codex history pending when
-their shared native lookup allowance is exhausted. There is no backfill flag
-that raises that allowance. The generic resource-limit detail alone does not
-prove that a transcript is too large. Repeating a command or narrowing its
-date/project output filter does not guarantee completion, because native proof
-preparation can still inspect the wider inventory.
+Foreground planning and dry runs continue native preparation and inspection
+across bounded lookup scopes, including a supported history requiring several
+scopes. No timeout flag is needed. Each native I/O operation remains bounded;
+source byte, record, graph and shared resource limits still apply. A dry-run
+plan does not establish confirmed staging, admission or publication completion.
+Those later phases retain their existing work allowances.
 
 Local Git origins use bounded, read-only chain resolution for both proposed and
 configured projects. Absolute/relative paths and local `file://` URLs (empty or
@@ -297,8 +297,9 @@ restart enumeration or prevent later roots from being observed. Restored access
 can require several bounded discovery passes before automatic recovery completes.
 
 The [large-backfill completion plan](../../dev/proposals/large-backfill-completion.md)
-tracks remaining foreground work renewal, larger inventories and recovery
-assistance. Those future options are not available in this build. Existing
+tracks remaining confirmed-import continuation, larger inventories and recovery
+assistance. Planning continuation and bounded local-origin evidence are available;
+broader completion and recovery assistance remain planned behavior. Existing
 supported mappings and historical destinations remain available.
 
 For Codex history refusals, `diagnostics` preserves fixed source reason codes
@@ -311,9 +312,18 @@ printed. These details explain the existing skip and do not change eligibility.
 `lookup_allowance_spent` with action `retry` means this run used its time or
 header-read allowance for finding Codex rollouts. Affected sessions remain
 unchecked under `related_history_pending`; this is not evidence of an oversized
-or unsupported source. Retrying starts a new allowance, but this build does not
-yet continue unfinished foreground lookup work automatically, so a large run may
-stop at the same point. Actual source byte and record limits remain
+or unsupported source. Foreground preparation and inspection renew this
+scheduling allowance automatically. Confirmed import and background collection
+retain separate allowances. `lookup_io_timeout` identifies an actual failed
+bounded I/O operation; check source access before retrying. `lookup_no_progress`
+means inventory could not advance its directory cursor or finish another source;
+preparation stops once and reports an incomplete-inventory warning. JSON includes
+the optional `native_lookup_incomplete` diagnostic with this detail and `retry`
+action. Independently verified sessions remain eligible; a session still missing
+required native facts keeps its own refusal. No candidate or unreadable-folder
+count is invented for unknown inventory. Repair source access before retrying.
+Failed I/O is not retried automatically.
+Actual source byte and record limits remain
 `source_size_limit` and `source_record_limit`; history graph, aggregate byte and
 record limits keep their specific reasons. Missing native evidence remains a
 separate refusal.
@@ -322,7 +332,7 @@ For a content-free planning baseline, use `AGENT_ARCHIVE_TRACE=1` with a dry run
 The timing tree includes native preparation separately from inventory/recovery
 and inspection. Fixed aggregate counters report `codex_lookup_scopes` (initial
 and explicitly renewed allowances), `backfill_native_preparation_attempts`
-(requested thread lookups), `backfill_native_inspection_attempts` (child or
+(deduplicated requested thread lookups), `backfill_native_inspection_attempts` (child or
 related-history inspections), and `backfill_lookup_unfinished_candidates`
 (final candidates left pending specifically by a spent allowance). These count
 attempts and final decisions, not complete histories or published sessions;

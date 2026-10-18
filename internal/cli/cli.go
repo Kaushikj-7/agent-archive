@@ -32,6 +32,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/gitremote"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/nativesessions"
@@ -156,6 +157,10 @@ type Env struct {
 	observeBackfillPlan func(backfill.Plan)
 	// reviewBackfillProjects enables private observations only for explicit review.
 	reviewBackfillProjects bool
+	// nativeLookupNow injects the foreground scheduling clock in tests.
+	nativeLookupNow func() time.Time
+	// observeBackfillLookup observes its actual owner without replacing scheduling.
+	observeBackfillLookup func(*discovery.CodexRolloutLookup)
 	// backfillHoldSteps, when positive (only in tests), caps the steps
 	// registration takes per hold of hooks.lock, to force several holds.
 	backfillHoldSteps int

@@ -17,6 +17,15 @@ follow [Semantic Versioning](https://semver.org/).
   to unlisted identities there under ordinary per-source import checks. Private
   review safely quotes paths/labels and escapes terminal-active JSON characters.
 
+- Backfill planning and dry runs continue supported Codex preparation and
+  inspection across bounded lookup scopes, including histories needing more
+  than five seconds of total lookup work. Native I/O timeouts and inventory
+  no-progress results stay specific. Incomplete inventory is reported while
+  independently verified sessions remain eligible. Shared native resource
+  exhaustion remains a failure. Source safety limits and
+  background work are unchanged; confirmed staging and publication keep their
+  existing bounds.
+
 - Deleted-worktree recovery resolves local Git origin chains consistently before
   and after project configuration. Every origin and traversed dependency must
   agree and remain current; physical clones remain distinct competitors. Cyclic,

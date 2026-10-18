@@ -376,8 +376,24 @@ action under `related_history_pending`. It describes unfinished lookup work,
 not a source resource or format refusal. Source raw-byte and individual-record
 refusals retain `source_size_limit` and `source_record_limit`; named graph,
 aggregate-history and evidence refusals retain their existing details. Skip
-precedence and admission decisions are unchanged. This diagnostic does not
-implement the renewable foreground work target below.
+precedence and admission decisions are unchanged. Foreground planning now
+selects renewable native preparation and inspection; confirmed staging,
+admission and publication retain their existing policy. A bounded failed native
+I/O unit keeps `lookup_io_timeout` with retry advice, independently of scheduling
+allowance. Read-only inventory commits each bounded directory batch before
+yielding. Stalled or cycling opaque directory cookies return
+`lookup_no_progress`; a slice containing only unavailable directories also stops.
+A changing or unavailable prefix cannot rewind the same work indefinitely.
+At the preparation boundary only a pure `lookup_no_progress` stops inventory
+once without aborting independently provable candidates. The successful plan's
+optional `native_lookup_incomplete` object is a closed diagnostic with
+`detail: lookup_no_progress` and `action: retry`, also rendered as a fixed human
+warning even without skipped candidates. It fabricates no candidate or
+unreadable-folder count. Individual sources still prove current selection,
+lineage, own-task and confinement evidence or keep their own refusal. Joined
+cleanup, capacity, I/O and caller cancellation/deadline failures remain fatal.
+The same lookup owner and charged facts survive successful scheduling renewal;
+source snapshots still close and perform their final current-selection checks.
 
 The optional existing trace records native preparation as its own fixed phase.
 Its constant-space aggregates count initial/renewed Codex lookup allowances,

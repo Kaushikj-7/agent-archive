@@ -819,6 +819,9 @@ publication. History reports admitted and remotely verified uploads separately.
   --yes                 Skip the confirmation (required without a terminal)
   --background          Stage and register sessions, then exit; the background
                         collector verifies and uploads them
+Planning renews bounded native lookup work; source safety limits still apply.
+Incomplete native inventory is reported; verified sessions remain eligible.
+A dry-run plan does not establish completed staging or publication.
 See agent-archive help backfill history, agent-archive help backfill projects,
 agent-archive help backfill review-projects, and
 agent-archive help backfill undo.
