@@ -678,7 +678,7 @@ func requestFor(store *state.Store, id string) (state.Request, bool, error) {
 // ends.
 func TestBackfillInterruptedUpload(t *testing.T) {
 	t.Parallel()
-	f, _ := newImportFixture(t)
+	f, bucket := newImportFixture(t)
 	signals := make(chan os.Signal, 1)
 	var mu sync.Mutex
 	var events []string
@@ -721,19 +721,89 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 	if !strings.Contains(out.String(), notice) {
 		t.Errorf("no notice of the stop:\n%s", out.String())
 	}
-	if code != 0 || !strings.Contains(out.String(), "Stopped. The remaining 12 sessions will be uploaded by the background collector.") || !strings.Contains(out.String(), "list --imported") {
+	if code != 0 || !strings.Contains(out.String(), "Stopped. The remaining 4 sessions will be uploaded by the background collector.") || !strings.Contains(out.String(), "list --imported") {
 		t.Fatalf("code %d, %s\n%s", code, errOut.String(), out.String())
 	}
-	parents, _ := importRegistrations(t, f.data, firstImport)
+	parents, children := importRegistrations(t, f.data, firstImport)
 	store := state.OpenReadOnly(f.data)
+	verified, pending := 0, 0
+	parentIDs := map[string]bool{}
 	for _, reg := range parents {
-		if _, found, _ := requestFor(store, reg.ArchiveSessionID); !found {
-			t.Errorf("%s has no pending request", reg.ArchiveSessionID)
+		parentIDs[reg.ArchiveSessionID] = true
+		_, requested, err := requestFor(store, reg.ArchiveSessionID)
+		must(t, err)
+		owed, err := store.Outstanding(reg, requested)
+		must(t, err)
+		if !owed.Published {
+			pending++
+			if !requested || !owed.Pending() || !owed.StagedImport {
+				t.Errorf("unfinished owner lost its staged/requested state: %s %+v", reg.ArchiveSessionID, owed)
+			}
+			stage, found, err := store.LoadImportStage(t.Context(), reg)
+			must(t, err)
+			if !found || stage.SHA256 == "" || stage.SHA256 != reg.StagedImportSHA256 {
+				t.Fatal("unfinished owner lost its exact frozen stage")
+			}
+			key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
+			must(t, err)
+			if _, err := bucket.Get(t.Context(), key); !errors.Is(err, storage.ErrNotFound) {
+				t.Fatal("interrupted owner unexpectedly reached remote metadata", err)
+			}
+			continue
+		}
+		// Admission already verified the first bounded group before this
+		// upload checkpoint. Ctrl-C must preserve its settled publications.
+		verified++
+		if requested || owed.Pending() {
+			t.Errorf("completed group regained pending work: %s %+v", reg.ArchiveSessionID, owed)
+		}
+		published, err := store.LoadPublishedState(reg.ArchiveSessionID)
+		must(t, err)
+		metadata, found, err := published.LastPublishedMetadata()
+		must(t, err)
+		if !found {
+			t.Fatal("completed group lost remote publication")
+		}
+		bundle, err := reader.LoadSource(t.Context(), bucket, metadata, reader.Limits{})
+		must(t, err)
+		if bundle.NativeSessionID != reg.NativeSessionID || !bundle.Capture.CapturedAt.Equal(reg.AdmittedAt) {
+			t.Fatal("completed group publication changed its selected provenance")
 		}
 	}
-	if len(parents) != 12 {
-		t.Fatalf("%d registered", len(parents))
+	if len(parents) != 12 || verified != 8 || pending != 4 {
+		t.Fatalf("registered=%d verified=%d pending=%d; want 12/8/4", len(parents), verified, pending)
 	}
+	// Classic linked children can still be queued behind their pending parent.
+	// Account for their actual batch membership separately from parent totals.
+	batch, _ := loadBatch(t, f.data)
+	batchChildren, retainedChildren := map[string]bool{}, map[string]bool{}
+	for _, id := range batch.Subagents {
+		batchChildren[id] = true
+	}
+	for _, child := range children {
+		if !batchChildren[child.ArchiveSessionID] || !parentIDs[child.ParentSessionID] {
+			t.Fatal("registered child changed its batch or parent membership")
+		}
+		retainedChildren[child.ArchiveSessionID] = true
+	}
+	candidates, issues, err := store.ScanSubagentCandidates()
+	must(t, err)
+	if len(issues) != 0 {
+		t.Fatal("interrupted import left unreadable linked children", issues)
+	}
+	for _, child := range candidates {
+		if !parentIDs[child.ParentArchiveSessionID] {
+			continue
+		}
+		if !batchChildren[child.ArchiveSessionID] || child.StagedImportSHA256 == "" {
+			t.Fatal("queued child lost its frozen batch membership")
+		}
+		retainedChildren[child.ArchiveSessionID] = true
+	}
+	if len(batchChildren) != 2 || len(retainedChildren) != 2 {
+		t.Fatalf("batch children=%d retained children=%d; want 2/2", len(batchChildren), len(retainedChildren))
+	}
+	t.Logf("parents registered=%d verified=%d pending=%d; linked children=%d (%d registered)", len(parents), verified, pending, len(retainedChildren), len(children))
 }
 
 // syncBuffer is a bytes.Buffer a test can read while a command writes it.

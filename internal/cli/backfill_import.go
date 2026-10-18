@@ -194,19 +194,9 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	stopConfirmation = releaseOnce(stopConfirmation)
 	reg.releases = append(reg.releases, stopConfirmation)
 	// Step 4: commit the configuration, under collector.lock and hooks.lock.
-	stopWait := startActivity(stdout, "Waiting for collector…")
-	if env.importCollectorWait != nil {
-		collectorWait = env.importCollectorWait(collectorWait)
-	}
-	initialCfg, _, err := config.Load(home)
+	collectorGuard, releaseCollector, err := waitImportCollector(env, stdout, home, collectorWait)
 	if err != nil {
-		stopWait()
 		return reg, err
-	}
-	collectorGuard, releaseCollector, err := lockCollectorGuardWait(home, "backfill import", env.now(), collectorNeedsGuard(initialCfg), collectorWait)
-	stopWait()
-	if err != nil {
-		return reg, errCollectorBusy
 	}
 	// collector.lock stays held through registration, so no pass runs
 	// between a session's subagent candidates and its registration.
@@ -318,6 +308,24 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	reg.activity.clear()
 	releaseCollector()
 	return reg, nil
+}
+
+func waitImportCollector(env Env, stdout io.Writer, home string, wait time.Duration) (*local.CollectorGuard, func(), error) {
+	stopWait := startActivity(stdout, "Waiting for collector…")
+	if env.importCollectorWait != nil {
+		wait = env.importCollectorWait(wait)
+	}
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		stopWait()
+		return nil, nil, err
+	}
+	guard, release, err := lockCollectorGuardWait(home, "backfill import", env.now(), collectorNeedsGuard(cfg), wait)
+	stopWait()
+	if err != nil {
+		return nil, nil, errCollectorBusy
+	}
+	return guard, release, nil
 }
 
 func recordImportGroup(env Env, home string, batch *backfill.Batch, ctx context.Context, publish func(context.Context) error) func([]string, []string) error {
