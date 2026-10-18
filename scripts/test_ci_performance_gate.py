@@ -12,6 +12,7 @@ import ci_performance_gate as gate
 import admit_ci_performance_baseline as admission
 import collect_ci_timing
 from test_collect_ci_timing import FakeAPI, TestedMergeAPI
+from test_ci_timing_history import archive, IdentityAPI
 import normalize_ci_timing as norm
 from test_ci_worker_topology import receipt
 
@@ -115,6 +116,33 @@ class PhysicalRetryAPI(FakeAPI):
 
 
 class GateTests(unittest.TestCase):
+    def test_current_workers_after_merge_require_authenticated_current_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, metadata, commit = archive(Path(directory))
+            identity = IdentityAPI(metadata, commit)
+            api = PhysicalRetryAPI()
+            api.runs[1]['pull_requests'] = []
+            original_get = api.get
+            def get(path):
+                if '/artifacts/' in path or '/git/commits/' in path:
+                    return identity.get(path)
+                return original_get(path)
+            api.get = get
+            with self.assertRaisesRegex(ValueError, 'missing authenticated'):
+                gate.current_worker_attempts(api, receipt(), 1, 1)
+            actual = gate.current_worker_attempts(api, receipt(), 1, 1, archives=[(99, path)])
+            self.assertEqual(actual, {index: 1 for index in range(8)})
+            with self.assertRaisesRegex(ValueError, 'exact run and attempt'):
+                gate.current_worker_attempts(api, receipt(), 1, 2, archives=[(99, path)])
+            api.runs[1]['pull_requests'] = FakeAPI().runs[1]['pull_requests']
+            api.runs[1]['pull_requests'][0]['number'] = 13
+            with self.assertRaisesRegex(ValueError, 'exact PR/workflow/revision'):
+                gate.current_worker_attempts(api, receipt(), 1, 1, archives=[(99, path)])
+            api.runs[1]['pull_requests'] = []
+            metadata['digest'] = 'sha256:' + '0'*64
+            with self.assertRaisesRegex(ValueError, 'digest mismatch'):
+                gate.current_worker_attempts(api, receipt(), 1, 1, archives=[(99, path)])
+
     def test_current_workers_accept_independently_proven_exact_tested_base(self):
         api = TestedMergeAPI()
         for job in api.jobs[1]:
@@ -156,6 +184,20 @@ class GateTests(unittest.TestCase):
         bounded.get('/repos/' + collect_ci_timing.REPOSITORY + '/actions/runs/1')
         with self.assertRaisesRegex(ValueError, 'budget exhausted'):
             bounded.get('/repos/' + collect_ci_timing.REPOSITORY + '/actions/runs/1')
+
+        # A post-merge receipt needs one extra metadata read, still within the
+        # same budget even when all ten physical attempt inventories are read.
+        with tempfile.TemporaryDirectory() as directory:
+            path, metadata, commit = archive(Path(directory), graph.topology, attempt=10)
+            identity = IdentityAPI(metadata, commit, graph.compare)
+            original_get = api.get
+            api.get = lambda path: identity.get(path) if '/artifacts/' in path else original_get(path)
+            api.runs[1]['pull_requests'] = []
+            bounded = collect_ci_timing.API('synthetic', request_limit=gate.REQUEST_LIMIT, opener=opener)
+            self.assertEqual(gate.current_worker_attempts(bounded, graph.topology, 1, 10,
+                                                        archives=[(99, path)]),
+                             {index: 2 if index == 5 else 1 for index in range(8)})
+            self.assertEqual(bounded.remaining, 0)
 
     def test_inherited_job_ids_do_not_change_physical_receipt_attempts(self):
         api = PhysicalRetryAPI()
@@ -989,14 +1031,16 @@ class GateTests(unittest.TestCase):
                         [event for event in events if event.get('Test', '').split('/')[0] != missing]))
                 manifests[0].write_text(json.dumps(manifest))
                 with self.subTest(damage=damage), mock.patch('sys.argv', argv), \
-                        mock.patch.dict(os.environ, {'GITHUB_RUN_ID': '12', 'GITHUB_RUN_ATTEMPT': '1'}), \
+                        mock.patch.dict(os.environ, {'GITHUB_RUN_ID': '12', 'GITHUB_RUN_ATTEMPT': '1',
+                            'CI_PERFORMANCE_IDENTITY_ARCHIVE': '99:' + str(root/'identity.zip')}), \
                         mock.patch.object(gate.collect_ci_timing, 'API'), \
-                        mock.patch.object(gate, 'current_worker_attempts', return_value={i: 1 for i in range(8)}), \
+                        mock.patch.object(gate, 'current_worker_attempts', return_value={i: 1 for i in range(8)}) as attempts, \
                         mock.patch.object(gate.normalize_ci_timing, 'worker', wraps=gate.normalize_ci_timing.worker) as normalize:
                     if damage is None:
                         gate.main()
                         self.assertTrue(json.loads((root/'result.json').read_text())['passed'])
                         self.assertEqual(normalize.call_count, 8)
+                        self.assertEqual(attempts.call_args.kwargs['archives'], [(99, root/'identity.zip')])
                     else:
                         with self.assertRaises(SystemExit) as failure:
                             gate.main()
