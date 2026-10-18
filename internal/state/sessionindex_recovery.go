@@ -493,7 +493,10 @@ func (s *Store) recoverRequestedMiss(ctx context.Context, file os.DirEntry, inve
 	}
 	path := filepath.Join(s.home, "sessions-v1", file.Name())
 	var entry qualifiedSessionIndexEntry
-	if err := local.Read(path, &entry); err != nil {
+	if err := s.readIndexControlJSON(path, &entry); err != nil {
+		if errors.Is(err, errUnsupportedNativeReservation) {
+			return err
+		}
 		return ErrSessionIndexRecoveryRequired
 	}
 	if !entry.Recovery {

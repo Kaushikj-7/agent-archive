@@ -50,6 +50,9 @@ func TestNativeImportReservationMalformedRawPreservesEveryBoundary(t *testing.T)
 					func() error { return s.finishSessionIndex(key, entry.ArchiveSessionID) },
 					func() error { return s.recoverRegistrationOwners(key, []string{entry.ArchiveSessionID}) },
 					func() error { return s.RequestSessionIndexRecovery(key) },
+					func() error {
+						return s.packedShardOwners(t.Context(), map[agentmeta.SessionKey][]string{key: {entry.ArchiveSessionID}}, map[string]qualifiedSessionIndexEntry{}, time.Time{})
+					},
 					func() error { return s.removeSessionIndex(key, entry.ArchiveSessionID) },
 					func() error {
 						_, err := s.PrepareSessionDeletion(archive.SessionRegistration{ArchiveSessionID: entry.ArchiveSessionID, NativeSessionID: key.NativeID, Harness: archive.Harness{Name: "muse"}}, RemovalReasonRetention, nil, time.Now(), "")
