@@ -48,6 +48,13 @@ separately derives optional installed declaration identities; other parsers stay
 - Muse validates the exact native omitted-body profile `{kind: broad_read}`.
   Extra keys and unknown tags refuse. Its tag is erased and cannot satisfy
   the separate committed file-read lane or infer eligibility, invocation/use.
+- Shared skill-directory acquisition for Claude, Codex, Cursor and Muse now
+  reads at most 257 directory entries once, before sorting or body inspection.
+  Complete roots with at most 256 entries retain their existing order/output.
+  Overflowing roots yield the existing empty unreadable/incomplete inventory,
+  without prefix snapshots, content digests or an exact omitted total. Only
+  opening a missing root proves absence; acquired read/close failures stay
+  incomplete, including ENOENT. Frozen pending bytes keep their actual provenance.
 - Muse supplemental skill evidence now uses the existing bounded shared
   filesystem inventory and privacy-filtered snapshots, according to the selected
   `none`, `metadata` or `body` mode. Imports receive no current skill inventory.

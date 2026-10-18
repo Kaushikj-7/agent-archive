@@ -633,7 +633,14 @@ charge; bounded success and idempotent release are tested with many short IDs.
 
 
 Muse supplemental skills (filter31) use the shared filtered evidence allowlist,
-mode selection and bounded filesystem observer. Exact injected root inventory is
+mode selection and bounded filesystem observer. All shared directory roots
+(Claude, Codex, Cursor and Muse) use one opened-directory read of at most 257
+entries. Only complete results of at most 256 entries are sorted and inspected.
+Overflow yields an empty unreadable/incomplete inventory before bodies or safe
+content digests, with no retained prefix or exact omitted total. Open-time
+ENOENT proves absence; acquired read/close errors do not. Existing declared-file,
+body and per-observation byte limits remain separate and unchanged.
+Exact injected root inventory is
 installed-only, including foreign/project roots regardless of unproven native
 eligibility. Config/plugin/native activation facts and skill invocation/read use
 are not inferred. Native private root paths are not added to inventory payloads.

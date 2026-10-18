@@ -213,16 +213,24 @@ func validSkillDeclaration(file agentapi.SkillFile) bool {
 
 func rootCandidates(root skillRoot, budget *skillReadBudget) ([]skillCandidate, int, error) {
 	if root.layout == agentapi.SkillDirectory && len(root.files) == 0 {
-		entries, err := os.ReadDir(root.path)
+		if budget.ctx != nil {
+			if err := budget.ctx.Err(); err != nil {
+				return nil, 0, err
+			}
+		}
+		dir, err := os.Open(root.path)
 		if err != nil {
 			return nil, 0, err
 		}
-		entries, omitted := boundedSkillEntries(entries)
+		entries, err := readSkillEntries(dir, budget.ctx)
+		if err != nil {
+			return nil, 0, err
+		}
 		out := make([]skillCandidate, 0, len(entries))
 		for _, entry := range entries {
 			out = append(out, skillCandidate{path: filepath.Join(root.path, entry.Name(), "SKILL.md"), name: entry.Name(), valid: true, directory: entry.IsDir() || entry.Type()&os.ModeSymlink != 0})
 		}
-		return out, omitted, nil
+		return out, 0, nil
 	}
 	if root.layout != agentapi.SkillDeclaredFiles {
 		return nil, 0, errors.New("invalid skill layout")
@@ -267,16 +275,6 @@ func rootCandidates(root skillRoot, budget *skillReadBudget) ([]skillCandidate, 
 	return out, len(root.files) - count + invalid, nil
 }
 
-func boundedSkillEntries(entries []os.DirEntry) ([]os.DirEntry, int) {
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	omitted := 0
-	if len(entries) > maxSkillsPerRoot {
-		omitted = len(entries) - maxSkillsPerRoot
-		entries = entries[:maxSkillsPerRoot]
-	}
-	return entries, omitted
-}
-
 func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *skillReadBudget, mode config.SkillEvidence) ([]archive.SupplementalEvidence, error) {
 	if root.layout == agentapi.SkillDeclaredFiles && !validSkillScope(root.scope) {
 		return []archive.SupplementalEvidence{inventoryObservation(harness, "declared_skills", "unreadable", false, observedAt)}, nil
@@ -293,7 +291,7 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *s
 		// root exists but its inventory is unknown. Record that instead of
 		// failing publication of a session over an unrelated directory.
 		rootStatus, complete := "unreadable", false
-		if errors.Is(err, os.ErrNotExist) {
+		if skillRootAbsent(err) {
 			// Root-local absence is observable and lets a later pass record
 			// removal of every skill previously seen in this scope.
 			// Installed-only coverage still says nothing about what the

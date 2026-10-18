@@ -448,6 +448,14 @@ installed-only interpretation apply. Native transcript invocation/eligibility
 semantics stay unchanged. Muse parser0.7.0 separately preserves optional installed declaration
 identities; default0.21.0 and other parsers/configuration/source/
 metadata schemas remain unchanged. Installation deduplicates the shared root.
+The same unreleased31/global0.31.0 allocation also covers the shared
+Claude/Codex/Cursor/Muse directory acquisition repair: a single257-entry sentinel
+read refuses oversized roots before body reads, replacing their old sorted
+256-entry prefix and exact tail count with the existing empty unreadable/
+incomplete inventory. Complete roots of at most256 entries are unchanged.
+This changes supplemental input retention, not parser derivation or schemas;
+all existing parser versions remain unchanged. Frozen pending objects keep
+actual producing bytes and versions.
 The same unreleased31 allocation includes exact qualified DataHome builtin
 inventory and bounded declared-file infrastructure for original PR10 installed
 plugin scope, including the qualified version1 native-local installed registry,

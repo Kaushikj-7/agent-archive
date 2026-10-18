@@ -211,8 +211,12 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   authenticated-producer or coherent-forgery guarantee. General redacted-content
   read-hash association and origin qualification remain unavailable.
 
-  Only each folder's immediate `<skill>/SKILL.md` files are read (up to 256
-  per folder), never other files in them. In a user-level folder a
+  Only each folder's immediate `<skill>/SKILL.md` files are read, never
+  other files in them. Across Claude, Codex, Cursor and Muse, directory
+  acquisition requests at most 257 entries once. A complete folder with at
+  most 256 entries is sorted before inspection. An overflowing folder yields
+  an empty, unreadable/incomplete inventory before any skill bodies are read;
+  no partial prefix or exact omitted total is claimed. In a user-level folder a
   symlinked skill is followed only when its resolved `SKILL.md` stays inside
   that selected skill root. A project's `SKILL.md` that resolves outside the
   project is skipped. The shared observer also supports finite caller-qualified
