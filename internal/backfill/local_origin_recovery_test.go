@@ -11,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/gitremote"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 func localOriginRecoveryFixture(t *testing.T) (*tree, Environment, config.Config, string, string, string, string) {
@@ -37,7 +38,7 @@ func localOriginRecoveryFixture(t *testing.T) (*tree, Environment, config.Config
 func TestLocalOriginRecoveryIsConsistentBeforeAndAfterConfiguration(t *testing.T) {
 	for _, configured := range []bool{false, true} {
 		t.Run(map[bool]string{false: "proposed", true: "configured"}[configured], func(t *testing.T) {
-			_, env, cfg, root, goneID, clone, target := localOriginRecoveryFixture(t)
+			tr, env, cfg, root, goneID, clone, target := localOriginRecoveryFixture(t)
 			if configured {
 				cfg.Archive.Projects = []archive.ProjectActivation{project(root, true), project(clone, true)}
 			}
@@ -52,13 +53,35 @@ func TestLocalOriginRecoveryIsConsistentBeforeAndAfterConfiguration(t *testing.T
 			if _, err := ApplyToConfig(&cfg, p, fixedNow); err != nil {
 				t.Fatal(err)
 			}
+			data := t.TempDir()
+			if err := config.Save(data, cfg); err != nil {
+				t.Fatal(err)
+			}
+			store, err := state.Open(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			registration := Registration{Context: t.Context(), Home: data, Store: store, AdmittedAt: fixedNow}
+			first, err := registration.Run(p.Imported())
+			if err != nil || len(first.Sessions) != len(p.Imported()) {
+				t.Fatal(first, err)
+			}
+			// A distinct deleted session is recoverable after the first import
+			// commits the formerly proposed local-origin clone to configuration.
+			const secondID = "00000000-0000-0000-0000-000000000098"
+			addRepoRollout(tr, secondID, tr.path("home/.codex/worktrees/deleted/repo"))
 			second := plan(t, env, nil, cfg, Filters{})
-			if c := candidate(t, second, goneID); c.Skip != "" || c.ProjectRoot != root || c.ProjectResolution == nil {
+			c = candidate(t, second, secondID)
+			if c.Skip != "" || c.ProjectRoot != root || c.ProjectResolution == nil {
 				t.Fatalf("second import: %+v %+v", c, c.Diagnostic)
 			}
 			temporaryRecoveryGit(t, target, "config", "remote.origin.url", "https://example.test/acme/repo")
 			if err := second.CheckRecovery(t.Context()); err == nil {
 				t.Fatal("changed chain admitted a now-ambiguous recovery")
+			}
+			stale, err := registration.Run([]Candidate{c})
+			if err != nil || len(stale.Sessions) != 0 || stale.NotAdmitted != 1 {
+				t.Fatal("changed chain reached registration", stale, err)
 			}
 		})
 	}
@@ -136,14 +159,13 @@ func TestLocalOriginRecoveryKeepsCompetingClonesAndExclusions(t *testing.T) {
 func TestAddedLocalOriginCloneCannotPreserveFalseUniqueness(t *testing.T) {
 	for _, same := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unresolved", true: "same_key"}[same], func(t *testing.T) {
-			tr, env, cfg, root, _, _, target := localOriginRecoveryFixture(t)
+			tr, env, cfg, root, _, _, _ := localOriginRecoveryFixture(t)
 			p := plan(t, env, nil, cfg, Filters{})
 			clone := tr.mkdir("home/new-clone")
 			temporaryRecoveryGit(t, clone, "init", "--quiet")
+			target := tr.path("missing")
 			if same {
 				target = root
-			} else {
-				target = tr.path("missing")
 			}
 			temporaryRecoveryGit(t, clone, "config", "remote.origin.url", target)
 			addRepoRollout(tr, "00000000-0000-0000-0000-0000000000a1", clone)

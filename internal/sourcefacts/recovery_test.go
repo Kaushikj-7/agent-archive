@@ -556,3 +556,20 @@ func TestRecoveryRequiresResolvedOwnershipForEveryRoot(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoveryRepeatedUnresolvedOriginKeepsItsCause(t *testing.T) {
+	key := archive.RepoKey("https://example.test/acme/repo")
+	for _, cause := range []RecoveryOutcome{RecoveryOriginCycle, RecoveryOriginMissing, RecoveryOriginUnreadable, RecoveryOriginConflict, RecoveryOriginUnsupported, RecoveryOriginUnresolved, RecoveryOriginLimit, RecoveryOriginChanged} {
+		t.Run(string(cause), func(t *testing.T) {
+			r := NewRecoveryResolver([]archive.ProjectActivation{{Root: "/a", Included: true}}, nil, filepath.Clean, func(context.Context, string) RepositoryIdentity {
+				return RepositoryIdentity{Root: "/a", Failure: cause}
+			}, nil)
+			r.Validate = func(id RepositoryIdentity) bool { return id.Known }
+			for range 2 {
+				if _, outcome := r.Recover(t.Context(), "/gone", key); outcome != cause {
+					t.Fatalf("got %s, want %s", outcome, cause)
+				}
+			}
+		})
+	}
+}

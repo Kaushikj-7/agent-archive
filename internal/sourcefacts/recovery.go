@@ -168,7 +168,7 @@ func (r *RecoveryResolver) Recover(ctx context.Context, cwd, key string) (proof 
 		return decision.Proof, decision.Outcome
 	}
 	defer func() {
-		if outcome != RecoveryBudgetExhausted && outcome != RecoveryInventoryUnavailable && len(r.results) < 4096 {
+		if settledRecoveryOutcome(outcome) && len(r.results) < 4096 {
 			if r.results == nil {
 				r.results = map[string]recoveryDecision{}
 			}
@@ -348,6 +348,17 @@ func (r *RecoveryResolver) prepareInventory(ctx context.Context) RecoveryOutcome
 		}
 	}
 	return ""
+}
+
+// Incomplete identity is not a settled decision. Caching it would renew an
+// invalid proof and replace its precise cause with generic inventory uncertainty
+// for a second session at the same cwd.
+func settledRecoveryOutcome(outcome RecoveryOutcome) bool {
+	switch outcome {
+	case RecoveryBudgetExhausted, RecoveryInventoryUnavailable:
+		return false
+	}
+	return outcome == "" || !validIdentityFailure(outcome)
 }
 
 func identityFailure(id RepositoryIdentity) RecoveryOutcome {
