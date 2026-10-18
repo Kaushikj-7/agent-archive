@@ -16,6 +16,11 @@ follow [Semantic Versioning](https://semver.org/).
   One decision covers all observed keys at an exact cwd; assignments also apply
   to unlisted identities there under ordinary per-source import checks. Private
   review safely quotes paths/labels and escapes terminal-active JSON characters.
+  Database-only Cursor chats participate in the same bounded review. Usable
+  configured-target observations are shared across conflicting recorded keys,
+  preserving the lookup allowance for later compatible groups.
+  Database-only chats use historical destinations; mixed-cwd configured choices
+  disclose the database-only candidates they leave unresolved.
 
 - Backfill planning and dry runs continue supported Codex preparation and
   inspection across bounded lookup scopes, including histories needing more

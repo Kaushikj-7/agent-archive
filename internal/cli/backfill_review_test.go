@@ -598,3 +598,80 @@ func TestRecoveryCwdTargetsKeepsBoundedUnionIndependentOfKeyOrder(t *testing.T) 
 		}
 	}
 }
+
+func TestRecoveryReviewExportsDatabaseOnlyCursorAssignments(t *testing.T) {
+	f := newRecoveryReviewFixture(t)
+	f.cfg.Archive.Projects = nil
+	f.save(t)
+	path := f.env.cursorDatabase()
+	must(t, os.MkdirAll(filepath.Dir(path), 0700))
+	db, err := sql.Open("sqlite", path)
+	must(t, err)
+	defer func() { must(t, db.Close()) }()
+	_, err = db.ExecContext(t.Context(), "CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)")
+	must(t, err)
+	for _, id := range []string{"synthetic-cursor-first", "synthetic-cursor-second"} {
+		composer := map[string]any{"_v": 18, "composerId": id, "createdAt": time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC).UnixMilli(), "status": "completed", "workspaceIdentifier": map[string]any{"uri": "file://" + f.missing}, "fullConversationHeadersOnly": []map[string]any{{"bubbleId": "m1", "type": 1}}}
+		data, err := json.Marshal(composer)
+		must(t, err)
+		_, err = db.ExecContext(t.Context(), "INSERT INTO cursorDiskKV VALUES (?, ?)", "composerData:"+id, data)
+		must(t, err)
+		_, err = db.ExecContext(t.Context(), "INSERT INTO cursorDiskKV VALUES (?, ?)", "bubbleId:"+id+":m1", `{"_v":3,"bubbleId":"m1","type":1,"text":"Private synthetic Cursor prompt"}`)
+		must(t, err)
+		if id == "synthetic-cursor-first" {
+			_, err = db.ExecContext(t.Context(), "INSERT INTO cursorDiskKV VALUES (?, ?)", "composerData:synthetic-alias", data)
+			must(t, err)
+		}
+	}
+	must(t, db.Close())
+	var observed backfill.Plan
+	f.env.observeBackfillPlan = func(plan backfill.Plan) { observed = plan }
+	out, errout, code := f.command(t, "", "backfill", "--dry-run", "--json", "--harness", "cursor")
+	unresolved := 0
+	for _, candidate := range observed.Candidates {
+		if candidate.SourceKind == archive.SourceKindCursorSQLite && candidate.Skip == backfill.SkipWorktreeUnresolved {
+			unresolved++
+		}
+	}
+	if code != 0 || unresolved != 2 {
+		t.Fatal("database-only fixture did not reach project recovery", code, unresolved, out, errout)
+	}
+	const historicalID = "44444444444444444444444444444444"
+	manual, err := backfill.EncodeMappingFile(backfill.Filters{HistoricalMappings: map[string]string{f.missing: historicalID}, HistoricalProjects: []backfill.HistoricalProjectDefinition{{ID: historicalID, Label: "Retired Cursor project"}}})
+	must(t, err)
+	manualPath := filepath.Join(t.TempDir(), "manual-cursor.json")
+	must(t, os.WriteFile(manualPath, manual, 0600))
+	out, errout, code = f.command(t, "", "backfill", "--dry-run", "--json", "--harness", "cursor", "--mapping-file", manualPath)
+	if code != 0 || len(observed.Imported()) != 2 {
+		t.Fatal("existing manual assignments did not qualify the supported database sources", code, len(observed.Imported()), out, errout)
+	}
+	output := filepath.Join(t.TempDir(), "cursor-reviewed.json")
+	beforeArchive, beforeNative := snapshotTree(t, f.home), snapshotTree(t, f.userHome)
+	out, errout, code = f.command(t, "new\nRetired Cursor project\nexport\n", "backfill", "review-projects", "--harness", "cursor", "--output", output)
+	if code != 0 || !strings.Contains(out, "Original cwd: "+strconv.Quote(f.missing)) || !strings.Contains(out, "Candidates: 2") || strings.Count(out, "Choose an exact destination") != 1 {
+		t.Fatal("database-only missing cwd was omitted or duplicate rows widened review", code, out, errout)
+	}
+	if strings.Contains(out, "Private synthetic Cursor prompt") || strings.Contains(out, "synthetic-cursor-") || strings.Contains(out, "state.vscdb") || beforeArchive != snapshotTree(t, f.home) || beforeNative != snapshotTree(t, f.userHome) {
+		t.Fatal("database review exposed content or changed archive/native state", out)
+	}
+	data, err := os.ReadFile(output)
+	must(t, err)
+	var assignments backfill.Filters
+	must(t, backfill.ReadMappingFile(bytes.NewReader(data), &assignments))
+	if len(assignments.HistoricalMappings) != 1 || assignments.HistoricalMappings[f.missing] == "" || len(assignments.ProjectMappings) != 0 {
+		t.Fatal("database review did not export one exact shared-cwd assignment", assignments)
+	}
+	out, errout, code = f.command(t, "", "backfill", "--yes", "--background", "--harness", "cursor", "--mapping-file", output)
+	store, err := state.Open(f.home)
+	must(t, err)
+	regs, err := store.LoadRegistrations()
+	must(t, err)
+	if code != 0 || len(regs) != 2 {
+		t.Fatal("reviewed database-only assignments did not unblock supported imports", code, regs, out, errout)
+	}
+	for _, reg := range regs {
+		if reg.SourceKind != archive.SourceKindCursorSQLite || reg.TranscriptPath != "" || reg.HistoricalProject == nil || reg.HistoricalProject.ProjectID != assignments.HistoricalMappings[f.missing] || reg.HistoricalProject.OriginalCwd != f.missing {
+			t.Fatal("database-only import lost exact historical assignment", reg)
+		}
+	}
+}

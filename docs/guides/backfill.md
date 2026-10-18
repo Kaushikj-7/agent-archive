@@ -360,6 +360,13 @@ evidence. These are private local metadata. Transcript content, native session
 IDs and transcript locators are omitted. Terminal input and output are required;
 JSON and piped review are unavailable. Ordinary previews do not expose this
 private evidence unless you separately supply an explicit mapping file.
+Database-only Cursor chats with a usable original folder join the same bounded
+groups as transcript files. Shared configured-target observations are reused
+across recorded keys; an incompatible key remains refused without repeatedly
+spending the lookup allowance needed by later compatible groups.
+Choose a historical destination for database-only Cursor chats. A configured
+choice at a mixed cwd can recover supported transcript files while leaving those
+database-only chats unresolved; the review reports their count explicitly.
 
 Choose a displayed compatible configured destination, an import-only historical
 project, `new` to define an import-only historical identity, or `skip`. Even a

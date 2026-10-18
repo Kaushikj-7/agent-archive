@@ -291,7 +291,8 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	}
 
 	env.planningProgress(PlanningStageCheckingDatabaseSessions, 0, 0)
-	if err := planCursorDatabase(ctx, env, state, r, projectFilter, since, until, workers, &plan); err != nil {
+	databaseItems, err := planCursorDatabase(ctx, env, state, r, projectFilter, since, until, workers, &plan)
+	if err != nil {
 		return Plan{}, err
 	}
 	env.planningProgress(PlanningStageFinishingPlan, 0, 0)
@@ -311,7 +312,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	if err := bindRecoveryPolicy(cfg, &plan); err != nil {
 		return Plan{}, err
 	}
-	return finishPlanReview(ctx, env, r, items, plan)
+	return finishPlanReview(ctx, env, r, plan, items, databaseItems)
 }
 
 // tracePlanSelection records the completed plan without retaining candidates.

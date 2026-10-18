@@ -215,6 +215,9 @@ func renderRecoveryGroup(out io.Writer, g backfill.RecoveryReviewGroup) {
 		key = "unavailable"
 	}
 	terminal.Printf(out, "\nOriginal cwd: %q\nRecorded repository key: %s\nCandidates: %d\n", g.OriginalCwd, key, g.Candidates)
+	if g.DatabaseOnlyCandidates > 0 {
+		terminal.Printf(out, "  Database-only Cursor candidates: %d; use a historical destination for these sources. Configured assignments apply to supported transcript-file candidates.\n", g.DatabaseOnlyCandidates)
+	}
 	if g.AssignmentCwd != g.OriginalCwd {
 		terminal.Printf(out, "  Exact assignment spelling: %q\n", g.AssignmentCwd)
 	}

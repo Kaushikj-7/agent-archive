@@ -3,6 +3,7 @@ package backfill
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -166,5 +167,43 @@ func TestRecoveryReviewStopsSourceObservationOnCancellation(t *testing.T) {
 	review := reviewProjects(ctx, r, items)
 	if observations != 1 || len(review.Groups) != 0 || len(review.Witnesses) != 0 {
 		t.Fatal("cancelled review continued observation or returned partial groups", observations, review)
+	}
+}
+
+func TestRecoveryReviewSharesOneBoundAcrossFileAndDatabaseWork(t *testing.T) {
+	tr := newTree(t)
+	r := newResolver(tr.env(), config.Config{}, Filters{})
+	var files, database []*work
+	for i := range RecoveryReviewLimit + 2 {
+		cwd := tr.path(fmt.Sprintf("home/gone/%03d", i))
+		files = append(files, &work{t: &transcript{cwd: cwd}, c: Candidate{Skip: SkipWorktreeUnresolved}, res: resolution{skip: SkipWorktreeUnresolved}})
+		database = append(database, &work{t: &transcript{cwd: cwd}, c: Candidate{SourceKind: archive.SourceKindCursorSQLite, Skip: SkipWorktreeUnresolved}, res: resolution{skip: SkipWorktreeUnresolved}})
+	}
+	first := reviewProjects(t.Context(), r, files, database)
+	second := reviewProjects(t.Context(), r, database, files)
+	if !reflect.DeepEqual(first, second) || len(first.Groups) != RecoveryReviewLimit || first.OmittedCandidates != 4 {
+		t.Fatal("candidate batches acquired separate review windows or changed ordering", first, second)
+	}
+	for _, group := range first.Groups {
+		if group.Candidates != 2 || group.DatabaseOnlyCandidates != 1 {
+			t.Fatal("shared file/database cwd lost a candidate or widened the group", group)
+		}
+	}
+}
+
+func TestRecoveryReviewDatabaseCleanupFailureDoesNotReturnProjection(t *testing.T) {
+	tr := newTree(t)
+	env := tr.env()
+	env.ReviewProjects = true
+	failed := errors.New("synthetic database snapshot cleanup failure")
+	closed := 0
+	env.CursorDatabase = func(ctx context.Context) (CursorDatabaseResult, error) {
+		res, err := fakeCursorDatabase(nil, nil, nil, nil)(ctx)
+		res.Close = func() error { closed++; return failed }
+		return res, err
+	}
+	plan, err := BuildPlan(t.Context(), env, states{}, config.Config{}, Filters{Harnesses: []string{"cursor"}})
+	if !errors.Is(err, failed) || closed != 1 || plan.RecoveryReview != nil {
+		t.Fatal("private database projection concealed snapshot cleanup failure", err, closed, plan.RecoveryReview)
 	}
 }

@@ -1722,9 +1722,27 @@ checkout observations without transcript content, locators or native IDs.
 Ordinary plan text/JSON does not render this projection. Terminal input and
 output are mandatory; JSON and piped review are explicitly unsupported.
 
+The projection folds the planning owner's existing file and finalized
+database-only Cursor work slices through one bounded group set, without a
+second database scan or a concatenated candidate inventory. The database owner
+retains the resolved folder in its existing work item and closes its snapshot
+before the private projection consumes those facts; cleanup errors still fail
+the plan. Existing duplicate/file preference and source decisions are unchanged.
+Database-only Cursor sources retain their existing historical-assignment route;
+they do not supply support for a configured-target choice. The bounded projection
+counts and discloses these members. A mixed file/database cwd retains compatible
+configured choices for supported file members, while its database-only members
+remain unresolved for that choice. Both kinds can use a supported historical
+assignment. This adds no configured recovery/admission authority for database
+sources; that capability remains outside this assistance change.
+
 Configured target suggestions call the existing exact mapping classifier and
 share its target observations and work allowance. They grant no proof or capture
 authority, do not change selected candidates and do not infer uniqueness.
+Usable target identity observations are frozen before per-group key comparison,
+so incompatible groups do not repeatedly spend the shared lookup allowance.
+Unresolved/budget outcomes retain their existing policy, and admission still
+renews frozen target evidence before accepting an exact mapping.
 Source restrictions, target exclusions, usable conflicting keys, unavailable
 target chains and existing ownership remain binding. Historical selection uses
 the existing separate opaque identity contract; disabled destination decisions

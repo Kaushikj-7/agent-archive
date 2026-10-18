@@ -278,13 +278,15 @@ func (r *RecoveryResolver) recoverMapped(ctx context.Context, key, target string
 		if !id.Known {
 			return proof, identityFailure(id)
 		}
-		if key != "" && id.Key != key {
-			return proof, RecoveryMappingConflict
-		}
 		if r.mappedIdentities == nil {
 			r.mappedIdentities = map[string]RepositoryIdentity{}
 		}
+		// Freeze usable target facts independently of this source's key.
+		// A mismatch must not spend another lookup for every review group.
 		r.mappedIdentities[p.Root] = id
+		if key != "" && id.Key != key {
+			return proof, RecoveryMappingConflict
+		}
 		proof.Root = p.Root
 		proof.Method = "explicit_mapping"
 		proof.ValidationMethod = "dependency_stamps"

@@ -37,6 +37,7 @@ type RecoveryReviewGroup struct {
 	ParentTraversalOriginal bool
 	RecordedRepoKey         string
 	Candidates              int
+	DatabaseOnlyCandidates  int
 	PrimaryReasons          map[SkipReason]int
 	OtherReasons            map[SkipReason]int
 	DiagnosticDetails       map[DiagnosticDetail]int
@@ -65,9 +66,9 @@ type RecoveryWitness struct {
 	Failure      sourcefacts.RecoveryOutcome
 }
 
-func finishPlanReview(ctx context.Context, env Environment, r *resolver, items []*work, plan Plan) (Plan, error) {
+func finishPlanReview(ctx context.Context, env Environment, r *resolver, plan Plan, batches ...[]*work) (Plan, error) {
 	if env.ReviewProjects {
-		plan.RecoveryReview = reviewProjects(ctx, r, items)
+		plan.RecoveryReview = reviewProjects(ctx, r, batches...)
 		if err := ctx.Err(); err != nil {
 			return Plan{}, err
 		}
@@ -76,56 +77,60 @@ func finishPlanReview(ctx context.Context, env Environment, r *resolver, items [
 	return plan, nil
 }
 
-func reviewProjectGroups(ctx context.Context, r *resolver, items []*work, review *RecoveryReview) {
+func reviewProjectGroups(ctx context.Context, r *resolver, review *RecoveryReview, batches ...[]*work) {
 	type groupKey struct {
 		cwd string
 		key string
 	}
 	groups := map[groupKey]*RecoveryReviewGroup{}
-	for _, w := range items {
-		if ctx.Err() != nil {
-			return
-		}
-		cwd := w.t.cwd
-		if w.vanished || w.evidenceOnly || w.filtered {
-			continue
-		}
-		if !validMappingPath(cwd) {
-			if w.c.Skip == SkipProjectUnknown || w.c.Skip == SkipWorktreeUnresolved {
-				review.UnavailableCwdCandidates++
+	// Fold the owner's existing file/database work slices through one bounded
+	// group set, without concatenating or copying the candidate inventories.
+	for _, items := range batches {
+		for _, w := range items {
+			if ctx.Err() != nil {
+				return
 			}
-			continue
-		}
-		if r.env.exists(cwd) {
-			continue
-		}
-		if w.t.repoKey != "" && !archive.IsRepoKey(w.t.repoKey) {
-			review.UnavailableIdentityCandidates++
-			continue
-		}
-		key := groupKey{filepath.Clean(cwd), w.t.repoKey}
-		g := groups[key]
-		if g == nil {
-			if len(groups) == RecoveryReviewLimit {
-				// Keep the lexically first bounded set independent of source order.
-				// Do not build a second inventory to count omitted distinct groups.
-				var last groupKey
-				for retained := range groups {
-					if retained.cwd > last.cwd || retained.cwd == last.cwd && retained.key > last.key {
-						last = retained
+			cwd := w.t.cwd
+			if w.vanished || w.evidenceOnly || w.filtered {
+				continue
+			}
+			if !validMappingPath(cwd) {
+				if w.c.Skip == SkipProjectUnknown || w.c.Skip == SkipWorktreeUnresolved {
+					review.UnavailableCwdCandidates++
+				}
+				continue
+			}
+			if r.env.exists(cwd) {
+				continue
+			}
+			if w.t.repoKey != "" && !archive.IsRepoKey(w.t.repoKey) {
+				review.UnavailableIdentityCandidates++
+				continue
+			}
+			key := groupKey{filepath.Clean(cwd), w.t.repoKey}
+			g := groups[key]
+			if g == nil {
+				if len(groups) == RecoveryReviewLimit {
+					// Keep the lexically first bounded set independent of source order.
+					// Do not build a second inventory to count omitted distinct groups.
+					var last groupKey
+					for retained := range groups {
+						if retained.cwd > last.cwd || retained.cwd == last.cwd && retained.key > last.key {
+							last = retained
+						}
 					}
+					if key.cwd > last.cwd || key.cwd == last.cwd && key.key > last.key {
+						review.OmittedCandidates++
+						continue
+					}
+					review.OmittedCandidates += groups[last].Candidates
+					delete(groups, last)
 				}
-				if key.cwd > last.cwd || key.cwd == last.cwd && key.key > last.key {
-					review.OmittedCandidates++
-					continue
-				}
-				review.OmittedCandidates += groups[last].Candidates
-				delete(groups, last)
+				g = &RecoveryReviewGroup{OriginalCwd: cwd, AssignmentCwd: key.cwd, RecordedRepoKey: key.key, PrimaryReasons: map[SkipReason]int{}, OtherReasons: map[SkipReason]int{}, DiagnosticDetails: map[DiagnosticDetail]int{}}
+				groups[key] = g
 			}
-			g = &RecoveryReviewGroup{OriginalCwd: cwd, AssignmentCwd: key.cwd, RecordedRepoKey: key.key, PrimaryReasons: map[SkipReason]int{}, OtherReasons: map[SkipReason]int{}, DiagnosticDetails: map[DiagnosticDetail]int{}}
-			groups[key] = g
+			observeRecoveryGroup(r, g, w)
 		}
-		observeRecoveryGroup(r, g, w)
 	}
 	for _, group := range groups {
 		review.Groups = append(review.Groups, *group)
@@ -163,6 +168,9 @@ func observeRecoveryGroup(r *resolver, g *RecoveryReviewGroup, w *work) {
 		g.SourceRestriction = restriction
 	}
 	g.Candidates++
+	if w.c.SourceKind == archive.SourceKindCursorSQLite {
+		g.DatabaseOnlyCandidates++
+	}
 	if w.t.capturePending || (w.c.RelatedHistory || w.c.NativeChild) && !w.validated {
 		g.NativeEvidenceUnresolved++
 	}
@@ -177,9 +185,9 @@ func observeRecoveryGroup(r *resolver, g *RecoveryReviewGroup, w *work) {
 	}
 }
 
-func reviewProjects(ctx context.Context, r *resolver, items []*work) *RecoveryReview {
+func reviewProjects(ctx context.Context, r *resolver, batches ...[]*work) *RecoveryReview {
 	review := &RecoveryReview{}
-	reviewProjectGroups(ctx, r, items, review)
+	reviewProjectGroups(ctx, r, review, batches...)
 	if ctx.Err() != nil {
 		return review
 	}
@@ -204,7 +212,7 @@ func reviewProjects(ctx context.Context, r *resolver, items []*work) *RecoveryRe
 				continue
 			}
 			outcome := sourcefacts.RecoveryUnavailable
-			if g.SourceRestriction == "" {
+			if g.SourceRestriction == "" && g.DatabaseOnlyCandidates < g.Candidates {
 				info, err := r.env.stat(p.Root)
 				if err != nil || !info.IsDir() {
 					outcome = sourcefacts.RecoveryMappingConflict
