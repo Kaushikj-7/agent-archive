@@ -10,8 +10,19 @@ follow [Semantic Versioning](https://semver.org/).
   inspection across bounded lookup scopes, including histories needing more
   than five seconds of total lookup work. Native I/O timeouts and inventory
   no-progress results stay specific. Incomplete inventory is reported while
-  independently verified sessions remain eligible. Source safety limits and background work
-  are unchanged; confirmed staging and publication keep their existing bounds.
+  independently verified sessions remain eligible. Source safety limits and
+  background work are unchanged; confirmed staging and publication keep their
+  existing bounds.
+
+- Deleted-worktree recovery resolves local Git origin chains consistently before
+  and after project configuration. Every origin and traversed dependency must
+  agree and remain current; physical clones remain distinct competitors. Cyclic,
+  missing, unreadable, conflicting or unresolved chains report specific reasons
+  and remain available for reviewed exact project assignments. Local paths and
+  configuration dependencies preserve symlink traversal before parent components.
+  Local file URLs accept ASCII `localhost` hostname case variants. Unambiguous
+  filesystem paths can contain colons. Resumed recovery sweeps renew earlier
+  incomplete origin observations without restarting their forward progress.
 
 - Backfill distinguishes exhausted Codex lookup work (`lookup_allowance_spent`,
   retry) from source byte/record limits and missing history evidence. Pending

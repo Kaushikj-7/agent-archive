@@ -25,8 +25,8 @@ import (
 // checkout of the same repository known only to that app's sessions: the
 // session is then recovered into one checkout of its own repository rather
 // than left unresolved. That is the residual the inventory already accepts
-// for a clone no agent ever ran in, a keyless clone (PR #387) and a
-// url.insteadOf origin. Configured roots, including exclusions and nested
+// for a clone no agent ever ran in. Observed local origins and url.insteadOf
+// expansions must resolve completely; uncertain identity blocks recovery. Configured roots, including exclusions and nested
 // exclusions, are enumerated through Git independently of every app store, so
 // no gap can hide capture policy. Output filters do not change this: an app
 // --harness leaves out still contributes the witnesses it observed, and its

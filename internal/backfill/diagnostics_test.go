@@ -17,7 +17,7 @@ import (
 )
 
 func TestRecoveryOutcomesSurvivePlanningAndPrecedence(t *testing.T) {
-	outcomes := []sourcefacts.RecoveryOutcome{sourcefacts.RecoveryBudgetExhausted, sourcefacts.RecoveryInventoryUnavailable, sourcefacts.RecoveryExcluded, sourcefacts.RecoveryAmbiguous, sourcefacts.RecoveryRepositoryUnavailable, sourcefacts.RecoveryMappingConflict, sourcefacts.RecoverySubtreeUnavailable, sourcefacts.RecoveryUnavailable}
+	outcomes := []sourcefacts.RecoveryOutcome{sourcefacts.RecoveryBudgetExhausted, sourcefacts.RecoveryInventoryUnavailable, sourcefacts.RecoveryExcluded, sourcefacts.RecoveryAmbiguous, sourcefacts.RecoveryRepositoryUnavailable, sourcefacts.RecoveryMappingConflict, sourcefacts.RecoverySubtreeUnavailable, sourcefacts.RecoveryUnavailable, sourcefacts.RecoveryOriginCycle, sourcefacts.RecoveryOriginMissing, sourcefacts.RecoveryOriginUnreadable, sourcefacts.RecoveryOriginConflict, sourcefacts.RecoveryOriginUnsupported, sourcefacts.RecoveryOriginUnresolved, sourcefacts.RecoveryOriginLimit, sourcefacts.RecoveryOriginChanged}
 	for _, outcome := range outcomes {
 		t.Run(string(outcome), func(t *testing.T) {
 			w := &work{t: &transcript{}, c: Candidate{StartedAt: fixedNow.Add(-time.Hour)}, res: resolution{skip: SkipWorktreeUnresolved, outcome: outcome}}
