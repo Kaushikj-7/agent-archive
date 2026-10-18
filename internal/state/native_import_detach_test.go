@@ -240,3 +240,35 @@ func TestNativeImportExactUndoRefusesWrongReceiptAndMissingUndo(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeImportExactUndoRefusesOwnerReplacementBeforeCAS(t *testing.T) {
+	t.Parallel()
+	f, reg := nativeImportCommitForUndo(t)
+	s := f.native.store
+	markActualNativeImportUndone(t, s, reg)
+	path := s.registrationPath(reg.ArchiveSessionID)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := bytes.Replace(before, []byte("muse-historical-import-v1"), []byte("muse-historical-import-v9"), 1)
+	replaced := false
+	s.onWriteSync = func() {
+		if replaced {
+			return
+		}
+		replaced = true
+		if err := os.WriteFile(path, future, 0600); err != nil {
+			t.Error(err)
+		}
+	}
+	changed, err := s.DetachNativeImportBatchMembership(t.Context(), reg.NativeImport.Confirmation.BatchID, reg.ArchiveSessionID, reg.NativeImport.Membership.ReceiptID)
+	s.onWriteSync = nil
+	if !replaced || changed || err == nil {
+		t.Fatal("current future owner escaped final CAS", replaced, changed, err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil || !bytes.Equal(future, after) {
+		t.Fatal("future owner overwritten", readErr)
+	}
+}

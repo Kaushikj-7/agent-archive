@@ -22,6 +22,9 @@ func (s *Store) CheckNativeImportConfirmationScope(ctx context.Context, scope ar
 	if _, err := archive.NativeImportBatchScopeDigest(ctx, scope); err != nil {
 		return err
 	}
+	if len(scope.Filters.Harnesses) != 1 || scope.Filters.Harnesses[0] != "muse" {
+		return errors.New("historical Muse import requires a Muse-only batch; run separate imports for other harnesses")
+	}
 	if _, err := os.Lstat(filepath.Join(s.home, "setup-transaction.json")); !errors.Is(err, os.ErrNotExist) {
 		return errors.Join(ErrReadySelectionFrozen, err)
 	}

@@ -120,7 +120,7 @@ func (p *nativeImportDetachProof) check(ctx context.Context, previous, next arch
 }
 
 func nativeImportUndoControlMatches(ctx context.Context, control archive.NativeImportBatchControl, reg archive.SessionRegistration, receiptID string) error {
-	if control.UndoneAt == nil || reg.ValidateNativeImport() != nil || reg.NativeImport.Membership.ReceiptID != receiptID {
+	if len(control.Filters.Harnesses) != 1 || control.Filters.Harnesses[0] != "muse" || control.UndoneAt == nil || reg.ValidateNativeImport() != nil || reg.NativeImport.Membership.ReceiptID != receiptID {
 		return archive.ErrUnsupportedNativeImport
 	}
 	// Closed normalization is for identity comparison only, never reattachment.
