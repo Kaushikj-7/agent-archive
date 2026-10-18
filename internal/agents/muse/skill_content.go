@@ -134,7 +134,7 @@ func (s *skillContentJoin) Restore(ctx context.Context, prior archive.SourceBund
 		s.clearPending()
 		return archive.FilteredTranscript{}, err
 	}
-	if prior.SchemaVersion == 0 || len(s.pending) == 0 || !priorSkillContentProof(prior) {
+	if prior.SchemaVersion == 0 || len(s.pending) == 0 || !priorSkillContentEvent(prior) {
 		return s.out, nil
 	}
 	// The collector separately binds the archive/project owner. Old privacy
@@ -164,18 +164,14 @@ func (s *skillContentJoin) Restore(ctx context.Context, prior archive.SourceBund
 	return out, err
 }
 
-// This is only a no-allocation work gate, never proof validation. Without a
-// prior skill hash there is nothing to restore; the usual comparator still
-// validates its complete baseline. Present proofs take the strict path below.
-func priorSkillContentProof(prior archive.SourceBundle) bool {
+// This is only a no-allocation work gate, never proof validation. Previously
+// hashless events must also be consumed so an active observation cannot rewrite
+// a published prefix. Every matching event takes the strict validation below.
+func priorSkillContentEvent(prior archive.SourceBundle) bool {
 	for _, row := range prior.NativeRecords {
 		f := object(row["fields"])
 		if str(f["event_kind"]) == string(eventSkillReadObserved) {
-			_, hash := f["sha256"]
-			_, marker := f["hash_evidence"]
-			if hash || marker {
-				return true
-			}
+			return true
 		}
 	}
 	return false
@@ -236,7 +232,7 @@ func (s *skillContentJoin) priorProofs(ctx context.Context, rows []logicalRow) (
 			continue
 		}
 		r := *row.ordinary
-		if r.Type != payloadRuntimeSession || str(r.Fields["event_kind"]) != string(eventSkillReadObserved) || str(r.Fields["sha256"]) == "" {
+		if r.Type != payloadRuntimeSession || str(r.Fields["event_kind"]) != string(eventSkillReadObserved) {
 			continue
 		}
 		k := skillContentIdentity(r)
@@ -244,10 +240,17 @@ func (s *skillContentJoin) priorProofs(ctx context.Context, rows []logicalRow) (
 		if !found {
 			continue
 		}
-		if !sameSkillEvent(r, pending.event) || hex.EncodeToString(pending.digest[:]) != str(r.Fields["sha256"]) {
+		if !sameSkillEvent(r, pending.event) {
 			return nil, errFormat
 		}
-		proofs[k] = hex.EncodeToString(pending.digest[:])
+		hash := str(r.Fields["sha256"])
+		if hash != "" && hex.EncodeToString(pending.digest[:]) != hash {
+			return nil, errFormat
+		}
+		// Empty S deliberately consumes a previously hashless event without
+		// enriching it. Only events absent from the validated prior baseline
+		// remain eligible for a new current-observation proof.
+		proofs[k] = hash
 	}
 	return proofs, nil
 }

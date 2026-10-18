@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -188,5 +189,165 @@ func TestSkillContentCollectorErrorAndCancelReleaseView(t *testing.T) {
 		if used, _ := scan.readBudget().Charged(); used != 0 {
 			t.Fatal("failed active gate leaked source/output loan")
 		}
+	}
+}
+
+func TestSkillContentCollectorPreservesHashlessPublishedPrefix(t *testing.T) {
+	scan, reader, _ := nativeCollectorFixture(t)
+	root := t.TempDir()
+	body := []byte("---\nname: declared-label\n---\nAn ordinary later-available skill.\n")
+	h := sha256.Sum256(body)
+	raw, err := os.ReadFile(filepath.Join("..", "agents", "muse", "testdata", "synthetic-skill-read.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.ReplaceAll(raw, []byte("/work/synthetic-muse"), []byte(scan.reg.ProjectRoot))
+	raw = bytes.ReplaceAll(raw, []byte("sha256:"+strings.Repeat("a", 64)), []byte("sha256:"+hex.EncodeToString(h[:])))
+	if err = os.WriteFile(reader.ref.Path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	scan.published, err = scan.local.LoadPublishedState(scan.id())
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	scan.opts.SupplementalSkillContent = func(ctx context.Context, _ archive.SessionRegistration, at time.Time, b *agentapi.NativeReadBudget) (agentapi.SkillContentObservation, func(), error) {
+		calls++
+		return evidence.ObserveSkillsWithContent(ctx, evidence.SkillOptions{Harness: "muse", Mode: config.SkillEvidenceBody, ObservedAt: at, Locations: []agentapi.SkillRoot{{Path: root, Scope: "user_muse_config", UserBoundary: root}}}, b)
+	}
+	read := func() sourceRead {
+		t.Helper()
+		mark := len(scan.retainedReleases)
+		out, observed, err := reader.Filter(t.Context(), muse.Filter{}, 64<<20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sourceRead{adapter: muse.Filter{}, filtered: out, observed: observed, filterLease: scan.nativeFilterLease(mark)}
+	}
+	save := func(b archive.SourceBundle) archive.SourceBundle {
+		t.Helper()
+		if err := scan.published.Save(b, scan.now, state.CacheStatusPublished); err != nil {
+			t.Fatal(err)
+		}
+		if err := scan.closeNativeLeases(); err != nil {
+			t.Fatal(err)
+		}
+		scan.releaseRetained()
+		var err error
+		scan.published, err = scan.local.LoadPublishedState(scan.id())
+		if err != nil {
+			t.Fatal(err)
+		}
+		cached, _, _, _ := scan.published.Cached()
+		return cached
+	}
+	first := read()
+	baseline, _, err := scan.buildRead(&first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := (muse.Parser{}).Parse(t.Context(), baseline)
+	if err != nil || len(a.View.NativeSkillUses) != 1 || a.View.NativeSkillUses[0].SHA256 != "" || calls != 1 {
+		t.Fatal("hashless durable baseline precondition", err, calls)
+	}
+	baseline = save(baseline)
+	dir := filepath.Join(root, "installed-origin")
+	if err = os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(dir, "SKILL.md"), body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	unchanged := read()
+	quiet, _, err := scan.buildRead(&unchanged)
+	if err != nil || calls != 1 || !reflect.DeepEqual(baseline.NativeRecords, quiet.NativeRecords) {
+		t.Fatal("file appearance initialized unchanged tick", err, calls)
+	}
+	if err = scan.closeNativeLeases(); err != nil {
+		t.Fatal(err)
+	}
+	scan.releaseRetained()
+
+	// A real explicit request may observe the now-available file, but cannot
+	// upgrade the earlier published event or trigger the rewrite guard.
+	scan.req.Token = "synthetic-refresh"
+	requested := read()
+	refreshed, supplemental, err := scan.buildRead(&requested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, blocked, err := scan.guard(t.Context(), requested, refreshed, supplemental)
+	if err != nil || blocked || calls != 2 || !reflect.DeepEqual(baseline.NativeRecords, refreshed.NativeRecords) {
+		t.Fatal("hashless baseline was retroactively enriched", err, blocked, calls)
+	}
+	baseline = save(refreshed)
+	scan.req.Token = ""
+
+	// Append a genuine assistant turn and a NEW read event in the same run.
+	// Fixture mutation uses the existing exact native shapes and owned IDs.
+	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
+	decode := func(line []byte) map[string]any {
+		t.Helper()
+		var m map[string]any
+		d := json.NewDecoder(bytes.NewReader(line))
+		d.UseNumber()
+		if err := d.Decode(&m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	turn := decode(lines[len(lines)-3])
+	if turn["payload_type"] != "runtime.session" {
+		t.Fatal("assistant template type")
+	}
+	tp := turn["payload"].(map[string]any)
+	te := tp["event"].(map[string]any)
+	if te["kind"] != "assistant_message_committed" {
+		t.Fatal("assistant template kind")
+	}
+	turn["id"], turn["sequence"] = "cccccccc-cccc-4ccc-8ccc-000000000011", json.Number("11")
+	tp["source_run_record_id"], tp["source_run_record_sequence"] = "dddddddd-dddd-4ddd-8ddd-000000000004", json.Number("4")
+	te["message_id"], te["response_id"], te["text"] = "synthetic-new-message", "synthetic-new-response", "A genuine appended assistant turn."
+	event := decode(lines[len(lines)-1])
+	ep := event["payload"].(map[string]any)
+	ee := ep["event"].(map[string]any)
+	if ee["kind"] != "skill_read_observed" {
+		t.Fatal("read template kind")
+	}
+	event["id"], event["sequence"] = "cccccccc-cccc-4ccc-8ccc-000000000012", json.Number("12")
+	ep["source_run_record_id"], ep["source_run_record_sequence"] = "dddddddd-dddd-4ddd-8ddd-000000000005", json.Number("5")
+	ee["observed_at_sequence"] = json.Number("5")
+	for _, row := range []map[string]any{turn, event} {
+		encoded, err := json.Marshal(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = append(raw, append(encoded, '\n')...)
+	}
+	if err = os.WriteFile(reader.ref.Path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	appended := read()
+	candidate, supplemental, err := scan.buildRead(&appended)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, blocked, err = scan.guard(t.Context(), appended, candidate, supplemental)
+	if err != nil || blocked || calls != 3 || !(muse.Filter{}).EvidenceExtends(baseline, candidate) {
+		t.Fatal("genuine append was blocked by content proof", err, blocked, calls)
+	}
+	a, err = (muse.Parser{}).Parse(t.Context(), candidate)
+	if err != nil || len(a.View.NativeSkillUses) != 2 || a.View.NativeSkillUses[0].SHA256 != "" || a.View.NativeSkillUses[1].SHA256 != hex.EncodeToString(h[:]) {
+		t.Fatal("old/new skill events did not retain distinct proof authority", err)
+	}
+	if !reflect.DeepEqual(baseline.NativeRecords, candidate.NativeRecords[:len(baseline.NativeRecords)]) {
+		t.Fatal("published prefix changed during genuine append")
+	}
+	if err = scan.closeNativeLeases(); err != nil {
+		t.Fatal(err)
+	}
+	scan.releaseRetained()
+	if used, _ := scan.readBudget().Charged(); used != 0 {
+		t.Fatal("hashless prefix regression leaked loan")
 	}
 }
