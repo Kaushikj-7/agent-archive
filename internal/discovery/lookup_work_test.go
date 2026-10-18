@@ -268,9 +268,10 @@ func TestForegroundUnitsDoNotRetryTimeoutOrHideIOFailure(t *testing.T) {
 					case lookupUnitCancel:
 						cancel()
 						return ctx.Err()
-					default:
+					case lookupUnitIOFailure:
 						return io.ErrUnexpectedEOF
 					}
+					return errors.New("unknown native unit test case")
 				})
 				if calls != 1 || work.units != 0 || work.scopes != 1 {
 					t.Fatal("failed unit was retried or counted as progress", calls, work)
@@ -389,6 +390,8 @@ func TestForegroundPolicyIsExplicitAndKeepsProbeAndResourceOwnershipSeparate(t *
 			store, _, _, _ := fixture(t)
 			var policy []CodexLookupPolicy
 			switch mode {
+			case lookupPolicyDefault:
+				// Leave policy omitted to exercise the background default.
 			case lookupPolicyBackground:
 				policy = []CodexLookupPolicy{BackgroundLookup}
 			case lookupPolicyForeground:
