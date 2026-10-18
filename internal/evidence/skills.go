@@ -116,10 +116,8 @@ func ObserveSkillsWithContent(ctx context.Context, options SkillOptions, budget 
 	}()
 	out.Evidence, err = observeSkills(ctx, options, content)
 	if err == nil {
-		out.Digests, err = content.accepted(out.Evidence)
-		if err == nil {
-			err = ctx.Err()
-		}
+		out.Digests = content.accepted(out.Evidence)
+		err = ctx.Err()
 	}
 	return out, release, err
 }
@@ -396,29 +394,36 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *s
 		archive.AnnotateSupplementalGaps(filtered[0].Payload, gaps)
 		snapshots = append(snapshots, filtered[0])
 	}
-	totalOmittedEntries := omittedEntries + uninspectedEntries
+	result := []archive.SupplementalEvidence{
+		skillInventoryEvidence(root.scope, provenance, observedAt, inventory,
+			omittedEntries+uninspectedEntries, omittedSnapshots),
+	}
+	return append(result, snapshots...), nil
+}
+
+// skillInventoryEvidence builds the final root-local inventory after all reads.
+func skillInventoryEvidence(scope, provenance string, observedAt time.Time, inventory []any, omittedEntries, omittedSnapshots int) archive.SupplementalEvidence {
 	rootStatus := "present"
-	if len(inventory) == 0 && totalOmittedEntries == 0 {
+	if len(inventory) == 0 && omittedEntries == 0 {
 		rootStatus = "empty"
 	}
-	inventoryPayload := map[string]any{
-		"coverage": string(archive.SkillCoverageInstalledOnly), "scope": root.scope, "skills": inventory,
-		"inventory_complete": totalOmittedEntries == 0,
+	payload := map[string]any{
+		"coverage": string(archive.SkillCoverageInstalledOnly), "scope": scope, "skills": inventory,
+		"inventory_complete": omittedEntries == 0,
 		"root_status":        rootStatus,
 		"uncertainty":        "root-local filesystem inventory does not prove discovery, eligibility, or invocation; other roots and plugin-managed inventories may not have been inspected",
 	}
-	if totalOmittedEntries > 0 {
-		inventoryPayload["truncated"] = true
-		inventoryPayload["omitted_count"] = float64(totalOmittedEntries)
+	if omittedEntries > 0 {
+		payload["truncated"] = true
+		payload["omitted_count"] = float64(omittedEntries)
 	}
 	if omittedSnapshots > 0 {
-		inventoryPayload["snapshot_omitted_count"] = float64(omittedSnapshots)
+		payload["snapshot_omitted_count"] = float64(omittedSnapshots)
 	}
-	result := []archive.SupplementalEvidence{{
-		Kind: archive.EvidenceKindSkillInventory, ObservedAt: observedAt, Provenance: provenance,
-		Payload: inventoryPayload,
-	}}
-	return append(result, snapshots...), nil
+	return archive.SupplementalEvidence{
+		Kind: archive.EvidenceKindSkillInventory, ObservedAt: observedAt,
+		Provenance: provenance, Payload: payload,
+	}
 }
 
 // skillBounds decides which resolved SKILL.md paths one skill root may read.

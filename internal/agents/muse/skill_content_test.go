@@ -7,10 +7,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -356,7 +356,7 @@ func TestSkillContentDispatchUsesExactVariant(t *testing.T) {
 func TestSkillContentOptionalFinalizePressure(t *testing.T) {
 	t.Parallel()
 	for _, room := range []int64{0, 4096} {
-		t.Run(fmt.Sprint(room), func(t *testing.T) {
+		t.Run(strconv.FormatInt(room, 10), func(t *testing.T) {
 			t.Parallel()
 			budget := agentapi.NewNativeReadBudget(8 << 20)
 			end := budget.BeginScope(8 << 20)

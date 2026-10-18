@@ -50,12 +50,12 @@ func (s *skillContentDigests) add(d agentapi.SkillContentDigest) error {
 	return nil
 }
 
-func (s *skillContentDigests) accepted(evidence []archive.SupplementalEvidence) ([]agentapi.SkillContentDigest, error) {
+func (s *skillContentDigests) accepted(evidence []archive.SupplementalEvidence) []agentapi.SkillContentDigest {
 	if len(s.values) == 0 {
-		return nil, nil
+		return nil
 	}
 	if !s.charge(int64(len(s.values)) * 32) {
-		return nil, nil
+		return nil
 	}
 	out := make([]agentapi.SkillContentDigest, 0, len(s.values))
 	accept := func(payload map[string]any) {
@@ -92,7 +92,7 @@ func (s *skillContentDigests) accepted(evidence []archive.SupplementalEvidence) 
 	}
 	sort.Slice(out, func(i, j int) bool { return string(out[i][:]) < string(out[j][:]) })
 	s.acceptedDigests = out
-	return out, nil
+	return out
 }
 
 func (s *skillContentDigests) close() {
