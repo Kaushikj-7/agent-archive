@@ -291,6 +291,8 @@ func TestEvalReplayPlanRejectsLossyScalarEscapes(t *testing.T) {
 					object["ownership_locations"].(map[string]any)["/SCALAR"] = request.DataHome
 				case replayScalarMapValue:
 					object["ownership_locations"].(map[string]any)[request.DataHome] = "/SCALAR"
+				case replayScalarExecutable, replayScalarDataHome, replayScalarDefaultDataHome, replayScalarPrivateDirectory:
+					object[string(field)] = "/SCALAR"
 				default:
 					object[string(field)] = "/SCALAR"
 				}

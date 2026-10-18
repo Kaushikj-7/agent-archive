@@ -107,6 +107,8 @@ func TestNativeImportAtomicCommitRechecksCurrentAuthority(t *testing.T) {
 			var preservedPath string
 			err = local.RootedAtomicWriteWitnessed(t.Context(), held.Root, "pending/selected.json", func(w io.Writer) error { _, e := w.Write([]byte(`{"selected":true}`)); return e }, make([]byte, 1024), func(witness *local.AtomicWriteWitness, rename func() error) error {
 				switch mode {
+				case nativeAtomicTestValid:
+					// Keep the valid fixture unchanged.
 				case nativeAtomicTestOwner, nativeAtomicTestReceipt:
 					if mode == nativeAtomicTestOwner {
 						reg.RegisteredAt = reg.RegisteredAt.Add(time.Second)

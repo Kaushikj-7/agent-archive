@@ -200,6 +200,8 @@ func TestNativeImportBatchLockInspectionRefusesUnknownContent(t *testing.T) {
 			}
 			name := filepath.Join(home, importLocksDirectory, "2026-10-17-1.lock")
 			switch mode {
+			case lockTestValid:
+				// Keep the valid fixture unchanged.
 			case lockTestName:
 				if err := os.Rename(name, filepath.Join(home, importLocksDirectory, "future.lock")); err != nil {
 					t.Fatal(err)

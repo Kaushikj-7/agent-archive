@@ -65,6 +65,8 @@ func mutateNativeImportBatch(t *testing.T, s *Store, reg archive.SessionRegistra
 			t.Fatal(err)
 		}
 		return
+	case nativeBatchBoundaryTestMissing, nativeBatchBoundaryTestValid, nativeBatchBoundaryTestOwner, nativeBatchBoundaryTestRequest, nativeBatchBoundaryTestConfig, nativeBatchBoundaryTestCandidate:
+		t.Fatal("unknown batch mutation", mode)
 	default:
 		t.Fatal("unknown batch mutation", mode)
 	}
@@ -196,8 +198,10 @@ func TestNativeImportBatchFinalPendingAndSelectingCAS(t *testing.T) {
 				}
 				err = local.RootedAtomicWriteWitnessed(t.Context(), held.Root, target, func(w io.Writer) error { return json.NewEncoder(w).Encode(value) }, make([]byte, 4096), func(witness *local.AtomicWriteWitness, rename func() error) error {
 					switch mode {
+					case nativeBatchBoundaryTestMissing, nativeBatchBoundaryTestInstance, nativeBatchBoundaryTestScope, nativeBatchBoundaryTestFuture, nativeBatchBoundaryTestValid:
+						// Valid is intentionally unchanged; the other modes are outside this table.
 					case nativeBatchBoundaryTestUndone:
-						mutateNativeImportBatch(t, s, reg, "undone")
+						mutateNativeImportBatch(t, s, reg, nativeBatchBoundaryTestUndone)
 					case nativeBatchBoundaryTestOwner:
 						reg.RegisteredAt = reg.RegisteredAt.Add(time.Second)
 						if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
@@ -208,7 +212,7 @@ func TestNativeImportBatchFinalPendingAndSelectingCAS(t *testing.T) {
 							t.Fatal(err)
 						}
 					case nativeBatchBoundaryTestConfig:
-						changeNativeImportInitialConfig(t, s, reg, "project")
+						changeNativeImportInitialConfig(t, s, reg, nativeInitialTestProject)
 					case nativeBatchBoundaryTestCandidate:
 						// Change only mutable wire bookkeeping after encoding. A fully valid
 						// proof does not authorize bytes from a different candidate snapshot.

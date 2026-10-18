@@ -172,6 +172,8 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 			s, reg, next := releasedNativeImportFixture(t)
 			path := filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseReceiptName))
 			switch mode {
+			case nativeRetainedTestValid:
+				// Keep the valid fixture unchanged.
 			case nativeRetainedTestMissing:
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
@@ -403,10 +405,11 @@ func TestNativeImportStageActivityKeepsEarlyReturns(t *testing.T) {
 		for _, staged := range []bool{false, true} {
 			t.Run(test.name+"/"+map[bool]string{false: "absent-stage", true: "ordinary-stage"}[staged], func(t *testing.T) {
 				t.Parallel()
-				var reg archive.SessionRegistration
+				stageSHA256 := ""
 				if staged {
-					reg.StagedImportSHA256 = strings.Repeat("a", 64)
+					stageSHA256 = strings.Repeat("a", 64)
 				}
+				reg := archive.SessionRegistration{StagedImportSHA256: stageSHA256}
 				active, err := test.published.NativeImportStageActive(reg)
 				if err != nil || active != staged {
 					t.Fatal("legacy early branch required a store", active, err)

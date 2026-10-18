@@ -91,6 +91,8 @@ func changeNativeImportInitialConfig(t *testing.T, s *Store, reg archive.Session
 			t.Fatal(err)
 		}
 		return
+	case nativeInitialTestAbsentFiles:
+		t.Fatal("unknown fixture mode", mode)
 	default:
 		t.Fatal("unknown fixture mode", mode)
 	}
@@ -167,7 +169,7 @@ func TestNativeImportInitialStageNeverBorrowsDifferentACK(t *testing.T) {
 	var snapshot nativeImportReleaseSnapshot
 	s, reg, _ := releasedNativeImportFixture(t, &snapshot)
 	restoreNativeImportBeforeRelease(t, s, reg, snapshot, true)
-	changeNativeImportInitialConfig(t, s, reg, "removed")
+	changeNativeImportInitialConfig(t, s, reg, nativeInitialTestRemoved)
 	// Change the candidate's source/body/proof consistently through an actual
 	// factory under the old config is forbidden above. A different stored ACK
 	// also cannot excuse the original candidate: even a marker-only rewrite
