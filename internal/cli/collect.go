@@ -137,8 +137,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		return collector.Result{}, fmt.Errorf("open local store: %w", err)
 	}
 
-	needsGuard := collectorNeedsGuard(cfg)
-	guard, unlock, err := lockCollectorGuard(home, collectorPassHolder(quietOnBusy, pass), env.now(), needsGuard)
+	guard, unlock, err := lockCollectorGuard(home, collectorPassHolder(quietOnBusy, pass), env.now(), collectorNeedsGuard(cfg))
 	if err != nil {
 		if errors.Is(err, local.ErrBusy) {
 			if quietOnBusy {
