@@ -13,7 +13,8 @@ follow [Semantic Versioning](https://semver.org/).
   files disappear. Fresh staging renews repository/source observations and
   current policy; an existing durable selection keeps its frozen provenance.
   Linked subagent registration or publication failures remain pending and retry
-  with the same options instead of reporting a completed import. Unreadable child
+  with the same options instead of reporting a completed import. Temporary policy
+  holds preserve their validated retained continuation. Unreadable child
   ownership reports unfinished publication. A delayed first upload preserves the
   retained evidence's original capture time. Scoped publication preserves unrelated
   sessions' retry schedules, deferral clocks and actionable issues.

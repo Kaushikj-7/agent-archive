@@ -136,6 +136,9 @@ field or permission and leaves the existing expiry-deferral rule unchanged.
 A matching empty-plan continuation resumes retained admission and publication,
 including a completed registration batch whose first publication is pending.
 Selected linked children that remain queued before registration are also pending.
+Current policy refusal preserves a validated retained child and its exact queued
+continuation; it cannot register or publish while refused. Ordinary hook candidates
+retain their existing permanent parent-ownership refusal.
 Completion reads only their exact batch IDs, existing admitted parent and matching
 retained stage. Read-only history never quarantines candidate evidence; unknown
 selected evidence reports an error, while unrelated and ordinary hook candidates

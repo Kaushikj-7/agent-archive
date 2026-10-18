@@ -99,6 +99,8 @@ Linked subagent transcripts keep their own pending registration and publication
 obligations.
 An import reports completion only after those transcripts finish too; rerunning
 the same options retries their retained evidence after native deletion.
+Temporarily excluding their project or disabling their app preserves that
+continuation until the configuration permits publication again.
 An already recorded remote publication can still be waiting for local release
 of its stage and covered request. Current exclusions keep that first import
 pending until its existing release owner can settle it; they grant no upload

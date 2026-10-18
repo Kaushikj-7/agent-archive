@@ -721,7 +721,7 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 	if !strings.Contains(out.String(), notice) {
 		t.Errorf("no notice of the stop:\n%s", out.String())
 	}
-	if code != 0 || !strings.Contains(out.String(), "Stopped. The remaining 4 sessions will be uploaded by the background collector.") || !strings.Contains(out.String(), "list --imported") {
+	if code != 0 || !strings.Contains(out.String(), "Stopped. The remaining 4 sessions and 2 subagent transcripts will be uploaded by the background collector.") || !strings.Contains(out.String(), "list --imported") {
 		t.Fatalf("code %d, %s\n%s", code, errOut.String(), out.String())
 	}
 	parents, children := importRegistrations(t, f.data, firstImport)
