@@ -916,7 +916,7 @@ publication. History reports admitted and remotely verified uploads separately.
   --background          Stage and register sessions, then exit; the background
                         collector verifies and uploads them
 Planning renews bounded native lookup work; source safety limits still apply.
-Incomplete native inventory is reported; independently verified sessions remain eligible.
+Incomplete native inventory is reported; verified sessions remain eligible.
 A dry-run plan does not establish completed staging or publication.
 See agent-archive help backfill history, agent-archive help backfill projects,
 and agent-archive help backfill undo.
