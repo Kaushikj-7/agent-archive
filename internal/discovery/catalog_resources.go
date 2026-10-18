@@ -27,8 +27,8 @@ var errCatalogChanged = errors.New("native catalog changed while read")
 const maxCatalogBytes = 32 << 20
 
 // PassCacheBytes is the most the lookup keeps between sessions: catalog,
-// rollout observations and listings, and metadata inventory, all charged
-// unscoped.
+// rollout observations and listings, and metadata inventory (including trusted
+// home alias mappings), all charged unscoped.
 const PassCacheBytes = maxCatalogBytes + maxObservationBytes + maxListingBytes + metadataBytes
 
 // reserveCatalog keeps restored facts and new catalog allocations charged for
