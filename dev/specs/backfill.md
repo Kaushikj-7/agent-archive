@@ -370,6 +370,20 @@ Recovery outcomes remain distinct even when their primary skip is
 `worktree_unresolved`; history stays `related_history_pending` with
 `history_lookup_pending` until a shared selection/dependency lookup is available.
 
+A known `lookup_allowance_spent` source cause retains that detail with `retry`
+action under `related_history_pending`. It describes unfinished lookup work,
+not a source resource or format refusal. Source raw-byte and individual-record
+refusals retain `source_size_limit` and `source_record_limit`; named graph,
+aggregate-history and evidence refusals retain their existing details. Skip
+precedence and admission decisions are unchanged. This diagnostic does not
+implement the renewable foreground work target below.
+
+The optional existing trace records native preparation as its own fixed phase.
+Its constant-space aggregates count initial/renewed Codex lookup allowances,
+preparation lookup attempts, related-native inspection attempts and final
+allowance-pending candidates. Attempts are not distinct logical histories or
+publication completion, and no per-source telemetry is retained.
+
 `inventory.unique_candidate_files` counts distinct candidate transcript paths;
 `database_candidates` counts database-only candidates separately. Each file has
 one disposition (`planned_import`, `already_archived`, `duplicate_candidate`,

@@ -175,7 +175,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 		checkpointAllowance = min(Budget, o.Rollouts.remaining)
 		allowance = checkpointAllowance - time.Second
 		if allowance <= 0 {
-			return h, agentapi.Wrap(agentapi.Limit, errors.New("native observation budget exhausted"))
+			return h, allowanceSpent("native observation budget exhausted")
 		}
 	}
 	started := time.Now()

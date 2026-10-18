@@ -11,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/discovery"
 	"github.com/wangjohn/agent-archive/internal/inspectioncache"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // buildBackfillPlan owns the same trusted lookup used by continuous capture.
@@ -36,7 +37,10 @@ func buildBackfillPlanWithLookup(ctx context.Context, env Env, home, userHome st
 		if len(ids) == 0 {
 			return nil
 		}
+		span := trace.Start("backfill native preparation")
+		defer span.End()
 		for _, id := range ids {
+			trace.Add(trace.BackfillNativePreparationAttempts, 1)
 			_, lookupErr := lookup.Thread(ctx, id)
 			if lookupErr != nil && (agentapi.HasFailure(lookupErr, agentapi.Cleanup) || ctx.Err() != nil) {
 				return lookupErr
