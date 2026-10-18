@@ -177,6 +177,13 @@ func TestInstalledSkillManifestChecksHashIdentityAndFiniteDeclarations(t *testin
 func FuzzInstalledSkillCatalog(f *testing.F) {
 	registry, _ := skillWire(f)
 	f.Add(skillWireJSON(f, registry))
+	records := object(registry["plugins"])
+	record := object(records["synthetic"])
+	delete(records, "synthetic")
+	record["id"] = "a..b"
+	record["cache_path"] = "plugins/cache/local/a..b/" + strings.Repeat("a", 64) + "/package"
+	records["a..b"] = record
+	f.Add(skillWireJSON(f, registry))
 	f.Add([]byte(`{"version":1,"plugins":{}}`))
 	f.Add([]byte(`{"version":1,"version":1}`))
 	f.Fuzz(func(t *testing.T, raw []byte) {
@@ -188,8 +195,15 @@ func FuzzInstalledSkillCatalog(f *testing.F) {
 			t.Fatal("unbounded installed package output")
 		}
 		for _, pkg := range got.Packages {
-			if !skillPortableID(pkg.ID) || !strings.HasPrefix(pkg.Directory, "plugins/cache/local/"+pkg.ID+"/") || strings.Contains(pkg.Directory, "..") {
+			parts := strings.Split(pkg.Directory, "/")
+			if !skillPortableID(pkg.ID) || len(parts) != 6 || parts[0] != "plugins" || parts[1] != "cache" || parts[2] != "local" || parts[3] != pkg.ID || parts[5] != "package" {
 				t.Fatal("unsafe package locator")
+			}
+			// Interior dots in a logical ID are not parent components. Check
+			// the exact derived locator and canonical digest independently.
+			digest, err := hex.DecodeString(parts[4])
+			if err != nil || len(digest) != sha256.Size || hex.EncodeToString(digest) != parts[4] {
+				t.Fatal("noncanonical package digest locator")
 			}
 		}
 	})
