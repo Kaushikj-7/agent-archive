@@ -81,6 +81,32 @@ Delivery, compatibility review and actual qualification are owned by the
 [completion plan](../proposals/large-backfill-completion.md). No native schema,
 format fence or per-source limit is changed by this specification edit.
 
+### Foreground lookup scheduling foundation
+
+The lookup constructor accepts an explicit `ForegroundLookup` scheduling policy;
+its omitted/zero policy retains background behavior. This lower-level foundation
+is not yet selected by the backfill CLI. CLI preparation/inventory continuation
+and the small/512 cold/warm command qualification remain delivery PR 3b;
+confirmed staging/admission/publication remains PR 4.
+
+Foreground scheduling owns no selection or source authority. A successful bounded
+native read, verification chunk, private write, append page, directory batch or
+SQL stage advances the current composite operation. Its scheduling allowance may
+renew between completed units while the same coherent snapshot, descriptors and
+shared memory charges remain owned. Native-index generation/content checks,
+current-row revision validation and source-provider final checks still decide
+whether that evidence can be used. No validation slice is automatically renewed.
+
+Each individual foreground I/O/SQL unit keeps a five-second timeout and caller
+cancellation. Regular-file syscalls remain synchronous; their bounded reads and
+writes check cancellation/time before and after the syscall and create no detached
+worker. A timed-out unit reports `lookup_io_timeout` as unavailable, separately
+from background `lookup_allowance_spent`, source size/record/graph limits and real
+I/O errors. Failed units are not automatically retried. Native/source/cache charges
+are never reset by scheduling renewal. Optional trace totals count completed
+`codex_lookup_work_units` and initial/renewed `codex_lookup_scopes`; these describe
+work, not imported or published logical sessions.
+
 ### Current lookup and lineage
 
 `discovery.CodexRolloutLookup` owns the pass's native current projection,
