@@ -8,7 +8,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -41,8 +40,8 @@ func lockCollector(home, holder string, now time.Time) (func(), error) {
 	return recordCollectorLock(home, holder, now, func() (func(), error) { return local.Lock(home) })
 }
 
-func lockCollectorGuard(home, holder string, now time.Time, format destination.ArchiveFormat) (*local.CollectorGuard, func(), error) {
-	if format != destination.FormatCatalogV4 {
+func lockCollectorGuard(home, holder string, now time.Time, needsGuard bool) (*local.CollectorGuard, func(), error) {
+	if !needsGuard {
 		unlock, err := lockCollector(home, holder, now)
 		return nil, unlock, err
 	}

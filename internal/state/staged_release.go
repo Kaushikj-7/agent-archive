@@ -725,6 +725,9 @@ func (s *Store) resumeStagedOwner(ctx context.Context, id string, remote StagedR
 			return err
 		}
 		if found && reg.NativeImport != nil {
+			if _, _, selected := published.LastPublished(); !selected && published.state.PublicationVersion == 0 {
+				return s.checkUnpublishedNativeImportRelease(ctx, reg)
+			}
 			return published.ValidateNativeImportAuthority(ctx, reg)
 		}
 		return nil
@@ -746,3 +749,26 @@ const (
 	stagedReleaseReceiptName  stagedControlName = "release.json"
 	stagedReleaseProgressName stagedControlName = "release-progress.json"
 )
+
+// An initial stage is not released lineage. A sweep leaves it for normal typed
+// publication only while its complete owner/stage and current controls agree.
+// Any release evidence without an ACK remains a refusal, never a repair hint.
+func (s *Store) checkUnpublishedNativeImportRelease(ctx context.Context, reg archive.SessionRegistration) error {
+	var receipt stagedReleaseReceipt
+	if err := s.readStagedControl(reg.ArchiveSessionID, stagedReleaseReceiptName, &receipt); !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	var progress stagedReleaseProgress
+	if err := s.readStagedControl(reg.ArchiveSessionID, stagedReleaseProgressName, &progress); !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	stage, found, err := s.LoadImportStage(ctx, reg)
+	if err != nil || !found || !stage.TypedSelection || stage.Version != 2 {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	cfg, found, err := s.loadConfig()
+	if err != nil || nativeImportStagedPolicyMismatch(cfg, reg, found) {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	return s.resumeOwnedNativeImport(ctx, stage, reg, cfg)
+}

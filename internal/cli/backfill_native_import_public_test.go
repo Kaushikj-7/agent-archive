@@ -280,6 +280,24 @@ func TestBackfillNativeImportPublicRestartUsesFrozenStageWithoutNative(t *testin
 	if f.filter.calls != 1 {
 		t.Fatal("restart re-filtered native evidence", f.filter.calls)
 	}
+	var syncOut, syncErr bytes.Buffer
+	if code := Run([]string{"sync"}, nil, &syncOut, &syncErr, f.env); code != 0 {
+		t.Fatal("restart normal native-free publication", code, syncOut.String(), syncErr.String())
+	}
+	store, err := state.Open(f.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, found, err := store.LoadRegistration(batches[0].Sessions[0])
+	if err != nil || !found {
+		t.Fatal("restart historical owner", found, err)
+	}
+	if err := store.NativeImportRetainedAuthority(t.Context(), reg); err != nil {
+		t.Fatal("restart did not reach verified selecting release", err)
+	}
+	if f.filter.calls != 1 {
+		t.Fatal("restart publication re-filtered native evidence", f.filter.calls)
+	}
 }
 
 type nativeImportAnswer struct {

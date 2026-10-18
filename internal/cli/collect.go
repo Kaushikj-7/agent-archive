@@ -137,7 +137,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		return collector.Result{}, fmt.Errorf("open local store: %w", err)
 	}
 
-	guard, unlock, err := lockCollectorGuard(home, collectorPassHolder(quietOnBusy, pass), env.now(), cfg.Storage.EffectiveArchiveFormat())
+	guard, unlock, err := lockCollectorGuard(home, collectorPassHolder(quietOnBusy, pass), env.now(), cfg.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 || cfg.SupportsStagedSelection())
 	if err != nil {
 		if errors.Is(err, local.ErrBusy) {
 			if quietOnBusy {
