@@ -306,3 +306,41 @@ func TestSkillContentOldEightFieldReaderRefusesHashVariant(t *testing.T) {
 		t.Fatal("old exact eight-field reader accepted new safe hash")
 	}
 }
+
+// Exercise the outer fieldShape -> validFields gate as well as the event's
+// own validator: each independently enforces the same exact closed variant.
+func TestSkillContentDispatchUsesExactVariant(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                   string
+		content, marker, extra bool
+		want                   bool
+	}{
+		{name: "old8", want: true},
+		{name: "safe10", content: true, marker: true, want: true},
+		{name: "hash_without_marker", content: true},
+		{name: "marker_without_hash", marker: true},
+		{name: "extra_old", extra: true},
+		{name: "extra_safe", content: true, marker: true, extra: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := map[string]any{"kind": "run", "event_kind": "skill_read_observed", "run_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "source_run_record_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "source_run_record_sequence": json.Number("1"), "skill_id": "installed-origin", "evidence_kind": "read_skill_tool", "observed_at_sequence": json.Number("1")}
+			if tc.content {
+				f["sha256"] = strings.Repeat("a", 64)
+			}
+			if tc.marker {
+				f["hash_evidence"] = skillContentEvidence
+			}
+			if tc.extra {
+				f["extra"] = "future"
+			}
+			r := retained{Type: payloadRuntimeSession, PayloadSchema: 1, Fields: f}
+			if got := validFields(r); got != tc.want {
+				t.Fatalf("outer exact-variant dispatch = %v, want %v", got, tc.want)
+			}
+			if got := skillReadFields(r); got != tc.want {
+				t.Fatalf("event exact-variant predicate = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

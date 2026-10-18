@@ -23,12 +23,18 @@ const skillContentEvidence = "marker_free_skill_content_v1"
 
 var skillReadFieldNames = []string{"kind", "event_kind", "run_id", "source_run_record_id", "source_run_record_sequence", "skill_id", "evidence_kind", "observed_at_sequence"}
 
+func skillReadNames(f map[string]any) []string {
+	if _, present := f["sha256"]; present {
+		return append(append([]string(nil), skillReadFieldNames...), "sha256", "hash_evidence")
+	}
+	return skillReadFieldNames
+}
+
 func skillReadFields(r retained) bool {
 	f := r.Fields
-	shape := keys(f, skillReadFieldNames...)
+	shape := keys(f, skillReadNames(f)...)
 	if _, present := f["sha256"]; present {
-		names := append(append([]string(nil), skillReadFieldNames...), "sha256", "hash_evidence")
-		shape = keys(f, names...) && str(f["hash_evidence"]) == skillContentEvidence && digest("sha256:"+str(f["sha256"]))
+		shape = shape && str(f["hash_evidence"]) == skillContentEvidence && digest("sha256:"+str(f["sha256"]))
 	}
 	return r.PayloadSchema == 1 && r.Causation == nil && shape && str(f["kind"]) == "run" && str(f["event_kind"]) == string(eventSkillReadObserved) && conversationSourceShape(f) && skillPortableID(str(f["skill_id"])) && str(f["evidence_kind"]) == "read_skill_tool" && integer(f["observed_at_sequence"], 1) && num(f["observed_at_sequence"]) == num(f["source_run_record_sequence"])
 }

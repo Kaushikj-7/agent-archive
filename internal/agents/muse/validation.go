@@ -474,7 +474,7 @@ func fieldsRuntimeSession(r retained) (int64, []string, bool) {
 	ek := runtimeEvent(str(f["event_kind"]))
 	names = []string{"kind", "event_kind"}
 	if kind == roleRun && ek == eventSkillReadObserved {
-		return schema, skillReadFieldNames, skillReadFields(r)
+		return schema, skillReadNames(f), skillReadFields(r)
 	}
 	if kind == roleRun && enrichedTools(f) {
 		if ek == eventAssistantToolCallsCommitted {
