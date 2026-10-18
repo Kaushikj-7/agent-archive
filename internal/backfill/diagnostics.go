@@ -27,7 +27,8 @@ const (
 	ActionReviewSource  DiagnosticAction = "review_source"
 )
 
-// Diagnostic is a content-free explanation subordinate to the primary skip code.
+// Diagnostic is a content-free explanation; candidate diagnostics are subordinate
+// to their primary skip code. Inventory diagnostics fabricate no candidate count.
 // Detail is a fixed code, never a native ID, path, Git stderr or transcript field.
 type Diagnostic struct {
 	Detail DiagnosticDetail `json:"detail"`
@@ -61,6 +62,10 @@ const (
 	DetailSourceRecordLimit DiagnosticDetail = "source_record_limit"
 	// DetailLookupAllowanceSpent identifies unfinished scheduling work, not a source limit.
 	DetailLookupAllowanceSpent DiagnosticDetail = DiagnosticDetail(agentapi.CauseLookupAllowanceSpent)
+	// DetailLookupIOTimeout identifies an actual failed bounded native I/O unit.
+	DetailLookupIOTimeout DiagnosticDetail = DiagnosticDetail(agentapi.CauseLookupIOTimeout)
+	// DetailLookupNoProgress identifies inventory work requiring source access repair.
+	DetailLookupNoProgress DiagnosticDetail = DiagnosticDetail(agentapi.CauseLookupNoProgress)
 )
 
 // Native refusal diagnostic details retain the public JSON codes.
@@ -165,6 +170,8 @@ var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
 	DetailOwnTaskBeforeCreation:                            {ActionAwaitSupport, "The first own task predates native session creation."},
 	DetailNativeResourceLimit:                              {ActionAwaitSupport, "The source reader reached a resource limit without a more specific reason."},
 	DetailLookupAllowanceSpent:                             {ActionRetry, "This run's allowance for finding Codex rollouts (time or header reads) ran out; these sessions remain unchecked. Retry backfill; this does not establish a source size or format limit."},
+	DetailLookupIOTimeout:                                  {ActionRetry, "A native lookup I/O operation timed out; check local source access and retry backfill."},
+	DetailLookupNoProgress:                                 {ActionRetry, "Native inventory made no progress; check local source access and retry backfill."},
 	DetailNativeSourceUnavailable:                          {ActionReviewSource, "The source reader could not obtain required evidence; no more specific reason was supplied."},
 	DetailAggregateHistoryByteLimit:                        {ActionAwaitSupport, "Aggregate history byte limit."},
 	DetailCurrentRolloutEvidenceUnavailable:                {ActionReviewSource, "Current rollout evidence unavailable."},
@@ -301,6 +308,21 @@ func (p Plan) Diagnostics() []DiagnosticSummary {
 func renderDiagnostics(w io.Writer, p Plan) {
 	for _, d := range p.Diagnostics() {
 		terminal.Printf(w, "      %d: %s\n", d.Count, diagnosticDescriptions[d.Detail].text)
+	}
+}
+
+func (p Plan) nativeLookupDiagnostic() *Diagnostic {
+	if p.NativeLookupIncomplete == nil || p.NativeLookupIncomplete.Detail != DetailLookupNoProgress || p.NativeLookupIncomplete.Action != ActionRetry {
+		return nil
+	}
+	return &Diagnostic{Detail: DetailLookupNoProgress, Action: ActionRetry}
+}
+
+func renderNativeLookupWarning(w io.Writer, p Plan) {
+	if p.nativeLookupDiagnostic() != nil {
+		terminal.Println(w, "Warning: native lookup is incomplete (lookup_no_progress); check local source access and retry.")
+		terminal.Println(w, "Independently verified sessions remain eligible.")
+		terminal.Println(w)
 	}
 }
 

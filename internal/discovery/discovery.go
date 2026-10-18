@@ -67,12 +67,42 @@ type Health struct {
 	NativeReadOperations         int64               `json:"native_read_operations,omitempty"`
 	RepositoryMetadataOperations int                 `json:"repository_metadata_operations,omitempty"`
 	RepositoryLookups            int                 `json:"repository_lookups,omitempty"`
+	// Private finite-slice progress and failure are never persisted health facts.
+	progress uint64
+	failure  error
 }
 
 type directory struct {
 	Root   string `json:"root"`
 	Path   string `json:"path"`
 	Offset int64  `json:"offset"`
+	cursor directoryCursor
+}
+
+// directoryCursor detects cycles in opaque directory cookies with Brent's
+// constant-space algorithm. It stays with the queued directory across slices,
+// and starts fresh only when that directory is queued for a new scan.
+type directoryCursor struct {
+	anchor int64
+	power  uint64
+	steps  uint64
+}
+
+func (c *directoryCursor) advance(current, next int64) bool {
+	if c.power == 0 {
+		c.anchor, c.power = current, 1
+	}
+	c.steps++
+	if next == current || next == c.anchor {
+		return false
+	}
+	if c.steps == c.power {
+		c.anchor, c.steps = next, 0
+		if c.power <= ^uint64(0)/2 {
+			c.power *= 2
+		}
+	}
+	return true
 }
 
 type cached struct {
@@ -169,9 +199,10 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 		h.Pending = true
 		return h, err
 	}
+	foreground := o.nativeOnly && o.Rollouts != nil && o.Rollouts.work != nil
 	allowance := Budget
 	checkpointAllowance := Budget
-	if o.Rollouts != nil {
+	if o.Rollouts != nil && !foreground {
 		checkpointAllowance = min(Budget, o.Rollouts.remaining)
 		allowance = checkpointAllowance - time.Second
 		if allowance <= 0 {
@@ -179,7 +210,7 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 		}
 	}
 	started := time.Now()
-	if o.Rollouts != nil {
+	if o.Rollouts != nil && !foreground {
 		// Discovery's time includes the lookup calls it makes, which charge
 		// themselves as they end; charge the whole once, not those twice.
 		before := o.Rollouts.remaining
@@ -188,11 +219,15 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 	// Observation may exhaust its slice while the durable queue/proofs still
 	// need saving. Keep the reserved checkpoint second inside the same pass
 	// allowance and under the original caller's cancellation.
-	checkpointCtx, cancelCheckpoint := context.WithDeadline(ctx, started.Add(checkpointAllowance))
-	defer cancelCheckpoint()
+	checkpointCtx := ctx
 	deadline := started.Add(allowance)
-	ctx, cancel := context.WithDeadline(checkpointCtx, deadline)
-	defer cancel()
+	if !foreground {
+		var cancelCheckpoint, cancel context.CancelFunc
+		checkpointCtx, cancelCheckpoint = context.WithDeadline(ctx, started.Add(checkpointAllowance))
+		defer cancelCheckpoint()
+		ctx, cancel = context.WithDeadline(checkpointCtx, deadline)
+		defer cancel()
+	}
 	if o.CodexRollouts == nil && o.Rollouts != nil {
 		o.CodexRollouts = o.Rollouts
 	}
@@ -231,7 +266,10 @@ func runWithAdapters(ctx context.Context, store *state.Store, cfg config.Config,
 		if o.Rollouts != nil {
 			o.Rollouts.catalog = &c
 		}
-		return h, nil
+		if foreground && ctx.Err() != nil {
+			return h, ctx.Err()
+		}
+		return h, h.failure
 	}
 	if err := checkpointCatalog(checkpointCtx, o.Rollouts, path, &c, &h); err != nil {
 		return h, err
@@ -618,25 +656,10 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 		hit = false
 	}
 	if !hit || cachedEntryNeedsRefresh(entry, source, now, retryDelay) {
-		if !discoveryProbeAvailable(h, s.rollouts) {
-			return true, true
-		}
-		headerCharge := int64(sourcefacts.HeaderBytes + 128<<10)
-		reservation := s.probeReservation()
-		if !reservation.Reserve(headerCharge) {
-			return true, true
-		}
 		memberChanged := !hit || entry.Size != source.Fingerprint.Size || entry.Mtime != source.Fingerprint.Mtime || entry.SourceFingerprint != source.EntryFingerprint
-		observation := s.adapter.Inspect(s.ctx, source.Source)
-		h.Probes++
-		if s.rollouts != nil {
-			s.rollouts.probes++
-		}
-		h.Bytes += observation.Bytes
-		h.NativeReadBytes += observation.NativeReadBytes
-		h.NativeReadOperations += observation.NativeReadOperations
-		entry = cached{SourceFingerprint: source.EntryFingerprint, Size: source.Fingerprint.Size, Mtime: source.Fingerprint.Mtime, Checked: now, Observation: observation}
-		if !s.retainProbedObservation(entry, headerCharge, reservation) {
+		var completed bool
+		entry, completed = s.probeSource(source)
+		if !completed {
 			return true, true
 		}
 		c.Cache[loc] = entry
@@ -662,6 +685,53 @@ func (s scan) visitEntry(d directory, source SourceEntry) (retry, stop bool) {
 		return false, false
 	}
 	return s.admitObservation(source, entry)
+}
+
+// probeSource owns one completed bounded header read and its reservation.
+func (s scan) probeSource(source SourceEntry) (cached, bool) {
+	h := s.health
+	if foregroundWork(s.ctx) != nil {
+		s.rollouts.renewProbeWindow()
+	}
+	if !discoveryProbeAvailable(s.ctx, h, s.rollouts) {
+		return cached{}, false
+	}
+	headerCharge := int64(sourcefacts.HeaderBytes + 128<<10)
+	reservation := s.probeReservation()
+	if !reservation.Reserve(headerCharge) {
+		if foregroundWork(s.ctx) != nil {
+			h.failure = errCatalogBudget
+		}
+		return cached{}, false
+	}
+	var observation Observation
+	err := nativeUnit(s.ctx, func(unit context.Context) error {
+		observation = s.adapter.Inspect(unit, source.Source)
+		if foregroundWork(unit) != nil {
+			return unit.Err()
+		}
+		return nil
+	})
+	if err != nil {
+		reservation.Release(headerCharge)
+		h.failure = err
+		return cached{}, false
+	}
+	h.Probes++
+	if s.rollouts != nil {
+		s.rollouts.probes++
+	}
+	h.Bytes += observation.Bytes
+	h.NativeReadBytes += observation.NativeReadBytes
+	h.NativeReadOperations += observation.NativeReadOperations
+	entry := cached{SourceFingerprint: source.EntryFingerprint, Size: source.Fingerprint.Size, Mtime: source.Fingerprint.Mtime, Checked: s.now, Observation: observation}
+	if !s.retainProbedObservation(entry, headerCharge, reservation) {
+		if foregroundWork(s.ctx) != nil {
+			h.failure = errCatalogBudget
+		}
+		return cached{}, false
+	}
+	return entry, true
 }
 
 func (s scan) admitObservation(source SourceEntry, entry cached) (bool, bool) {
@@ -1035,7 +1105,13 @@ func (s scan) finishCandidate(candidate Candidate, loc, root, generation, ownedR
 	return false, false
 }
 
-func discoveryProbeAvailable(h *Health, rollouts *CodexRolloutLookup) bool {
+func discoveryProbeAvailable(ctx context.Context, h *Health, rollouts *CodexRolloutLookup) bool {
+	// Read-only foreground enumeration finishes a bounded batch before yielding.
+	// Its existing header window renews between completed reads, not by raising
+	// the window size or restarting a changing prefix of that batch.
+	if foregroundWork(ctx) != nil {
+		return true
+	}
 	return h.Probes < HeaderProbes && (rollouts == nil || rollouts.probes < HeaderProbes-maxCurrentThreads)
 }
 
@@ -1096,16 +1172,24 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 	// Retry unavailable directories before the remaining backlog next pass,
 	// without revisiting them in this pass or consuming forward queue slots.
 	var unavailable []directory
-	for len(c.Queue) > 0 && discoveryProbeAvailable(h, o.Rollouts) && h.Entries < 2048 && time.Now().Before(deadline) {
+	for len(c.Queue) > 0 && discoveryProbeAvailable(s.ctx, h, o.Rollouts) && h.Entries < 2048 && time.Now().Before(deadline) {
 		if scanStopped(s.ctx, o) {
 			break
 		}
 		d := c.Queue[0]
 		c.Queue = c.Queue[1:]
-		batch, err := s.adapter.Enumerate(s.ctx, d.Root, d.Path, d.Offset)
+		var batch SourceBatch
+		err := nativeUnit(s.ctx, func(unit context.Context) error {
+			var enumerateErr error
+			batch, enumerateErr = s.adapter.Enumerate(unit, d.Root, d.Path, d.Offset)
+			return enumerateErr
+		})
 		next, finished := batch.Continuation, batch.Complete
 		if err != nil {
-			if s.ctx.Err() != nil {
+			if s.ctx.Err() != nil || nativeInterrupted(err) {
+				if foregroundWork(s.ctx) != nil {
+					h.failure = err
+				}
 				c.Queue = append(c.Queue, d)
 				break
 			}
@@ -1114,8 +1198,9 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 			continue
 		}
 		worker := scan{nativeOnly: s.nativeOnly, proofs: s.proofs, resolver: s.resolver, recovery: s.recovery, store: s.store, cfg: s.cfg, catalog: c, health: h, now: s.now, adapter: s.adapter, ctx: s.ctx, reservedDirectories: len(unavailable), rollouts: o.Rollouts, refused: s.refused}
+		foreground := foregroundWork(s.ctx) != nil
 		for _, source := range batch.Entries {
-			if scanStopped(s.ctx, o) || time.Now().After(deadline) {
+			if scanStopped(s.ctx, o) || !foreground && time.Now().After(deadline) {
 				finished = false
 				next = d.Offset
 				break
@@ -1129,12 +1214,37 @@ func (s scan) observeDirectories(o Options, deadline time.Time) {
 				break
 			}
 		}
+		s.directoryProgress(&d, next, finished)
 		if !finished {
 			d.Offset = next
 			c.Queue = append(c.Queue, d)
 		}
+		if h.failure != nil {
+			break
+		}
 	}
 	c.Queue = append(unavailable, c.Queue...)
+}
+
+func (s scan) directoryProgress(d *directory, next int64, finished bool) {
+	if finished {
+		s.health.progress++
+		return
+	}
+	if foregroundWork(s.ctx) == nil {
+		return
+	}
+	// Restored JSON does not contain the private cursor. Charge its fixed
+	// three-word state to the same catalog owner before retaining it.
+	if d.cursor.power == 0 && !s.rollouts.reserveCatalog(24) {
+		s.health.failure = errCatalogBudget
+		return
+	}
+	if d.cursor.advance(d.Offset, next) {
+		s.health.progress++
+	} else if s.health.failure == nil {
+		s.health.failure = agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("native inventory cursor did not advance")), agentapi.CauseLookupNoProgress)
+	}
 }
 
 func (s scan) recoverProject(candidate Candidate) (archive.ProjectResolution, sourcefacts.RecoveryOutcome, bool) {

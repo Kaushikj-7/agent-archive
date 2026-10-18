@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Backfill planning and dry runs continue supported Codex preparation and
+  inspection across bounded lookup scopes, including histories needing more
+  than five seconds of total lookup work. Native I/O timeouts and inventory
+  no-progress results stay specific. Incomplete inventory is reported while
+  independently verified sessions remain eligible. Source safety limits and background work
+  are unchanged; confirmed staging and publication keep their existing bounds.
+
 - Backfill distinguishes exhausted Codex lookup work (`lookup_allowance_spent`,
   retry) from source byte/record limits and missing history evidence. Pending
   sessions keep their existing eligibility checks. Content-free traces count
