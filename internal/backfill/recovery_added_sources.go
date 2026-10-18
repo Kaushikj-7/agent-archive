@@ -418,8 +418,6 @@ func addedRecoveryBlocks(ctx context.Context, r *resolver, slugs map[string]bool
 			keys[id.Key] = true
 		case id.Known:
 			// A repository without a key matches no recorded key.
-		case !id.BudgetExhausted && id.Root != "" && id.Key == "":
-			// A keyless clone, as an inventory's proposed root (nonOwning).
 		default:
 			gaps.add(root.agent, CauseNativeInventoryChanged)
 		}
