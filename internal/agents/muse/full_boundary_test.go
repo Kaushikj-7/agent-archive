@@ -33,6 +33,13 @@ type boundaryCase struct {
 	target int64
 }
 
+type boundaryPhase string
+
+const (
+	boundaryPhaseGenerate boundaryPhase = "generate"
+	boundaryPhaseVerify   boundaryPhase = "verify"
+)
+
 func boundaryCases() []boundaryCase {
 	var cases []boundaryCase
 	for _, family := range []struct {
@@ -56,14 +63,14 @@ func boundaryCases() []boundaryCase {
 // 2 GiB before admission, pins this source and inputs, and preserves failed roots.
 // This is a controlled-emitter bound, not an OS quota or publication campaign.
 func TestMuseFullByteBoundary(t *testing.T) {
-	phase := os.Getenv("AGENT_ARCHIVE_MUSE_BOUNDARY_PHASE")
+	phase := boundaryPhase(os.Getenv("AGENT_ARCHIVE_MUSE_BOUNDARY_PHASE"))
 	if phase == "" {
 		return
 	}
 	if os.Getenv("AGENT_ARCHIVE_PERF") != "1" {
 		t.Fatal("full boundaries require explicit PERF=1")
 	}
-	if phase != "generate" && phase != "verify" {
+	if phase != boundaryPhaseGenerate && phase != boundaryPhaseVerify {
 		t.Fatal("unknown boundary phase")
 	}
 	root := os.Getenv("AGENT_ARCHIVE_MUSE_BOUNDARY_ROOT")
@@ -76,8 +83,8 @@ func TestMuseFullByteBoundary(t *testing.T) {
 			continue
 		}
 		t.Run(c.name, func(t *testing.T) {
-			t.Run(phase, func(t *testing.T) {
-				if phase == "generate" {
+			t.Run(string(phase), func(t *testing.T) {
+				if phase == boundaryPhaseGenerate {
 					boundaryGenerate(t, root, c)
 				} else {
 					boundaryVerify(t, root, c)
@@ -169,6 +176,7 @@ func (w *boundaryWriter) Write(p []byte) (int, error) {
 	}
 	return total, nil
 }
+
 func boundaryPadding(t *testing.T, w io.Writer, n int64) {
 	t.Helper()
 	if n < 0 {
@@ -181,12 +189,14 @@ func boundaryPadding(t *testing.T, w io.Writer, n int64) {
 		n -= int64(len(part))
 	}
 }
+
 func boundaryWrite(t *testing.T, w io.Writer, p []byte) {
 	t.Helper()
 	if n, err := w.Write(p); err != nil || n != len(p) {
 		t.Fatalf("write %d/%d: %v", n, len(p), err)
 	}
 }
+
 func boundaryNewFile(t *testing.T, path string) *os.File {
 	t.Helper()
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
@@ -227,7 +237,7 @@ func boundaryGenerate(t *testing.T, root string, c boundaryCase) {
 	} else {
 		prefix := readSynthetic(t, "synthetic-exec-empty.jsonl")
 		boundaryWrite(t, w, prefix)
-		for _, line := range bytes.Split(bytes.TrimSuffix(prefix, []byte("\n")), []byte("\n")) {
+		for line := range bytes.SplitSeq(bytes.TrimSuffix(prefix, []byte("\n")), []byte("\n")) {
 			m.Rows++
 			m.MaxPhysicalRow = max(m.MaxPhysicalRow, int64(len(line)+1))
 		}
@@ -345,7 +355,11 @@ func boundaryInput(t *testing.T, root string, c boundaryCase) boundaryManifest {
 	return m
 }
 
-type boundaryReads struct{ calls, bytes int64 }
+type boundaryReads struct {
+	calls int64
+	bytes int64
+}
+
 type boundaryOpener struct {
 	transcriptio.OS
 	reads *boundaryReads
@@ -455,6 +469,7 @@ func boundarySmallBundle(t *testing.T) archive.SourceBundle {
 	boundaryNameIndex(t, bundle)
 	return bundle
 }
+
 func boundaryNameIndex(t *testing.T, bundle archive.SourceBundle) int {
 	t.Helper()
 	for i, row := range bundle.NativeRecords {
@@ -469,6 +484,7 @@ func boundaryNameIndex(t *testing.T, bundle archive.SourceBundle) int {
 	t.Fatal("real Filter did not retain name scalar")
 	return 0
 }
+
 func boundaryDecode(t *testing.T, r io.Reader, bundle archive.SourceBundle, header []byte) {
 	t.Helper()
 	records, headers := 0, 0
@@ -485,6 +501,8 @@ func boundaryDecode(t *testing.T, r io.Reader, bundle archive.SourceBundle, head
 				return errors.New("decoded retained record changed")
 			}
 			records++
+		case archive.SourceLineNativeText, archive.SourceLineSupplementalEvidence:
+			return errors.New("unexpected codec line kind")
 		default:
 			return errors.New("unexpected codec line kind")
 		}
