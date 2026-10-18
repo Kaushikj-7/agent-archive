@@ -140,7 +140,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		return collector.Result{}, fmt.Errorf("open local store: %w", err)
 	}
 
-	guard, unlock, err := lockCollectorGuard(home, collectorPassHolder(quietOnBusy, pass), env.now(), cfg.Storage.EffectiveArchiveFormat())
+	guard, unlock, err := lockCollectorGuard(home, collectorPassHolder(quietOnBusy, pass), env.now(), collectorNeedsGuard(cfg))
 	if err != nil {
 		if errors.Is(err, local.ErrBusy) {
 			if quietOnBusy {
@@ -300,6 +300,10 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 	}
 
 	return finishPassWithRetention(home, env, cfg, localStore, objectStore, previousScanAt, result, summary, verifyErr)
+}
+
+func collectorNeedsGuard(cfg config.Config) bool {
+	return cfg.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 || cfg.SupportsStagedSelection()
 }
 
 // verifyAndRecordPass performs read-back verification and records per-session

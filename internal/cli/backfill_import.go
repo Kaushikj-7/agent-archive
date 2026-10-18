@@ -200,7 +200,7 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 		stopWait()
 		return reg, err
 	}
-	collectorGuard, releaseCollector, err := lockCollectorGuardWait(home, "backfill import", env.now(), initialCfg.Storage.EffectiveArchiveFormat(), collectorWait)
+	collectorGuard, releaseCollector, err := lockCollectorGuardWait(home, "backfill import", env.now(), collectorNeedsGuard(initialCfg), collectorWait)
 	stopWait()
 	if err != nil {
 		return reg, errCollectorBusy

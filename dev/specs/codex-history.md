@@ -140,6 +140,18 @@ subdirectories and unrelated entries and retain a separate18432-entry traversal
 ceiling. Aliases of one canonical home share acquisition while every approved
 home spelling remains fenced.
 
+Targeted current lookup also accepts a clean absolute index locator beneath an
+originally supplied alias of an already approved home. It captures that alias's
+physical root identity at construction, charges its retained mapping to the same
+native ledger within the existing 16MiB metadata allowance, and rechecks the
+original spelling and root identity before operations, including cached selections
+and final current-row validation. Only
+the home prefix is rebased; descendant paths retain the existing source opener's
+confinement checks. Unapproved aliases, wrong homes, traversal, unavailable or
+retargeted aliases and replaced roots supply no authority. Ordinary physical
+homes need no additional retained alias mapping. This changes no native binding,
+retained source, metadata, privacy filter, adapter or parser format/version.
+
 A thread's lineage is a chain, and the chain is its own proof. The tip is the
 rollout Codex's thread index names (`threads.rollout_path` in
 `state_5.sqlite`). Each rollout's header names the rollout it continues from

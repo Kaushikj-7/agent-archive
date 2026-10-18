@@ -155,6 +155,8 @@ type Env struct {
 	// observeBackfillPlan, set only by tests, sees the actual completed plan.
 	// The observer must not mutate it or grant admission authority.
 	observeBackfillPlan func(backfill.Plan)
+	// reviewBackfillProjects enables private observations only for explicit review.
+	reviewBackfillProjects bool
 	// nativeLookupNow injects the foreground scheduling clock in tests.
 	nativeLookupNow func() time.Time
 	// observeBackfillLookup observes its actual owner without replacing scheduling.
