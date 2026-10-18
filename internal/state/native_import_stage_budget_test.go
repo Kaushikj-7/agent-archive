@@ -28,7 +28,10 @@ func largeNativeImportFixture(t *testing.T) nativeImportPrepareFixture {
 		output.Write(line)
 		output.WriteByte('\n')
 	}
-	for i := 0; i < 40; i++ {
+	// Privacy retains at most 64KiB per text. Use many valid smaller records,
+	// not oversized values whose retained output would silently shrink.
+	const messages = 320
+	for i := 0; i < messages; i++ {
 		var row map[string]any
 		if err := json.Unmarshal(lines[len(lines)-2], &row); err != nil {
 			t.Fatal(err)
@@ -40,7 +43,7 @@ func largeNativeImportFixture(t *testing.T) nativeImportPrepareFixture {
 		payload["source_run_record_sequence"] = 3 + i
 		event := payload["event"].(map[string]any)
 		event["message_id"] = fmt.Sprintf("synthetic-large-%d", i)
-		event["text"] = strings.Repeat("x", 512<<10)
+		event["text"] = strings.Repeat("x", 63<<10)
 		encoded, err := json.Marshal(row)
 		if err != nil {
 			t.Fatal(err)
@@ -52,7 +55,7 @@ func largeNativeImportFixture(t *testing.T) nativeImportPrepareFixture {
 	if err := json.Unmarshal(lines[len(lines)-1], &end); err != nil {
 		t.Fatal(err)
 	}
-	end["sequence"] = 49
+	end["sequence"] = 9 + messages
 	encoded, err := json.Marshal(end)
 	if err != nil {
 		t.Fatal(err)
@@ -72,6 +75,11 @@ func TestNativeImportLargeStagePublicRecoveryUsesBoundedTemporaryLoans(t *testin
 	p, err := f.prepare(t.Context())
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, gap := range p.filtered.Gaps {
+		if gap.Code == "content_truncated" {
+			t.Fatal("large fixture depended on privacy truncation")
+		}
 	}
 	interruption := errors.New("synthetic after stage")
 	f.native.store.onIndexStep = func(step string) error {
