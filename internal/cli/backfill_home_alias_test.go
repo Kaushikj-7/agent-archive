@@ -36,8 +36,10 @@ func TestBackfillImportsHistoryThroughTrustedHomeAlias(t *testing.T) {
 			canonical := func(path string) string { p, err := filepath.EvalSymlinks(path); must(t, err); return p }
 			data, rawUser := canonical(t.TempDir()), t.TempDir()
 			physicalUser := canonical(rawUser)
-			user := physicalUser
+			var user string
 			switch spelling {
+			case trustedHomePhysical:
+				user = physicalUser
 			case trustedHomeSymlink:
 				user = filepath.Join(t.TempDir(), "trusted-home")
 				must(t, os.Symlink(physicalUser, user))
