@@ -133,11 +133,6 @@ func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]Dura
 	return append([]DurableStorageObligation(nil), out...), anonymous, cache.entries, nil
 }
 
-func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remaining *int, legacy bool) ([]DurableStorageObligation, bool, error) {
-	matched := false
-	return s.inspectPendingRootWitnessed(home, name, remaining, legacy, &matched)
-}
-
 func (s *Store) inspectPendingRootWitnessed(home *local.RootedHome, name string, remaining *int, legacy bool, matchedWitness *bool) (out []DurableStorageObligation, unknown bool, err error) {
 	root, err := privateDirectory(home.Root, name, false)
 	if err != nil {
@@ -399,10 +394,6 @@ func (s *Store) CheckDurableReadRoots() error {
 
 func publicationReadOwnerChanged(metadata archive.Metadata, reg archive.SessionRegistration, origin archive.SessionOrigin, owner *publicationReadOwner, pending PendingPublication) bool {
 	return (metadata.SessionID != reg.ArchiveSessionID || metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.Harness.Name != reg.Harness.Name || metadata.PreviousGenerationID != reg.PreviousGenerationID || !metadata.StartedAt.Equal(reg.SessionStartedAt) || metadata.Origin != origin || owner.machine != "" && metadata.MachineID != owner.machine || pending.Preparation == nil || pending.Preparation.DestinationID != reg.DestinationID || pending.Preparation.AdmissionContext != owner.admission)
-}
-
-func (s *Store) validateDurableReadPending(id string, history bool, owner *publicationReadOwner) error {
-	return s.validateDurableReadPendingSelection(id, history, owner, nil)
 }
 
 func (s *Store) validateDurableReadPendingSelection(id string, history bool, owner *publicationReadOwner, nativeImportACK *StagedSelection) error {

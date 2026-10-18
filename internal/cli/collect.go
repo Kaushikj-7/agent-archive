@@ -173,17 +173,22 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 	// The complete authority census precedes the application allowance. Give it
 	// part of the remaining pass budget so a census slower than four seconds
 	// does not consume every future slice before any owner can be applied.
-	recoveryBudget := max(time.Nanosecond, (collectSoftDeadline-time.Since(started))/2)
-	applicationBudget := min(state.SessionIndexRecoverySlice, recoveryBudget) * 3 / 4
-	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, recoveryBudget)
-	_, recoveryErr := localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, applicationBudget))
-	if errors.Is(recoveryErr, context.DeadlineExceeded) && state.SessionIndexRecoveryInterrupted(recoveryErr) && ctx.Err() == nil {
-		recoveryErr = nil
+	var recoveryErr error
+	if !stop() {
+		recoveryBudget := (collectSoftDeadline - time.Since(started)) / 2
+		if recoveryBudget > 0 {
+			applicationBudget := min(state.SessionIndexRecoverySlice, recoveryBudget) * 3 / 4
+			recoveryCtx, recoveryCancel := context.WithTimeout(ctx, recoveryBudget)
+			_, recoveryErr = localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, applicationBudget))
+			if errors.Is(recoveryErr, context.DeadlineExceeded) && state.SessionIndexRecoveryInterrupted(recoveryErr) && ctx.Err() == nil {
+				recoveryErr = nil
+			}
+			if recoveryErr != nil {
+				recordPreflightError(localStore, recoveryErr)
+			}
+			recoveryCancel()
+		}
 	}
-	if recoveryErr != nil {
-		recordPreflightError(localStore, recoveryErr)
-	}
-	recoveryCancel()
 	rollouts, readHomes, err := passCodexRollouts(ctx, localStore, cfg, env)
 	if err != nil {
 		recordPreflightError(localStore, err)

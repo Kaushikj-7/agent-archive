@@ -20,6 +20,9 @@ import (
 func TestOpenBatch(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	store := state.OpenReadOnly(home)
 	filters := Plan{Filters: Filters{Harnesses: []string{"claude-code"}, IncludeTemp: true}, projectFilter: []string{"/work/repo"}}.BatchFilters()
 	if filters.Harnesses[0] != "claude" || filters.ProjectIDs[0] != archive.ProjectID("/work/repo") {
