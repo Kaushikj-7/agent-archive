@@ -362,10 +362,8 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *s
 		originalText := string(original)
 		redacted := archive.RedactText(originalText)
 		digest := sha256.Sum256([]byte(redacted))
-		if budget.content != nil && archive.MarkerFreeRedactionFixedPoint(originalText, redacted) {
-			if err := budget.content.add(agentapi.SkillContentDigest(digest)); err != nil {
-				return nil, err
-			}
+		if err := budget.observeSkillContent(originalText, redacted, digest); err != nil {
+			return nil, err
 		}
 		hash := hex.EncodeToString(digest[:])
 		payload["sha256"] = hash

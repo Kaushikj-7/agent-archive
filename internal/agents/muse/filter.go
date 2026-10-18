@@ -73,15 +73,14 @@ func (Filter) filterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 	rows := []logicalRow{}
 	gaps := privacyGaps{}
 	line, encodedTotal := int64(0), int64(0)
-	nativeJoins := nativeBodyJoins{}
 	if content != nil {
 		if !reservation.Reserve(512) {
 			return out, release, errBudget
 		}
 		held += 512
 		contentJoin = &skillContentJoin{reservation: reservation, held: &held, limits: c.Limits}
-		nativeJoins.skillContent = contentJoin
 	}
+	nativeJoins := nativeBodyJoins{skillContent: contentJoin}
 	// End private ownership before the earlier error-release defer runs too.
 	defer func() { nativeJoins = nativeBodyJoins{} }()
 	for {
@@ -112,34 +111,12 @@ func (Filter) filterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 		if err == nil {
 			for _, r := range decoded {
 				var safe logicalRow
-				safe, err = privacyLogical(r, len(rows)+1, gaps.add)
+				var retainedCharge int64
+				safe, retainedCharge, err = retainNativeLogicalRow(r, len(rows)+1, c.Limits, &encodedTotal, &gaps, reservation)
 				if err != nil {
 					break
 				}
-				encoded, _ := json.Marshal(safe)
-				encodedTotal += int64(len(encoded))
-				ceiling := c.Limits.FilteredBytes
-				if ceiling <= 0 {
-					ceiling = archive.MaxRecordBytes
-				}
-				if encodedTotal > ceiling {
-					err = archive.ErrRecordTooLarge
-					break
-				}
-				multiplier := int64(8)
-				if safe.ordinary != nil && enrichedTools(safe.ordinary.Fields) {
-					// Keep the existing decoded-value expansion allowance alive for
-					// tool arrays after the physical raw reservation is released.
-					// It covers retained maps plus later call/batch/source joins and
-					// normalized call slices, before rows take persistent ownership.
-					multiplier = 128
-				}
-				n := int64(len(encoded))*multiplier + 512
-				if !reservation.Reserve(n) {
-					err = errBudget
-					break
-				}
-				held += n
+				held += retainedCharge
 				rows = append(rows, safe)
 			}
 		}
@@ -227,7 +204,7 @@ func privacyWithGaps(r retained, record int, addGap func(string, int, string)) (
 	for k, v := range original.Fields {
 		switch fieldName(k) {
 		case fieldPrompt, fieldText, fieldNewName, fieldPreviousName, fieldObservedModel:
-		case fieldObservedAtSequence, fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence, fieldResume, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldModelCallIndex, fieldObservedInput, fieldObservedOutput, fieldToolCalls, fieldToolResults:
+		case fieldObservedAtSequence, fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence, fieldResume, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldModelCallIndex, fieldObservedInput, fieldObservedOutput, fieldToolCalls, fieldToolResults, fieldSkillContentSHA, fieldSkillContentEvidence:
 			fallthrough
 		default:
 			if !reflect.DeepEqual(v, r.Fields[k]) {
@@ -655,4 +632,35 @@ func nativeFilterRecordLimit(in agentapi.NativeInput, limits agentapi.ReadLimits
 		return 0, archive.ErrRecordTooLarge
 	}
 	return record, nil
+}
+
+// retainNativeLogicalRow transfers exactly the existing per-row privacy and
+// persistent expansion allowance before the caller releases its physical line.
+func retainNativeLogicalRow(r logicalRow, ordinal int, limits agentapi.ReadLimits, encodedTotal *int64, gaps *privacyGaps, reservation *agentapi.NativeReadReservation) (logicalRow, int64, error) {
+	safe, err := privacyLogical(r, ordinal, gaps.add)
+	if err != nil {
+		return logicalRow{}, 0, err
+	}
+	encoded, _ := json.Marshal(safe)
+	*encodedTotal += int64(len(encoded))
+	ceiling := limits.FilteredBytes
+	if ceiling <= 0 {
+		ceiling = archive.MaxRecordBytes
+	}
+	if *encodedTotal > ceiling {
+		return logicalRow{}, 0, archive.ErrRecordTooLarge
+	}
+	multiplier := int64(8)
+	if safe.ordinary != nil && enrichedTools(safe.ordinary.Fields) {
+		// Keep the existing decoded-value expansion allowance alive for
+		// tool arrays after the physical raw reservation is released.
+		// It covers retained maps plus later call/batch/source joins and
+		// normalized call slices, before rows take persistent ownership.
+		multiplier = 128
+	}
+	n := int64(len(encoded))*multiplier + 512
+	if !reservation.Reserve(n) {
+		return logicalRow{}, 0, errBudget
+	}
+	return safe, n, nil
 }

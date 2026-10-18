@@ -34,7 +34,7 @@ func TestSkillContentSameReadSafeSubset(t *testing.T) {
 			}
 			budget := agentapi.NewNativeReadBudget(1 << 20)
 			options := SkillOptions{Harness: "muse", Mode: mode, ObservedAt: time.Unix(2000000000, 0), Locations: []agentapi.SkillRoot{{Path: root, Scope: "project_agents", ProjectBoundary: root}}}
-			out, close, err := ObserveSkillsWithContent(t.Context(), options, budget)
+			out, releaseObservation, err := ObserveSkillsWithContent(t.Context(), options, budget)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -53,8 +53,8 @@ func TestSkillContentSameReadSafeSubset(t *testing.T) {
 					}
 				}
 			}
-			close()
-			close()
+			releaseObservation()
+			releaseObservation()
 			if used, _ := budget.Charged(); used != 0 {
 				t.Fatal("safe companion pass loan leaked")
 			}
@@ -80,8 +80,8 @@ func TestSkillContentCancellationAndBudgetDiscard(t *testing.T) {
 		want  error
 	}{{ctx, 1 << 20, context.Canceled}, {t.Context(), 1, agentapi.ErrReadBudget}} {
 		budget := agentapi.NewNativeReadBudget(c.limit)
-		out, close, err := ObserveSkillsWithContent(c.ctx, options, budget)
-		close()
+		out, releaseObservation, err := ObserveSkillsWithContent(c.ctx, options, budget)
+		releaseObservation()
 		if !errors.Is(err, c.want) || len(out.Digests) != 0 {
 			t.Fatal("partial content proof returned", err)
 		}

@@ -587,23 +587,11 @@ func (s *sessionScan) buildRead(read *sourceRead) (archive.SourceBundle, []archi
 	baseEvidence = s.applyLabels(baseEvidence)
 	supplemental := limitSkillEvidence(mergeSupplementalEvidence(baseEvidence, s.req.HookEvidence), s.opts.skillEvidence())
 
-	// now is a placeholder here; bundleEvidenceEqual ignores CapturedAt, so
-	// it has no effect on the comparison. The real value is assigned once it
-	// is known whether this is genuinely new evidence.
-	candidateOwner := len(s.retainedReleases)
-	candidate, err := s.newSourceBundle(s.reg, read.adapter, read.filtered, s.now, supplemental)
+	candidate, observe, err := s.skillActivityProbe(read, cached, haveCached, supplemental)
 	if err != nil {
-		return archive.SourceBundle{}, nil, fmt.Errorf("build source bundle: %w", err)
+		return archive.SourceBundle{}, nil, err
 	}
-
-	// Observe the filesystem only with session activity. An unrelated skill edit
-	// must not refresh every historical session or extend its retention lifetime.
-	nativeChanged := !nativeEvidenceExtends(read.adapter, cached, candidate) || !nativeEvidenceExtends(read.adapter, candidate, cached)
-	active := !haveCached || s.req.Token != "" || (nativeChanged && !bundleChangeIsNamingOnly(read.adapter, cached, candidate))
-	if signature, found, _ := s.local.LoadScanSignature(s.id()); found && pendingSkillMode(signature.SkillEvidence) != s.opts.skillEvidence() {
-		active = true
-	}
-	if (s.opts.SupplementalEvidence == nil && s.opts.SupplementalSkillContent == nil) || !active {
+	if !observe {
 		if err := s.finalizeSkillContent(read, nil); err != nil {
 			return archive.SourceBundle{}, nil, err
 		}
@@ -621,10 +609,6 @@ func (s *sessionScan) buildRead(read *sourceRead) (archive.SourceBundle, []archi
 	}
 	supplemental = mergeSupplementalEvidence(baseEvidence, observed, s.req.HookEvidence)
 	supplemental = limitSkillEvidence(supplemental, s.opts.skillEvidence())
-	// The activity probe's decoded rows are no longer consumed. The filtered
-	// input still owns history/ordinal/text aliases needed by the final build.
-	s.releaseRetainedIndex(candidateOwner)
-	candidate = archive.SourceBundle{}
 	if err := s.finalizeSkillContent(read, observation.Digests); err != nil {
 		return archive.SourceBundle{}, nil, err
 	}

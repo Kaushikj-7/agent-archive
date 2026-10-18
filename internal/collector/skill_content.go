@@ -2,6 +2,7 @@ package collector
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -59,4 +60,32 @@ func (s *sessionScan) observeSkillContent() (agentapi.SkillContentObservation, f
 	}
 	items, err := s.opts.SupplementalEvidence(s.reg, s.now)
 	return agentapi.SkillContentObservation{Evidence: items}, nil, err
+}
+
+// skillActivityProbe owns its decoded candidate and index loan. Only an
+// inactive funded candidate may escape; active probes end before observation.
+func (s *sessionScan) skillActivityProbe(read *sourceRead, cached archive.SourceBundle, haveCached bool, supplemental []archive.SupplementalEvidence) (archive.SourceBundle, bool, error) {
+	// now is a placeholder here; bundleEvidenceEqual ignores CapturedAt, so
+	// it has no effect on the comparison. The real value is assigned once it
+	// is known whether this is genuinely new evidence.
+	candidateOwner := len(s.retainedReleases)
+	candidate, err := s.newSourceBundle(s.reg, read.adapter, read.filtered, s.now, supplemental)
+	if err != nil {
+		return archive.SourceBundle{}, false, fmt.Errorf("build source bundle: %w", err)
+	}
+
+	// Observe the filesystem only with session activity. An unrelated skill edit
+	// must not refresh every historical session or extend its retention lifetime.
+	nativeChanged := !nativeEvidenceExtends(read.adapter, cached, candidate) || !nativeEvidenceExtends(read.adapter, candidate, cached)
+	active := !haveCached || s.req.Token != "" || (nativeChanged && !bundleChangeIsNamingOnly(read.adapter, cached, candidate))
+	if signature, found, _ := s.local.LoadScanSignature(s.id()); found && pendingSkillMode(signature.SkillEvidence) != s.opts.skillEvidence() {
+		active = true
+	}
+	if (s.opts.SupplementalEvidence == nil && s.opts.SupplementalSkillContent == nil) || !active {
+		return candidate, false, nil
+	}
+	// The filtered input still owns history/ordinal/text aliases required by
+	// the final build; this decoded probe and its independent loan end here.
+	s.releaseRetainedIndex(candidateOwner)
+	return archive.SourceBundle{}, true, nil
 }

@@ -256,7 +256,7 @@ func validFields(r retained) bool {
 			}
 		case fieldResume:
 		case fieldPreviousName:
-		case fieldPrompt, fieldText, fieldNewName, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldObservedModel:
+		case fieldPrompt, fieldText, fieldNewName, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldObservedModel, fieldSkillContentSHA, fieldSkillContentEvidence:
 			fallthrough
 		default:
 			if _, ok := v.(string); !ok {

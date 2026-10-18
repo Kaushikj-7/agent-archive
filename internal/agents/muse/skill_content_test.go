@@ -33,13 +33,13 @@ func skillContentNative(t *testing.T, body string) []byte {
 
 func skillContentOperation(t *testing.T, raw []byte, budget *agentapi.NativeReadBudget) (archive.FilteredTranscript, agentapi.SkillContentJoin, func()) {
 	t.Helper()
-	out, join, close, err := (Filter{}).FilterSkillContentLeased(t.Context(), agentapi.NativeInput{File: memoryInput{bytes.NewReader(raw)}}, agentapi.FilterContext{}, budget)
+	out, join, releaseObservation, err := (Filter{}).FilterSkillContentLeased(t.Context(), agentapi.NativeInput{File: memoryInput{bytes.NewReader(raw)}}, agentapi.FilterContext{}, budget)
 	if err != nil {
-		close()
+		releaseObservation()
 		t.Fatal(err)
 	}
-	t.Cleanup(close)
-	return out, join, close
+	t.Cleanup(releaseObservation)
+	return out, join, releaseObservation
 }
 
 func TestSkillContentFullPipeline(t *testing.T) {
@@ -54,7 +54,7 @@ func TestSkillContentFullPipeline(t *testing.T) {
 	}
 	budget := agentapi.NewNativeReadBudget(8 << 20)
 	raw := skillContentNative(t, body)
-	_, join, close := skillContentOperation(t, raw, budget)
+	_, join, releaseObservation := skillContentOperation(t, raw, budget)
 	if _, err := join.Restore(t.Context(), archive.SourceBundle{}); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestSkillContentFullPipeline(t *testing.T) {
 	if bytes.Contains(bytes.Join(out.Records, nil), []byte("evidence_hash")) {
 		t.Fatal("native original-hash field retained")
 	}
-	close()
+	releaseObservation()
 	if used, _ := budget.Charged(); used != 0 {
 		t.Fatal("pipeline content loan leaked")
 	}
@@ -169,7 +169,7 @@ func TestSkillContentCancelBudgetAndAttestation(t *testing.T) {
 	t.Parallel()
 	for _, cancelNow := range []bool{false, true} {
 		budget := agentapi.NewNativeReadBudget(8 << 20)
-		_, join, close := skillContentOperation(t, skillContentNative(t, "ordinary"), budget)
+		_, join, releaseObservation := skillContentOperation(t, skillContentNative(t, "ordinary"), budget)
 		if _, err := join.Restore(t.Context(), archive.SourceBundle{}); err != nil {
 			t.Fatal(err)
 		}
@@ -195,8 +195,8 @@ func TestSkillContentCancelBudgetAndAttestation(t *testing.T) {
 		if !errors.Is(err, want) || len(join.(*skillContentJoin).pending) != 0 {
 			t.Fatal("failed finalization kept private state", err)
 		}
-		close()
-		close()
+		releaseObservation()
+		releaseObservation()
 		if used, _ := budget.Charged(); used != 0 {
 			t.Fatal("operation lease leaked")
 		}
@@ -312,9 +312,11 @@ func TestSkillContentOldEightFieldReaderRefusesHashVariant(t *testing.T) {
 func TestSkillContentDispatchUsesExactVariant(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name                   string
-		content, marker, extra bool
-		want                   bool
+		name    string
+		content bool
+		marker  bool
+		extra   bool
+		want    bool
 	}{
 		{name: "old8", want: true},
 		{name: "safe10", content: true, marker: true, want: true},
@@ -324,6 +326,7 @@ func TestSkillContentDispatchUsesExactVariant(t *testing.T) {
 		{name: "extra_safe", content: true, marker: true, extra: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f := map[string]any{"kind": "run", "event_kind": "skill_read_observed", "run_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "source_run_record_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "source_run_record_sequence": json.Number("1"), "skill_id": "installed-origin", "evidence_kind": "read_skill_tool", "observed_at_sequence": json.Number("1")}
 			if tc.content {
 				f["sha256"] = strings.Repeat("a", 64)

@@ -79,7 +79,10 @@ func (s *skillContentDigests) accepted(evidence []archive.SupplementalEvidence) 
 					}
 				}
 			}
+		case archive.EvidenceKindSessionLabels, archive.EvidenceKindSkillDiscovered, archive.EvidenceKindSkillInvocation, archive.EvidenceKindSkillRead, archive.EvidenceKindLifecycleHook, archive.EvidenceKindFinalResponse, archive.EvidenceKindExplicitFeedback, archive.EvidenceKindLinkedSession, archive.EvidenceKindCaptureGap:
+			// Other evidence kinds do not grant installed-content digests.
 		default:
+			// Unknown kinds keep the existing no-authority behavior.
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return string(out[i][:]) < string(out[j][:]) })
@@ -98,4 +101,11 @@ func (s *skillContentDigests) close() {
 	s.values = nil
 	s.budget.ReleaseUnscoped(s.held)
 	s.held = 0
+}
+
+func (b *skillReadBudget) observeSkillContent(original, redacted string, safe [32]byte) error {
+	if b.content == nil || !archive.MarkerFreeRedactionFixedPoint(original, redacted) {
+		return nil
+	}
+	return b.content.add(agentapi.SkillContentDigest(safe))
 }

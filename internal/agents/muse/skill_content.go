@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"reflect"
 	"strings"
 
@@ -13,18 +14,27 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+const (
+	fieldSkillContentSHA      fieldName = "sha256"
+	fieldSkillContentEvidence fieldName = "hash_evidence"
+)
+
 type skillContentKey struct {
-	stream, id            string
-	sequence, line, child int64
-	hasChild              bool
+	stream   string
+	id       string
+	sequence int64
+	line     int64
+	child    int64
+	hasChild bool
 }
 
 func skillContentIdentity(r retained) skillContentKey {
-	k := skillContentKey{stream: r.Stream.ID, id: r.ID, sequence: r.Sequence, line: r.Position.Line}
-	if r.Position.Child != nil {
-		k.hasChild, k.child = true, int64(*r.Position.Child)
+	child := int64(0)
+	hasChild := r.Position.Child != nil
+	if hasChild {
+		child = int64(*r.Position.Child)
 	}
-	return k
+	return skillContentKey{stream: r.Stream.ID, id: r.ID, sequence: r.Sequence, line: r.Position.Line, hasChild: hasChild, child: child}
 }
 
 // This object is owned by the existing raw filter release, never by the registry.
@@ -35,13 +45,15 @@ type privateSkillContent struct {
 }
 
 type skillContentJoin struct {
-	reservation                 *agentapi.NativeReadReservation
-	held                        *int64
-	limits                      agentapi.ReadLimits
-	pending                     map[skillContentKey]privateSkillContent
-	rows                        []logicalRow
-	out                         archive.FilteredTranscript
-	restored, finalized, closed bool
+	reservation *agentapi.NativeReadReservation
+	held        *int64
+	limits      agentapi.ReadLimits
+	pending     map[skillContentKey]privateSkillContent
+	rows        []logicalRow
+	out         archive.FilteredTranscript
+	restored    bool
+	finalized   bool
+	closed      bool
 }
 
 func (Filter) SkillContentJoinFor(a archive.Adapter) bool { _, ok := a.(Filter); return ok }
@@ -258,7 +270,7 @@ func (s *skillContentJoin) priorProofs(ctx context.Context, rows []logicalRow) (
 func sameSkillEvent(prior retained, expected []byte) bool {
 	fields := make(map[string]any, len(prior.Fields)-2)
 	for k, v := range prior.Fields {
-		if k != "sha256" && k != "hash_evidence" {
+		if fieldName(k) != fieldSkillContentSHA && fieldName(k) != fieldSkillContentEvidence {
 			fields[k] = v
 		}
 	}
@@ -333,9 +345,7 @@ func (s *skillContentJoin) enrich(ctx context.Context, proofs map[skillContentKe
 		}
 		r := *row.ordinary
 		r.Fields = make(map[string]any, len(row.ordinary.Fields)+2)
-		for k, v := range row.ordinary.Fields {
-			r.Fields[k] = v
-		}
+		maps.Copy(r.Fields, row.ordinary.Fields)
 		r.Fields["sha256"], r.Fields["hash_evidence"] = strings.Clone(h), skillContentEvidence
 		if !skillReadFields(r) {
 			return archive.FilteredTranscript{}, errFormat

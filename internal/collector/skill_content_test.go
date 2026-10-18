@@ -57,8 +57,8 @@ func TestSkillContentCollectorRestoresBeforeActivity(t *testing.T) {
 	}
 	scan.opts.SupplementalSkillContent = func(ctx context.Context, reg archive.SessionRegistration, at time.Time, b *agentapi.NativeReadBudget) (agentapi.SkillContentObservation, func(), error) {
 		calls++
-		out, close, err := evidence.ObserveSkillsWithContent(ctx, evidence.SkillOptions{Harness: "muse", Mode: config.SkillEvidenceBody, ObservedAt: at, Locations: []agentapi.SkillRoot{{Path: root, Scope: "user_muse_config", UserBoundary: root}}}, b)
-		return out, func() { releases++; close() }, err
+		out, releaseObservation, err := evidence.ObserveSkillsWithContent(ctx, evidence.SkillOptions{Harness: "muse", Mode: config.SkillEvidenceBody, ObservedAt: at, Locations: []agentapi.SkillRoot{{Path: root, Scope: "user_muse_config", UserBoundary: root}}}, b)
+		return out, func() { releases++; releaseObservation() }, err
 	}
 	read := func() sourceRead {
 		t.Helper()
@@ -150,45 +150,51 @@ func TestSkillContentCallbackNoneAndImport(t *testing.T) {
 
 func TestSkillContentCollectorErrorAndCancelReleaseView(t *testing.T) {
 	for _, cancelDuringObservation := range []bool{false, true} {
-		scan, reader, _ := nativeCollectorFixture(t)
-		var err error
-		scan.published, err = scan.local.LoadPublishedState(scan.id())
-		if err != nil {
-			t.Fatal(err)
-		}
-		ctx, cancel := context.WithCancel(t.Context())
-		scan.ctx = ctx
-		released := 0
-		refusal := errors.New("synthetic observation refusal")
-		scan.opts.SupplementalSkillContent = func(context.Context, archive.SessionRegistration, time.Time, *agentapi.NativeReadBudget) (agentapi.SkillContentObservation, func(), error) {
-			if cancelDuringObservation {
-				cancel()
-				return agentapi.SkillContentObservation{}, func() { released++ }, nil
-			}
-			return agentapi.SkillContentObservation{}, func() { released++ }, refusal
-		}
-		mark := len(scan.retainedReleases)
-		out, observed, err := reader.Filter(t.Context(), muse.Filter{}, 64<<20)
-		if err != nil {
-			t.Fatal(err)
-		}
-		read := sourceRead{adapter: muse.Filter{}, filtered: out, observed: observed, filterLease: scan.nativeFilterLease(mark)}
-		candidate, _, err := scan.buildRead(&read)
-		want := refusal
+		name := "refusal"
 		if cancelDuringObservation {
-			want = context.Canceled
+			name = "cancellation"
 		}
-		if !errors.Is(err, want) || released != 1 || len(candidate.NativeRecords) != 0 {
-			t.Fatal("error/cancel retained a borrowed view or partial candidate", err, released)
-		}
-		cancel()
-		if err = scan.closeNativeLeases(); err != nil {
-			t.Fatal(err)
-		}
-		scan.releaseRetained()
-		if used, _ := scan.readBudget().Charged(); used != 0 {
-			t.Fatal("failed active gate leaked source/output loan")
-		}
+		t.Run(name, func(t *testing.T) {
+			scan, reader, _ := nativeCollectorFixture(t)
+			var err error
+			scan.published, err = scan.local.LoadPublishedState(scan.id())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			scan.ctx = ctx
+			released := 0
+			refusal := errors.New("synthetic observation refusal")
+			scan.opts.SupplementalSkillContent = func(context.Context, archive.SessionRegistration, time.Time, *agentapi.NativeReadBudget) (agentapi.SkillContentObservation, func(), error) {
+				if cancelDuringObservation {
+					cancel()
+					return agentapi.SkillContentObservation{}, func() { released++ }, nil
+				}
+				return agentapi.SkillContentObservation{}, func() { released++ }, refusal
+			}
+			mark := len(scan.retainedReleases)
+			out, observed, err := reader.Filter(t.Context(), muse.Filter{}, 64<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			read := sourceRead{adapter: muse.Filter{}, filtered: out, observed: observed, filterLease: scan.nativeFilterLease(mark)}
+			candidate, _, err := scan.buildRead(&read)
+			want := refusal
+			if cancelDuringObservation {
+				want = context.Canceled
+			}
+			if !errors.Is(err, want) || released != 1 || len(candidate.NativeRecords) != 0 {
+				t.Fatal("error/cancel retained a borrowed view or partial candidate", err, released)
+			}
+			cancel()
+			if err = scan.closeNativeLeases(); err != nil {
+				t.Fatal(err)
+			}
+			scan.releaseRetained()
+			if used, _ := scan.readBudget().Charged(); used != 0 {
+				t.Fatal("failed active gate leaked source/output loan")
+			}
+		})
 	}
 }
 
@@ -349,5 +355,42 @@ func TestSkillContentCollectorPreservesHashlessPublishedPrefix(t *testing.T) {
 	scan.releaseRetained()
 	if used, _ := scan.readBudget().Charged(); used != 0 {
 		t.Fatal("hashless prefix regression leaked loan")
+	}
+}
+
+func TestSkillContentActivityProbeOwnsItsLifetime(t *testing.T) {
+	scan, reader, _ := nativeCollectorFixture(t)
+	scan.opts.SupplementalSkillContent = func(context.Context, archive.SessionRegistration, time.Time, *agentapi.NativeReadBudget) (agentapi.SkillContentObservation, func(), error) {
+		t.Fatal("activity probe entered observation")
+		return agentapi.SkillContentObservation{}, nil, nil
+	}
+	mark := len(scan.retainedReleases)
+	out, observed, err := reader.Filter(t.Context(), muse.Filter{}, 64<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := sourceRead{adapter: muse.Filter{}, filtered: out, observed: observed, filterLease: scan.nativeFilterLease(mark)}
+	beforeActive, _ := scan.readBudget().Charged()
+	active, observe, err := scan.skillActivityProbe(&read, archive.SourceBundle{}, false, nil)
+	afterActive, _ := scan.readBudget().Charged()
+	if err != nil || !observe || !reflect.DeepEqual(active, archive.SourceBundle{}) || afterActive != beforeActive {
+		t.Fatal("active probe escaped or retained its index loan", err, observe, beforeActive, afterActive)
+	}
+	cached, err := scan.newSourceBundle(scan.reg, read.adapter, read.filtered, scan.now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeInactive, _ := scan.readBudget().Charged()
+	inactive, observe, err := scan.skillActivityProbe(&read, cached, true, nil)
+	afterInactive, _ := scan.readBudget().Charged()
+	if err != nil || observe || len(inactive.NativeRecords) == 0 || !reflect.DeepEqual(cached.NativeRecords, inactive.NativeRecords) || afterInactive <= beforeInactive {
+		t.Fatal("inactive probe lost its funded candidate", err, observe, beforeInactive, afterInactive)
+	}
+	if err := scan.closeNativeLeases(); err != nil {
+		t.Fatal(err)
+	}
+	scan.releaseRetained()
+	if used, _ := scan.readBudget().Charged(); used != 0 {
+		t.Fatal("probe lifetime loan leaked")
 	}
 }

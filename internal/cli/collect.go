@@ -215,17 +215,8 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 	if previous, err := localStore.LoadStatus(); err == nil {
 		previousScanAt = previous.LastScanAt
 	}
-	labelHomes := []string{}
-	if cfg.Discovery != nil {
-		labelHomes = append(labelHomes, cfg.Discovery.CodexHomes...)
-	}
-	if len(labelHomes) == 0 {
-		if userHome, err := env.userHomeDir(); err == nil {
-			if file := env.hookFiles(userHome)["codex"]; file != "" {
-				labelHomes = append(labelHomes, filepath.Dir(file))
-			}
-		}
-	}
+	labelHomes := collectionLabelHomes(env, cfg)
+
 	skillPass := newSkillObservationPass(env, cfg.EffectiveSkillEvidence())
 	defer skillPass.Close()
 	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
@@ -608,8 +599,9 @@ func (p *skillObservationPass) Observe(reg archive.SessionRegistration, at time.
 }
 
 type skillObservationViews struct {
-	Evidence      []archive.SupplementalEvidence
-	user, project []agentapi.SkillContentDigest
+	Evidence []archive.SupplementalEvidence
+	user     []agentapi.SkillContentDigest
+	project  []agentapi.SkillContentDigest
 }
 
 func (p *skillObservationPass) ObserveWithContent(ctx context.Context, reg archive.SessionRegistration, at time.Time, budget *agentapi.NativeReadBudget) (out agentapi.SkillContentObservation, release func(), err error) {
@@ -733,11 +725,11 @@ func newSkillObservationPass(env Env, mode config.SkillEvidence) *skillObservati
 		if err := ctx.Err(); err != nil {
 			return skillObservationViews{}, err
 		}
-		out := skillObservationViews{Evidence: append(append([]archive.SupplementalEvidence(nil), userScope.Evidence...), projectScope.Evidence...)}
+		var userDigests, projectDigests []agentapi.SkillContentDigest
 		if content {
-			out.user, out.project = userScope.Digests, projectScope.Digests
+			userDigests, projectDigests = userScope.Digests, projectScope.Digests
 		}
-		return out, nil
+		return skillObservationViews{Evidence: append(append([]archive.SupplementalEvidence(nil), userScope.Evidence...), projectScope.Evidence...), user: userDigests, project: projectDigests}, nil
 	}
 	return pass
 }
@@ -807,4 +799,19 @@ func checkDurablePassRoots(ctx context.Context, store *state.Store) error {
 		}
 	}
 	return ctx.Err()
+}
+
+func collectionLabelHomes(env Env, cfg config.Config) []string {
+	labelHomes := []string{}
+	if cfg.Discovery != nil {
+		labelHomes = append(labelHomes, cfg.Discovery.CodexHomes...)
+	}
+	if len(labelHomes) == 0 {
+		if userHome, err := env.userHomeDir(); err == nil {
+			if file := env.hookFiles(userHome)["codex"]; file != "" {
+				labelHomes = append(labelHomes, filepath.Dir(file))
+			}
+		}
+	}
+	return labelHomes
 }
