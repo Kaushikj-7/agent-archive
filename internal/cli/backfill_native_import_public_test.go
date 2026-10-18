@@ -27,15 +27,17 @@ import (
 
 const publicNativeImportID = "00000000-0000-7000-8000-000000000001"
 
+type publicImportBase = muse.Filter
+
 type publicImportFilter struct {
-	muse.Filter
+	publicImportBase
 	calls int
 }
 
 func (f *publicImportFilter) LeasedFilterFor(adapter archive.Adapter) bool { return adapter == f }
 func (f *publicImportFilter) FilterLeased(ctx context.Context, in agentapi.NativeInput, opts agentapi.FilterContext, budget *agentapi.NativeReadBudget) (archive.FilteredTranscript, func(), error) {
 	f.calls++
-	return f.Filter.FilterLeased(ctx, in, opts, budget)
+	return f.publicImportBase.FilterLeased(ctx, in, opts, budget)
 }
 
 type publicNativeImportFixture struct {
