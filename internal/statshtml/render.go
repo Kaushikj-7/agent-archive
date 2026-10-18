@@ -95,7 +95,7 @@ type Options struct {
 	// client or an internal tool (a fine-tune id, a deployment name). By
 	// default each is a stand-in ("project A", "skill A", "MCP server A",
 	// "model A"), so the page can be shared. A model the built-in price table
-	// lists ("opus", "gpt-5") is public and shown either way.
+	// lists ("opus-5.5", "gpt-6.1-sol") is public and shown either way.
 	IncludeNames bool
 	// Filters are named in the heading.
 	Filters Filters

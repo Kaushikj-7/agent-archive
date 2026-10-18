@@ -242,7 +242,7 @@ opus-5       ████████████████████       
 fable-5      ██                          20    1.5B       $386    10%
 sonnet-5     ██                          30    1.3B       $320     8%
 gpt-5.6-sol  █                            1    100M      $7.00    <1%
-haiku-5      █                           10    100M      $6.00    <1%
+haiku-4.5    █                           10    100M      $6.00    <1%
 
 Estimated at list price, not a bill.   --view overview
 ```

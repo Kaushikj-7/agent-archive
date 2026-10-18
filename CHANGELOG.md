@@ -9,9 +9,14 @@ follow [Semantic Versioning](https://semver.org/).
 - `stats` names each model by its exact version: cost by model, the models
   view, the favorite model, `--json` and `--html` show `opus-5.5`, `opus-5`,
   `gpt-6.1-sol` and `gpt-6-luna` as separate rows instead of grouping them
-  under `opus` or `gpt-6`. Only two names of one model share a row (the
-  `gpt-5.6` alias with `gpt-5.6-sol`). Bar colors still follow the family. The
-  built-in price table is now version `2026-10.1`; its prices are unchanged.
+  under `opus` or `gpt-6`. Only two names of one model share a row: the
+  `gpt-5.6` alias with `gpt-5.6-sol`, and `claude-3-5-haiku` with
+  `claude-haiku-3-5`. Bar colors still follow the family. The built-in price
+  table is now version `2026-10.1`; its prices are unchanged. A `--prices` file
+  of your own keeps the `family` labels it sets: if it still groups versions
+  under `opus` or `sonnet`, those rows appear next to the exact-version ones
+  and as stand-ins on `--html` pages, so set each entry's `family` to its
+  version (`opus-5`) or remove it to show the model id.
 
 - `agent-archive handoff` names the session above `Continue in`: its title,
   agent, when it was last active, and the handoff's size. When only one other

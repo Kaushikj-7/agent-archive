@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -350,9 +351,26 @@ func TestFamilyIsOnlyForListedModels(t *testing.T) {
 	}
 }
 
+// claudeVersion is a Claude id's name and version ("claude-opus-5-5").
+var claudeVersion = regexp.MustCompile(`^claude-([a-z]+)-(\d+)(?:-(\d+))?$`)
+
+// exactLabel is the label a built-in id is shown under: a Claude id without
+// "claude-" and with a dotted version ("opus-5.5"), any other id as it is.
+func exactLabel(id string) string {
+	m := claudeVersion.FindStringSubmatch(id)
+	if m == nil {
+		return id
+	}
+	if m[3] == "" {
+		return m[1] + "-" + m[2]
+	}
+	return m[1] + "-" + m[2] + "." + m[3]
+}
+
 // Each built-in model is its own row in cost by model, named for its exact
 // version: GPT-6.1 Sol is not lumped in with GPT-6 Luna, nor Opus 5.5 with Opus
-// 5. Only two names of one model share a label.
+// 5. Only two names of one model share a label, the label of the model the
+// other name stands for.
 func TestBuiltInModelsAreLabelledByExactVersion(t *testing.T) {
 	t.Parallel()
 	aliases := map[string]string{"gpt-5.6": "gpt-5.6-sol", "claude-3-5-haiku": "claude-haiku-3-5"}
@@ -361,6 +379,9 @@ func TestBuiltInModelsAreLabelledByExactVersion(t *testing.T) {
 		id := m.ID
 		if target, ok := aliases[id]; ok {
 			id = target
+		}
+		if want := exactLabel(id); m.Family != want {
+			t.Errorf("%s is labelled %q, want %q", m.ID, m.Family, want)
 		}
 		if prev, ok := owner[m.Family]; ok && prev != id {
 			t.Errorf("%s and %s share the label %q", prev, id, m.Family)

@@ -252,6 +252,25 @@ func TestModelRowCountsASessionOnce(t *testing.T) {
 	if len(got.Models) != 4 {
 		t.Fatalf("models = %+v, want one row per version", got.Models)
 	}
+	share := 0.0
+	for _, r := range got.Models {
+		if r.CostShare == nil {
+			t.Fatalf("row %q has no cost share", r.Label)
+		}
+		share += *r.CostShare
+	}
+	if !near(share, 1) {
+		t.Fatalf("cost shares sum to %v, want 1", share)
+	}
+	// Two names of one model are one row, and a session that used both, in
+	// itself and in a subagent, is one session of it.
+	aliasParent := meta("ap", "codex", day(time.September, 28, 12), modelTokens("gpt-5.6", 1000, 0, 0, 0))
+	aliasChild := meta("ak", "codex", day(time.September, 28, 12), parentOf("ap"), modelTokens("gpt-5.6-sol", 1000, 0, 0, 0))
+	aliased := Compute([]archive.Metadata{aliasParent, aliasChild}, opts())
+	sol := modelRow(t, aliased, "gpt-5.6-sol")
+	if len(aliased.Models) != 1 || sol.Sessions != 1 || sol.Tokens != 2000 || !slices.Equal(sol.Models, []string{"gpt-5.6", "gpt-5.6-sol"}) {
+		t.Fatalf("alias rows = %+v", aliased.Models)
+	}
 }
 
 func TestHandBuiltTableWithoutACurrencyIsUSD(t *testing.T) {

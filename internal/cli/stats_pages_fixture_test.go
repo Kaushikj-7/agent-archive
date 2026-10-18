@@ -77,7 +77,7 @@ func realisticStats() stats.Stats {
 			{Label: "fable-5", Models: []string{"claude-fable-5"}, Sessions: 20, Tokens: 1_500_000_000, Priced: true, Cost: usd(386), CostShare: f64(386.0 / 3989)},
 			{Label: "sonnet-5", Models: []string{"claude-sonnet-5"}, Sessions: 30, Tokens: 1_300_000_000, Priced: true, Cost: usd(320), CostShare: f64(320.0 / 3989)},
 			{Label: "gpt-5.6-sol", Models: []string{"gpt-5.6"}, Sessions: 1, Tokens: 100_000_000, Priced: true, Cost: usd(7), CostShare: f64(7.0 / 3989)},
-			{Label: "haiku-5", Models: []string{"claude-haiku-5"}, Sessions: 10, Tokens: 100_000_000, Priced: true, Cost: usd(6), CostShare: f64(6.0 / 3989)},
+			{Label: "haiku-4.5", Models: []string{"claude-haiku-4-5"}, Sessions: 10, Tokens: 100_000_000, Priced: true, Cost: usd(6), CostShare: f64(6.0 / 3989)},
 		},
 		Projects: []stats.Project{
 			{Name: "agent-archive", Sessions: 31, Tokens: i64(4_600_000_000), Cost: usd(1862)},
