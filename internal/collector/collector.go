@@ -961,6 +961,9 @@ func (p *pass) saveStatus() error {
 		ExpiredSubagents: state.CarryExpiredSubagents(previous.ExpiredSubagents, p.expiredSubagents, p.now),
 	}
 	status.SetLastErrors(problems...)
+	if p.opts.SelectSession != nil {
+		status = p.selectedStatus(previous, status)
+	}
 	if err := p.local.SaveStatus(status); err != nil {
 		return fmt.Errorf("save status: %w", err)
 	}

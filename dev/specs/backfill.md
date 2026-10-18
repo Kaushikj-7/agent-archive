@@ -114,6 +114,18 @@ capacity recovery remains available, with publication restricted to that batch.
 Settled batch members stay in its ownership selection but do not reopen native
 sources on later capacity passes unless existing outstanding work requires it.
 Staged-release and catalog-removal recovery likewise preserve unselected owners.
+Scoped publication merges current selected-owner scheduling and issue facts into
+the existing status, preserving untouched deferral clocks, waiter order, retry
+times and issue codes. Global pending is counted from current local obligations,
+including policy-held first stages and unknown/unreadable owners; settled ordinary
+owners that current policy rejects retain their existing filtering. Publication
+selection still requires current policy. For scoped work, native aggregate
+observations and `LastScanAt` retain the last whole-pass result.
+Actual publication advances `LastPublishedAt`. A selected retry's saved
+`NextRetryAt` remains its next attempt independently of the whole-pass clock;
+unknown/future whole-pass times retain the existing conservative retry behavior.
+The CLI replaces the complete issue tally and summary under the same collector
+lock, clearing settled selected issues while retaining unrelated failures.
 The existing `state.Outstanding` owner derives an unsettled admitted import-stage
 facet from strict rooted presence, without decoding source payloads. Publication
 recording alone does not clear that obligation, including interruption after

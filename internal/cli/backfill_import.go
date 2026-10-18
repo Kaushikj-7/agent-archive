@@ -1143,11 +1143,12 @@ func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.St
 		if err != nil {
 			return err
 		}
+		previous, _ := store.LoadStatus()
 		result, err := collector.Run(ctx, store, remote, collector.Options{CollectorGuard: guard, CatalogDestination: config.DestinationID(current.Storage), Sources: env.agentRegistry(), Parsers: parsersFor(env), Decoders: env.agentRegistry(), MachineID: current.MachineID, Now: env.Now, AcceptSession: current.AcceptSession, PendingOnly: true, SelectSession: func(reg archive.SessionRegistration) bool {
 			return reg.InBatch(batchID)
 		}, HistoricalProjectLabel: current.HistoricalProjectLabel, SkillEvidence: current.EffectiveSkillEvidence(), RequireSkillUse: current.RequireSkillUse, CursorDatabase: env.cursorDatabase(), CodexRollouts: lookup, ConfiguredCodexHomes: readHomes, NativeRoots: current.NativeRoots, RepoKey: env.repoKey, Stop: stop})
 		defer result.CloseStagedResults()
-		_, issueErr := recordPassSessionIssues(store, result)
+		_, issueErr := recordSelectedPassSessionIssues(store, result, previous)
 		reportErr := errors.Join(reportImportCapacityDrain(stdout, result, err), issueErr)
 		if stop != nil && stop() {
 			return errors.Join(backfill.ErrStopped, reportErr)

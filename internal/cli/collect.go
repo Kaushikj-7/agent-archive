@@ -215,10 +215,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 	}
 	// The previous pass's time, read before this pass overwrites it: the
 	// retention sweep checks the clock against it (see retention.Options).
-	var previousScanAt time.Time
-	if previous, err := localStore.LoadStatus(); err == nil {
-		previousScanAt = previous.LastScanAt
-	}
+	previous, _ := localStore.LoadStatus()
 	labelHomes := collectorLabelHomes(cfg, env)
 	var selectSession func(archive.SessionRegistration) bool
 	if pass.importBatch != "" {
@@ -267,7 +264,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		// Imported publications already verify their exact source set and
 		// metadata before acknowledging requests or releasing selected staging.
 		// Global verification and retention belong to ordinary collection.
-		return result, recordImportPass(home, cfg, env, localStore, quietOnBusy, result)
+		return result, recordImportPass(home, cfg, env, localStore, quietOnBusy, result, previous)
 	}
 
 	summary, verifyErr, err := verifyAndRecordPass(ctx, home, cfg, env, localStore, objectStore, quietOnBusy, result)
@@ -275,7 +272,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		return result, err
 	}
 
-	return finishPassWithRetention(home, env, cfg, localStore, objectStore, previousScanAt, result, summary, verifyErr)
+	return finishPassWithRetention(home, env, cfg, localStore, objectStore, previous.LastScanAt, result, summary, verifyErr)
 }
 
 func collectorRollouts(ctx context.Context, store *state.Store, cfg config.Config, env Env, pass passOptions) (*discovery.CodexRolloutLookup, []string, error) {
@@ -309,13 +306,13 @@ func collectorLabelHomes(cfg config.Config, env Env) []string {
 	return homes
 }
 
-func recordImportPass(home string, cfg config.Config, env Env, store *state.Store, quietOnBusy bool, result collector.Result) error {
+func recordImportPass(home string, cfg config.Config, env Env, store *state.Store, quietOnBusy bool, result collector.Result, previous state.Status) error {
 	if health := passStorageHealth(result); health != "not_checked" {
 		if err := recordStorageHealth(home, cfg, env, quietOnBusy, health); err != nil {
 			return err
 		}
 	}
-	_, err := recordPassSessionIssues(store, result)
+	_, err := recordSelectedPassSessionIssues(store, result, previous)
 	return err
 }
 

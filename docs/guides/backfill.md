@@ -102,8 +102,9 @@ of its stage and covered request. Current exclusions keep that first import
 pending until its existing release owner can settle it; they grant no upload
 permission. After settlement, ordinary later updates follow current settings.
 An unrelated owner's pending evidence is never uploaded merely to make room for
-this import. Provider failures or unrelated quota occupancy retain completed
-evidence and report a retry action; they do not expand the quota.
+this import. Its retry schedule and existing status issues remain intact while
+the import publishes its own work. Provider failures or unrelated quota occupancy
+retain completed evidence and report a retry action; they do not expand the quota.
 
 Pausing keeps referenced evidence for retry. Updated privacy rules are applied
 again before staged evidence is published. Canceling before admission removes
