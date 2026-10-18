@@ -271,6 +271,9 @@ Local Git origins use bounded, read-only chain resolution for both proposed and
 configured projects. Absolute/relative paths and local `file://` URLs (empty or
 ASCII `localhost` host, case-insensitive) can lead to a portable repository
 identity through another checkout or bare repository.
+Filesystem names may contain colons when a slash precedes the first colon, as in
+`/work/mirror:backup.git` or `./mirror:backup.git`. Git still treats an unprefixed
+`host:path` as a remote, even if a similarly named local directory exists.
 Paths follow filesystem symlink and parent-directory semantics, and their
 dependencies are checked again before admission. Every origin value must
 resolve consistently. Two physical clones of the same
@@ -287,6 +290,11 @@ asked to fetch, and configuration is unchanged. Reviewed exact mappings or a
 mapping file can resolve supported assignments independently of unrelated
 uncertain clones. Mappings still respect exclusions and target identity; native
 history must pass its own checks.
+
+Discovery resumes partial repository sweeps and retries earlier incomplete origin
+observations within its existing lookup allowance. Persistent failures do not
+restart enumeration or prevent later roots from being observed. Restored access
+can require several bounded discovery passes before automatic recovery completes.
 
 The [large-backfill completion plan](../../dev/proposals/large-backfill-completion.md)
 tracks remaining foreground work renewal, larger inventories and recovery

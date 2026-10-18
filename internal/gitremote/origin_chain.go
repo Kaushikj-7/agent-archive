@@ -121,7 +121,7 @@ func (c *originChain) resolveValues(ctx context.Context, root, top string, value
 		if value == "" {
 			continue
 		}
-		if !strings.Contains(value, "://") && strings.Contains(value, "::") {
+		if !strings.Contains(value, "://") && strings.Contains(value, "::") && !filesystemOriginSpelling(value) {
 			return "", sourcefacts.RecoveryOriginUnsupported
 		}
 		candidate := archive.RepoKey(value)
@@ -219,7 +219,7 @@ func localOriginPath(base, value string) (string, bool) {
 			return "", false
 		}
 		value = u.Path
-	} else if strings.Contains(value, ":") || strings.HasPrefix(value, "~") {
+	} else if !filesystemOriginSpelling(value) || strings.HasPrefix(value, "~") {
 		return "", false
 	}
 	if value == "" || len(value) > 4096 || strings.ContainsAny(value, "\x00\r\n") {
@@ -229,6 +229,13 @@ func localOriginPath(base, value string) (string, bool) {
 		value = joinRepositoryPath(base, value)
 	}
 	return value, len(value) <= 4096
+}
+
+// Git treats a colon as an SCP/transport separator only before the first
+// slash. Preserve unambiguous local spellings without consulting path existence.
+func filesystemOriginSpelling(value string) bool {
+	colon, slash := strings.IndexByte(value, ':'), strings.IndexByte(value, '/')
+	return colon < 0 || (slash >= 0 && slash < colon)
 }
 
 // Join without cleaning so filesystem traversal resolves symlinks before parents.

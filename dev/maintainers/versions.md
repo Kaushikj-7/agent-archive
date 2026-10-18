@@ -441,3 +441,6 @@ reobserve. Existing admitted ownership, configuration writer fences and publishe
 proof/source/metadata schemas are unchanged. Public RepoKey/ProjectKey annotation
 algorithms and retained content/metadata derivation are unchanged, so this change
 allocates no filter, adapter, parser or permanent writer version.
+Renewing incomplete entries in existing disposable inventory and recognizing
+unambiguous colon-containing filesystem origins add no persisted fields or
+authority formats; the same version assessment applies.

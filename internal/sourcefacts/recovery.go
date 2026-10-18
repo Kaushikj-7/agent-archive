@@ -319,6 +319,10 @@ func (r *RecoveryResolver) prepareInventory(ctx context.Context) RecoveryOutcome
 			}
 		}
 	}
+	// Finish the forward sweep before renewing old incomplete entries. Dropping
+	// the prefix at an unavailable root would revisit the same roots forever
+	// when that prefix consumes the next slice's entire lookup allowance.
+	renewEnd := len(inv.Entries)
 	for inv.Cursor < len(r.Projects) {
 		if ctx.Err() != nil || r.Operations >= r.MaxOperations {
 			return RecoveryBudgetExhausted
@@ -328,11 +332,28 @@ func (r *RecoveryResolver) prepareInventory(ctx context.Context) RecoveryOutcome
 		if ctx.Err() != nil {
 			return RecoveryBudgetExhausted
 		}
-		// Temporary unavailable answers must be retried, and cannot certify uniqueness.
-
 		inv.Entries = append(inv.Entries, id)
 		inv.Cursor++
 	}
+	for i := r.prefixValidated; i < renewEnd; i++ {
+		if inv.Entries[i].Known {
+			continue
+		}
+		if ctx.Err() != nil || r.Operations >= r.MaxOperations {
+			return RecoveryBudgetExhausted
+		}
+		id := safeRepositoryIdentity(r.Lookup(ctx, r.Projects[i].Root))
+		r.Operations++
+		if ctx.Err() != nil {
+			return RecoveryBudgetExhausted
+		}
+		inv.Entries[i] = id
+		r.digest = ""
+		r.results = nil
+	}
+	// Fresh failures, including the tail just observed above, are reused for
+	// this validation slice. They may be renewed in the next slice, never once
+	// per candidate or immediately inside the operation that produced them.
 	r.prefixValidated = len(inv.Entries)
 	if r.digest == "" {
 		b, _ := json.Marshal(inv)

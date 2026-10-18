@@ -1424,14 +1424,24 @@ mapping. Live filesystem ownership and nearest configured rules take precedence.
 
 The discovery catalog checkpoints an incomplete configured-root sweep. Each
 pass allows at most 128 identity lookups; completed sweeps refresh next pass,
-and cached prefix metadata is validated before a resumed sweep. Unavailable
-entries cannot certify uniqueness. Proposed and configured roots require the same
+and cached prefix metadata is validated before a resumed sweep. Incomplete
+prefix entries are reobserved within that same allowance after forward enumeration
+finishes, at most once per validation slice. A fresh failure is not immediately
+retried. Renewal updates incomplete entries in place rather than truncating at
+the first unknown root, so persistent failures cannot starve later roots. If an
+exact lookup-window boundary leaves no allowance for renewal, the next pass's
+completed-inventory reset starts a fresh bounded sweep. Unavailable entries
+cannot certify uniqueness. Proposed and configured roots require the same
 complete identity evidence. The identity observer reads every `remote.origin.url`
 value, including values that follow an already portable URL. Supported local
 references are absolute or relative paths and local `file://` URLs (empty or
 ASCII `localhost` host, case-insensitive) naming checkouts or Git repository
 directories, including bare repositories. Relative paths resolve from the checkout
-top level, or from the repository directory for a bare/explicit Git directory. The filesystem resolves
+top level, or from the repository directory for a bare/explicit Git directory.
+A slash before the first colon identifies a filesystem spelling, including
+absolute paths, `./mirror:backup.git` and `mirrors/repo::backup.git`. An unprefixed
+`host:path` remains an SCP-style remote regardless of local path existence;
+remote-helper spellings remain unsupported. The filesystem resolves
 symlinks before parent (`..`) components; renewal retains both the original alias
 and the actual repository/configuration dependencies. Local traversal never
 runs a transport or mutates configuration. When `url.insteadOf` rules are present,

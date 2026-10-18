@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -206,7 +207,7 @@ func TestLocalOriginReadFailureCannotBeHiddenByPortableValue(t *testing.T) {
 }
 
 func FuzzLocalOriginPath(f *testing.F) {
-	for _, value := range []string{"/mirror/repo", "../mirror.git", "file:///mirror/repo", "file://localhost/mirror/repo", "file://LOCALHOST/mirror/repo", "file://LocalHost/link/../repo", "file://localhoſt/mirror/repo", "file://LOCALHOST:/mirror/repo", "file://[localhost]/mirror/repo", "file://remote.test/mirror", "helper::repo", "ssh://host.test/repo", "\x00"} {
+	for _, value := range []string{"/mirror/repo", "../mirror.git", "/mirror:backup.git", "./mirror:backup.git", "mirrors/repo::backup.git", "/mirror:backup://repo", "host:repo", "file:///mirror/repo", "file://localhost/mirror/repo", "file://LOCALHOST/mirror/repo", "file://LocalHost/link/../repo", "file://localhoſt/mirror/repo", "file://LOCALHOST:/mirror/repo", "file://[localhost]/mirror/repo", "file://remote.test/mirror", "helper::repo", "ssh://host.test/repo", "\x00"} {
 		f.Add(value)
 	}
 	f.Fuzz(func(t *testing.T, value string) {
@@ -214,7 +215,7 @@ func FuzzLocalOriginPath(f *testing.F) {
 		if ok && (!filepath.IsAbs(path) || len(path) > 4096 || strings.ContainsAny(path, "\x00\r\n")) {
 			t.Fatalf("invalid local path: %q", path)
 		}
-		if strings.Contains(value, "://") && !strings.HasPrefix(value, "file://") && ok {
+		if u, err := url.Parse(value); err == nil && u.Scheme != "" && u.Scheme != "file" && ok {
 			t.Fatal("network reference accepted as a local path")
 		}
 	})
