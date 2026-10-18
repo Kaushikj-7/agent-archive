@@ -49,6 +49,8 @@ type CodexRolloutLookup struct {
 	// deferCheckpoint), which writes it without the pass deadline.
 	dirty            bool
 	roots            []string
+	homeAliases      []metadataRoot
+	homeAliasCharge  int64
 	deadline         time.Time
 	remaining        time.Duration
 	observationBytes int64
@@ -118,10 +120,6 @@ func NewCodexRolloutLookupWithOptions(ctx context.Context, store *state.Store, h
 	if err := sweepPrivateIndexes(ctx, indexSnapshotRoot(os.TempDir()), time.Now()); err != nil {
 		return nil, agentapi.Wrap(agentapi.Cleanup, err)
 	}
-	roots := approvedRoots(homes)
-	if len(roots) > 1024 {
-		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native home limit"))
-	}
 	var work *lookupWork
 	if options.Policy == ForegroundLookup {
 		now := options.Now
@@ -130,9 +128,12 @@ func NewCodexRolloutLookupWithOptions(ctx context.Context, store *state.Store, h
 		}
 		work = &lookupWork{now: now, remaining: Budget, scopes: 1}
 	}
-	lookup := &CodexRolloutLookup{store: store, homes: slices.Clone(homes), readBudget: agentapi.NewNativeReadBudget(agentapi.PassReadBudget), roots: roots, work: work, deadline: time.Now().Add(Budget), remaining: Budget, observations: map[string]rolloutObservation{}, byThread: map[string]map[string]struct{}{}, byPhysical: map[string]map[string]struct{}{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
+	lookup := &CodexRolloutLookup{store: store, homes: slices.Clone(homes), readBudget: agentapi.NewNativeReadBudget(agentapi.PassReadBudget), work: work, deadline: time.Now().Add(Budget), remaining: Budget, observations: map[string]rolloutObservation{}, byThread: map[string]map[string]struct{}{}, byPhysical: map[string]map[string]struct{}{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
 	if work != nil {
 		ctx = lookup.workContext(ctx)
+	}
+	if err := lookup.captureHomeAliases(ctx); err != nil {
+		return nil, errors.Join(err, lookup.closeWithContext(ctx))
 	}
 	trace.Add(trace.CodexLookupScopes, 1)
 	var prior catalog
@@ -142,7 +143,7 @@ func NewCodexRolloutLookupWithOptions(ctx context.Context, store *state.Store, h
 		}
 		return lookup, nil
 	}
-	if catalogNeedsReset(prior, roots) {
+	if catalogNeedsReset(prior, lookup.roots) {
 		lookup.releaseRestored()
 		return lookup, nil
 	}
@@ -471,7 +472,8 @@ func (l *CodexRolloutLookup) thread(ctx context.Context, id string) (_ agentapi.
 		if err != nil || !found {
 			continue
 		}
-		if l.homeFor(path) != root {
+		path, confined := l.currentHomePath(root, path)
+		if !confined {
 			return agentapi.CodexRolloutSet{}, agentapi.Wrap(agentapi.Unsafe, errors.New("current locator belongs to another native home"))
 		}
 		if currentLocatorMissing(path) {
@@ -652,10 +654,11 @@ func (l *CodexRolloutLookup) Check(ctx context.Context, id, revision string) (er
 		}
 		// The source provider checks opened header/content separately. Requerying
 		// the same locator does not repeat its native header scan.
-		ref := &agentapi.SourceRef{Kind: archive.SourceKindFile, Path: path, Key: id}
-		if l.homeFor(path) != root {
+		path, confined := l.currentHomePath(root, path)
+		if !confined {
 			return agentapi.Wrap(agentapi.Unsafe, errIndexChanged)
 		}
+		ref := &agentapi.SourceRef{Kind: archive.SourceKindFile, Path: path, Key: id}
 		if currentLocatorMissing(path) {
 			continue
 		}
@@ -926,6 +929,9 @@ func (l *CodexRolloutLookup) closeWithContext(ctx context.Context) error {
 	}
 	l.closed = true
 	defer func() {
+		l.readBudget.ReleaseUnscoped(l.homeAliasCharge)
+		l.homeAliasCharge = 0
+		l.homeAliases = nil
 		l.readBudget.ReleaseUnscoped(l.catalogCharge)
 		l.catalogCharge = 0
 		l.releaseRestored()
@@ -972,19 +978,28 @@ func (l *CodexRolloutLookup) beginOperation(ctx context.Context) (context.Contex
 		return ctx, nil, err
 	}
 	if l.work != nil {
-		return l.workContext(ctx), func(*error) {}, nil
+		ctx = l.workContext(ctx)
+		if err := l.checkHomeAliases(ctx); err != nil {
+			return ctx, nil, err
+		}
+		return ctx, func(*error) {}, nil
 	}
 	started := time.Now()
 	deadline := started.Add(l.remaining)
 	l.deadline = deadline
 	operation, cancel := context.WithDeadline(ctx, deadline)
-	return operation, func(err *error) {
+	done := func(err *error) {
 		if *err != nil && ctx.Err() == nil && errors.Is(operation.Err(), context.DeadlineExceeded) {
 			*err = allowanceSpent("native lookup pass deadline")
 		}
 		cancel()
 		l.remaining -= time.Since(started)
-	}, nil
+	}
+	if err := l.checkHomeAliases(operation); err != nil {
+		done(&err)
+		return ctx, nil, err
+	}
+	return operation, done, nil
 }
 
 // NativeReadBudget is the pass-owned shared native/source/cache charge ledger.

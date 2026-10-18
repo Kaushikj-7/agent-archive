@@ -269,6 +269,13 @@ source byte, record, graph and shared resource limits still apply. A dry-run
 plan does not establish confirmed staging, admission or publication completion.
 Those later phases retain their existing work allowances.
 
+Codex's thread index may spell an already trusted native home through a symbolic
+link or a macOS directory alias. Backfill verifies that the original spelling
+still names the same physical home and substitutes only that home prefix.
+The rollout remains confined to its approved store; an alias cannot authorize
+another home or a source outside it. A removed, retargeted or replaced home
+invalidates the lookup, including a cached selection.
+
 Local Git origins use bounded, read-only chain resolution for both proposed and
 configured projects. Absolute/relative paths and local `file://` URLs (empty or
 ASCII `localhost` host, case-insensitive) can lead to a portable repository
