@@ -22,6 +22,15 @@ follow [Semantic Versioning](https://semver.org/).
   Metadata preserves distinct installed declaration identities even when skills
   share a name and content hash. Exact runtime identity and public capture remain gated.
 
+- Backfill planning and dry runs continue supported Codex preparation and
+  inspection across bounded lookup scopes, including histories needing more
+  than five seconds of total lookup work. Native I/O timeouts and inventory
+  no-progress results stay specific. Incomplete Codex inventory is reported while
+  independently verified Codex sessions remain eligible. Shared native resource
+  exhaustion remains a failure. Source safety limits and
+  background work are unchanged; confirmed staging and publication keep their
+  existing bounds.
+
 - Deleted-worktree recovery resolves local Git origin chains consistently before
   and after project configuration. Every origin and traversed dependency must
   agree and remain current; physical clones remain distinct competitors. Cyclic,

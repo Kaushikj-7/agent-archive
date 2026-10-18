@@ -17,6 +17,7 @@ func TestSourceErrorWordsItsCause(t *testing.T) {
 	}{
 		{Wrap(Unavailable, native), "source unavailable", Unavailable},
 		{WithCause(Wrap(Unavailable, native), CauseHistoryBaseUnavailable), "source unavailable: a Codex rollout this thread continues from was not found", Unavailable},
+		{WithCause(Wrap(Unavailable, native), CauseLookupNoProgress), "source unavailable: native inventory made no progress; check local source access and retry", Unavailable},
 		{WithCause(Wrap(Unavailable, native), CauseLookupIOTimeout), "source unavailable: a native lookup I/O operation timed out; check local source access and retry", Unavailable},
 		{WithCause(Wrap(Changed, native), CauseRolloutTipAmbiguous), "source changed while reading; try again: Codex thread has no single current rollout", Changed},
 		//lint:ignore LV1001 deliberately a cause with no declared constant

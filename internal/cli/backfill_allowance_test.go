@@ -54,6 +54,8 @@ func TestBackfillDryRunDistinguishesLookupAllowanceFromSourceRefusals(t *testing
 	}{
 		{name: "small complete history"},
 		{"spent lookup allowance", agentapi.WithCause(agentapi.Wrap(agentapi.Limit, private), agentapi.CauseLookupAllowanceSpent), backfill.DetailLookupAllowanceSpent, backfill.ActionRetry, "This run's allowance for finding Codex rollouts"},
+		{"native inventory no progress", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, private), agentapi.CauseLookupNoProgress), backfill.DetailLookupNoProgress, backfill.ActionRetry, "Native inventory made no progress"},
+		{"native I/O timeout", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, private), agentapi.CauseLookupIOTimeout), backfill.DetailLookupIOTimeout, backfill.ActionRetry, "A native lookup I/O operation timed out"},
 		{"source bytes", agentapi.RawLimit(65, 64, nil), backfill.DetailSourceSizeLimit, backfill.ActionAwaitSupport, "source exceeds the supported size limit"},
 		{"source record", agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge), backfill.DetailSourceRecordLimit, backfill.ActionAwaitSupport, "source record exceeds the supported size limit"},
 		{"history graph", agentapi.WithCause(agentapi.Wrap(agentapi.Limit, private), agentapi.CauseRolloutHistoryDepthLimit), backfill.DetailRolloutHistoryDepthLimit, backfill.ActionAwaitSupport, "Rollout history depth limit"},
