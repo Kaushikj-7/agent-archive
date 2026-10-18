@@ -120,8 +120,8 @@ func TestNativeImportStageFirstRecoveryNeedsNoNativeSource(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := restarted.resumePreparedImport(t.Context(), stage); err != nil {
-				t.Fatal("stage-backed restart", err)
+			if err := restarted.ResumeImportAdmissions(t.Context()); err != nil {
+				t.Fatal("stage-backed public enumeration restart", err)
 			}
 			actual, found, err := restarted.LoadRegistration(reg.ArchiveSessionID)
 			if err != nil || !found || !sameNativeImportReceipt(actual.NativeImport, reg.NativeImport) || actual.StagedImportSHA256 != stage.SHA256 {

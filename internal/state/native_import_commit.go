@@ -489,6 +489,31 @@ func (p *nativeImportOwnerCommit) checkCurrentHeld(ctx context.Context, read *St
 // reservation and current closed confirmation. It never opens native input or
 // reconstructs a receipt from a caller-provided registration.
 func (s *Store) resumeNativeImportFirstOwner(ctx context.Context, stage ImportStage) (err error) {
+	read, closeRead := s.WithImportResultScope(ctx)
+	defer closeRead()
+	s = read
+	actual, found, err := s.LoadImportStage(ctx, stage.Registration)
+	if err != nil || !found {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	// Enumeration deliberately retains only a bounded descriptor. Reload the
+	// complete durable selection in this owned scope, then compare its descriptor
+	// before validating its source digest. Never restore source into the roster.
+	descriptor := actual
+	descriptor.Bundle = archive.SourceBundle{}
+	descriptor.Preserved = nil
+	expected := stage
+	expected.Bundle = archive.SourceBundle{}
+	expected.Preserved = nil
+	before, err := s.readyDigest(ctx, expected)
+	if err != nil {
+		return err
+	}
+	after, err := s.readyDigest(ctx, descriptor)
+	if err != nil || before != after {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	stage = actual
 	reg := stage.Registration
 	reg.StagedImportSHA256 = stage.SHA256
 	if err := stage.Validate(ctx, reg); err != nil {
