@@ -53,6 +53,11 @@ func nativeImportSelectingACK(t *testing.T, s *Store, reg archive.SessionRegistr
 		t.Fatal(err)
 	}
 	pending := PendingPublication{Bundle: stage.Bundle, SourceKey: sourceKey, MetadataKey: metadataKey, SourceBytes: source.Bytes, SourceSHA256: source.SHA256, ReadyAt: reg.AdmittedAt, Attempted: true, SkillEvidence: string(stage.SkillEvidence)}
+	request, found, err := s.LoadRequest(reg.ArchiveSessionID)
+	if err != nil || !found || request.Token == "" {
+		t.Fatal("actual import request missing before selecting ACK", found, err)
+	}
+	pending.RequestToken = request.Token
 	metadata, err := archive.BuildMetadataWithAnalysis(stage.Bundle, archive.Analysis{}, nil, "synthetic", reg.SessionStartedAt, reg.AdmittedAt, pending.SourceReference(), archive.ParserInfo{Name: "muse", Version: "synthetic"})
 	if err != nil {
 		t.Fatal(err)
