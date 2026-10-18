@@ -23,6 +23,7 @@ type nativeImportOwnerCommit struct {
 	store        *Store
 	confirmation *ConfirmedNativeImportBatch
 	stage        ImportStage
+	detach       *nativeImportDetachProof
 	reg          archive.SessionRegistration
 }
 
@@ -33,7 +34,10 @@ func nativeImportCommitArgument(values []*nativeImportOwnerCommit) *nativeImport
 	return values[0]
 }
 
-func (p *nativeImportOwnerCommit) check(_, next archive.SessionRegistration, found bool) error {
+func (p *nativeImportOwnerCommit) check(previous, next archive.SessionRegistration, found bool) error {
+	if p != nil && p.detach != nil {
+		return p.detach.check(p.ctx, previous, next, found)
+	}
 	if p == nil || p.store == nil || p.confirmation == nil || found || p.stage.Version != 2 || !p.stage.TypedSelection || next.StagedImportSHA256 != p.stage.SHA256 || next.ValidateNativeImport() != nil {
 		return ErrReadySelectionFrozen
 	}

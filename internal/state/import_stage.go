@@ -924,7 +924,7 @@ func (s *Store) preparedImportChildren(ctx context.Context, stage ImportStage) (
 func sameImportStageOwner(staged, current archive.SessionRegistration) bool {
 	return staged.ArchiveSessionID == current.ArchiveSessionID && staged.NativeSessionID == current.NativeSessionID &&
 		staged.Harness.Name == current.Harness.Name && staged.ProjectID == current.ProjectID && staged.ProjectRoot == current.ProjectRoot &&
-		sameHistoricalProjectProof(staged, current) && sameNativeImportReceipt(staged.NativeImport, current.NativeImport) && sameImportParentProof(staged, current) &&
+		sameHistoricalProjectProof(staged, current) && sameNativeImportStageReceipt(staged.NativeImport, current.NativeImport) && sameImportParentProof(staged, current) &&
 		sameNativeImportBinding(staged.NativeBinding, current.NativeBinding) && staged.DestinationID == current.DestinationID && staged.InBatch(current.ImportBatch.Recorded())
 }
 

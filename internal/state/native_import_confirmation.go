@@ -92,7 +92,9 @@ func (s *Store) OpenConfirmedNativeImportBatch(ctx context.Context, id string) (
 	if s.hook || !archive.ValidImportBatchID(id) {
 		return nil, archive.ErrUnsupportedNativeImport
 	}
-	read, closeRead := s.WithImportResultScope(ctx)
+	bound, ctx, closeContext := s.withDurableContext(ctx)
+	read, releaseRead := bound.WithImportResultScope(ctx)
+	closeRead := func() { releaseRead(); closeContext() }
 	h := &ConfirmedNativeImportBatch{store: s, read: read, closeRead: closeRead}
 	err := WithImportBatchLock(ctx, s.home, id, func(held *local.RootedHome) error {
 		control, err := read.readConfirmedNativeImportControl(ctx, held, id)
@@ -118,6 +120,17 @@ func (s *Store) OpenConfirmedNativeImportBatch(ctx context.Context, id string) (
 }
 
 func (s *Store) readConfirmedNativeImportControl(ctx context.Context, held *local.RootedHome, id string) (archive.NativeImportBatchControl, error) {
+	control, err := s.readNativeImportControl(ctx, held, id)
+	if err != nil {
+		return control, err
+	}
+	if control.CompletedAt != nil || control.UndoneAt != nil {
+		return control, ErrReadySelectionFrozen
+	}
+	return control, nil
+}
+
+func (s *Store) readNativeImportControl(ctx context.Context, held *local.RootedHome, id string) (archive.NativeImportBatchControl, error) {
 	var control archive.NativeImportBatchControl
 	info, err := held.Root.Lstat(filepath.Join("imports", id+".json"))
 	if err != nil || info.Size() < 1 || info.Size() > archive.MaxImportBatchControlBytes {
@@ -144,7 +157,7 @@ func (s *Store) readConfirmedNativeImportControl(ctx context.Context, held *loca
 	if err := control.Validate(ctx); err != nil {
 		return control, err
 	}
-	if control.ID != id || control.CompletedAt != nil || control.UndoneAt != nil {
+	if control.ID != id {
 		return control, ErrReadySelectionFrozen
 	}
 	*s.resourceReleases = append(*s.resourceReleases, func() { reservation.Release(n) })
