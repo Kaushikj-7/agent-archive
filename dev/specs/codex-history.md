@@ -346,7 +346,10 @@ Private pending state retains legacy active-source fields and adds a versioned
 commit identity plus up to 65 exact source payload references: one current and
 64 preserved revisions. The revision-reference limit is independent of the
 64 physical graph-span limit. Inline compressed replay payload descriptors are capped at
-128 MiB in aggregate; the active payload is stored once. The collector preserves
+128 MiB in aggregate; the active payload is stored once. Once a commit settles,
+published state keeps no inline bytes: each inline payload is marked `released`
+and bound by its reference's digest and size, so commit and preparation digests
+are unchanged; journals refuse `released` payloads. The collector preserves
 its existing 32 MiB compressed-object producer, resolver and retained-reader
 ceiling, independently of the 128 MiB filtered-data ceiling. Generic ref-only
 state/storage descriptors can exceed that aggregate and retain a 128 MiB

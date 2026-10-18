@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -44,7 +45,65 @@ type ImmutableStageHandle struct {
 type PublicationPayload struct {
 	Kind   PublicationPayloadKind `json:"kind"`
 	Inline []byte                 `json:"inline,omitempty"`
-	Stage  *ImmutableStageHandle  `json:"stage,omitempty"`
+	// Released marks an inline payload whose bytes a settled published state
+	// dropped after commit: the source reference's digest and size stand for
+	// them in every binding. Pending journals never carry it, since replay
+	// needs the bytes themselves.
+	Released bool                  `json:"released,omitempty"`
+	Stage    *ImmutableStageHandle `json:"stage,omitempty"`
+}
+
+// releasedPayloads reports whether any pending payload claims released bytes.
+func releasedPayloads(p PendingPublication) bool {
+	for _, s := range p.Sources {
+		if s.Payload.Released {
+			return true
+		}
+	}
+	if p.Preparation != nil {
+		for _, input := range p.Preparation.Inputs {
+			if input.Payload.Released {
+				return true
+			}
+		}
+	}
+	if p.Progress != nil {
+		for _, output := range p.Progress.Outputs {
+			if output.Source.Payload.Released {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// releaseSettledInline drops inline source bytes from a settled published
+// state. Commit and preparation digests bind each inline payload by its
+// reference's digest and size, so they are unchanged. Slices and the
+// preparation are copied: they may be shared with the pending journal.
+func releaseSettledInline(p publishedState) publishedState {
+	release := func(payload PublicationPayload) PublicationPayload {
+		if payload.Kind == PublicationInline && !payload.Released {
+			payload.Inline, payload.Released = nil, true
+		}
+		return payload
+	}
+	if len(p.Payloads) > 0 {
+		payloads := slices.Clone(p.Payloads)
+		for i := range payloads {
+			payloads[i].Payload = release(payloads[i].Payload)
+		}
+		p.Payloads = payloads
+	}
+	if p.Preparation != nil {
+		preparation := *p.Preparation
+		preparation.Inputs = slices.Clone(preparation.Inputs)
+		for i := range preparation.Inputs {
+			preparation.Inputs[i].Payload = release(preparation.Inputs[i].Payload)
+		}
+		p.Preparation = &preparation
+	}
+	return p
 }
 
 func publicationOwner(m archive.Metadata, destination, admission string) string {
@@ -158,16 +217,20 @@ func validatePublicationPayloadWithFacts(source PublicationSource, m archive.Met
 	p := source.Payload
 	switch p.Kind {
 	case PublicationInline:
-		if p.Stage != nil || len(p.Inline) != source.Reference.CompressedBytes || payloadInlineSHA(source, facts) != source.Reference.SHA256 {
+		if p.Released {
+			if p.Stage != nil || len(p.Inline) != 0 || source.Reference.CompressedBytes <= 0 || !validPublicationDigest(source.Reference.SHA256) {
+				return errors.New("released inline publication union mismatch")
+			}
+		} else if p.Stage != nil || len(p.Inline) != source.Reference.CompressedBytes || payloadInlineSHA(source, facts) != source.Reference.SHA256 {
 			return errors.New("inline publication checksum or union mismatch")
 		}
 	case PublicationRemote:
-		if p.Stage != nil || len(p.Inline) != 0 {
+		if p.Stage != nil || len(p.Inline) != 0 || p.Released {
 			return errors.New("remote publication union mismatch")
 		}
 	case PublicationHistoryStage:
 		h := p.Stage
-		if len(p.Inline) != 0 || h == nil || h.Version != 1 || h.Kind != p.Kind || (h.Namespace != PendingSourceNamespace && h.Namespace != DeletionSourceNamespace) || h.SessionID != m.SessionID || h.OwnerSHA256 != publicationOwner(m, destination, admission) || h.DestinationID != destination || h.AdmissionContext != admission || h.SourceSHA256 != source.Reference.SHA256 || h.CompressedBytes != source.Reference.CompressedBytes || h.Selection != source.Selection {
+		if len(p.Inline) != 0 || p.Released || h == nil || h.Version != 1 || h.Kind != p.Kind || (h.Namespace != PendingSourceNamespace && h.Namespace != DeletionSourceNamespace) || h.SessionID != m.SessionID || h.OwnerSHA256 != publicationOwner(m, destination, admission) || h.DestinationID != destination || h.AdmissionContext != admission || h.SourceSHA256 != source.Reference.SHA256 || h.CompressedBytes != source.Reference.CompressedBytes || h.Selection != source.Selection {
 			return errors.New("history stage authority mismatch")
 		}
 	case PublicationAdmissionStage:
@@ -187,16 +250,25 @@ type payloadBinding struct {
 	Stage        *ImmutableStageHandle   `json:"Stage"`
 }
 
+// payloadInlineBinding is the digest and size an inline payload binds: those
+// of its bytes, or of its reference once a settled state released them.
+func payloadInlineBinding(s PublicationSource, facts *payloadDigestFacts) (string, int) {
+	switch {
+	case s.Payload.Kind != PublicationInline:
+		return "", 0
+	case s.Payload.Released:
+		return s.Reference.SHA256, s.Reference.CompressedBytes
+	default:
+		return payloadInlineSHA(s, facts), len(s.Payload.Inline)
+	}
+}
+
 func payloadSetSHA(sources []PublicationSource) string { return payloadSetSHAWithFacts(sources, nil) }
 
 func payloadSetSHAWithFacts(sources []PublicationSource, facts *payloadDigestFacts) string {
 	bindings := make([]payloadBinding, len(sources))
 	for i, s := range sources {
-		inlineSHA, inlineSize := "", 0
-		if s.Payload.Kind == PublicationInline {
-			inlineSHA = payloadInlineSHA(s, facts)
-			inlineSize = len(s.Payload.Inline)
-		}
+		inlineSHA, inlineSize := payloadInlineBinding(s, facts)
 		bindings[i] = payloadBinding{Reference: s.Reference, Selection: s.Selection, Kind: s.Payload.Kind, Stage: s.Payload.Stage, InlineSHA256: inlineSHA, InlineSize: inlineSize}
 	}
 	raw, _ := json.Marshal(bindings)
