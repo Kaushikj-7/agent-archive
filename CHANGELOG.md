@@ -17,6 +17,9 @@ follow [Semantic Versioning](https://semver.org/).
   replay marker so the new conversation is not mistaken for a replay. Native
   Muse replay forwarding remains unqualified.
 
+- `handoff --to muse -- exec ...` places `exec` before the workspace option,
+  so Muse recognizes the headless command and its options.
+
 - `list --source local` and `show --source local` inspect bounded native sessions
   before setup, including qualified Muse roots with `--harness muse`. Selected
   sources receive complete privacy validation. These reads do not open storage,

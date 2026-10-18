@@ -261,10 +261,18 @@ Arguments after `--` go to the agent, after any set for it in `config.json`'s
 agent-archive handoff SESSION_ID --to codex -- --model o3
 ```
 
+For Muse's headless command, make `exec` the first argument, including any
+configured Muse arguments. The launcher places `exec` before its workspace
+option:
+
+```sh
+agent-archive handoff SESSION_ID --to muse -- exec --model MODEL
+```
+
 Give every option its value (`--model o3` or `--model=o3`). The prompt comes
 right after these arguments, so an option left without its value at the end
 would take the launcher's `--` (Claude Code, Codex) or the prompt itself
-(Cursor) as its value.
+(Cursor, Muse) as its value.
 
 ## Working in a separate checkout (`--worktree`)
 

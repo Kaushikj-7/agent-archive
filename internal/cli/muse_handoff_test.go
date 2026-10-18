@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -78,6 +79,65 @@ func TestEachExistingAgentHandsOffToMuse(t *testing.T) {
 				t.Fatalf("%s to Muse has unsafe or missing context: %v", source, err)
 			}
 		})
+	}
+}
+
+func TestMuseExecFileHandoffUsesModeFirstLaunch(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	source := filepath.Join(root, "source λ's $(not-run) `literal`.jsonl")
+	raw, err := os.ReadFile(filepath.Join("..", "archive", "testdata", "handoff", "claude.jsonl"))
+	must(t, err)
+	must(t, os.WriteFile(source, raw, 0o600))
+	project := filepath.Join(root, "checkout λ's $(not-run) `literal`")
+	temp := filepath.Join(root, "tmp λ's $(not-run) `literal`")
+	must(t, os.Mkdir(project, 0o700))
+	must(t, os.Mkdir(temp, 0o700))
+	home := filepath.Join(root, "not-configured")
+	env := testEnv(t, home, time.Now())
+	env.Environ = func() []string { return nil }
+	env.LookPath = func(name string) (string, error) { return "/synthetic/bin/" + name, nil }
+	env.Executable = func() (string, error) { return "/synthetic/agent-archive", nil }
+	env.WorkingDir = func() (string, error) { return project, nil }
+	env.TempDir = func() string { return temp }
+	var launched launchSpec
+	launches := 0
+	env.LaunchHandoff = func(spec launchSpec, _ io.Reader, _, _ io.Writer) error {
+		launched = spec
+		launches++
+		return nil
+	}
+	env.OpenTerminal = func(termlaunch.Spec) (string, error) {
+		t.Fatal("explicit --here handoff opened another terminal")
+		return "", nil
+	}
+	_, stderr, code := runPicker(t, env, "", "--file", source, "--harness", "claude", "--to", "muse", "--here", "--",
+		"exec", "--provider", "meta", "--model", "archive-synthetic-model", "--disable-write", "--disable-shell", "--disable-reminders", "--no-foreign-personal-context", "--max-model-steps", "3")
+	if code != 0 || launches != 1 || launched.Binary != "/synthetic/bin/muse" || launched.Dir != project {
+		t.Fatalf("exec handoff exit %d, launches %d: %s; launch=%+v", code, launches, stderr, launched)
+	}
+	artifact := handoffPathFromPrompt(t, launched)
+	prompt := "Read the complete handoff document at " + strconv.Quote(artifact) + ", then continue the work in this checkout. Agent Archive is available if you need more context; its commands are explained in that document."
+	want := []string{"exec", "--workspace", project, "--provider", "meta", "--model", "archive-synthetic-model", "--disable-write", "--disable-shell", "--disable-reminders", "--no-foreign-personal-context", "--max-model-steps", "3", prompt}
+	if !slices.Equal(launched.Args, want) || launched.HandoffFile != artifact || filepath.Dir(filepath.Dir(artifact)) != temp {
+		t.Fatalf("exec argv or private artifact changed: %+v", launched)
+	}
+	content, err := os.ReadFile(artifact)
+	if err != nil || !strings.Contains(string(content), "Why does the widget test fail?") || strings.Contains(string(content), "hunter2secret") {
+		t.Fatalf("unsafe or missing exec handoff context: %v", err)
+	}
+	for location, mode := range map[string]os.FileMode{artifact: 0o600, filepath.Dir(artifact): 0o700} {
+		info, err := os.Stat(location)
+		if err != nil || info.Mode().Perm() != mode {
+			t.Fatalf("private exec context permissions: %v %v", info, err)
+		}
+	}
+	after, err := os.ReadFile(source)
+	if err != nil || !slices.Equal(raw, after) {
+		t.Fatalf("exec handoff changed source bytes: %v", err)
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Fatalf("exec handoff created archive state: %v", err)
 	}
 }
 

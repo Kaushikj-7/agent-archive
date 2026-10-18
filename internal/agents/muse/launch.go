@@ -8,7 +8,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 )
 
-// Launcher builds a new interactive conversation using the ordinary Muse CLI.
+// Launcher builds a new conversation using the ordinary Muse CLI.
 // It does not resume or import the source session, or change permission policy.
 type Launcher struct{}
 
@@ -25,6 +25,12 @@ func (Launcher) Args(r agentapi.LaunchRequest) ([]string, error) {
 	if strings.HasPrefix(r.Prompt, "-") {
 		return nil, fmt.Errorf("muse handoff prompt cannot begin with `-`: positional option separation is not qualified")
 	}
-	args := slices.Concat([]string{"--workspace", r.ProjectDir}, r.ExtraArgs)
+	var args []string
+	if len(r.ExtraArgs) > 0 && r.ExtraArgs[0] == "exec" {
+		// Muse selects exec before interpreting its workspace and tool options.
+		args = slices.Concat([]string{"exec", "--workspace", r.ProjectDir}, r.ExtraArgs[1:])
+	} else {
+		args = slices.Concat([]string{"--workspace", r.ProjectDir}, r.ExtraArgs)
+	}
 	return append(args, r.Prompt), nil
 }
