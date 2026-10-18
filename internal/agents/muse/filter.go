@@ -38,10 +38,21 @@ func (f Filter) Filter(ctx context.Context, in agentapi.NativeInput, c agentapi.
 }
 
 // FilterLeased transfers retained memory ownership to the caller.
-func (Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agentapi.FilterContext, budget *agentapi.NativeReadBudget) (out archive.FilteredTranscript, release func(), err error) {
+func (f Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agentapi.FilterContext, budget *agentapi.NativeReadBudget) (archive.FilteredTranscript, func(), error) {
+	return f.filterLeased(ctx, in, c, budget, nil)
+}
+
+func (Filter) filterLeased(ctx context.Context, in agentapi.NativeInput, c agentapi.FilterContext, budget *agentapi.NativeReadBudget, content **skillContentJoin) (out archive.FilteredTranscript, release func(), err error) {
 	reservation := budget.Reservation()
 	held := int64(0)
-	release = func() { reservation.Release(held); held = 0 }
+	var contentJoin *skillContentJoin
+	release = func() {
+		if contentJoin != nil {
+			contentJoin.close()
+		}
+		reservation.Release(held)
+		held = 0
+	}
 	defer func() {
 		if err != nil {
 			release()
@@ -63,6 +74,14 @@ func (Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 	gaps := privacyGaps{}
 	line, encodedTotal := int64(0), int64(0)
 	nativeJoins := nativeBodyJoins{}
+	if content != nil {
+		if !reservation.Reserve(512) {
+			return out, release, errBudget
+		}
+		held += 512
+		contentJoin = &skillContentJoin{reservation: reservation, held: &held, limits: c.Limits}
+		nativeJoins.skillContent = contentJoin
+	}
 	// End private ownership before the earlier error-release defer runs too.
 	defer func() { nativeJoins = nativeBodyJoins{} }()
 	for {
@@ -148,6 +167,10 @@ func (Filter) FilterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 		return out, release, err
 	}
 	out, err = filtered(rows, c.Limits, gaps.list())
+	if err == nil && contentJoin != nil {
+		contentJoin.rows, contentJoin.out = rows, out
+		*content = contentJoin
+	}
 	return out, release, err
 }
 
@@ -409,7 +432,7 @@ var _ agentapi.TranscriptParser = Parser{}
 var retainedKeys = func() map[string]bool {
 	keys := strings.Fields("v pos line child id stream kind seq ts_us schema type payload_schema record_type durability causation_id fields schema_version format permission_epoch cause workspace_root provider_id model_id tool_surface_version session_id resume selection publication_id command_id command_kind activation_source cwd intent_id source_session_id surface semantic_kind envelope_record_id envelope_sequence run_id run_started_session_record_id run_started_source_record_id outcome_kind new_name previous_name source operation_id root_agent_id root_session_id event_kind source_run_record_id source_run_record_sequence prompt message_id response_id text position sequence marker omitted_record payload_type payload_schema_version payload_kind omission_class pending_action_id task_id tool_call_id review_id effect_id model_call_index model input_tokens output_tokens tool_calls call_id batch_id results tool_call_index effect_join")
 	out := map[string]bool{}
-	for _, key := range []string{"skill_id", "evidence_kind", "observed_at_sequence"} {
+	for _, key := range []string{"skill_id", "evidence_kind", "observed_at_sequence", "hash_evidence", "sha256"} {
 		out[key] = true
 	}
 	for _, key := range keys {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -124,7 +125,9 @@ func TestProductionAllowlistAndSchemaMatchClosedRetainedDispatch(t *testing.T) {
 				case "boolean":
 					fields[key] = false
 				default:
-					if _, hasPattern := prop["pattern"]; hasPattern {
+					if key == "sha256" {
+						fields[key] = strings.Repeat("a", 64)
+					} else if _, hasPattern := prop["pattern"]; hasPattern {
 						fields[key] = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 					} else {
 						fields[key] = "synthetic"

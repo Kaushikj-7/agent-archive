@@ -17,8 +17,16 @@ separately derives optional installed declaration identities; other parsers stay
   This means the native harness explicitly reports a skill read; it does not
   establish eligibility, activation or a successful tool-result join. The
   native `sha256:<64lowerhex>` digest is validated then erased because it
-  hashes original bytes while shared snapshots hash redacted bytes. Metadata
-  omits SHA256. Unknown tags, keys, types, aliases and changed private identity
+  hashes original bytes while shared snapshots hash redacted bytes. A separate
+  leased content-only join may retain safe SHA256 only for actual authorized
+  observer bytes unchanged by RedactText and containing no literal replacement
+  marker. Secret-bearing guesses and marker fixed points cannot enter the join;
+  only the existing safe observer digest is compared, with no original observer
+  hash, native-name alias, origin or eligibility inference. Prior exact-event
+  proof restores before activity without I/O; new proof finalizes only at the
+  existing active observation gate. Closed eight/ten-field retained variants
+  follow the existing producer-evidence trust model, not authentication against
+  coherent retained forgery. Unknown tags, keys, types, aliases and changed private identity
   refuse. Older strict Muse readers refuse this new closed variant. The same
   unreleased Muse parser0.7.0 derives this evidence without changing other
   parsers, shared source/metadata/history schemas or pending provenance.

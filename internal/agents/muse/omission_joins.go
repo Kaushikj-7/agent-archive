@@ -179,6 +179,7 @@ func (s *familyState) effect(r retained, run, ek string, f map[string]any) error
 // nativeBodyJoins checks redundant private copies before dropping their bodies.
 // Values live only in the charged decode reservation, never in retained output.
 type nativeBodyJoins struct {
+	skillContent  *skillContentJoin
 	requested     map[pendingKey]map[string]any
 	reviewStarted map[reviewKey]int64
 	taskIDs       map[taskKey]bool

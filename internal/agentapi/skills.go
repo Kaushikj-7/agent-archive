@@ -1,6 +1,20 @@
 package agentapi
 
-import "github.com/wangjohn/agent-archive/internal/filechange"
+import (
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/filechange"
+)
+
+// SkillContentDigest is an observer's full privacy-safe content digest. It is
+// data from a trusted producer, not an authenticity or installed-identity token.
+type SkillContentDigest [32]byte
+
+// SkillContentObservation keeps transient marker-free fixed-point digests out
+// of serialized evidence. Its digests are borrowed until the observation closes.
+type SkillContentObservation struct {
+	Evidence []archive.SupplementalEvidence
+	Digests  []SkillContentDigest
+}
 
 // SkillLocations contains observed locations, without filesystem operations.
 type SkillLocations struct {

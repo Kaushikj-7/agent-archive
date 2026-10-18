@@ -95,7 +95,8 @@ type sessionScan struct {
 	// filtered is the source as the refresh step already read and filtered
 	// it (see liveTranscriptChanged), which read then uses rather than
 	// filtering the whole source a second time in the same scan.
-	filtered *filteredSource
+	filtered            *filteredSource
+	skillContentFailure error
 	// rewritten is a rewritten transcript's candidate, set when guard
 	// publishes the retained snapshot filtered again in its place (see
 	// refilter.go); once that is published, the rewrite is recorded as the
@@ -377,6 +378,9 @@ type sourceRead struct {
 // read reads and filters the session's source. ok is false when the scan
 // ends here: nothing to read yet, or a recorded gap, or an error.
 func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
+	if s.skillContentFailure != nil {
+		return read, false, s.skillContentFailure
+	}
 	if s.reg.StagedImportSHA256 != "" {
 		if s.published.TypedStagedPublished() {
 			err := s.releaseTypedStage()
@@ -548,7 +552,7 @@ func (s *sessionScan) emptied(read sourceRead) (bool, error) {
 // reconciled and published without the read's encoded rows, so they are
 // released (finishHistoryFilter) before reconciliation reads more.
 func (s *sessionScan) buildCandidate(read *sourceRead) (archive.SourceBundle, []archive.SupplementalEvidence, error) {
-	candidate, supplemental, err := s.build(*read)
+	candidate, supplemental, err := s.buildRead(read)
 	if err != nil || candidate.History == nil || !s.canReconcileRevisions(*read, candidate) {
 		return candidate, supplemental, err
 	}
@@ -561,10 +565,17 @@ func (s *sessionScan) buildCandidate(read *sourceRead) (archive.SourceBundle, []
 // source has ended is cleared first, since a source that comes back carrying
 // exactly what was already captured produces no change to act on.
 func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.SupplementalEvidence, error) {
+	return s.buildRead(&read)
+}
+
+func (s *sessionScan) buildRead(read *sourceRead) (archive.SourceBundle, []archive.SupplementalEvidence, error) {
 	if err := s.clearEndedBlock(); err != nil {
 		return archive.SourceBundle{}, nil, err
 	}
 	cached, _, _, haveCached := s.published.Cached()
+	if err := s.restoreSkillContent(read, cached); err != nil {
+		return archive.SourceBundle{}, nil, err
+	}
 	lastPublished, _, _ := s.published.LastPublished()
 	baseEvidence := lastPublished.SupplementalEvidence
 	if haveCached {
@@ -592,10 +603,19 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 	if signature, found, _ := s.local.LoadScanSignature(s.id()); found && pendingSkillMode(signature.SkillEvidence) != s.opts.skillEvidence() {
 		active = true
 	}
-	if s.opts.SupplementalEvidence == nil || !active {
+	if (s.opts.SupplementalEvidence == nil && s.opts.SupplementalSkillContent == nil) || !active {
+		if err := s.finalizeSkillContent(read, nil); err != nil {
+			return archive.SourceBundle{}, nil, err
+		}
 		return candidate, supplemental, nil
 	}
-	observed, err := s.opts.SupplementalEvidence(s.reg, s.now)
+	observation, releaseObservation, err := s.observeSkillContent()
+	defer func() {
+		if releaseObservation != nil {
+			releaseObservation()
+		}
+	}()
+	observed := observation.Evidence
 	if err != nil {
 		return archive.SourceBundle{}, nil, fmt.Errorf("collect supplemental evidence: %w", err)
 	}
@@ -604,6 +624,14 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 	// The activity probe's decoded rows are no longer consumed. The filtered
 	// input still owns history/ordinal/text aliases needed by the final build.
 	s.releaseRetainedIndex(candidateOwner)
+	candidate = archive.SourceBundle{}
+	if err := s.finalizeSkillContent(read, observation.Digests); err != nil {
+		return archive.SourceBundle{}, nil, err
+	}
+	if releaseObservation != nil {
+		releaseObservation()
+		releaseObservation = nil
+	}
 	candidate, err = s.newSourceBundle(s.reg, read.adapter, read.filtered, s.now, supplemental)
 	if err != nil {
 		return archive.SourceBundle{}, nil, fmt.Errorf("build observed source bundle: %w", err)

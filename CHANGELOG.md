@@ -13,9 +13,12 @@ follow [Semantic Versioning](https://semver.org/).
   under the caller-qualified data home and declared files from the supported
   native-local installed plugin registry. A qualified own native
   `skill_read_observed` report can identify a harness skill read independently
-  of eligible inventory. Its original-file hash is erased, and metadata omits
-  the skill hash. Eligibility, activation and privacy-safe read-hash association
-  remain unqualified.
+  of eligible inventory. Its original-file hash is erased. A content-only hash
+  may come from an actual authorized observation whose full bytes are unchanged
+  by credential redaction and contain no replacement marker; native and installed
+  display identities remain separate. Redacted-content hashes, origin,
+  eligibility and activation remain unqualified. Retained hashes use the existing
+  producer-evidence trust model, without authenticated-producer claims.
   Metadata preserves distinct installed declaration identities even when skills
   share a name and content hash. Exact runtime identity and public capture remain gated.
 

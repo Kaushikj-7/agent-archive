@@ -190,9 +190,19 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   `skill_read_observed` report can retain its canonical skill ID and owning
   run/source sequence and derive positive harness skill-read evidence. It does
   not establish a successful tool-result join. The original-file digest is
-  validated then erased; metadata omits that skill hash because filesystem
-  snapshots hash privacy-filtered bytes. Privacy-safe read-hash association
-  remains unavailable.
+  validated then erased. An optional content-only hash can be joined from an
+  actual authorized skill observation only when the whole file is unchanged by
+  the credential redactor and contains no literal `[REDACTED]`. The producer
+  compares only that existing safe digest, never an original hash from redacted
+  candidates. Native identity stays separate from installed display identity;
+  no origin, trust or eligibility is inferred. Credential-bearing, literal-marker
+  and otherwise unmatched skills remain hashless. Exact prior-event safe proof
+  restores before activity comparison without filesystem access; only the normal
+  active observation gate can add new proof. Private native digests die with the
+  leased operation and never enter evidence, state or diagnostics. The closed
+  retained hash uses the existing producer-evidence trust boundary, not an
+  authenticated-producer or coherent-forgery guarantee. General redacted-content
+  read-hash association and origin qualification remain unavailable.
 
   Only each folder's immediate `<skill>/SKILL.md` files are read (up to 256
   per folder), never other files in them. In a user-level folder a

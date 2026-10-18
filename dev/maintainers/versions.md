@@ -30,9 +30,11 @@ facts over first prompts/file observations, also correcting Codex handoff start.
 The original native-start correction did not change metadata derivation. The
 unreleased filter 31 and global/Muse adapter 0.31.0 tuple additionally covers installed
 declaration identities and qualified positive native harness skill-read reports.
-The latter erase original-file digests and derive SHA-omitted evidence;
-eligibility, activation, exact-thread identity and privacy-safe read-hash
-association remain unqualified.
+The latter erase original-file digests. An actual authorized marker-free
+RedactText fixed-point observation can supply an optional content-only safe hash,
+without native/installed-name aliases or origin claims; other content stays
+hashless. General redacted-content hashes, origin, eligibility, activation and
+exact-thread identity remain unqualified.
 
 Claude uses the common parser version; Cursor uses parser 0.23.0.
 
@@ -403,11 +405,18 @@ The same exclusive unreleased31/global and Muse adapter0.31.0/Muse parser0.7.0
 tuple includes the closed own `skill_read_observed`/`read_skill_tool` event.
 Strict native digest validation precedes erasure; only native ID/run/source and
 self-source sequence survive. Existing `NativeSkillUses` derives positive
-`native_invocation` evidence with SHA256 omitted, independent of eligible
-inventory. It reports a native harness read, not tool-result success. Shared
+`native_invocation` evidence independently of eligible inventory. The same
+exclusive unpublished tuple also permits a closed optional safe content hash
+joined only from an actual authorized observer's full marker-free RedactText
+fixed point, with native skill identity unchanged. The raw native digest is
+private to the leased operation and is erased; redacted/unmatched content stays
+hashless. Exact prior-event proof restores before activity; only the existing
+active observation gate adds new hashes. The optional companion and cache/view
+loans share existing ownership and budgets. Retained hashes preserve the existing
+producer-evidence trust boundary, not authentication against coherent forgery. It reports a native harness read, not tool-result success. Shared
 source/metadata/history versions and other/default parser versions do not
-change. Older strict Muse readers refuse the new variant. Privacy-safe product
-read-hash association and full runtime/trust/activation/eligibility acceptance
+change. Older strict Muse readers refuse the new variant. General redacted-content product
+read-hash association and full origin/runtime/trust/activation/eligibility acceptance
 remain open.
 
 Muse effect-body compatibility accepts the closed native `file_read` profile,

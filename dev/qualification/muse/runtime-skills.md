@@ -72,12 +72,22 @@ case/path/namespace aliases, extra keys, unknown tags and invalid types refuse.
 Production validates the exact `sha256:<64lowerhex>` native hash then erases
 it. Shared filesystem snapshots hash redacted file bytes, so the original-byte
 native digest cannot safely be retained or associated by name/hash alone.
-The existing `NativeSkillUses`/`SkillUse` path derives `native_invocation` with
-SHA256 omitted: the native harness explicitly reports a skill read. It does
+The existing `NativeSkillUses`/`SkillUse` path derives `native_invocation`: the
+native harness explicitly reports a skill read. A leased content-only companion
+may add the existing safe SHA256 from an actual authorized observer read only
+when full RedactText leaves bytes unchanged and no literal `[REDACTED]` occurs.
+It compares no original digest from rejected/redacted candidates and creates no
+native-ID/install-name alias. Private native hashes are erased on terminal
+operation/release; safe digests share the existing user/own-project cache values
+and loans. Exact prior-event proof restores before the activity probe without
+filesystem work; only the existing active observation gate can add proof. The
+closed eight/ten-field variant uses existing producer-evidence trust, not
+coherent-forgery authentication. This new implementation checkpoint still needs
+fresh deterministic and actual consumer qualification. It does
 not infer eligibility, membership, activation, successful result status or
 native failure/no-op behavior. Installed inventory, call/result bodies,
 `read_file` and broad-read omission markers alone cannot create this evidence.
-Privacy-safe product read-hash association remains a separate open requirement.
+General redacted-content product read-hash association and origin qualification remain separate open requirements.
 Older strict Muse retained readers refuse the new closed event variant.
 
 ## Validation scope
@@ -93,6 +103,6 @@ The known source checksum and same-descriptor identity remained stable; that
 consumer ran no native producer or raw tool-result decoder and retained no raw
 result reference. Original failed attempts and the lost original endpoint result
 (969 bytes) remain distinct.
-Exact-thread identity, eligible inventory and privacy-safe read-hash
+Exact-thread identity, eligible inventory and general redacted-content read-hash
 association remain open. No capture or default setup enablement follows from
 skill presence.

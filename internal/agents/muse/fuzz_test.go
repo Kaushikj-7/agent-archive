@@ -78,7 +78,7 @@ func FuzzMuseNative(f *testing.F) {
 }
 
 func FuzzMuseRetained(f *testing.F) {
-	for _, name := range []string{"synthetic-exec-empty.golden.jsonl", "synthetic-msp-conversation.golden.jsonl", "synthetic-native-omissions.golden.jsonl", "synthetic-model-resolution-omissions.golden.jsonl", "synthetic-route-startup.golden.jsonl", "synthetic-own-observations.golden.jsonl", "synthetic-own-tools.golden.jsonl", "synthetic-committed-read-effects.golden.jsonl", "synthetic-skill-read.golden.jsonl"} {
+	for _, name := range []string{"synthetic-exec-empty.golden.jsonl", "synthetic-msp-conversation.golden.jsonl", "synthetic-native-omissions.golden.jsonl", "synthetic-model-resolution-omissions.golden.jsonl", "synthetic-route-startup.golden.jsonl", "synthetic-own-observations.golden.jsonl", "synthetic-own-tools.golden.jsonl", "synthetic-committed-read-effects.golden.jsonl", "synthetic-skill-read.golden.jsonl", "synthetic-skill-content.golden.jsonl"} {
 		raw, e := os.ReadFile(filepath.Join("testdata", name))
 		if e != nil {
 			f.Fatal(e)

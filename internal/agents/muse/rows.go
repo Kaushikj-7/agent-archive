@@ -210,6 +210,11 @@ func decodeNativeRows(raw []byte, line int64, joins *nativeBodyJoins) ([]logical
 		return nil, 0, e
 	}
 	p := object(m["payload"])
+	if joins.skillContent != nil {
+		if e = joins.skillContent.capture(r, p); e != nil {
+			return nil, 0, e
+		}
+	}
 	if e = joins.observe(r, p); e != nil {
 		return nil, 0, e
 	}

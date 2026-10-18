@@ -3,6 +3,7 @@
 package evidence
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -71,6 +72,8 @@ type skillReadBudget struct {
 	declarations     int
 	cache            []cachedSkill
 	catalogRemaining int64
+	content          *skillContentDigests
+	ctx              context.Context
 }
 
 type cachedSkill struct {
@@ -97,6 +100,31 @@ type skillCandidate struct {
 // root, never a reason to withhold the session: an unreadable root yields an
 // "unreadable" inventory and an unreadable entry counts as uninspected.
 func ObserveSkills(options SkillOptions) ([]archive.SupplementalEvidence, error) {
+	return observeSkills(context.Background(), options, nil)
+}
+
+// ObserveSkillsWithContent borrows only safe fixed-point digests from the same
+// observation. The caller closes their pass-lifetime charge; no raw hash leaves.
+func ObserveSkillsWithContent(ctx context.Context, options SkillOptions, budget *agentapi.NativeReadBudget) (out agentapi.SkillContentObservation, release func(), err error) {
+	content := &skillContentDigests{budget: budget}
+	release = content.close
+	defer func() {
+		if err != nil {
+			release()
+			out = agentapi.SkillContentObservation{}
+		}
+	}()
+	out.Evidence, err = observeSkills(ctx, options, content)
+	if err == nil {
+		out.Digests, err = content.accepted(out.Evidence)
+		if err == nil {
+			err = ctx.Err()
+		}
+	}
+	return out, release, err
+}
+
+func observeSkills(ctx context.Context, options SkillOptions, content *skillContentDigests) ([]archive.SupplementalEvidence, error) {
 	if options.ObservedAt.IsZero() {
 		return nil, errors.New("skill observation time is required")
 	}
@@ -110,9 +138,12 @@ func ObserveSkills(options SkillOptions) ([]archive.SupplementalEvidence, error)
 		return nil, fmt.Errorf("unsupported skill evidence mode %q", options.Mode)
 	}
 	roots := skillRoots(options)
-	budget := skillReadBudget{remaining: maxSnapshotBytes, declarations: maxSkillsPerRoot, catalogRemaining: 1 << 20}
+	budget := skillReadBudget{remaining: maxSnapshotBytes, declarations: maxSkillsPerRoot, catalogRemaining: 1 << 20, content: content, ctx: ctx}
 	var observations []archive.SupplementalEvidence
 	for _, root := range roots {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		evidence, err := observeRoot(options.Harness, root, options.ObservedAt, &budget, options.Mode)
 		if err != nil {
 			return nil, err
@@ -121,6 +152,9 @@ func ObserveSkills(options SkillOptions) ([]archive.SupplementalEvidence, error)
 	}
 	if options.Inventory != nil {
 		observations = append(observations, observeInstalledSkills(options, &budget)...)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	filtered, _, err := archive.FilterSupplementalEvidence(observations)
 	if err != nil {
@@ -276,6 +310,11 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *s
 	omittedSnapshots := 0
 	uninspectedEntries := 0
 	for _, entry := range entries {
+		if budget.ctx != nil {
+			if err := budget.ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if !entry.valid {
 			uninspectedEntries++
 			continue
@@ -320,7 +359,14 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *s
 		// hash of the original would let whoever holds the bucket confirm a
 		// guess at a redacted secret. A file with nothing to redact hashes
 		// to its own SHA-256, so `list --skill-sha256` still matches it.
-		digest := sha256.Sum256([]byte(archive.RedactText(string(original))))
+		originalText := string(original)
+		redacted := archive.RedactText(originalText)
+		digest := sha256.Sum256([]byte(redacted))
+		if budget.content != nil && archive.MarkerFreeRedactionFixedPoint(originalText, redacted) {
+			if err := budget.content.add(agentapi.SkillContentDigest(digest)); err != nil {
+				return nil, err
+			}
+		}
 		hash := hex.EncodeToString(digest[:])
 		payload["sha256"] = hash
 		installed := map[string]any{"name": name, "sha256": hash}
@@ -332,7 +378,7 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, budget *s
 		if mode == config.SkillEvidenceMetadata {
 			continue
 		}
-		body := string(original)
+		body := originalText
 		if len(body) > maxSnapshotBodyBytes {
 			body = archive.TruncateUTF8(body, maxSnapshotBodyBytes)
 			payload["truncated"] = true

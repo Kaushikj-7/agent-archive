@@ -98,6 +98,10 @@ type Options struct {
 	// installed skill inventory. The collector merges stable observations
 	// without letting a new polling timestamp manufacture a new snapshot.
 	SupplementalEvidence func(archive.SessionRegistration, time.Time) ([]archive.SupplementalEvidence, error)
+	// SupplementalSkillContent is the same active-gated observation with a
+	// borrowed safe-content companion. It replaces, never doubles, the legacy
+	// callback. The caller releases the view after synchronous finalization.
+	SupplementalSkillContent func(context.Context, archive.SessionRegistration, time.Time, *agentapi.NativeReadBudget) (agentapi.SkillContentObservation, func(), error)
 	// MaxTranscriptBytes caps the size of a transcript after filtering: what
 	// the published bundle carries. A larger one is recorded as a capture gap
 	// (CacheStatusBlocked with BlockedReasonTranscriptTooLarge) rather than
