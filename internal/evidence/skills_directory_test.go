@@ -70,11 +70,11 @@ func TestReadSkillEntriesBoundsAcquisitionBeforeInspection(t *testing.T) {
 	}
 }
 
-type claimingSkillEOF struct{}
+type claimingSkillEOFError struct{}
 
-func (claimingSkillEOF) Error() string { return "claims EOF" }
+func (claimingSkillEOFError) Error() string { return "claims EOF" }
 
-func (claimingSkillEOF) Is(target error) bool { return errors.Is(target, io.EOF) }
+func (claimingSkillEOFError) Is(target error) bool { return errors.Is(target, io.EOF) }
 
 func TestReadSkillEntriesDistinguishesAcquiredFailureFromAbsence(t *testing.T) {
 	readFailure, closeFailure := errors.New("read failed"), errors.New("close failed")
@@ -90,7 +90,7 @@ func TestReadSkillEntriesDistinguishesAcquiredFailureFromAbsence(t *testing.T) {
 		{"both_failures", readFailure, closeFailure, []error{readFailure, closeFailure}},
 		{"composite_eof", errors.Join(io.EOF, readFailure), nil, []error{io.EOF, readFailure}},
 		{"wrapped_eof", fmt.Errorf("read wrapper: %w", io.EOF), nil, []error{io.EOF}},
-		{"claimed_eof", claimingSkillEOF{}, nil, []error{io.EOF}},
+		{"claimed_eof", claimingSkillEOFError{}, nil, []error{io.EOF}},
 		{"close_eof", nil, io.EOF, []error{io.EOF}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
