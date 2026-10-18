@@ -89,7 +89,30 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if len(policy) > 1 || len(policy) == 1 && policy[0] > ForegroundLookup {
+	if len(policy) > 1 {
+		return nil, agentapi.Wrap(agentapi.Unavailable, errors.New("invalid native lookup scheduling policy"))
+	}
+	selected := BackgroundLookup
+	if len(policy) == 1 {
+		selected = policy[0]
+	}
+	return NewCodexRolloutLookupWithOptions(ctx, store, homes, CodexLookupOptions{Policy: selected})
+}
+
+// CodexLookupOptions supplies scheduling dependencies independently of selection.
+// Now measures completed native work; nil uses the system clock.
+type CodexLookupOptions struct {
+	Policy CodexLookupPolicy
+	Now    func() time.Time
+}
+
+// NewCodexRolloutLookupWithOptions preserves the ordinary lookup's ownership and
+// safety checks while allowing a caller-owned scheduling clock.
+func NewCodexRolloutLookupWithOptions(ctx context.Context, store *state.Store, homes []string, options CodexLookupOptions) (*CodexRolloutLookup, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if options.Policy > ForegroundLookup {
 		return nil, agentapi.Wrap(agentapi.Unavailable, errors.New("invalid native lookup scheduling policy"))
 	}
 	if err := sweepPrivateIndexes(ctx, indexSnapshotRoot(os.TempDir()), time.Now()); err != nil {
@@ -100,8 +123,12 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native home limit"))
 	}
 	var work *lookupWork
-	if len(policy) == 1 && policy[0] == ForegroundLookup {
-		work = &lookupWork{now: time.Now, remaining: Budget, scopes: 1}
+	if options.Policy == ForegroundLookup {
+		now := options.Now
+		if now == nil {
+			now = time.Now
+		}
+		work = &lookupWork{now: now, remaining: Budget, scopes: 1}
 	}
 	lookup := &CodexRolloutLookup{store: store, homes: slices.Clone(homes), readBudget: agentapi.NewNativeReadBudget(agentapi.PassReadBudget), roots: roots, work: work, deadline: time.Now().Add(Budget), remaining: Budget, observations: map[string]rolloutObservation{}, byThread: map[string]map[string]struct{}{}, byPhysical: map[string]map[string]struct{}{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
 	if work != nil {
@@ -262,6 +289,16 @@ func (l *CodexRolloutLookup) BeginCollection() {
 	l.probes = 0
 }
 
+// renewProbeWindow discards no facts, selection tokens or charges. Foreground
+// callers invoke it only between completed bounded header reads.
+func (l *CodexRolloutLookup) renewProbeWindow() {
+	if l.work != nil && l.probes >= HeaderProbes {
+		l.probes = 0
+		l.work.scopes++
+		trace.Add(trace.CodexLookupScopes, 1)
+	}
+}
+
 func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (*agentapi.SourceRef, error) {
 	reservation := l.readBudget.Reservation()
 	root := l.homeFor(path)
@@ -285,11 +322,7 @@ func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (
 		if l.work == nil {
 			return nil, allowanceSpent("native header probe limit")
 		}
-		// Completed header reads advance the foreground probe window. This
-		// scheduling renewal discards no facts, selection tokens or charges.
-		l.probes = 0
-		l.work.scopes++
-		trace.Add(trace.CodexLookupScopes, 1)
+		l.renewProbeWindow()
 	}
 	const headerCharge = int64(sourcefacts.HeaderBytes + 128<<10)
 	if !reservation.Reserve(headerCharge) {
@@ -958,11 +991,19 @@ func (l *CodexRolloutLookup) beginOperation(ctx context.Context) (context.Contex
 func (l *CodexRolloutLookup) NativeReadBudget() *agentapi.NativeReadBudget { return l.readBudget }
 
 // ObserveReadOnly advances the existing bounded inventory without admission or
-// durable state writes. It shares this lookup's pass deadline and charge ledger.
+// durable state writes. Background shares the pass deadline; foreground renews
+// scheduling between completed bounded batches on the same charge ledger.
 func (l *CodexRolloutLookup) ObserveReadOnly(ctx context.Context) (Health, error) {
 	l.readOnly = true
-	// Planning slices share one overall deadline and retained-data ledger. Reset
-	// only this slice's I/O allowance so large inventories can advance fairly.
+	// Each slice keeps its finite probe/entry window and the same retained ledger.
+	// Foreground units renew scheduling without replacing facts or selection.
 	l.probes = 0
-	return runWithAdapters(ctx, l.store, config.Config{}, Options{Rollouts: l, nativeOnly: true}, registeredAdapters())
+	if l.work != nil {
+		ctx = l.workContext(ctx)
+	}
+	health, err := runWithAdapters(ctx, l.store, config.Config{}, Options{Rollouts: l, nativeOnly: true}, registeredAdapters())
+	if err == nil && l.work != nil && health.Pending && health.progress == 0 {
+		err = agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("native inventory made no progress")), agentapi.CauseLookupNoProgress)
+	}
+	return health, err
 }

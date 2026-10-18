@@ -209,6 +209,7 @@ func SearchLine(f Filters, available []string) string {
 // progress lines or the final prompt. It prints project roots and counts
 // only: never a transcript path, a native ID, or content.
 func RenderText(w io.Writer, p Plan) {
+	renderNativeLookupWarning(w, p)
 	projects := p.Projects()
 	if len(projects) == 0 {
 		terminal.Println(w, "Nothing to import.")
@@ -737,9 +738,10 @@ func FormatSize(n int64) string {
 
 // planJSON is `backfill --dry-run --json`.
 type planJSON struct {
-	Assignments   []mappingEntry      `json:"assignments,omitempty"`
-	MappingDigest string              `json:"mapping_digest,omitempty"`
-	Diagnostics   []DiagnosticSummary `json:"diagnostics,omitempty"`
+	NativeLookupIncomplete *Diagnostic         `json:"native_lookup_incomplete,omitempty"`
+	Assignments            []mappingEntry      `json:"assignments,omitempty"`
+	MappingDigest          string              `json:"mapping_digest,omitempty"`
+	Diagnostics            []DiagnosticSummary `json:"diagnostics,omitempty"`
 	// RecoveryEvidenceGaps names, per app and cause, the incomplete recovery
 	// evidence that blocked sessions or that sessions were recovered without.
 	RecoveryEvidenceGaps []RecoveryEvidenceGap `json:"recovery_evidence_gaps,omitempty"`
@@ -824,7 +826,8 @@ type projectJSON struct {
 // never a transcript path, a native or archive session ID, or content.
 func RenderJSON(w io.Writer, p Plan) error {
 	out := planJSON{Assignments: p.mappingAssignments(), MappingDigest: p.Filters.mappingDigest(),
-		Destination: p.Destination,
+		NativeLookupIncomplete: p.nativeLookupDiagnostic(),
+		Destination:            p.Destination,
 		Filters: filtersJSON{
 			Harnesses: []string{}, Projects: []string{},
 			Since: p.Filters.Since, Until: p.Filters.Until,
