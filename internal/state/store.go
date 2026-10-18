@@ -1035,7 +1035,7 @@ func (s *Store) loadPendingContext(ctx context.Context, id string) (PendingPubli
 	if probeErr != nil {
 		return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, probeErr)
 	}
-	cfg, cfgErr := s.inspectDurableReadRoots()
+	cfg, cfgErr := s.inspectDurableReadRoots(ctx)
 	if cfgErr != nil {
 		return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, cfgErr)
 	}

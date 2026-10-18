@@ -70,15 +70,15 @@ func releasedNativeImportFixture(t *testing.T, snapshots ...*nativeImportRelease
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := PendingPublication{Bundle: bundle, SourceBytes: source.Bytes, SourceSHA256: source.SHA256, ReadyAt: at, Attempted: true, SkillEvidence: string(cfg.EffectiveSkillEvidence())}
-	p.SourceKey, err = archive.SourceObjectKey(bundle, source.SHA256)
+	sourceKey, err := archive.SourceObjectKey(bundle, source.SHA256)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.MetadataKey, err = archive.MetadataObjectKey("muse", reg.ArchiveSessionID)
+	metadataKey, err := archive.MetadataObjectKey("muse", reg.ArchiveSessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	p := PendingPublication{Bundle: bundle, SourceKey: sourceKey, MetadataKey: metadataKey, SourceBytes: source.Bytes, SourceSHA256: source.SHA256, ReadyAt: at, Attempted: true, SkillEvidence: string(cfg.EffectiveSkillEvidence())}
 	m, err := archive.BuildMetadataWithAnalysis(bundle, archive.Analysis{}, nil, "synthetic", at, at, p.SourceReference(), archive.ParserInfo{Name: "muse", Version: "synthetic"})
 	if err != nil {
 		t.Fatal(err)
@@ -131,11 +131,11 @@ func releasedNativeImportFixture(t *testing.T, snapshots ...*nativeImportRelease
 		t.Fatal(err)
 	}
 	nextMetadata.Parser.Version = "successor"
-	next := PendingPublication{Bundle: bundle, SourceBytes: source.Bytes, SourceSHA256: source.SHA256, SourceKey: p.SourceKey, MetadataKey: p.MetadataKey, ReadyAt: at.Add(time.Hour), Attempted: true, SkillEvidence: p.SkillEvidence, MetadataOnly: true}
-	next.MetadataBytes, err = json.Marshal(nextMetadata)
+	nextMetadataBytes, err := json.Marshal(nextMetadata)
 	if err != nil {
 		t.Fatal(err)
 	}
+	next := PendingPublication{Bundle: bundle, MetadataBytes: nextMetadataBytes, SourceBytes: source.Bytes, SourceSHA256: source.SHA256, SourceKey: p.SourceKey, MetadataKey: p.MetadataKey, ReadyAt: at.Add(time.Hour), Attempted: true, SkillEvidence: p.SkillEvidence, MetadataOnly: true}
 	admission, err := archive.NativeImportAdmissionContext(reg)
 	if err != nil {
 		t.Fatal(err)
@@ -149,21 +149,21 @@ func releasedNativeImportFixture(t *testing.T, snapshots ...*nativeImportRelease
 }
 
 func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) {
-	for _, mode := range []string{"valid", "missing", "future", "tampered", "predecessor", "owner", "ordinary", "metadata", "progress-missing", "progress-future", "stage", "checkpoint"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []nativeImportTestMode{nativeImportTestValid, nativeImportTestMissing, nativeImportTestFuture, nativeImportTestTampered, nativeImportTestPredecessor, nativeImportTestOwner, nativeImportTestOrdinary, nativeImportTestMetadata, nativeImportTestProgressMissing, nativeImportTestProgressFuture, nativeImportTestStage, nativeImportTestCheckpoint} {
+		t.Run(string(mode), func(t *testing.T) {
 			s, reg, next := releasedNativeImportFixture(t)
 			path := filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseReceiptName))
 			switch mode {
-			case "missing":
+			case nativeImportTestMissing:
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
 				}
-			case "future", "tampered":
+			case nativeImportTestFuture, nativeImportTestTampered:
 				raw, err := os.ReadFile(path)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if mode == "future" {
+				if mode == nativeImportTestFuture {
 					raw = bytes.Replace(raw, []byte(`"version":3`), []byte(`"version":99`), 1)
 				} else {
 					raw = append(raw[:len(raw)-2], []byte(`,"future":true}`)...)
@@ -171,10 +171,10 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 				if err := os.WriteFile(path, raw, 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "predecessor":
+			case nativeImportTestPredecessor:
 				next.Preparation.PredecessorSHA256 = strings.Repeat("a", 64)
-			case "owner", "ordinary":
-				if mode == "ordinary" {
+			case nativeImportTestOwner, nativeImportTestOrdinary:
+				if mode == nativeImportTestOrdinary {
 					reg.NativeImport = nil
 				} else {
 					reg.RegisteredAt = reg.RegisteredAt.Add(time.Second)
@@ -182,16 +182,16 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 				if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
 					t.Fatal(err)
 				}
-			case "progress-missing":
+			case nativeImportTestProgressMissing:
 				if err := os.Remove(filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseProgressName))); err != nil {
 					t.Fatal(err)
 				}
-			case "progress-future":
+			case nativeImportTestProgressFuture:
 				if err := os.WriteFile(filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseProgressName)), []byte(`{"version":99}`), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "stage", "checkpoint":
-				if mode == "stage" {
+			case nativeImportTestStage, nativeImportTestCheckpoint:
+				if mode == nativeImportTestStage {
 					reg.StagedImportSHA256 = strings.Repeat("a", 64)
 				} else {
 					reg.NativeBinding.Checkpoint.SHA256 = strings.Repeat("f", 64)
@@ -199,7 +199,7 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 				if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
 					t.Fatal(err)
 				}
-			case "metadata":
+			case nativeImportTestMetadata:
 				next.MetadataBytes = append(next.MetadataBytes, ' ')
 			}
 			before, err := os.ReadFile(s.registrationPath(reg.ArchiveSessionID))
@@ -207,7 +207,7 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 				t.Fatal(err)
 			}
 			err = s.SavePending(reg.ArchiveSessionID, next)
-			if mode == "valid" {
+			if mode == nativeImportTestValid {
 				if err != nil {
 					t.Fatal("valid released successor", err)
 				}

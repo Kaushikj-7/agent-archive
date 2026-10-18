@@ -266,20 +266,29 @@ func (s *Store) loadDurableInspectionConfig(home *local.RootedHome) (cfg config.
 	return cfg, found, nil
 }
 
-func (s *Store) inspectDurableReadRoots() (cfg config.Config, err error) {
+func (s *Store) inspectDurableReadRoots(ctx context.Context) (cfg config.Config, err error) {
+	if err := ctx.Err(); err != nil {
+		return cfg, err
+	}
 	home, err := local.OpenRootedHome(s.home)
 	if errors.Is(err, os.ErrNotExist) {
-		return cfg, nil
+		return cfg, ctx.Err()
 	}
 	if err != nil {
 		return cfg, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	defer func() { err = errors.Join(err, home.Close()) }()
-	cfg, _, err = s.inspectHeldDurableReadRoots(home)
-	return cfg, err
+	cfg, _, err = s.inspectHeldDurableReadRoots(ctx, home)
+	return cfg, errors.Join(err, ctx.Err())
 }
 
-func (s *Store) inspectHeldDurableReadRoots(home *local.RootedHome) (cfg config.Config, found bool, err error) {
+func (s *Store) inspectHeldDurableReadRoots(ctx context.Context, home *local.RootedHome) (cfg config.Config, found bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return cfg, false, err
+	}
+	bound := *s
+	bound.resourceContext = ctx
+	s = &bound
 	cfg, found, err = s.loadDurableInspectionConfig(home)
 	if err != nil {
 		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
@@ -292,10 +301,10 @@ func (s *Store) inspectHeldDurableReadRoots(home *local.RootedHome) (cfg config.
 		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	remaining := durableEntryLimit - entries
-	if err := inspectImportLocks(s.durableContext(), home, &remaining); err != nil {
+	if err := inspectImportLocks(ctx, home, &remaining); err != nil {
 		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	return cfg, found, nil
+	return cfg, found, ctx.Err()
 }
 
 func acknowledgedLegacyQuarantine(name string) bool {
@@ -351,7 +360,7 @@ func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner, 
 			err = errors.Join(ErrDurableStorageRecovery, err)
 		}
 	}()
-	_, found, err := s.inspectHeldDurableReadRoots(home)
+	_, found, err := s.inspectHeldDurableReadRoots(s.durableContext(), home)
 	if err != nil {
 		return err
 	}
@@ -390,7 +399,16 @@ func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner, 
 
 // CheckDurableReadRoots refuses anonymous recovery work before native content is read.
 // It reuses bounded observations, never ownership or cleanup authority.
-func (s *Store) CheckDurableReadRoots() error { _, err := s.inspectDurableReadRoots(); return err }
+func (s *Store) CheckDurableReadRoots() error {
+	return s.CheckDurableReadRootsContext(s.durableContext())
+}
+
+// CheckDurableReadRootsContext retains the caller's cancellation through cached
+// and absent-root inspection without creating a new data ownership scope.
+func (s *Store) CheckDurableReadRootsContext(ctx context.Context) error {
+	_, err := s.inspectDurableReadRoots(ctx)
+	return err
+}
 
 func publicationReadOwnerChanged(metadata archive.Metadata, reg archive.SessionRegistration, origin archive.SessionOrigin, owner *publicationReadOwner, pending PendingPublication) bool {
 	return (metadata.SessionID != reg.ArchiveSessionID || metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.Harness.Name != reg.Harness.Name || metadata.PreviousGenerationID != reg.PreviousGenerationID || !metadata.StartedAt.Equal(reg.SessionStartedAt) || metadata.Origin != origin || owner.machine != "" && metadata.MachineID != owner.machine || pending.Preparation == nil || pending.Preparation.DestinationID != reg.DestinationID || pending.Preparation.AdmissionContext != owner.admission)
@@ -408,7 +426,8 @@ func (s *Store) validateDurableReadPendingSelection(id string, history bool, own
 	var readable bool
 	var readErr error
 	if nativeImportACK != nil {
-		pending, readable, readErr = scratch.loadNativeImportReadPending(id, nativeImportACK)
+		pending, readErr = scratch.loadNativeImportReadPending(id, nativeImportACK)
+		readable = true
 	} else if owner != nil {
 		pending, readable, readErr = scratch.LoadPublicationPending(id)
 		if readErr == nil && readable && pending.JournalVersion == 5 {

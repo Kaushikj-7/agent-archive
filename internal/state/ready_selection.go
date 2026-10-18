@@ -144,7 +144,7 @@ func (s *Store) FreezeReadySelection(ctx context.Context, id string, p PendingPu
 	if err := s.validateReadablePendingContext(ctx, p); err != nil {
 		return p, err
 	}
-	cfg, err := s.inspectDurableReadRoots()
+	cfg, err := s.inspectDurableReadRoots(ctx)
 	if err != nil || !cfg.SupportsOrdinarySelection() {
 		return p, errors.Join(ErrDurableStorageRecovery, err)
 	}
@@ -273,7 +273,7 @@ func validateReadySourceKeys(p PendingPublication) error {
 }
 
 func (s *Store) validateReadyOwner(ctx context.Context, p PendingPublication) error {
-	cfg, err := s.inspectDurableReadRoots()
+	cfg, err := s.inspectDurableReadRoots(ctx)
 	if err != nil || !cfg.SupportsOrdinarySelection() || cfg.DestinationID() != p.Selection.DestinationID {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
@@ -430,7 +430,7 @@ func (p *Published) preserveReadyPublished(ctx context.Context, next *publishedS
 	}
 	if next.LastPublished != nil && next.LastPublished.Selection != nil {
 		next.PublicationVersion = 2
-		cfg, err := p.store.inspectDurableReadRoots()
+		cfg, err := p.store.inspectDurableReadRoots(ctx)
 		if err != nil || !cfg.SupportsOrdinarySelection() {
 			return errors.Join(ErrDurableStorageRecovery, err)
 		}
@@ -443,7 +443,7 @@ func (p *Published) preserveReadyPublished(ctx context.Context, next *publishedS
 }
 
 func (s *Store) checkSelectingPendingWrite(ctx context.Context, id string, p PendingPublication) error {
-	cfg, err := s.inspectDurableReadRoots()
+	cfg, err := s.inspectDurableReadRoots(ctx)
 	if err != nil {
 		return err
 	}
@@ -556,7 +556,7 @@ func (p *Published) validateReadyPublished(ctx context.Context, next *publishedS
 	if err != nil || digest != q.BundleSHA256 || metadata.NativeChild != bundle.NativeChild {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	cfg, err := read.inspectDurableReadRoots()
+	cfg, err := read.inspectDurableReadRoots(ctx)
 	if err != nil || cfg.DestinationID() != q.DestinationID {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}

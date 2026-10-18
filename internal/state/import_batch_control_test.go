@@ -98,30 +98,31 @@ func TestNativeImportBatchReplacementRechecksAfterPreparation(t *testing.T) {
 
 func TestNativeImportBatchLockInspectionRefusesUnknownContent(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"valid", "name", "content", "directory", "symlink"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []nativeImportTestMode{nativeImportTestValid, nativeImportTestName, nativeImportTestContent, nativeImportTestDirectory, nativeImportTestSymlink} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
 			home := t.TempDir()
 			if err := WithImportBatchLock(t.Context(), home, "2026-10-17-1", func(*local.RootedHome) error { return nil }); err != nil {
 				t.Fatal(err)
 			}
 			name := filepath.Join(home, importLocksDirectory, "2026-10-17-1.lock")
 			switch mode {
-			case "name":
+			case nativeImportTestName:
 				if err := os.Rename(name, filepath.Join(home, importLocksDirectory, "future.lock")); err != nil {
 					t.Fatal(err)
 				}
-			case "content":
+			case nativeImportTestContent:
 				if err := os.WriteFile(name, []byte("authority"), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "directory":
+			case nativeImportTestDirectory:
 				if err := os.Remove(name); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Mkdir(name, 0700); err != nil {
 					t.Fatal(err)
 				}
-			case "symlink":
+			case nativeImportTestSymlink:
 				if err := os.Remove(name); err != nil {
 					t.Fatal(err)
 				}
@@ -133,13 +134,17 @@ func TestNativeImportBatchLockInspectionRefusesUnknownContent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer held.Close()
+			defer func() {
+				if err := held.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			remaining := durableEntryLimit
 			err = inspectImportLocks(t.Context(), held, &remaining)
-			if (err == nil) != (mode == "valid") {
+			if (err == nil) != (mode == nativeImportTestValid) {
 				t.Fatalf("inspection %s: %v", mode, err)
 			}
-			if mode == "valid" && remaining != durableEntryLimit-1 {
+			if mode == nativeImportTestValid && remaining != durableEntryLimit-1 {
 				t.Fatal("lock entry was not charged")
 			}
 		})

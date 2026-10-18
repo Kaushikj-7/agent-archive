@@ -1,0 +1,41 @@
+package state
+
+// nativeImportTestMode names synthetic lifecycle and refusal controls.
+type nativeImportTestMode string
+
+const (
+	nativeImportTestAbsentFiles      nativeImportTestMode = "absent-files"
+	nativeImportTestAbsoluteOutside  nativeImportTestMode = "absolute-outside"
+	nativeImportTestCandidate        nativeImportTestMode = "candidate"
+	nativeImportTestCheckpoint       nativeImportTestMode = "checkpoint"
+	nativeImportTestConfig           nativeImportTestMode = "config"
+	nativeImportTestContent          nativeImportTestMode = "content"
+	nativeImportTestDestination      nativeImportTestMode = "destination"
+	nativeImportTestDirectory        nativeImportTestMode = "directory"
+	nativeImportTestDirectorySymlink nativeImportTestMode = "directory-symlink"
+	nativeImportTestFileSymlink      nativeImportTestMode = "file-symlink"
+	nativeImportTestFlag             nativeImportTestMode = "flag"
+	nativeImportTestFuture           nativeImportTestMode = "future"
+	nativeImportTestInstance         nativeImportTestMode = "instance"
+	nativeImportTestMetadata         nativeImportTestMode = "metadata"
+	nativeImportTestMissing          nativeImportTestMode = "missing"
+	nativeImportTestName             nativeImportTestMode = "name"
+	nativeImportTestOrdinary         nativeImportTestMode = "ordinary"
+	nativeImportTestOwner            nativeImportTestMode = "owner"
+	nativeImportTestPredecessor      nativeImportTestMode = "predecessor"
+	nativeImportTestProgress         nativeImportTestMode = "progress"
+	nativeImportTestProgressFuture   nativeImportTestMode = "progress-future"
+	nativeImportTestProgressMissing  nativeImportTestMode = "progress-missing"
+	nativeImportTestProject          nativeImportTestMode = "project"
+	nativeImportTestReceipt          nativeImportTestMode = "receipt"
+	nativeImportTestRemoved          nativeImportTestMode = "removed"
+	nativeImportTestRequest          nativeImportTestMode = "request"
+	nativeImportTestRevision         nativeImportTestMode = "revision"
+	nativeImportTestScope            nativeImportTestMode = "scope"
+	nativeImportTestSibling          nativeImportTestMode = "sibling"
+	nativeImportTestStage            nativeImportTestMode = "stage"
+	nativeImportTestSymlink          nativeImportTestMode = "symlink"
+	nativeImportTestTampered         nativeImportTestMode = "tampered"
+	nativeImportTestUndone           nativeImportTestMode = "undone"
+	nativeImportTestValid            nativeImportTestMode = "valid"
+)

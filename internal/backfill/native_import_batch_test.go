@@ -69,26 +69,32 @@ func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 	if err := SaveBatch(home, b); err != nil {
 		t.Fatal(err)
 	}
-	original, err := os.ReadFile(batchPath(home, b.ID))
-	if err != nil {
-		t.Fatal(err)
-	}
 	for name, change := range map[string]func(*Batch){
 		"drop":        func(b *Batch) { b.NativeImport = nil },
 		"destination": func(b *Batch) { b.DestinationID += "other" },
 		"started":     func(b *Batch) { b.StartedAt = b.StartedAt.Add(time.Second) },
 		"scope": func(b *Batch) {
-			copy := *b.NativeImport
-			copy.ScopeSHA256 = strings.Repeat("f", 64)
-			b.NativeImport = &copy
+			copied := *b.NativeImport
+			copied.ScopeSHA256 = strings.Repeat("f", 64)
+			b.NativeImport = &copied
 		},
 		"instance": func(b *Batch) {
-			copy := *b.NativeImport
-			copy.Instance = strings.Repeat("f", 32)
-			b.NativeImport = &copy
+			copied := *b.NativeImport
+			copied.Instance = strings.Repeat("f", 32)
+			b.NativeImport = &copied
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			b := confirmedNativeBatchFixture(t)
+			if err := local.Write(batchPath(home, b.ID), b); err != nil {
+				t.Fatal(err)
+			}
+			original, err := os.ReadFile(batchPath(home, b.ID))
+			if err != nil {
+				t.Fatal(err)
+			}
 			next := b
 			change(&next)
 			if err := SaveBatch(home, next); err == nil {
@@ -118,7 +124,6 @@ func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 
 func TestNativeImportBatchUnreadableAuthorityPreventsFallback(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
 	b := confirmedNativeBatchFixture(t)
 	raw, err := json.Marshal(b)
 	if err != nil {
@@ -134,6 +139,8 @@ func TestNativeImportBatchUnreadableAuthorityPreventsFallback(t *testing.T) {
 		"null":                      bytes.Replace(raw, []byte(`"native_import":{`), []byte(`"native_import":null,"ignored":{`), 1),
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
 			if err := os.MkdirAll(filepath.Join(home, "imports"), 0700); err != nil {
 				t.Fatal(err)
 			}
