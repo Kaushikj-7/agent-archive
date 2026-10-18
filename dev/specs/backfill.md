@@ -1429,9 +1429,9 @@ entries cannot certify uniqueness. Proposed and configured roots require the sam
 complete identity evidence. The identity observer reads every `remote.origin.url`
 value, including values that follow an already portable URL. Supported local
 references are absolute or relative paths and local `file://` URLs (empty or
-`localhost` host) naming checkouts or Git repository directories, including bare
-repositories. Relative paths resolve from the checkout top level, or from the
-repository directory for a bare/explicit Git directory. The filesystem resolves
+ASCII `localhost` host, case-insensitive) naming checkouts or Git repository
+directories, including bare repositories. Relative paths resolve from the checkout
+top level, or from the repository directory for a bare/explicit Git directory. The filesystem resolves
 symlinks before parent (`..`) components; renewal retains both the original alias
 and the actual repository/configuration dependencies. Local traversal never
 runs a transport or mutates configuration. When `url.insteadOf` rules are present,

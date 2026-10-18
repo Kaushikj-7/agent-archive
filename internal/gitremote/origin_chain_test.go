@@ -206,7 +206,7 @@ func TestLocalOriginReadFailureCannotBeHiddenByPortableValue(t *testing.T) {
 }
 
 func FuzzLocalOriginPath(f *testing.F) {
-	for _, value := range []string{"/mirror/repo", "../mirror.git", "file:///mirror/repo", "file://localhost/mirror/repo", "file://remote.test/mirror", "helper::repo", "ssh://host.test/repo", "\x00"} {
+	for _, value := range []string{"/mirror/repo", "../mirror.git", "file:///mirror/repo", "file://localhost/mirror/repo", "file://LOCALHOST/mirror/repo", "file://LocalHost/link/../repo", "file://localhoſt/mirror/repo", "file://LOCALHOST:/mirror/repo", "file://[localhost]/mirror/repo", "file://remote.test/mirror", "helper::repo", "ssh://host.test/repo", "\x00"} {
 		f.Add(value)
 	}
 	f.Fuzz(func(t *testing.T, value string) {

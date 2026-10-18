@@ -209,7 +209,13 @@ func (o *IdentityObserver) recoveryOrigins(ctx context.Context, root string) ([]
 func localOriginPath(base, value string) (string, bool) {
 	if strings.HasPrefix(value, "file://") {
 		u, err := url.Parse(value)
-		if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Host != "" && u.Host != "localhost") || !filepath.IsAbs(u.Path) {
+		if err != nil {
+			return "", false
+		}
+		// Compare the complete authority, excluding ports, brackets and Unicode
+		// case folds while accepting ASCII localhost case variants.
+		localAuthority := u.Host == "" || (len(u.Host) == len("localhost") && strings.EqualFold(u.Host, "localhost"))
+		if u.User != nil || u.RawQuery != "" || u.Fragment != "" || !localAuthority || !filepath.IsAbs(u.Path) {
 			return "", false
 		}
 		value = u.Path

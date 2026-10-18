@@ -12,6 +12,7 @@ follow [Semantic Versioning](https://semver.org/).
   missing, unreadable, conflicting or unresolved chains report specific reasons
   and remain available for reviewed exact project assignments. Local paths and
   configuration dependencies preserve symlink traversal before parent components.
+  Local file URLs accept ASCII `localhost` hostname case variants.
 
 - Backfill distinguishes exhausted Codex lookup work (`lookup_allowance_spent`,
   retry) from source byte/record limits and missing history evidence. Pending

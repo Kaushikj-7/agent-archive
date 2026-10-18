@@ -268,8 +268,9 @@ date/project output filter does not guarantee completion, because native proof
 preparation can still inspect the wider inventory.
 
 Local Git origins use bounded, read-only chain resolution for both proposed and
-configured projects. Absolute/relative paths and local `file://` URLs can lead to
-a portable repository identity through another checkout or bare repository.
+configured projects. Absolute/relative paths and local `file://` URLs (empty or
+ASCII `localhost` host, case-insensitive) can lead to a portable repository
+identity through another checkout or bare repository.
 Paths follow filesystem symlink and parent-directory semantics, and their
 dependencies are checked again before admission. Every origin value must
 resolve consistently. Two physical clones of the same
