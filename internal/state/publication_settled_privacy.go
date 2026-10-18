@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"reflect"
@@ -224,7 +225,9 @@ func (s *Store) publicationValidationLoan(p publishedState) (func(), error) {
 	return func() { reservation.Release(n) }, nil
 }
 
-func (s *Store) validateSelectingPublishedBudgeted(p publishedState) error {
+func (s *Store) validateSelectingPublishedBudgeted(ctx context.Context, p publishedState) error {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	release, err := s.publicationValidationLoan(p)
 	if err != nil {
 		return err
@@ -234,7 +237,7 @@ func (s *Store) validateSelectingPublishedBudgeted(p publishedState) error {
 	if p.Preparation != nil {
 		count += len(p.Preparation.Inputs)
 	}
-	facts, end, e := newPayloadDigestFacts(s.durableContext(), s.resourceBudget, count)
+	facts, end, e := newPayloadDigestFacts(ctx, s.resourceBudget, count)
 	if e != nil {
 		return e
 	}

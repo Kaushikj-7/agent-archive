@@ -98,7 +98,9 @@ func TestNativeReplayConsumerReservationRejectsMarkerOnlyRetry(t *testing.T) {
 	changed := f
 	changed.candidate.Intent.Replay = &archive.Replay{RunID: "different"}
 	if other, err := changed.prepare(t.Context()); err == nil {
-		other.Close()
+		if err := other.Close(); err != nil {
+			t.Error(err)
+		}
 		t.Fatal("marker-only retry acquired original reservation")
 	}
 	f.assertReleased(t)

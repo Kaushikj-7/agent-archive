@@ -9,11 +9,11 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
-func nativeReplayTestWire(t testing.TB, replay string) []byte {
-	t.Helper()
+func nativeReplayTestWire(tb testing.TB, replay string) []byte {
+	tb.Helper()
 	raw, err := json.Marshal(nativeIntentShapeFixture())
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	if replay == "" {
 		return raw

@@ -19,8 +19,9 @@ import (
 func TestStartupCandidateAcknowledgementBindsReplayMarker(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
-		name      string
-		old, next *archive.Replay
+		name string
+		old  *archive.Replay
+		next *archive.Replay
 	}{
 		{"ordinary_to_replay", nil, &archive.Replay{RunID: "run"}},
 		{"replay_to_ordinary", &archive.Replay{RunID: "run"}, nil},

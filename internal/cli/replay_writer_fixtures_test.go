@@ -58,14 +58,16 @@ func TestMuseReplayProtectedWriterFixtures(t *testing.T) {
 			form = "managed"
 		}
 		for _, transition := range []struct {
-			name          string
-			before, after []byte
+			name   string
+			before []byte
+			after  []byte
 		}{{"strong-before", strong, ordinary}, {"strong-after", ordinary, strong}} {
 			target := filepath.Join(directory, "owned-"+form+"-"+transition.name, "config.json")
-			journal := setupjournal.Journal{FilesOnly: true, Changes: []fileapply.Change{{Path: target, Before: transition.before, After: transition.after, Existed: true, Mode: 0600}}}
+			var jobs []setupjournal.ManagedJob
 			if managed {
-				journal.Jobs = []setupjournal.ManagedJob{{Role: setupjournal.SearchRole, Backend: "launchd", Ref: "com.agent-archive.synthetic-replay", Definition: filepath.Join(directory, "owned-jobs", "synthetic.plist"), Intent: setupjournal.Keep}}
+				jobs = []setupjournal.ManagedJob{{Role: setupjournal.SearchRole, Backend: "launchd", Ref: "com.agent-archive.synthetic-replay", Definition: filepath.Join(directory, "owned-jobs", "synthetic.plist"), Intent: setupjournal.Keep}}
 			}
+			journal := setupjournal.Journal{FilesOnly: true, Changes: []fileapply.Change{{Path: target, Before: transition.before, After: transition.after, Existed: true, Mode: 0600}}, Jobs: jobs}
 			encoded := serialize(journal)
 			var decoded setupjournal.Journal
 			must(t, json.Unmarshal(encoded, &decoded))

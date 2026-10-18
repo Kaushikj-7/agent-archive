@@ -26,7 +26,7 @@ const (
 // ValidNativeAdmissionIntentShape checks closed wire shape and size only. It
 // grants no source, owner, window, project or publication authority.
 func ValidNativeAdmissionIntentShape(i AdmissionIntent) bool {
-	if i.Version != 2 || i.Harness != "muse" || i.NativeAdmission == nil || i.NativeAdmission.Validate() != nil || !nativeRootID(i.NativeSessionID) || !nativeRootPath(i.ProjectRoot, true) || !nativeRootPath(i.ObservedCwd, false) || !nativeRootHex(i.DestinationID, 64) || i.PauseGeneration != "" && !nativeRootHex(i.PauseGeneration, 32) || i.ObservedAt.IsZero() {
+	if !validNativeRootEnvelope(i) {
 		return false
 	}
 	if i.TranscriptPath != "" || i.CodexPolicyToken != "" || i.CursorVersion != "" || i.ComposerMode != "" || i.LastHead != nil {
@@ -49,6 +49,13 @@ func ValidNativeAdmissionIntentShape(i AdmissionIntent) bool {
 	}
 	raw, err := json.MarshalIndent(i, "", "  ")
 	return err == nil && len(raw)+1 <= MaxNativeAdmissionIntentBytes
+}
+
+func validNativeRootEnvelope(i AdmissionIntent) bool {
+	if i.Version != 2 || i.Harness != "muse" || i.NativeAdmission == nil || i.NativeAdmission.Validate() != nil || !nativeRootID(i.NativeSessionID) || !nativeRootPath(i.ProjectRoot, true) || !nativeRootPath(i.ObservedCwd, false) || !nativeRootHex(i.DestinationID, 64) || i.PauseGeneration != "" && !nativeRootHex(i.PauseGeneration, 32) || i.ObservedAt.IsZero() {
+		return false
+	}
+	return true
 }
 
 func nativeRootContinuationEvent(i AdmissionIntent, e LifecycleEvent) bool {

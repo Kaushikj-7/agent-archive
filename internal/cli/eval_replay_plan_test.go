@@ -203,7 +203,7 @@ func TestEvalReplayPlanRefusesUnsafeObservationsWithoutPartialOutput(t *testing.
 		},
 		func(r *replayPlanRequest) { delete(r.OwnershipLocations, r.DataHome) },
 		func(r *replayPlanRequest) {
-			for i := 0; i < 33; i++ {
+			for i := range 33 {
 				path := filepath.Join(filepath.Dir(r.DataHome), strings.Repeat("x", i+1))
 				r.OwnershipLocations[path] = path
 			}
@@ -261,25 +261,38 @@ func FuzzEvalReplayPlanRequest(f *testing.F) {
 	})
 }
 
+type replayScalarField string
+
+const (
+	replayScalarExecutable       replayScalarField = "executable"
+	replayScalarDataHome         replayScalarField = "data_home"
+	replayScalarDefaultDataHome  replayScalarField = "default_data_home"
+	replayScalarPrivateDirectory replayScalarField = "private_directory"
+	replayScalarSettings         replayScalarField = "settings"
+	replayScalarManaged          replayScalarField = "managed"
+	replayScalarMapKey           replayScalarField = "map-key"
+	replayScalarMapValue         replayScalarField = "map-value"
+)
+
 // The direct CLI accepts raw JSON independently of Python's UTF-8 encoder.
 func TestEvalReplayPlanRejectsLossyScalarEscapes(t *testing.T) {
-	for _, field := range []string{"executable", "data_home", "default_data_home", "private_directory", "settings", "managed", "map-key", "map-value"} {
+	for _, field := range []replayScalarField{replayScalarExecutable, replayScalarDataHome, replayScalarDefaultDataHome, replayScalarPrivateDirectory, replayScalarSettings, replayScalarManaged, replayScalarMapKey, replayScalarMapValue} {
 		for _, escape := range []string{`\ud800`, `\udc00`, `\ud800x`, `\ud800\u0041`, `\ud800\ud800`} {
-			t.Run(field+"/"+escape, func(t *testing.T) {
+			t.Run(string(field)+"/"+escape, func(t *testing.T) {
 				request := replayPlannerFixture(t)
 				raw, err := json.Marshal(request)
 				must(t, err)
 				var object map[string]any
 				must(t, json.Unmarshal(raw, &object))
 				switch field {
-				case "settings", "managed":
-					object[field].(map[string]any)["path"] = "/SCALAR"
-				case "map-key":
+				case replayScalarSettings, replayScalarManaged:
+					object[string(field)].(map[string]any)["path"] = "/SCALAR"
+				case replayScalarMapKey:
 					object["ownership_locations"].(map[string]any)["/SCALAR"] = request.DataHome
-				case "map-value":
+				case replayScalarMapValue:
 					object["ownership_locations"].(map[string]any)[request.DataHome] = "/SCALAR"
 				default:
-					object[field] = "/SCALAR"
+					object[string(field)] = "/SCALAR"
 				}
 				raw, err = json.Marshal(object)
 				must(t, err)
@@ -292,7 +305,10 @@ func TestEvalReplayPlanRejectsLossyScalarEscapes(t *testing.T) {
 			})
 		}
 	}
-	for _, value := range []struct{ encoded, decoded string }{
+	for _, value := range []struct {
+		encoded string
+		decoded string
+	}{
 		{`\ufffd`, "�"}, {"�", "�"}, {`\ud83d\ude80`, "🚀"}, {`\\ud800`, `\ud800`},
 	} {
 		request := replayPlannerFixture(t)

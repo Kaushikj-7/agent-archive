@@ -144,7 +144,7 @@ func (owned *PendingPublication) validateStagedShape() error {
 }
 
 func (s *Store) stagedContext(ctx context.Context, id string) (config.Config, archive.SessionRegistration, ImportStage, error) {
-	cfg, err := s.inspectDurableReadRoots()
+	cfg, err := s.inspectDurableReadRoots(ctx)
 	if err != nil || !cfg.SupportsStagedSelection() || cfg.Paused || !cfg.Archive.Enabled {
 		return cfg, archive.SessionRegistration{}, ImportStage{}, errors.Join(ErrReadySelectionFrozen, err)
 	}
@@ -418,7 +418,7 @@ func (p *Published) validateStagedPublished(ctx context.Context, next *published
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	cfg, err := p.store.inspectDurableReadRoots()
+	cfg, err := p.store.inspectDurableReadRoots(ctx)
 	if err != nil || stagedPublishedConfigMismatch(cfg, q) {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}

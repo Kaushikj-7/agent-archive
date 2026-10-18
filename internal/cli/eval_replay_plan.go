@@ -17,6 +17,7 @@ import (
 )
 
 const replayPlanWireVersion = 1
+
 const replayPlanByteLimit = 64 << 10
 
 // These are private machine-wire values, not persisted archive metadata. Keep
@@ -47,12 +48,12 @@ type replayPlanRequest struct {
 }
 
 type replayPlanChange struct {
-	Path    string
-	Before  []byte
-	After   []byte
-	Existed bool
-	Mode    uint32
-	Delete  bool
+	Path    string `json:"Path"`
+	Before  []byte `json:"Before"`
+	After   []byte `json:"After"`
+	Existed bool   `json:"Existed"`
+	Mode    uint32 `json:"Mode"`
+	Delete  bool   `json:"Delete"`
 }
 
 type replayPlanResponse struct {
@@ -180,90 +181,108 @@ func decodeReplayPlanRequest(raw []byte) (replayPlanRequest, error) {
 	if _, err = replayPlanObject(object, "version", "executable", "data_home", "default_data_home", "ownership_locations", "private_directory", "control", "settings", "managed"); err != nil {
 		return request, err
 	}
-	locations, ok := object["ownership_locations"].(map[string]any)
-	if !ok || len(locations) > 32 {
-		return request, errors.New("bounded ownership observations required")
-	}
-	for path, value := range locations {
-		canonical, ok := value.(string)
-		if !ok || !replayPlanPath(path) || !replayPlanPath(canonical) {
-			return request, errors.New("invalid ownership observation")
-		}
-	}
-	for _, name := range []string{"executable", "data_home", "default_data_home", "private_directory"} {
-		if _, ok := object[name].(string); !ok {
-			return request, errors.New("explicit path string required")
-		}
-	}
-	control, err := replayPlanObject(object["control"], "launch_id", "replay")
-	if err != nil {
+	if err := validateReplayPlanObjectShape(object); err != nil {
 		return request, err
-	}
-	replay, ok := control["replay"].(map[string]any)
-	if !ok || len(replay) > 1 {
-		return request, errors.New("normalized replay required")
-	}
-	if len(replay) == 1 {
-		id, ok := replay["run_id"].(string)
-		if !ok || !archive.IsReplayRunID(id) {
-			return request, errors.New("invalid replay identifier")
-		}
-	}
-	for _, name := range []string{"settings", "managed"} {
-		observation, err := replayPlanObject(object[name], "path", "present", "bytes", "mode", "regular")
-		if err != nil {
-			return request, err
-		}
-		if _, ok := observation["bytes"].(string); !ok {
-			return request, errors.New("encoded observation required")
-		}
-		if _, ok := observation["path"].(string); !ok {
-			return request, errors.New("observed path string required")
-		}
-		if _, ok := observation["present"].(bool); !ok {
-			return request, errors.New("observed presence boolean required")
-		}
-		if _, ok := observation["regular"].(bool); !ok {
-			return request, errors.New("observed type boolean required")
-		}
-		if _, ok := observation["mode"].(float64); !ok {
-			return request, errors.New("observed numeric mode required")
-		}
 	}
 	if err = json.Unmarshal(raw, &request); err != nil {
 		return request, err
 	}
+	if err := validateDecodedReplayPlanRequest(request); err != nil {
+		return request, err
+	}
+	return request, nil
+}
+
+func validateReplayPlanObjectShape(object map[string]any) error {
+	locations, ok := object["ownership_locations"].(map[string]any)
+	if !ok || len(locations) > 32 {
+		return errors.New("bounded ownership observations required")
+	}
+	for path, value := range locations {
+		canonical, ok := value.(string)
+		if !ok || !replayPlanPath(path) || !replayPlanPath(canonical) {
+			return errors.New("invalid ownership observation")
+		}
+	}
+	for _, name := range []string{"executable", "data_home", "default_data_home", "private_directory"} {
+		if _, ok := object[name].(string); !ok {
+			return errors.New("explicit path string required")
+		}
+	}
+	control, err := replayPlanObject(object["control"], "launch_id", "replay")
+	if err != nil {
+		return err
+	}
+	replay, ok := control["replay"].(map[string]any)
+	if !ok || len(replay) > 1 {
+		return errors.New("normalized replay required")
+	}
+	if len(replay) == 1 {
+		id, ok := replay["run_id"].(string)
+		if !ok || !archive.IsReplayRunID(id) {
+			return errors.New("invalid replay identifier")
+		}
+	}
+	return validateReplayPlanObservationShapes(object)
+}
+
+func validateReplayPlanObservationShapes(object map[string]any) error {
+	for _, name := range []string{"settings", "managed"} {
+		observation, err := replayPlanObject(object[name], "path", "present", "bytes", "mode", "regular")
+		if err != nil {
+			return err
+		}
+		if _, ok := observation["bytes"].(string); !ok {
+			return errors.New("encoded observation required")
+		}
+		if _, ok := observation["path"].(string); !ok {
+			return errors.New("observed path string required")
+		}
+		if _, ok := observation["present"].(bool); !ok {
+			return errors.New("observed presence boolean required")
+		}
+		if _, ok := observation["regular"].(bool); !ok {
+			return errors.New("observed type boolean required")
+		}
+		if _, ok := observation["mode"].(float64); !ok {
+			return errors.New("observed numeric mode required")
+		}
+	}
+	return nil
+}
+
+func validateDecodedReplayPlanRequest(request replayPlanRequest) error {
 	for _, canonical := range request.OwnershipLocations {
 		if other, found := request.OwnershipLocations[canonical]; found && other != canonical {
-			return request, errors.New("ambiguous canonical ownership")
+			return errors.New("ambiguous canonical ownership")
 		}
 	}
 	if request.DefaultDataHome != "" && !replayPlanPath(request.DefaultDataHome) {
-		return request, errors.New("invalid default archive home")
+		return errors.New("invalid default archive home")
 	}
 	if request.Version != replayPlanWireVersion || !archive.IsReplayRunID(request.Control.LaunchID) || request.Control.Replay == nil {
-		return request, errors.New("unsupported replay control")
+		return errors.New("unsupported replay control")
 	}
 	if !replayPlanPath(request.Executable) || !replayPlanPath(request.DataHome) || !replayPlanPath(request.PrivateDirectory) || !replayPlanPath(request.Settings.Path) {
-		return request, errors.New("canonical absolute paths required")
+		return errors.New("canonical absolute paths required")
 	}
 	for _, observation := range []replayPlanObservation{request.Settings, request.Managed} {
 		if observation.Mode > 0777 || observation.Present && (!observation.Regular || !replayPlanPath(observation.Path)) {
-			return request, errors.New("regular observed file required")
+			return errors.New("regular observed file required")
 		}
 		if !observation.Present && (len(observation.Bytes) != 0 || observation.Mode != 0 || observation.Regular) {
-			return request, errors.New("absent observation has content")
+			return errors.New("absent observation has content")
 		}
 		if observation.Present {
 			if !replayPlanScalarEscapes(observation.Bytes) {
-				return request, errors.New("invalid observed JSON scalar escape")
+				return errors.New("invalid observed JSON scalar escape")
 			}
 			if _, err := strictHookPayload(observation.Bytes); err != nil {
-				return request, err
+				return err
 			}
 		}
 	}
-	return request, nil
+	return nil
 }
 
 func replayPlanPath(path string) bool {
@@ -282,7 +301,7 @@ func prepareReplayPlan(request replayPlanRequest, lookup agentapi.HooksLookup) (
 	var response replayPlanResponse
 	port, ok := lookup.LookupHooks(string(agentmeta.Muse))
 	if !ok {
-		return response, errors.New("Muse hooks unavailable")
+		return response, errors.New("muse hooks unavailable")
 	}
 	owner := agentapi.HookOwner{Executable: request.Executable, DataHome: request.DataHome, DefaultDataHome: request.DefaultDataHome}
 	observed := agentapi.HookFile{Path: request.Settings.Path, Bytes: request.Settings.Bytes, Present: request.Settings.Present, Mode: fs.FileMode(request.Settings.Mode), Regular: request.Settings.Regular}
@@ -332,23 +351,8 @@ func prepareReplayPlan(request replayPlanRequest, lookup agentapi.HooksLookup) (
 	if err != nil || len(command) > 4096 {
 		return response, errors.New("generated command exceeds bound")
 	}
-	// Preserve only a supplied, existing absolute managed source. Native relative
-	// managed-source resolution is deliberately unavailable before qualification.
-	settings := map[string]any{}
-	if observed.Present {
-		settings, err = strictHookPayload(observed.Bytes)
-		if err != nil {
-			return response, err
-		}
-	}
-	managedPath, present := settings["managed_hooks_path"]
-	if present {
-		path, ok := managedPath.(string)
-		if !ok || !replayPlanPath(path) || !request.Managed.Present || request.Managed.Path != path {
-			return response, errors.New("managed source observation required")
-		}
-	} else if request.Managed.Present || request.Managed.Path != "" {
-		return response, errors.New("unreferenced managed observation")
+	if err := validateReplayPlanManagedSource(request, observed); err != nil {
+		return response, err
 	}
 	marker := request.Control.Replay.RunID
 	if marker == "" {
@@ -365,4 +369,27 @@ func prepareReplayPlan(request replayPlanRequest, lookup agentapi.HooksLookup) (
 	runner := []byte("#!/bin/sh\nexport " + archive.ReplayEnv + "=" + shellQuote(marker) + "\nexec /bin/sh -c " + shellQuote(command) + "\n")
 	response = replayPlanResponse{Version: replayPlanWireVersion, PreparationOnly: true, LaunchID: request.Control.LaunchID, Replay: request.Control.Replay, ObservedSettings: request.Settings, ObservedManaged: request.Managed, OwnerPresent: inspection.Owned, Install: replayPlanWireChanges(install), OwnedInstall: replayPlanWireChanges(owned), Removal: replayPlanWireChanges(removal), Command: command, Runner: runner, RunnerPath: runnerPath, NativeCommand: nativeCommand}
 	return response, nil
+}
+
+func validateReplayPlanManagedSource(request replayPlanRequest, observed agentapi.HookFile) error {
+	// Preserve only a supplied, existing absolute managed source. Native relative
+	// managed-source resolution is deliberately unavailable before qualification.
+	settings := map[string]any{}
+	if observed.Present {
+		var err error
+		settings, err = strictHookPayload(observed.Bytes)
+		if err != nil {
+			return err
+		}
+	}
+	managedPath, present := settings["managed_hooks_path"]
+	if present {
+		path, ok := managedPath.(string)
+		if !ok || !replayPlanPath(path) || !request.Managed.Present || request.Managed.Path != path {
+			return errors.New("managed source observation required")
+		}
+	} else if request.Managed.Present || request.Managed.Path != "" {
+		return errors.New("unreferenced managed observation")
+	}
+	return nil
 }

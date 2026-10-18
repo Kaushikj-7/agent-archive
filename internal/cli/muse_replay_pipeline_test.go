@@ -24,8 +24,9 @@ import (
 func TestMuseReplayWholeHookCandidateOwnerPublicationAndList(t *testing.T) {
 	// Sequential: the production Filter trace counter is process-wide.
 	for _, test := range []struct {
-		name, value string
-		protected   bool
+		name      string
+		value     string
+		protected bool
 	}{
 		{"identifier", "run-11:a.b_2", true}, {"malformed", "PRIVATE marker $(command)", true},
 		{"empty", "", true}, {"whitespace", " \t ", true}, {"ordinary_old_fence", "", false},

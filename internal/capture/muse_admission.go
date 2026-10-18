@@ -43,11 +43,12 @@ func prepareMuseAdmission(cfg config.Config, batch []agentapi.LifecycleEvent, ob
 	if err != nil {
 		return nil, err
 	}
-	c := &museAdmissionContext{intent: agentapi.AdmissionIntent{Version: 2, NativeMode: agentapi.NativeStartupCandidate, Harness: "muse", Event: "SessionStart", NativeSessionID: e.Session.NativeID, ProjectRoot: project.Root, ObservedCwd: e.ProjectRoot, ObservedAt: observedAt.UTC(), DestinationID: cfg.DestinationID(), PauseGeneration: cfg.PauseGeneration, NativeAdmission: &archive.NativeAdmission{Contract: "muse-root-admission", HookContract: e.NativeHookContract, RootFingerprint: digest, WindowGeneration: cfg.MuseCapture.Generation, PolicyFingerprint: cfg.MuseCapture.PolicyFingerprint}}}
+	var marker *archive.Replay
 	if replay != nil {
-		marker := *replay
-		c.intent.Replay = &marker
+		value := *replay
+		marker = &value
 	}
+	c := &museAdmissionContext{intent: agentapi.AdmissionIntent{Replay: marker, Version: 2, NativeMode: agentapi.NativeStartupCandidate, Harness: "muse", Event: "SessionStart", NativeSessionID: e.Session.NativeID, ProjectRoot: project.Root, ObservedCwd: e.ProjectRoot, ObservedAt: observedAt.UTC(), DestinationID: cfg.DestinationID(), PauseGeneration: cfg.PauseGeneration, NativeAdmission: &archive.NativeAdmission{Contract: "muse-root-admission", HookContract: e.NativeHookContract, RootFingerprint: digest, WindowGeneration: cfg.MuseCapture.Generation, PolicyFingerprint: cfg.MuseCapture.PolicyFingerprint}}}
 	if err := checkMuseAdmission(cfg, c, nil, observedAt); err != nil {
 		return nil, err
 	}

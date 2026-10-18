@@ -73,28 +73,34 @@ func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	existing := b
 	for name, change := range map[string]func(*Batch){
 		"drop":        func(b *Batch) { b.NativeImport = nil },
 		"destination": func(b *Batch) { b.DestinationID += "other" },
 		"started":     func(b *Batch) { b.StartedAt = b.StartedAt.Add(time.Second) },
 		"scope": func(b *Batch) {
-			copy := *b.NativeImport
-			copy.ScopeSHA256 = strings.Repeat("f", 64)
-			b.NativeImport = &copy
+			confirmation := *b.NativeImport
+			confirmation.ScopeSHA256 = strings.Repeat("f", 64)
+			b.NativeImport = &confirmation
 		},
 		"instance": func(b *Batch) {
-			copy := *b.NativeImport
-			copy.Instance = strings.Repeat("f", 32)
-			b.NativeImport = &copy
+			confirmation := *b.NativeImport
+			confirmation.Instance = strings.Repeat("f", 32)
+			b.NativeImport = &confirmation
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			next := b
+			t.Parallel()
+			home := t.TempDir()
+			if err := local.Write(batchPath(home, existing.ID), existing); err != nil {
+				t.Fatal(err)
+			}
+			next := existing
 			change(&next)
 			if err := SaveBatch(home, next); err == nil {
 				t.Fatal("authority changed")
 			}
-			got, _ := os.ReadFile(batchPath(home, b.ID))
+			got, _ := os.ReadFile(batchPath(home, existing.ID))
 			if !bytes.Equal(got, original) {
 				t.Fatal("refused write changed control")
 			}
@@ -118,7 +124,6 @@ func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 
 func TestNativeImportBatchUnreadableAuthorityPreventsFallback(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
 	b := confirmedNativeBatchFixture(t)
 	raw, err := json.Marshal(b)
 	if err != nil {
@@ -134,6 +139,8 @@ func TestNativeImportBatchUnreadableAuthorityPreventsFallback(t *testing.T) {
 		"null":                      bytes.Replace(raw, []byte(`"native_import":{`), []byte(`"native_import":null,"ignored":{`), 1),
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
 			if err := os.MkdirAll(filepath.Join(home, "imports"), 0700); err != nil {
 				t.Fatal(err)
 			}

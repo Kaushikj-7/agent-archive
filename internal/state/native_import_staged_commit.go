@@ -36,7 +36,7 @@ func (s *Store) nativeImportStagedCommit(ctx context.Context, id string, candida
 	if err != nil {
 		return nil, err
 	}
-	return func(witness *local.AtomicWriteWitness, rename func() error) error {
+	return func(witness *local.AtomicWriteWitness, rename func() error) (err error) {
 		commit := func(held *local.RootedHome) error {
 			unlock, err := local.RootedLockWait(held, requestLockName(id), time.Second)
 			if err != nil {
@@ -66,7 +66,7 @@ func (s *Store) nativeImportStagedCommit(ctx context.Context, id string, candida
 		if err != nil {
 			return err
 		}
-		defer held.Close()
+		defer func() { err = errors.Join(err, held.Close()) }()
 		return commit(held)
 	}, nil
 }
@@ -138,7 +138,8 @@ func (s *Store) nativeImportStagedCandidate(ctx context.Context, id string, cand
 	var q *StagedSelection
 	var metadata []byte
 	if candidate != nil {
-		if candidate.ValidateReadySlot(id) != nil {
+		valid := candidate.ValidateReadySlot(id) == nil
+		if !valid {
 			return nil, nil, false, nil
 		}
 		if err := s.validateStagedSelection(ctx, *candidate); err != nil {

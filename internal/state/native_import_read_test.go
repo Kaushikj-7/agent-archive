@@ -13,6 +13,14 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+type nativeReadTestMode string
+
+const (
+	nativeReadTestFileSymlink      nativeReadTestMode = "file-symlink"
+	nativeReadTestDirectorySymlink nativeReadTestMode = "directory-symlink"
+	nativeReadTestAbsoluteOutside  nativeReadTestMode = "absolute-outside"
+)
+
 func TestNativeImportUnsupportedReadersNeverQuarantineOrRepairOwner(t *testing.T) {
 	for _, mutation := range []struct {
 		name   string
@@ -110,8 +118,8 @@ func assertUnsupportedNativeOwnerReads(t *testing.T, s *Store, owner archive.Ses
 }
 
 func TestNativeImportRegistrationReadRefusesOutsideRoot(t *testing.T) {
-	for _, mode := range []string{"file-symlink", "directory-symlink", "absolute-outside"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []nativeReadTestMode{nativeReadTestFileSymlink, nativeReadTestDirectorySymlink, nativeReadTestAbsoluteOutside} {
+		t.Run(string(mode), func(t *testing.T) {
 			f, owner := historicalNativeOwnerFixture(t)
 			original, err := json.Marshal(owner)
 			if err != nil {
@@ -124,14 +132,14 @@ func TestNativeImportRegistrationReadRefusesOutsideRoot(t *testing.T) {
 			}
 			path := f.store.registrationPath(owner.ArchiveSessionID)
 			switch mode {
-			case "file-symlink":
+			case nativeReadTestFileSymlink:
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Symlink(target, path); err != nil {
 					t.Fatal(err)
 				}
-			case "directory-symlink":
+			case nativeReadTestDirectorySymlink:
 				directory := filepath.Dir(path)
 				if err := os.Rename(directory, directory+"-original"); err != nil {
 					t.Fatal(err)
@@ -139,7 +147,7 @@ func TestNativeImportRegistrationReadRefusesOutsideRoot(t *testing.T) {
 				if err := os.Symlink(outside, directory); err != nil {
 					t.Fatal(err)
 				}
-			case "absolute-outside":
+			case nativeReadTestAbsoluteOutside:
 				path = target
 			}
 			var decoded archive.SessionRegistration
@@ -149,7 +157,7 @@ func TestNativeImportRegistrationReadRefusesOutsideRoot(t *testing.T) {
 			if decoded.NativeImport != nil {
 				t.Fatal("outside authority was decoded")
 			}
-			if mode != "absolute-outside" {
+			if mode != nativeReadTestAbsoluteOutside {
 				if _, _, err := f.store.LoadRegistration(owner.ArchiveSessionID); err == nil {
 					t.Fatal("public owner load followed outside link")
 				}
