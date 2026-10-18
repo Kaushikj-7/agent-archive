@@ -87,6 +87,7 @@ func newPublicNativeImportFixture(t *testing.T) publicNativeImportFixture {
 	bindings := []builtin.Integration{}
 	for _, descriptor := range builtins.Catalog().All() {
 		binding, _ := builtins.Lookup(string(descriptor.ID))
+		binding.Descriptor = agentmeta.Descriptor{ID: descriptor.ID}
 		if descriptor.ID == agentmeta.Muse {
 			binding.Filter = f.filter
 		}
