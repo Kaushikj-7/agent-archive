@@ -276,7 +276,9 @@ projects remain part of automatic recovery evidence.
 
 Cycles, missing or unreadable targets, conflicting identities, unsupported
 references, keyless chain terminals and traversal limits keep recovery pending
-with a specific `project_origin_*` diagnostic. The observer compares at most 16
+with a specific `project_origin_*` diagnostic. `status` directs pending automatic
+recovery to `backfill --dry-run` for these reasons and reviewed assignments.
+The observer compares at most 16
 repository directories and 128 dependencies for one chain graph. Git is never
 asked to fetch, and configuration is unchanged. Reviewed exact mappings or a
 mapping file can resolve supported assignments independently of unrelated

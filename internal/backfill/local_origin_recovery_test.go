@@ -87,52 +87,66 @@ func TestLocalOriginRecoveryIsConsistentBeforeAndAfterConfiguration(t *testing.T
 	}
 }
 
+type localRecoveryCase string
+
+const (
+	localRecoverySameKey           localRecoveryCase = "same_key"
+	localRecoveryExcludedClone     localRecoveryCase = "excluded_clone"
+	localRecoveryNestedExclusion   localRecoveryCase = "nested_exclusion"
+	localRecoveryOriginalExclusion localRecoveryCase = "original_exclusion"
+	localRecoveryCycle             localRecoveryCase = "cycle"
+	localRecoveryMissing           localRecoveryCase = "missing"
+	localRecoveryUnreadable        localRecoveryCase = "unreadable"
+	localRecoveryConflict          localRecoveryCase = "conflict"
+	localRecoveryUnresolved        localRecoveryCase = "unresolved"
+)
+
 func TestLocalOriginRecoveryKeepsCompetingClonesAndExclusions(t *testing.T) {
-	for _, kind := range []string{"same_key", "excluded_clone", "nested_exclusion", "original_exclusion", "cycle", "missing", "unreadable", "conflict", "unresolved"} {
+	for _, kind := range []localRecoveryCase{localRecoverySameKey, localRecoveryExcludedClone, localRecoveryNestedExclusion, localRecoveryOriginalExclusion, localRecoveryCycle, localRecoveryMissing, localRecoveryUnreadable, localRecoveryConflict, localRecoveryUnresolved} {
 		for _, configured := range []bool{false, true} {
-			t.Run(kind+map[bool]string{false: "/proposed", true: "/configured"}[configured], func(t *testing.T) {
+			t.Run(string(kind)+map[bool]string{false: "/proposed", true: "/configured"}[configured], func(t *testing.T) {
 				tr, env, cfg, root, goneID, clone, target := localOriginRecoveryFixture(t)
 				if configured {
 					cfg.Archive.Projects = []archive.ProjectActivation{project(root, true), project(clone, true)}
 				}
 				want := sourcefacts.RecoveryAmbiguous
 				switch kind {
-				case "same_key", "excluded_clone":
+				case localRecoverySameKey, localRecoveryExcludedClone:
 					// Reaching an already configured clone must retain clone as a
 					// distinct physical competitor rather than coalescing it into root.
 					temporaryRecoveryGit(t, clone, "config", "remote.origin.url", root)
-					if kind == "excluded_clone" {
+					if kind == localRecoveryExcludedClone {
 						cfg.Archive.Projects = []archive.ProjectActivation{project(root, true), project(clone, false)}
 					}
-				case "nested_exclusion":
+				case localRecoveryNestedExclusion:
 					cfg.Archive.Projects = []archive.ProjectActivation{project(root, true), project(tr.mkdir("home/repo/private"), false)}
 					want = sourcefacts.RecoverySubtreeUnavailable
-				case "original_exclusion":
+				case localRecoveryOriginalExclusion:
 					cfg.Archive.Projects = []archive.ProjectActivation{project(root, true), project(filepath.Dir(tr.path("home/.codex/worktrees/deleted/repo")), false)}
 					want = sourcefacts.RecoveryExcluded
-				case "cycle":
+				case localRecoveryCycle:
 					temporaryRecoveryGit(t, target, "config", "remote.origin.url", clone)
 					want = sourcefacts.RecoveryOriginCycle
-				case "missing":
+				case localRecoveryMissing:
 					temporaryRecoveryGit(t, clone, "config", "remote.origin.url", tr.path("missing-target"))
 					want = sourcefacts.RecoveryOriginMissing
-				case "unreadable":
+				case localRecoveryUnreadable:
 					path := filepath.Join(target, ".git", "config")
 					if err := os.Chmod(path, 0); err != nil {
 						t.Fatal(err)
 					}
 					t.Cleanup(func() { _ = os.Chmod(path, 0600) })
 					want = sourcefacts.RecoveryOriginUnreadable
-				case "conflict":
+				case localRecoveryConflict:
 					temporaryRecoveryGit(t, clone, "config", "--add", "remote.origin.url", "https://example.test/acme/repo")
 					want = sourcefacts.RecoveryOriginConflict
-				case "unresolved":
+				case localRecoveryUnresolved:
 					temporaryRecoveryGit(t, target, "config", "--unset-all", "remote.origin.url")
 					want = sourcefacts.RecoveryOriginUnresolved
 				}
 				p := plan(t, env, nil, cfg, Filters{})
 				c := candidate(t, p, goneID)
-				if kind == "original_exclusion" {
+				if kind == localRecoveryOriginalExclusion {
 					if c.Skip != SkipExcludedProject {
 						t.Fatalf("exclusion bypassed: %+v", c)
 					}
@@ -141,7 +155,7 @@ func TestLocalOriginRecoveryKeepsCompetingClonesAndExclusions(t *testing.T) {
 				if c.Skip != SkipWorktreeUnresolved || c.ProjectResolution != nil || c.Diagnostic == nil || c.Diagnostic.Detail != DiagnosticDetail(want) {
 					t.Fatalf("want %s: %+v %+v", want, c, c.Diagnostic)
 				}
-				if kind == "nested_exclusion" {
+				if kind == localRecoveryNestedExclusion {
 					return
 				}
 				// Reviewed exact assignment bypasses unrelated incomplete or

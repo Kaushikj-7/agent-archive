@@ -17,8 +17,10 @@ import (
 
 // These bounds cover the complete observation, including repeated branches.
 // Exhaustion is uncertainty, never a proof that another clone is unrelated.
-const maxOriginRepositories = 16
-const maxIdentityDependencies = 128
+const (
+	maxOriginRepositories   = 16
+	maxIdentityDependencies = 128
+)
 
 type originChain struct {
 	observer *IdentityObserver
@@ -35,14 +37,16 @@ func (o *IdentityObserver) checkoutIdentity(ctx context.Context, root, top, scop
 	if failure != "" {
 		return sourcefacts.RepositoryIdentity{Root: top, ObservationScope: scope, Failure: failure, BudgetExhausted: o.budget}
 	}
-	id := sourcefacts.RepositoryIdentity{Root: top, Key: key, Known: true, ObservationScope: scope, ObservedRoot: root}
+	var validation string
 	if chain.semantic {
-		id.Validation = "semantic"
+		validation = "semantic"
 	}
+	dependencies := make([]sourcefacts.RepositoryDependency, 0, len(chain.paths))
 	for path, stamp := range chain.paths {
-		id.Dependencies = append(id.Dependencies, sourcefacts.RepositoryDependency{Path: path, Stamp: stamp})
+		dependencies = append(dependencies, sourcefacts.RepositoryDependency{Path: path, Stamp: stamp})
 	}
-	sort.Slice(id.Dependencies, func(i, j int) bool { return id.Dependencies[i].Path < id.Dependencies[j].Path })
+	sort.Slice(dependencies, func(i, j int) bool { return dependencies[i].Path < dependencies[j].Path })
+	id := sourcefacts.RepositoryIdentity{Root: top, Key: key, Known: true, ObservationScope: scope, ObservedRoot: root, Validation: validation, Dependencies: dependencies}
 	if !ProjectIdentityCurrent(id) {
 		return sourcefacts.RepositoryIdentity{Failure: sourcefacts.RecoveryOriginChanged}
 	}

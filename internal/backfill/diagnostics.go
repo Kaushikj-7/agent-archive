@@ -50,6 +50,14 @@ const (
 	DetailMappingConflict                              = DiagnosticDetail(sourcefacts.RecoveryMappingConflict)
 	DetailSubtreeUnavailable                           = DiagnosticDetail(sourcefacts.RecoverySubtreeUnavailable)
 	DetailRecoveryUnavailable                          = DiagnosticDetail(sourcefacts.RecoveryUnavailable)
+	DetailOriginCycle                                  = DiagnosticDetail(sourcefacts.RecoveryOriginCycle)
+	DetailOriginMissing                                = DiagnosticDetail(sourcefacts.RecoveryOriginMissing)
+	DetailOriginUnreadable                             = DiagnosticDetail(sourcefacts.RecoveryOriginUnreadable)
+	DetailOriginConflict                               = DiagnosticDetail(sourcefacts.RecoveryOriginConflict)
+	DetailOriginUnsupported                            = DiagnosticDetail(sourcefacts.RecoveryOriginUnsupported)
+	DetailOriginUnresolved                             = DiagnosticDetail(sourcefacts.RecoveryOriginUnresolved)
+	DetailOriginLimit                                  = DiagnosticDetail(sourcefacts.RecoveryOriginLimit)
+	DetailOriginChanged                                = DiagnosticDetail(sourcefacts.RecoveryOriginChanged)
 	DetailWorktreeEvidenceUnavailable DiagnosticDetail = "worktree_evidence_unavailable"
 	DetailHistoryLookupPending        DiagnosticDetail = "history_lookup_pending"
 	DetailSourceChanged               DiagnosticDetail = "source_changed"
@@ -184,14 +192,14 @@ var diagnosticDescriptions = map[DiagnosticDetail]diagnosticDescription{
 	// Most recovery limits are fixed (configured roots, dependency stamps,
 	// Cursor catalog rows), so the same plan reaches them again; retrying
 	// clears only a timeout. An exact mapping bypasses the shared inventory.
-	DiagnosticDetail(sourcefacts.RecoveryOriginCycle):       {ActionReviewMapping, "A local Git origin chain contains a cycle; review an exact project mapping."},
-	DiagnosticDetail(sourcefacts.RecoveryOriginMissing):     {ActionReviewMapping, "A local Git origin target is missing; restore it or review an exact project mapping."},
-	DiagnosticDetail(sourcefacts.RecoveryOriginUnreadable):  {ActionRetry, "Git origin evidence could not be read completely; check repository access, then retry or review an exact project mapping."},
-	DiagnosticDetail(sourcefacts.RecoveryOriginConflict):    {ActionReviewMapping, "Git origin values resolve to different repositories; review an exact project mapping."},
-	DiagnosticDetail(sourcefacts.RecoveryOriginUnsupported): {ActionReviewMapping, "A Git origin reference cannot be resolved safely through local repositories; review an exact project mapping."},
-	DiagnosticDetail(sourcefacts.RecoveryOriginUnresolved):  {ActionReviewMapping, "A local Git origin chain ends without a portable repository identity; review an exact project mapping."},
-	DiagnosticDetail(sourcefacts.RecoveryOriginLimit):       {ActionReviewMapping, "A local Git origin chain exceeds the bounded repository or dependency allowance; review an exact project mapping."},
-	DiagnosticDetail(sourcefacts.RecoveryOriginChanged):     {ActionRetry, "Git origin-chain evidence changed during observation; retry after repositories settle."},
+	DetailOriginCycle:                 {ActionReviewMapping, "A local Git origin chain contains a cycle; review an exact project mapping."},
+	DetailOriginMissing:               {ActionReviewMapping, "A local Git origin target is missing; restore it or review an exact project mapping."},
+	DetailOriginUnreadable:            {ActionRetry, "Git origin evidence could not be read completely; check repository access, then retry or review an exact project mapping."},
+	DetailOriginConflict:              {ActionReviewMapping, "Git origin values resolve to different repositories; review an exact project mapping."},
+	DetailOriginUnsupported:           {ActionReviewMapping, "A Git origin reference cannot be resolved safely through local repositories; review an exact project mapping."},
+	DetailOriginUnresolved:            {ActionReviewMapping, "A local Git origin chain ends without a portable repository identity; review an exact project mapping."},
+	DetailOriginLimit:                 {ActionReviewMapping, "A local Git origin chain exceeds the bounded repository or dependency allowance; review an exact project mapping."},
+	DetailOriginChanged:               {ActionRetry, "Git origin-chain evidence changed during observation; retry after repositories settle."},
 	DetailRecoveryBudget:              {ActionReviewMapping, "Project recovery reached a fixed work or time limit. Retrying helps only if Git or the disk was slow; otherwise review an exact --map-project assignment."},
 	DetailInventoryUnavailable:        {ActionRetry, "Configured repository evidence is unavailable or changed; check repository access and Git, then retry."},
 	DetailRecoveryExcluded:            {ActionReviewProject, "Recorded repository identity matches an excluded project; review the exclusion."},

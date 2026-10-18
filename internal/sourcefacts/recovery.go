@@ -355,10 +355,16 @@ func (r *RecoveryResolver) prepareInventory(ctx context.Context) RecoveryOutcome
 // for a second session at the same cwd.
 func settledRecoveryOutcome(outcome RecoveryOutcome) bool {
 	switch outcome {
-	case RecoveryBudgetExhausted, RecoveryInventoryUnavailable:
+	case RecoveryBudgetExhausted, RecoveryInventoryUnavailable,
+		RecoveryOriginCycle, RecoveryOriginMissing, RecoveryOriginUnreadable,
+		RecoveryOriginConflict, RecoveryOriginUnsupported, RecoveryOriginUnresolved,
+		RecoveryOriginLimit, RecoveryOriginChanged:
 		return false
+	case "", RecoveryExcluded, RecoveryAmbiguous, RecoveryRepositoryUnavailable,
+		RecoveryMappingConflict, RecoverySubtreeUnavailable, RecoveryUnavailable:
+		return true
 	}
-	return outcome == "" || !validIdentityFailure(outcome)
+	return false
 }
 
 func identityFailure(id RepositoryIdentity) RecoveryOutcome {
@@ -374,6 +380,10 @@ func validIdentityFailure(failure RecoveryOutcome) bool {
 		RecoveryOriginConflict, RecoveryOriginUnsupported, RecoveryOriginUnresolved,
 		RecoveryOriginLimit, RecoveryOriginChanged:
 		return true
+	case RecoveryBudgetExhausted, RecoveryInventoryUnavailable,
+		RecoveryExcluded, RecoveryAmbiguous, RecoveryRepositoryUnavailable,
+		RecoveryMappingConflict, RecoverySubtreeUnavailable, RecoveryUnavailable:
+		return false
 	}
 	return false
 }
