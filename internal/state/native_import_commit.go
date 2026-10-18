@@ -125,7 +125,7 @@ func (p *PreparedNativeImport) allocateImportIdentity(ctx context.Context) error
 			return errors.Join(ErrSessionIdentityConflict, err)
 		}
 		p.reg.ArchiveSessionID = p.index.ArchiveSessionID
-		stage, found, err := p.store.loadPreparedImportStage(ctx, p.index.ArchiveSessionID)
+		stage, found, err := p.read.loadPreparedImportStage(ctx, p.index.ArchiveSessionID)
 		if err != nil {
 			return err
 		}
@@ -226,11 +226,12 @@ func (p *PreparedNativeImport) reserveImportIdentity(ctx context.Context, locks 
 		if err := p.checkImportHeld(ctx, locks); err != nil {
 			return err
 		}
-		stage, found, err := s.LoadImportStage(ctx, p.reg)
-		if err != nil || !found || stage.SHA256 != p.stage.SHA256 || stage.Validate(ctx, p.reg) != nil {
-			return errors.Join(ErrReadySelectionFrozen, err)
-		}
-		return nil
+		return p.read.inspectNativeImportStage(ctx, p.reg, func(stage ImportStage, found bool) error {
+			if !found || stage.SHA256 != p.stage.SHA256 {
+				return ErrReadySelectionFrozen
+			}
+			return stage.Validate(ctx, p.reg)
+		})
 	}, change: func(current fileSnapshot) (any, bool, error) {
 		if current.found != p.indexFound {
 			return nil, false, errIndexMoved
@@ -267,7 +268,9 @@ func (p *PreparedNativeImport) checkImportHeld(ctx context.Context, held *local.
 }
 
 func (p *PreparedNativeImport) persistImportStage(ctx context.Context, locks *local.RootedHome) error {
-	read, ctx, closeRead := p.store.withDurableContext(ctx)
+	bound, ctx, closeContext := p.read.withDurableContext(ctx)
+	defer closeContext()
+	read, closeRead := bound.WithReadBudget(ctx, bound.resourceBudget)
 	defer closeRead()
 	closeWire, err := read.ownStageValidationWire(ctx, p.stage)
 	if err != nil {
@@ -395,7 +398,9 @@ func (s *Store) lockNativeImport(ctx context.Context, held *local.RootedHome, ba
 }
 
 func (s *Store) commitNativeImportOwner(ctx context.Context, cap *nativeImportOwnerCommit, locks *local.RootedHome, reserved qualifiedSessionIndexEntry, verify func() error) error {
-	read, ctx, closeRead := s.withDurableContext(ctx)
+	bound, ctx, closeContext := cap.confirmation.read.withDurableContext(ctx)
+	defer closeContext()
+	read, closeRead := bound.WithReadBudget(ctx, bound.resourceBudget)
 	defer closeRead()
 	key := agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: cap.reg.NativeSessionID}
 	lock := func() (func(), error) {
@@ -478,9 +483,13 @@ func (p *nativeImportOwnerCommit) checkCurrentHeld(ctx context.Context, read *St
 	if found && (!sameImportStageOwner(p.reg, owner) || !sameNativeImportReceipt(p.reg.NativeImport, owner.NativeImport) || owner.StagedImportSHA256 != p.stage.SHA256) {
 		return ErrSessionIdentityConflict
 	}
-	stage, found, err := read.LoadImportStage(ctx, p.reg)
-	if err != nil || !found || stage.SHA256 != p.stage.SHA256 || stage.Validate(ctx, p.reg) != nil {
-		return errors.Join(ErrReadySelectionFrozen, err)
+	if err := read.inspectNativeImportStage(ctx, p.reg, func(stage ImportStage, found bool) error {
+		if !found || stage.SHA256 != p.stage.SHA256 {
+			return ErrReadySelectionFrozen
+		}
+		return stage.Validate(ctx, p.reg)
+	}); err != nil {
+		return err
 	}
 	return errors.Join(ctx.Err(), held.Check())
 }
@@ -559,11 +568,12 @@ func (s *Store) resumeNativeImportFirstOwner(ctx context.Context, stage ImportSt
 		if err := confirmation.checkCurrent(ctx, s); err != nil {
 			return err
 		}
-		actual, found, err := s.LoadImportStage(ctx, reg)
-		if err != nil || !found || actual.SHA256 != stage.SHA256 || actual.Validate(ctx, reg) != nil {
-			return errors.Join(ErrReadySelectionFrozen, err)
-		}
-		return ctx.Err()
+		return s.inspectNativeImportStage(ctx, reg, func(actual ImportStage, found bool) error {
+			if !found || actual.SHA256 != stage.SHA256 {
+				return ErrReadySelectionFrozen
+			}
+			return actual.Validate(ctx, reg)
+		})
 	}
 	return s.commitNativeImportOwner(ctx, cap, locks, entry, verify)
 }
@@ -715,10 +725,27 @@ func (p *PreparedNativeImport) reloadPreparedImportIndex(ctx context.Context, ke
 			return ErrSessionIdentityConflict
 		}
 	}
-	actual, staged, err := p.store.LoadImportStage(ctx, p.reg)
-	if err != nil || staged && actual.SHA256 != p.stage.SHA256 {
-		return errors.Join(ErrReadySelectionFrozen, err)
+	if err := p.read.inspectNativeImportStage(ctx, p.reg, func(actual ImportStage, staged bool) error {
+		if staged && actual.SHA256 != p.stage.SHA256 {
+			return ErrReadySelectionFrozen
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	p.index, p.indexFound = entry, found
 	return nil
+}
+
+// Verification owns temporary decoded evidence only for this callback. Nested
+// scopes share the authoritative capability's ledger and release every decoded
+// stage charge before a later CAS revalidation. No stage may escape the callback.
+func (s *Store) inspectNativeImportStage(ctx context.Context, reg archive.SessionRegistration, inspect func(ImportStage, bool) error) error {
+	read, closeRead := s.WithImportResultScope(ctx)
+	defer closeRead()
+	stage, found, err := read.LoadImportStage(ctx, reg)
+	if err != nil {
+		return err
+	}
+	return inspect(stage, found)
 }

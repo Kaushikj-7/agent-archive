@@ -34,7 +34,11 @@ func newNativeImportPrepareFixture(t *testing.T) nativeImportPrepareFixture {
 
 func newNativeImportPrepareFixtureProject(t *testing.T, projectID string) nativeImportPrepareFixture {
 	t.Helper()
-	f := newNativeAdmissionFixture(t)
+	return nativeImportPrepareFixtureFromNative(t, newNativeAdmissionFixture(t), projectID, 8<<20)
+}
+
+func nativeImportPrepareFixtureFromNative(t *testing.T, f nativeAdmissionFixture, projectID string, filteredBytes int64) nativeImportPrepareFixture {
+	t.Helper()
 	cfg, _, err := config.Load(f.store.home)
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +68,7 @@ func newNativeImportPrepareFixtureProject(t *testing.T, projectID string) native
 	if err != nil {
 		t.Fatal(err)
 	}
-	limits := agentapi.ReadLimits{RawBytes: 32 << 20, RecordBytes: 1 << 20, FilteredBytes: 8 << 20, ReadBudget: f.budget}
+	limits := agentapi.ReadLimits{RawBytes: 32 << 20, RecordBytes: 1 << 20, FilteredBytes: filteredBytes, ReadBudget: f.budget}
 	snapshot, err := pass.Read(t.Context(), agentapi.SourceRef{Kind: archive.SourceKindFile, Path: f.path, Key: f.candidate.Intent.NativeSessionID}, limits)
 	if err != nil {
 		_ = pass.Close()

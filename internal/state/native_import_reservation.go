@@ -43,6 +43,9 @@ func (p *PreparedNativeImport) reservationAuthority() (string, error) {
 // and original durable stage plus still-current confirmation prove completion.
 // Missing/future/mismatched source or controls preserve the marker unchanged.
 func (s *Store) nativeImportReservationOwner(entry qualifiedSessionIndexEntry) error {
+	read, closeRead := s.WithImportResultScope(s.durableContext())
+	defer closeRead()
+	s = read
 	if !supportedReservationPrefix(entry.NativeReservation, nativeImportReservationPrefix) {
 		return errUnsupportedNativeReservation
 	}
