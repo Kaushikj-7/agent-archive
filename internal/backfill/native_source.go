@@ -20,6 +20,7 @@ import (
 // Historical admission belongs to the import; ancestry supplies no permission.
 func filterImportSource(ctx context.Context, env Environment, w *work, started time.Time, inspect bool) (out archive.FilteredTranscript, summary *agentapi.ImportSummary, release func(), err error) {
 	release = func() {}
+	w.refusalResidual = ""
 	ref := agentapi.SourceRef{Kind: w.c.SourceKind, Path: w.t.path, Key: w.c.SourceKey}
 	if ref.Kind == "" {
 		ref.Kind = archive.SourceKindFile
@@ -96,6 +97,14 @@ func filterImportSource(ctx context.Context, env Environment, w *work, started t
 	}
 	if evidence.Binding.Codex.RequiresOwnTask() && !evidence.Task.ValidNativeCreation(evidence.Binding.Codex.NativeCreatedAt) {
 		cause := ownTaskRefusalCause(evidence.Task, evidence.Binding.Codex.NativeCreatedAt)
+		if !evidence.Task.Seen {
+			switch evidence.OwnRecords {
+			case agentapi.OwnRecordsNone:
+				w.refusalResidual = DetailNoOwnRecordsInSnapshot
+			case agentapi.OwnRecordsPresent:
+				w.refusalResidual = DetailOwnRecordsWithoutTask
+			}
+		}
 		return out, summary, release, agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, errors.New("native own task unavailable")), cause)
 	}
 	trace.Add(trace.AdapterInvocations, 1)
