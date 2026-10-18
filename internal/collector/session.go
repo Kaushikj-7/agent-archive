@@ -560,14 +560,6 @@ func (s *sessionScan) buildCandidate(read *sourceRead) (archive.SourceBundle, []
 	return candidate, supplemental, err
 }
 
-// build assembles the candidate bundle, and returns the supplemental
-// evidence it was built with. A recoverable block the readable
-// source has ended is cleared first, since a source that comes back carrying
-// exactly what was already captured produces no change to act on.
-func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.SupplementalEvidence, error) {
-	return s.buildRead(&read)
-}
-
 func (s *sessionScan) buildRead(read *sourceRead) (archive.SourceBundle, []archive.SupplementalEvidence, error) {
 	if err := s.clearEndedBlock(); err != nil {
 		return archive.SourceBundle{}, nil, err

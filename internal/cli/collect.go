@@ -646,10 +646,6 @@ func (p *skillObservationPass) Close() {
 	p.observe = nil
 }
 
-func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegistration, time.Time) ([]archive.SupplementalEvidence, error) {
-	return newSkillObservationPass(env, mode).Observe
-}
-
 func newSkillObservationPass(env Env, mode config.SkillEvidence) *skillObservationPass {
 	pass := &skillObservationPass{}
 	userCache := map[string][]archive.SupplementalEvidence{}
