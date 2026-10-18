@@ -52,6 +52,12 @@ without changing retained fields, parser interpretation or schemas. The version
 
 ## What a bump does
 
+Trusted Codex native-home alias rebasing changes only private indexed locator
+handling. The same approved home identity, confined source and final native
+selection remain required. It neither rewrites durable bindings nor changes
+source bytes, metadata derivation, private proof formats or uploaded schemas;
+filter, adapter, parser and permanent writer versions are unchanged.
+
 Private recovery review/export reuses mapping-file schema 1 and existing exact
 configured/historical assignment semantics. Its opt-in grouped observations are
 not persisted in ordinary plan output, configuration, registrations or uploaded

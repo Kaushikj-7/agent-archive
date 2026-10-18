@@ -939,6 +939,7 @@ publication. History reports admitted and remotely verified uploads separately.
   --background          Stage and register sessions, then exit; the background
                         collector verifies and uploads them
 Codex preparation and inspection renew bounded native lookup work; source safety limits still apply.
+Codex index paths may use a verified alias of an already trusted native home.
 Incomplete Codex lookup inventory is reported; independently verified sessions remain eligible.
 A dry-run plan does not establish completed staging or publication.
 See agent-archive help backfill history, agent-archive help backfill projects,

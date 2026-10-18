@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Codex backfill accepts indexed rollout paths through a verified alias of an
+  already trusted native home, including macOS temporary-folder aliases. Home
+  identity, source confinement and final native selection remain required.
+
 - `backfill review-projects --output FILE` offers a private terminal review of
   observed missing original cwd groups, repository evidence, compatible exact
   configured assignments and import-only historical destinations. Export requires
