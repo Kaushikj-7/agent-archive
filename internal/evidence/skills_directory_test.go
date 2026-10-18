@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -219,8 +220,29 @@ func TestObserveSkillsOverflowDoesNotConsumeOtherRoot(t *testing.T) {
 			}
 			continue
 		}
-		if len(got) != 3 || got[0].Payload["root_status"] != "unreadable" || got[1].Payload["root_status"] != "present" || got[2].Payload["name"] != "valid" {
-			t.Fatalf("other root lost: %#v", got)
+		want := 2
+		if mode == config.SkillEvidenceBody {
+			want = 3
+		}
+		if len(got) != want {
+			t.Fatalf("mode %s evidence count: %#v", mode, got)
+		}
+		if got[0].Kind != archive.EvidenceKindSkillInventory || got[0].Payload["root_status"] != "unreadable" || got[0].Payload["inventory_complete"] != false || len(got[0].Payload["skills"].([]any)) != 0 {
+			t.Fatalf("overflow root was not unknown/empty: %#v", got[0])
+		}
+		if got[1].Kind != archive.EvidenceKindSkillInventory || got[1].Payload["root_status"] != "present" || got[1].Payload["inventory_complete"] != true {
+			t.Fatalf("other root lost: %#v", got[1])
+		}
+		skills := got[1].Payload["skills"].([]any)
+		if len(skills) != 1 {
+			t.Fatalf("other root inventory count: %#v", skills)
+		}
+		valid := skills[0].(map[string]any)
+		if valid["name"] != "valid" || valid["sha256"] != fmt.Sprintf("%x", sha256.Sum256([]byte("ordinary valid body"))) {
+			t.Fatalf("other root content changed: %#v", valid)
+		}
+		if mode == config.SkillEvidenceBody && (got[2].Kind != archive.EvidenceKindSkillSnapshot || got[2].Payload["name"] != "valid" || got[2].Payload["snapshot"] != "ordinary valid body") {
+			t.Fatalf("other root snapshot lost: %#v", got[2])
 		}
 	}
 }
