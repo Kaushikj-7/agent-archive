@@ -10,7 +10,8 @@ follow [Semantic Versioning](https://semver.org/).
   and after project configuration. Every origin and traversed dependency must
   agree and remain current; physical clones remain distinct competitors. Cyclic,
   missing, unreadable, conflicting or unresolved chains report specific reasons
-  and remain available for reviewed exact project assignments.
+  and remain available for reviewed exact project assignments. Local paths and
+  configuration dependencies preserve symlink traversal before parent components.
 
 - Backfill distinguishes exhausted Codex lookup work (`lookup_allowance_spent`,
   retry) from source byte/record limits and missing history evidence. Pending

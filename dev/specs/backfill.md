@@ -1431,7 +1431,9 @@ value, including values that follow an already portable URL. Supported local
 references are absolute or relative paths and local `file://` URLs (empty or
 `localhost` host) naming checkouts or Git repository directories, including bare
 repositories. Relative paths resolve from the checkout top level, or from the
-repository directory for a bare/explicit Git directory. Local traversal never
+repository directory for a bare/explicit Git directory. The filesystem resolves
+symlinks before parent (`..`) components; renewal retains both the original alias
+and the actual repository/configuration dependencies. Local traversal never
 runs a transport or mutates configuration. When `url.insteadOf` rules are present,
 Git's read-only `remote get-url --all origin` expansion must succeed for every
 value; unsupported expansion remains uncertain. Remote helpers are unsupported.

@@ -64,7 +64,15 @@ func (c *originChain) observe(ctx context.Context, root, top string, terminalReq
 	if failure := c.addPath(root); failure != "" {
 		return "", failure
 	}
+	// Retain the original spelling as an alias dependency, then read metadata
+	// from its resolved directory. Lexical cleaning before symlink traversal
+	// could select a different repository across a symlink followed by .. .
+	alias := root
+	root = canonical
 	if key, ok := c.keys[canonical]; ok {
+		if resolved, err := filepath.EvalSymlinks(alias); err != nil || resolved != canonical {
+			return "", sourcefacts.RecoveryOriginChanged
+		}
 		return key, ""
 	}
 	if c.nodes >= maxOriginRepositories {
@@ -99,7 +107,8 @@ func (c *originChain) observe(ctx context.Context, root, top string, terminalReq
 		return "", sourcefacts.RecoveryOriginUnresolved
 	}
 	_, verified, failure := c.observer.recoveryOrigins(ctx, root)
-	if failure != "" || !bytes.Equal(raw, verified) || (top != "" && ProjectRoot(ctx, root, c.observer.shortRunner()) != top) {
+	resolved, aliasErr := filepath.EvalSymlinks(alias)
+	if failure != "" || !bytes.Equal(raw, verified) || aliasErr != nil || resolved != canonical || (top != "" && ProjectRoot(ctx, root, c.observer.shortRunner()) != top) {
 		return "", sourcefacts.RecoveryOriginChanged
 	}
 	c.keys[canonical] = key
@@ -211,10 +220,14 @@ func localOriginPath(base, value string) (string, bool) {
 		return "", false
 	}
 	if !filepath.IsAbs(value) {
-		value = filepath.Join(base, value)
+		value = joinRepositoryPath(base, value)
 	}
-	value = filepath.Clean(value)
 	return value, len(value) <= 4096
+}
+
+// Join without cleaning so filesystem traversal resolves symlinks before parents.
+func joinRepositoryPath(base, path string) string {
+	return strings.TrimSuffix(base, string(filepath.Separator)) + string(filepath.Separator) + path
 }
 
 func (o *IdentityObserver) originTarget(ctx context.Context, path string) (string, string, sourcefacts.RecoveryOutcome) {

@@ -270,7 +270,9 @@ preparation can still inspect the wider inventory.
 Local Git origins use bounded, read-only chain resolution for both proposed and
 configured projects. Absolute/relative paths and local `file://` URLs can lead to
 a portable repository identity through another checkout or bare repository.
-Every origin value must resolve consistently. Two physical clones of the same
+Paths follow filesystem symlink and parent-directory semantics, and their
+dependencies are checked again before admission. Every origin value must
+resolve consistently. Two physical clones of the same
 repository remain competitors, even when one points at the other. Excluded
 projects remain part of automatic recovery evidence.
 

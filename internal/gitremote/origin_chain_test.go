@@ -38,7 +38,13 @@ func TestLocalOriginChainResolvesEveryBranchAndRetainsPhysicalRoot(t *testing.T)
 		t.Fatalf("incomplete chain: %+v", id)
 	}
 	for _, clone := range []string{root, middle, terminal} {
-		if !slices.ContainsFunc(id.Dependencies, func(d sourcefacts.RepositoryDependency) bool { return d.Path == filepath.Join(clone, ".git", "config") }) {
+		canonical, err := filepath.EvalSymlinks(clone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.ContainsFunc(id.Dependencies, func(d sourcefacts.RepositoryDependency) bool {
+			return d.Path == filepath.Join(canonical, ".git", "config")
+		}) {
 			t.Fatalf("missing traversed config dependency for %s", filepath.Base(clone))
 		}
 	}
@@ -160,9 +166,13 @@ func TestLocalOriginChainRenewsRewritesAndRejectsMidObservationChange(t *testing
 	}
 	chainGit(t, t.Context(), git, root, "config", "remote.origin.url", target)
 	reads := 0
+	canonical, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
 	observer := &IdentityObserver{Run: func(ctx context.Context, dir string, args ...string) ([]byte, error) {
 		raw, err := ExecRunner(ctx, dir, args...)
-		if dir == target && slices.Contains(args, "--get-all") {
+		if dir == canonical && slices.Contains(args, "--get-all") {
 			reads++
 			if reads == 1 {
 				chainGit(t, ctx, git, target, "config", "remote.origin.url", "https://example.test/acme/other")
@@ -180,8 +190,12 @@ func TestLocalOriginReadFailureCannotBeHiddenByPortableValue(t *testing.T) {
 	target := initRepo(t, git, "https://example.test/acme/repo")
 	root := initRepo(t, git, target)
 	chainGit(t, t.Context(), git, root, "config", "--add", "remote.origin.url", "https://example.test/acme/repo")
+	canonical, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
 	observer := &IdentityObserver{Run: func(ctx context.Context, dir string, args ...string) ([]byte, error) {
-		if dir == target && slices.Contains(args, "--get-all") {
+		if dir == canonical && slices.Contains(args, "--get-all") {
 			return nil, errors.New("synthetic target failure")
 		}
 		return ExecRunner(ctx, dir, args...)

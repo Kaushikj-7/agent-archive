@@ -182,7 +182,7 @@ func (o *IdentityObserver) projectDependencies(ctx context.Context, root, top st
 			if !filepath.IsAbs(path) || strings.ContainsAny(path, "\x00\r\n") {
 				return nil, false, sourcefacts.RecoveryOriginUnreadable
 			}
-			paths[filepath.Clean(path)] = true
+			paths[path] = true
 		}
 	}
 	if !includeDependencies(bounded, root, paths, o.configRunner()) {
@@ -194,9 +194,9 @@ func (o *IdentityObserver) projectDependencies(ctx context.Context, root, top st
 			return nil, false, sourcefacts.RecoveryOriginUnreadable
 		}
 		if !filepath.IsAbs(path) {
-			path = filepath.Join(root, path)
+			path = joinRepositoryPath(root, path)
 		}
-		paths[filepath.Clean(path)] = true
+		paths[path] = true
 	}
 	if len(paths) > maxIdentityDependencies {
 		return nil, false, sourcefacts.RecoveryOriginLimit
@@ -239,12 +239,15 @@ func includeDependencies(ctx context.Context, root string, paths map[string]bool
 				return false
 			}
 			if !filepath.IsAbs(origin) {
-				origin = filepath.Join(root, origin)
+				origin = joinRepositoryPath(root, origin)
 			}
 			if !filepath.IsAbs(path) {
-				path = filepath.Join(filepath.Dir(origin), path)
+				// filepath.Dir cleans too; preserve a symlink/.. spelling in
+				// the containing configuration directory before joining.
+				directory := origin[:strings.LastIndexByte(origin, filepath.Separator)+1]
+				path = joinRepositoryPath(directory, path)
 			}
-			paths[filepath.Clean(path)] = true
+			paths[path] = true
 		}
 	}
 	return true
@@ -271,7 +274,7 @@ func topLevelConfigDependencies(ctx context.Context, root string, paths map[stri
 			if !filepath.IsAbs(path) || strings.ContainsAny(path, "\x00\r\n") {
 				return false
 			}
-			paths[filepath.Clean(path)] = true
+			paths[path] = true
 		}
 	}
 	return true
