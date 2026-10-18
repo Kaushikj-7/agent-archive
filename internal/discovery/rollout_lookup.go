@@ -44,6 +44,7 @@ type CodexRolloutLookup struct {
 	catalog    *catalog
 	readOnly   bool
 	readBudget *agentapi.NativeReadBudget
+	work       *lookupWork
 	// dirty records a discovery checkpoint handed to Close (see
 	// deferCheckpoint), which writes it without the pass deadline.
 	dirty            bool
@@ -82,9 +83,14 @@ type currentIndexView struct {
 
 // NewCodexRolloutLookup composes existing catalog and registrations lazily with
 // targeted current-row evidence. It does no native enumeration or SQL at setup.
-func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []string) (*CodexRolloutLookup, error) {
+// The optional scheduling policy defaults to BackgroundLookup; foreground
+// consumers must opt in explicitly and retain the same source/selection checks.
+func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []string, policy ...CodexLookupPolicy) (*CodexRolloutLookup, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if len(policy) > 1 || len(policy) == 1 && policy[0] > ForegroundLookup {
+		return nil, agentapi.Wrap(agentapi.Unavailable, errors.New("invalid native lookup scheduling policy"))
 	}
 	if err := sweepPrivateIndexes(ctx, indexSnapshotRoot(os.TempDir()), time.Now()); err != nil {
 		return nil, agentapi.Wrap(agentapi.Cleanup, err)
@@ -93,11 +99,18 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 	if len(roots) > 1024 {
 		return nil, agentapi.Wrap(agentapi.Limit, errors.New("native home limit"))
 	}
-	lookup := &CodexRolloutLookup{store: store, homes: slices.Clone(homes), readBudget: agentapi.NewNativeReadBudget(agentapi.PassReadBudget), roots: roots, deadline: time.Now().Add(Budget), remaining: Budget, observations: map[string]rolloutObservation{}, byThread: map[string]map[string]struct{}{}, byPhysical: map[string]map[string]struct{}{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
+	var work *lookupWork
+	if len(policy) == 1 && policy[0] == ForegroundLookup {
+		work = &lookupWork{now: time.Now, remaining: Budget, scopes: 1}
+	}
+	lookup := &CodexRolloutLookup{store: store, homes: slices.Clone(homes), readBudget: agentapi.NewNativeReadBudget(agentapi.PassReadBudget), roots: roots, work: work, deadline: time.Now().Add(Budget), remaining: Budget, observations: map[string]rolloutObservation{}, byThread: map[string]map[string]struct{}{}, byPhysical: map[string]map[string]struct{}{}, threads: map[string]agentapi.CodexRolloutSet{}, indexes: map[string]*currentIndexView{}}
+	if work != nil {
+		ctx = lookup.workContext(ctx)
+	}
 	trace.Add(trace.CodexLookupScopes, 1)
 	var prior catalog
 	if err := lookup.readCatalog(ctx, filepath.Join(store.Home(), "discovery-catalog.json"), &prior); err != nil && !errors.Is(err, os.ErrNotExist) {
-		if errors.Is(err, agentapi.ErrReadBudget) || ctx.Err() != nil {
+		if errors.Is(err, agentapi.ErrReadBudget) || nativeInterrupted(err) || ctx.Err() != nil {
 			return nil, errors.Join(err, lookup.closeWithContext(ctx))
 		}
 		return lookup, nil
@@ -108,6 +121,9 @@ func NewCodexRolloutLookup(ctx context.Context, store *state.Store, homes []stri
 	}
 	prior.reclassify()
 	for path, entry := range prior.Cache {
+		if err := ctx.Err(); err != nil {
+			return nil, errors.Join(err, lookup.closeWithContext(ctx))
+		}
 		root := lookup.homeFor(path)
 		if root == "" || entry.Observation.Identity == nil {
 			continue
@@ -209,7 +225,7 @@ func (l *CodexRolloutLookup) checkBudget(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if l.remaining <= 0 {
+	if l.work == nil && l.remaining <= 0 {
 		return allowanceSpent("native lookup pass deadline")
 	}
 	return nil
@@ -224,7 +240,9 @@ func allowanceSpent(what string) error {
 // AllowanceSpent reports whether this pass's lookup time is used up, so that
 // every further Rollout, Thread and Check call fails (see
 // agentapi.CodexRolloutAllowance).
-func (l *CodexRolloutLookup) AllowanceSpent() bool { return !l.closed && l.remaining <= 0 }
+func (l *CodexRolloutLookup) AllowanceSpent() bool {
+	return !l.closed && l.work == nil && l.remaining <= 0
+}
 
 // BeginCollection gives a collector pass its own lookup allowance, a fresh
 // Budget of lookup time and HeaderProbes header probes, separate from what
@@ -237,6 +255,10 @@ func (l *CodexRolloutLookup) AllowanceSpent() bool { return !l.closed && l.remai
 func (l *CodexRolloutLookup) BeginCollection() {
 	trace.Add(trace.CodexLookupScopes, 1)
 	l.remaining = Budget
+	if l.work != nil {
+		l.work.remaining = Budget
+		l.work.scopes++
+	}
 	l.probes = 0
 }
 
@@ -247,7 +269,10 @@ func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (
 		return nil, agentapi.Wrap(agentapi.Unsafe, errors.New("current locator outside native home"))
 	}
 	if prior, present := l.observations[path]; present && prior.identity.ThreadID == thread {
-		opened, err := sourcefacts.OpenRegular(root, path)
+		opened, err := nativeOpenRegular(ctx, root, path)
+		if nativeInterrupted(err) {
+			return nil, err
+		}
 		if err == nil {
 			info, statErr := opened.Stat()
 			_ = opened.Close()
@@ -257,7 +282,14 @@ func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (
 		}
 	}
 	if l.probes >= HeaderProbes {
-		return nil, allowanceSpent("native header probe limit")
+		if l.work == nil {
+			return nil, allowanceSpent("native header probe limit")
+		}
+		// Completed header reads advance the foreground probe window. This
+		// scheduling renewal discards no facts, selection tokens or charges.
+		l.probes = 0
+		l.work.scopes++
+		trace.Add(trace.CodexLookupScopes, 1)
 	}
 	const headerCharge = int64(sourcefacts.HeaderBytes + 128<<10)
 	if !reservation.Reserve(headerCharge) {
@@ -265,7 +297,13 @@ func (l *CodexRolloutLookup) inspect(ctx context.Context, path, thread string) (
 	}
 	defer reservation.Release(headerCharge)
 	l.probes++
-	header := sourcefacts.ReadHeader(ctx, root, path)
+	var header sourcefacts.Header
+	if err := nativeUnit(ctx, func(unit context.Context) error {
+		header = sourcefacts.ReadHeader(unit, root, path)
+		return unit.Err()
+	}); err != nil {
+		return nil, err
+	}
 	if header.Identity == nil {
 		return nil, agentapi.Wrap(agentapi.Unavailable, errors.New("current header unavailable"))
 	}
@@ -380,18 +418,23 @@ func (l *CodexRolloutLookup) thread(ctx context.Context, id string) (_ agentapi.
 	if cached, present := l.threads[id]; present {
 		return l.withCandidates(ctx, id, cached)
 	}
-	l.registrationHint(ctx, id)
+	if err := l.registrationHint(ctx, id); err != nil {
+		return agentapi.CodexRolloutSet{}, err
+	}
 	var current *agentapi.SourceRef
 	for _, root := range l.roots {
 		view, err := l.index(ctx, root, false)
 		if err != nil {
-			if agentapi.Failure(err) == agentapi.Limit {
+			if agentapi.Failure(err) == agentapi.Limit || nativeInterrupted(err) {
 				return agentapi.CodexRolloutSet{}, err
 			}
 			continue
 		}
 		l.queries += 2 // bounded EXPLAIN and actual parameterized query
 		path, found, err := currentLocator(ctx, view.db, id)
+		if nativeInterrupted(err) {
+			return agentapi.CodexRolloutSet{}, err
+		}
 		if err != nil || !found {
 			continue
 		}
@@ -423,25 +466,29 @@ func (l *CodexRolloutLookup) thread(ctx context.Context, id string) (_ agentapi.
 	return set, nil
 }
 
-func (l *CodexRolloutLookup) registrationHint(ctx context.Context, id string) {
-	if ctx.Err() != nil {
-		return
+func (l *CodexRolloutLookup) registrationHint(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+	// Registration state is only a best-effort locator hint. Its absence or
+	// ordinary read failures do not replace authoritative native selection.
+	var path string
 	key, err := agentmeta.NewSessionKey("codex", id)
-	if err != nil {
-		return
+	if err == nil {
+		archiveID, found, err := l.store.ArchiveSessionID(key)
+		if err == nil && found {
+			reg, found, err := l.store.LoadRegistration(archiveID)
+			if err == nil && found {
+				path = reg.TranscriptPath
+			}
+		}
 	}
-	archiveID, found, err := l.store.ArchiveSessionID(key)
-	if err != nil || !found {
-		return
+	if l.homeFor(path) != "" {
+		if _, err := l.inspect(ctx, path, id); nativeInterrupted(err) {
+			return err
+		}
 	}
-	reg, found, err := l.store.LoadRegistration(archiveID)
-	if err != nil || !found {
-		return
-	}
-	if l.homeFor(reg.TranscriptPath) != "" {
-		_, _ = l.inspect(ctx, reg.TranscriptPath, id)
-	}
+	return nil
 }
 
 // withCandidates adds the thread's observed same-thread rollouts to set and
@@ -551,6 +598,9 @@ func (l *CodexRolloutLookup) Check(ctx context.Context, id, revision string) (er
 	for _, root := range l.roots {
 		view, err := l.index(ctx, root, true)
 		if err != nil {
+			if nativeInterrupted(err) {
+				return err
+			}
 			if old.Current != nil && l.homeFor(old.Current.Path) == root {
 				return agentapi.Wrap(agentapi.Changed, err)
 			}
@@ -559,6 +609,9 @@ func (l *CodexRolloutLookup) Check(ctx context.Context, id, revision string) (er
 		l.queries += 2 // bounded EXPLAIN and actual parameterized query
 		path, found, err := currentLocator(ctx, view.db, id)
 		if err != nil {
+			if l.work != nil && nativeInterrupted(err) {
+				return err
+			}
 			return agentapi.Wrap(agentapi.Changed, err)
 		}
 		if !found {
@@ -616,7 +669,11 @@ func equalIndexStamps(a, b []os.FileInfo) bool {
 }
 
 func (l *CodexRolloutLookup) index(ctx context.Context, root string, refresh bool) (*currentIndexView, error) {
-	return l.indexDeadline(ctx, root, refresh, l.deadline)
+	deadline := l.deadline
+	if l.work != nil {
+		deadline = time.Time{}
+	}
+	return l.indexDeadline(ctx, root, refresh, deadline)
 }
 
 func (l *CodexRolloutLookup) indexDeadline(ctx context.Context, root string, refresh bool, deadline time.Time) (*currentIndexView, error) {
@@ -638,6 +695,17 @@ func (l *CodexRolloutLookup) indexDeadline(ctx context.Context, root string, ref
 			}
 			view.db = nil
 			if err := appendCurrentIndex(ctx, root, view.snapshot, l.readBudget); err != nil {
+				if nativeInterrupted(err) {
+					// Interrupted append work may have changed the private file,
+					// but proves nothing about native selection. Discard it without
+					// retrying the failed unit; a later operation can start afresh.
+					if cleanupErr := view.snapshot.close(); cleanupErr != nil {
+						view.unavailable = true
+						return nil, errors.Join(err, agentapi.Wrap(agentapi.Cleanup, cleanupErr))
+					}
+					delete(l.indexes, root)
+					return nil, err
+				}
 				if errors.Is(err, errIndexChanged) && ctx.Err() == nil {
 					// A checkpoint invalidates the incremental projection, not
 					// necessarily the selected thread. Discard it completely and
@@ -672,15 +740,18 @@ func (l *CodexRolloutLookup) indexDeadline(ctx context.Context, root string, ref
 		view = &currentIndexView{}
 		l.indexes[root] = view
 	}
-	ctx, cancel := context.WithDeadline(ctx, deadline)
-	defer cancel()
+	if !deadline.IsZero() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
 	capturedStamps := indexStamps(root)
 	snapshot, err := snapshotCurrentIndexBudget(ctx, root, nil, l.readBudget)
 	if err != nil {
 		// A read cut off by a deadline or cancellation says nothing about
 		// the index: a later call, under a later allowance of the same pass
 		// (the collector's after discovery's), reads it again.
-		if agentapi.Failure(err) == agentapi.Limit || ctx.Err() != nil {
+		if agentapi.Failure(err) == agentapi.Limit || nativeInterrupted(err) || ctx.Err() != nil {
 			delete(l.indexes, root)
 			return nil, err
 		}
@@ -722,17 +793,25 @@ func currentLocatorMissing(path string) bool {
 }
 
 func currentLocator(ctx context.Context, db *sql.DB, id string) (string, bool, error) {
-	// This query validates the selected locator in a private immutable view,
-	// rather than collecting optional native scheduling hints. Allow the pass's
-	// operation budget; its remaining allowance and caller cancellation still
-	// cap this timeout through the inherited context.
-	ctx, cancel := context.WithTimeout(ctx, Budget)
-	defer cancel()
-	conn, err := db.Conn(ctx)
+	// Background retains one cumulative query allowance. Foreground acquisition,
+	// plan validation and selected-row reads are independently bounded units.
+	if foregroundWork(ctx) == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, Budget)
+		defer cancel()
+	}
+	var conn *sql.Conn
+	err := nativeUnit(ctx, func(unit context.Context) error {
+		var err error
+		conn, err = db.Conn(unit)
+		return err
+	})
+	if conn != nil {
+		defer func() { _ = conn.Close() }()
+	}
 	if err != nil {
 		return "", false, err
 	}
-	defer func() { _ = conn.Close() }()
 	for _, limit := range []struct {
 		id    int
 		value int
@@ -742,52 +821,56 @@ func currentLocator(ctx context.Context, db *sql.DB, id string) (string, bool, e
 		}
 	}
 	const query = "SELECT substr(rollout_path,1,4097) FROM threads WHERE id=? LIMIT 2"
-	plan, err := conn.QueryContext(ctx, "EXPLAIN QUERY PLAN "+query, id)
-	if err != nil {
+	if err := nativeUnit(ctx, func(unit context.Context) error {
+		plan, err := conn.QueryContext(unit, "EXPLAIN QUERY PLAN "+query, id)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = plan.Close() }()
+		valid := false
+		count := 0
+		for plan.Next() {
+			var a, b, c int
+			var detail string
+			if err := plan.Scan(&a, &b, &c, &detail); err != nil {
+				return err
+			}
+			count++
+			if count > 16 || len(detail) > 2048 || !strings.Contains(detail, "SEARCH threads USING INDEX sqlite_autoindex_threads_1 (id=?)") {
+				return errors.New("unsupported current primary key")
+			}
+			valid = true
+		}
+		if err := plan.Err(); err != nil || !valid {
+			return errors.Join(errors.New("current primary key unavailable"), err)
+		}
+		return nil
+	}); err != nil {
 		return "", false, err
 	}
-	defer func() { _ = plan.Close() }()
-	valid := false
-	count := 0
-	for plan.Next() {
-		var a, b, c int
-		var detail string
-		if err := plan.Scan(&a, &b, &c, &detail); err != nil {
-			_ = plan.Close()
-			return "", false, err
-		}
-		count++
-		if count > 16 || len(detail) > 2048 || !strings.Contains(detail, "SEARCH threads USING INDEX sqlite_autoindex_threads_1 (id=?)") {
-			_ = plan.Close()
-			return "", false, errors.New("unsupported current primary key")
-		}
-		valid = true
-	}
-	err = plan.Err()
-	_ = plan.Close()
-	if err != nil || !valid {
-		return "", false, errors.Join(errors.New("current primary key unavailable"), err)
-	}
-	rows, err := conn.QueryContext(ctx, query, id)
-	if err != nil {
-		return "", false, err
-	}
-	defer func() { _ = rows.Close() }()
 	var path string
 	found := false
-	for rows.Next() {
-		if found {
-			return "", false, errors.New("duplicate current thread")
+	err = nativeUnit(ctx, func(unit context.Context) error {
+		rows, err := conn.QueryContext(unit, query, id)
+		if err != nil {
+			return err
 		}
-		if err := rows.Scan(&path); err != nil {
-			return "", false, err
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			if found {
+				return errors.New("duplicate current thread")
+			}
+			if err := rows.Scan(&path); err != nil {
+				return err
+			}
+			if path == "" || len(path) > 4096 {
+				return errors.New("current locator length")
+			}
+			found = true
 		}
-		if path == "" || len(path) > 4096 {
-			return "", false, errors.New("current locator length")
-		}
-		found = true
-	}
-	return path, found, rows.Err()
+		return rows.Err()
+	})
+	return path, found, err
 }
 
 // Close releases all private databases and snapshots; it never changes natives.
@@ -854,6 +937,9 @@ var (
 func (l *CodexRolloutLookup) beginOperation(ctx context.Context) (context.Context, func(*error), error) {
 	if err := l.checkBudget(ctx); err != nil {
 		return ctx, nil, err
+	}
+	if l.work != nil {
+		return l.workContext(ctx), func(*error) {}, nil
 	}
 	started := time.Now()
 	deadline := started.Add(l.remaining)

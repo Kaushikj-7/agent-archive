@@ -80,11 +80,29 @@ func (l *CodexRolloutLookup) readCatalog(ctx context.Context, path string, c *ca
 		}
 	}()
 	raw := make([]byte, n)
-	if _, err := io.ReadFull(f, raw); err != nil {
-		return err
+	if foregroundWork(ctx) == nil {
+		if _, err := io.ReadFull(f, raw); err != nil {
+			return err
+		}
+	} else {
+		for offset := 0; offset < len(raw); {
+			end := min(offset+64<<10, len(raw))
+			n, err := nativeReadAt(ctx, f, raw[offset:end], int64(offset))
+			if err != nil {
+				return err
+			}
+			if n != end-offset {
+				return io.ErrUnexpectedEOF
+			}
+			offset = end
+		}
 	}
 	var extra [1]byte
-	if count, err := f.Read(extra[:]); count != 0 || !errors.Is(err, io.EOF) {
+	count, err := nativeReadAt(ctx, f, extra[:], n)
+	if nativeInterrupted(err) {
+		return err
+	}
+	if count != 0 || !errors.Is(err, io.EOF) {
 		return errCatalogChanged
 	}
 	if err := ctx.Err(); err != nil {

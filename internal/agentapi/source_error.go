@@ -45,6 +45,10 @@ const (
 // fresh allowance, reads it.
 const CauseLookupAllowanceSpent SourceCause = "lookup_allowance_spent"
 
+// CauseLookupIOTimeout identifies one bounded foreground native I/O unit that
+// timed out. Renewing the scheduling allowance cannot make that unit progress.
+const CauseLookupIOTimeout SourceCause = "lookup_io_timeout"
+
 // Native source refusal causes are fixed codes with no paths or content.
 const (
 	// CauseAggregateHistoryByteLimit identifies the aggregate history byte limit refusal.
@@ -106,6 +110,7 @@ var causeText = map[SourceCause]string{
 	CauseHistoryBaseUnavailable: "a Codex rollout this thread continues from was not found",
 	CauseRolloutTipAmbiguous:    "Codex thread has no single current rollout",
 	CauseLookupAllowanceSpent:   "this pass's allowance for finding Codex rollouts (its time or header reads) ran out; the next pass reads it",
+	CauseLookupIOTimeout:        "a native lookup I/O operation timed out; check local source access and retry",
 }
 
 // SourceError retains a local cause and a bounded public classification.
