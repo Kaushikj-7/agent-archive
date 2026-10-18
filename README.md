@@ -1,4 +1,4 @@
-# agent-archive
+# agent-archive: Session handoffs and backups for Claude Code, Codex, and Cursor
 
 [![Test](https://github.com/wangjohn/agent-archive/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/wangjohn/agent-archive/actions/workflows/test.yml)
 [![Go 1.27](https://img.shields.io/badge/go-1.27.2-00ADD8?logo=go)](go.mod)
