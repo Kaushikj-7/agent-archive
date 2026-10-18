@@ -298,7 +298,7 @@ func TestSyncStagedSelectionKeepsBusyHolderAndQueuedWork(t *testing.T) {
 	if !found {
 		t.Fatal("busy holder record missing")
 	}
-	if code, _, errOut := f.sync(t); code != 1 || !strings.Contains(errOut, "backfill import holds the collector lock") {
+	if code, _, errOut := f.sync(t); code != 1 || !strings.Contains(errOut, "agent-archive backfill import (process ") || !strings.Contains(errOut, "holds the collector lock; retry when it finishes") {
 		t.Fatalf("sync did not report the actual busy holder: exit=%d stderr=%s", code, errOut)
 	}
 	var out, errOut bytes.Buffer
