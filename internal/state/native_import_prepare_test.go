@@ -120,7 +120,7 @@ func nativeImportPrepareFixtureFromNative(t *testing.T, f nativeAdmissionFixture
 }
 
 func (f nativeImportPrepareFixture) prepare(ctx context.Context) (*PreparedNativeImport, error) {
-	return f.native.store.PrepareNativeImport(ctx, f.confirmation, f.candidate, f.snapshot, f.snapshot.Input(), muse.Filter{}, agentapi.FilterContext{Filename: f.native.path, Limits: f.limits}, admissionUnitLocator{}, "historical-unit-selection", f.native.budget, f.pass.Close)
+	return f.native.store.PrepareNativeImport(ctx, f.confirmation, f.candidate, f.snapshot, f.snapshot.Input(), muse.Filter{}, agentapi.FilterContext{Filename: f.native.path, Limits: f.limits}, admissionUnitLocator{}, "state-unit-selection", f.native.budget, f.pass.Close)
 }
 
 func TestPreparedNativeImportProvesHistoricalSourceWithoutLiveWindow(t *testing.T) {
