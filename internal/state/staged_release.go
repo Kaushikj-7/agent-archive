@@ -188,6 +188,9 @@ func (s *Store) verifyAndBeginStagedRelease(ctx context.Context, id string, remo
 		return nil
 	}
 	q := state.selection
+	if err := s.refuseAttachedNativeImportLaterRequest(id, q); err != nil {
+		return err
+	}
 	if state.pendingFound {
 		if err := s.validateStagedSelection(ctx, state.pending); err != nil {
 			return err
@@ -217,6 +220,23 @@ func (s *Store) verifyAndBeginStagedRelease(ctx context.Context, id string, remo
 	})
 }
 
+// This advisory refusal precedes new readback controls. The locked comparison
+// in finishStagedRelease remains authoritative for request and owner changes.
+func (s *Store) refuseAttachedNativeImportLaterRequest(id string, q *StagedSelection) error {
+	request, requested, err := s.LoadRequest(id)
+	if err != nil || !requested || q.HadRequest && request.Token == q.CoveredToken {
+		return err
+	}
+	reg, found, err := s.LoadRegistration(id)
+	if err != nil {
+		return err
+	}
+	if found && reg.NativeImport != nil && reg.NativeImport.Membership.State == archive.NativeImportAttached {
+		return ErrReadySelectionFrozen
+	}
+	return nil
+}
+
 func (s *Store) finishStagedRelease(ctx context.Context, id string, q *StagedSelection, progress stagedReleaseProgress, pending PendingPublication, found bool, g config.DurableStorageGuard) error {
 	cfg, present, err := config.Load(s.home)
 	if err != nil || !present || !cfg.SupportsStagedSelection() || cfg.DestinationID() != q.Core.DestinationID {
@@ -236,7 +256,7 @@ func (s *Store) finishStagedRelease(ctx context.Context, id string, q *StagedSel
 	coveredRequest := requested
 	if requested && (!q.HadRequest || current.Token != q.CoveredToken) {
 		reg, found, err := s.LoadRegistration(id)
-		if err != nil || !found || reg.NativeImport == nil {
+		if err != nil || !found || reg.NativeImport == nil || reg.NativeImport.Membership.State != archive.NativeImportDetached {
 			return errors.Join(ErrReadySelectionFrozen, err)
 		}
 		digest, err := s.nativeImportStagedAdmissionDigest(ctx, reg, q)

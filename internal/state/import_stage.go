@@ -1060,10 +1060,17 @@ func (s *Store) classifyReleasedImportOwner(ctx context.Context, id string, rece
 	if err := validateNativeImportSelectionAuthority(reg, q.Core); err != nil {
 		return reg, err
 	}
-	if reg.NativeImport != nil && reg.NativeImport.Membership.State == archive.NativeImportDetached {
+	if reg.NativeImport != nil {
 		original, err := s.nativeImportReleasedSelection(ctx, reg)
-		if err != nil || !sameStagedSelection(original, q) {
-			return reg, errors.Join(ErrReadySelectionFrozen, err)
+		if err == nil && sameStagedSelection(original, q) {
+			return reg, nil
+		}
+		// An interrupted initial cleanup may have removed its stage immediately
+		// before recording released. Exact local-complete readback and the current
+		// stored ACK suffice for enumeration, without granting released authority.
+		digest, ackErr := s.nativeImportExactACKAdmissionDigest(ctx, reg, &q)
+		if ackErr != nil || digest != q.Core.AdmissionContext {
+			return reg, errors.Join(ErrReadySelectionFrozen, ackErr)
 		}
 		return reg, nil
 	}

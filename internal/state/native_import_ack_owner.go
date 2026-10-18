@@ -17,7 +17,14 @@ func (s *Store) nativeImportStagedAdmissionDigest(ctx context.Context, reg archi
 	if reg.NativeImport == nil || reg.NativeImport.Membership.State == archive.NativeImportAttached {
 		return s.readyDigest(ctx, reg)
 	}
-	if reg.NativeImport.Membership.State != archive.NativeImportDetached {
+	return s.nativeImportExactACKAdmissionDigest(ctx, reg, q)
+}
+
+// nativeImportExactACKAdmissionDigest proves the current initial selecting ACK
+// and either its held stage or exact local-complete readback receipt. It never
+// treats local-complete progress as released maintenance authority.
+func (s *Store) nativeImportExactACKAdmissionDigest(ctx context.Context, reg archive.SessionRegistration, q *StagedSelection) (string, error) {
+	if reg.NativeImport == nil || (reg.NativeImport.Membership.State != archive.NativeImportDetached && reg.NativeImport.Membership.State != archive.NativeImportAttached) {
 		return "", archive.ErrUnsupportedNativeImport
 	}
 	if reg.ValidateNativeImport() != nil || q == nil || q.Version != 3 || q.validateDigest() != nil || validateNativeImportSelectionAuthority(reg, q.Core) != nil {

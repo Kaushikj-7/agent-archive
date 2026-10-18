@@ -61,7 +61,8 @@ func (p *Published) NativeImportStageActive(ctx context.Context, reg archive.Ses
 }
 
 // ValidateNativeImportReadAuthority accepts only the exact initial typed ACK
-// with its matching durable stage, or the verified released selecting lineage.
+// with its matching durable stage or exact local-complete readback receipt,
+// or the verified released selecting lineage.
 // It grants no publication, maintenance, native-source or cleanup permission.
 func (p *Published) ValidateNativeImportReadAuthority(reg archive.SessionRegistration) error {
 	if p == nil || p.store == nil || p.id != reg.ArchiveSessionID || reg.ValidateNativeImport() != nil {
@@ -88,16 +89,8 @@ func (p *Published) ValidateNativeImportReadAuthority(reg archive.SessionRegistr
 	if released {
 		return current.validateNativeImportReleasedRead(reg)
 	}
-	stage, found, err := read.LoadImportStage(ctx, reg)
-	if err != nil || !found || stage.Version != 2 || !stage.TypedSelection || stage.SHA256 != q.StageSHA256 {
-		return errors.Join(ErrDurableStorageRecovery, err)
-	}
-	owner, err := read.nativeImportStagedAdmissionDigest(ctx, reg, q)
+	owner, err := read.nativeImportExactACKAdmissionDigest(ctx, reg, q)
 	if err != nil || owner != q.Core.AdmissionContext {
-		return errors.Join(ErrDurableStorageRecovery, err)
-	}
-	bundle, err := read.readyDigest(ctx, stage.Bundle)
-	if err != nil || bundle != q.Core.BundleSHA256 {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
 	return read.checkDurableSessionRead(p.id, nil, q)
