@@ -72,12 +72,16 @@ type nativeImportPreview struct {
 }
 
 func (p *nativeImportPreview) close() error {
+	inventory := p.inventory
+	// End borrowed observations before releasing their inventory/ledger owner.
+	p.Rows, p.projects, p.resume, p.inventory = nil, nil, nil, nil
 	if p.charge > 0 && p.budget != nil {
 		p.budget.ReleaseUnscoped(p.charge)
 		p.charge = 0
 	}
-	if p.inventory != nil {
-		return p.inventory.Close()
+	p.budget = nil
+	if inventory != nil {
+		return inventory.Close()
 	}
 	return nil
 }
@@ -182,7 +186,14 @@ func renderNativeImport(out io.Writer, p nativeImportPreview, jsonOut bool) erro
 		}{"historical-muse-import", p})
 	}
 	terminal.Printf(out, "Historical Muse import for destination %s\n", archive.DisplayLine(p.Destination))
-	terminal.Printf(out, "Exact UTC range: %s to %s (exclusive).\n", archive.DisplayLine(p.SinceUTC), archive.DisplayLine(p.UntilUTC))
+	since, until := p.SinceUTC, p.UntilUTC
+	if since == "" {
+		since = "unbounded"
+	}
+	if until == "" {
+		until = "unbounded"
+	}
+	terminal.Printf(out, "Exact UTC range: %s to %s (exclusive).\n", archive.DisplayLine(since), archive.DisplayLine(until))
 	for _, row := range p.Rows {
 		started := "unavailable"
 		if row.OriginalT != nil {
