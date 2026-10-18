@@ -380,6 +380,11 @@ ToolResults/ToolErrors remain unavailable. Ordinary unaffected rows, other-agent
 parsers, Source2/metadata1 and private writer formats do not change. This finite
 observation lane does not enable capture or qualify rich tool/status parity.
 
+The unreleased PR10 filter31/Muse adapter0.31.0 scope also validates exactly
+`{kind: broad_read}` in private tool-batch start bodies. The tag is erased, does
+not satisfy the committed file-read profile, and derives no skill-use or
+eligibility facts. Muse parser0.7.0 and other allocated versions stay unchanged.
+
 Muse effect-body compatibility accepts the closed native `file_read` profile,
 `complete` task completion and `failed` outcome forms. Only validation of private
 omitted bodies changes: equivalent old and new bodies yield byte-identical

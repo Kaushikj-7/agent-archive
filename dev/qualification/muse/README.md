@@ -327,3 +327,29 @@ production Parser and Refilter execution is required for executable refusal
 claims. Selected native graph evidence is not full pipeline acceptance; all
 three controlled source files still need root-reviewed immutable-source full
 Filter/Parser/metadata/refilter acceptance. Capture remains a separate gate.
+
+## Bounded broad-read profile observation
+
+Muse 1.4.9-R6297.1, binary SHA
+`4c6ed04ccd5a453bd7b38799aeb9eb290b8635b32c95b5a35e6950a2f20446cb`,
+produced an isolated synthetic installed-skill experiment. The exact 145600-byte
+source has SHA `0bad3fa36ee7412ce84c020fa14ce9f766f19f2d2aaab6fa048d80cce61f0243`.
+A fixed-predicate diagnostic preserved the original format refusal at physical
+record52, tool_batch.effect.started/schema1, parallel-profile validation.
+Separate strict full-checksum/framing acquisition observed only
+`parallel_profile: {kind: broad_read}`. Its field has exactly the key `kind`,
+string10B, and no subject. No other payload values were projected.
+
+The shape worker exited0 with exact FD/ancestor stability, one145600-byte source
+read, full pins and joined process guards. The outer wrapper remains **FAIL**:
+Python emitted the exact110-byte confstr DARWIN_USER_TEMP_DIR warning and /tmp
+fallback. This attributed warning does not invalidate the bounded primary field
+observation, as separately adjudicated; it is not a general stderr waiver or a
+successful full Source/Filter qualification. No rerun silenced that warning.
+
+The Filter accepts only this exact omitted-body tag, erases it and retains all
+existing joins. Unknown tags, additional fields and subjects refuse. It cannot
+create committed_file_read_v1, skill eligibility, invocation, read-hash attribution,
+usage or capture admission. Deterministic native-shaped regression and a fuzz
+seed cover this compatibility change. Actual full-source qualification and
+read-skill use attribution remain open pending separate checks.

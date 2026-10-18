@@ -10,6 +10,9 @@ records the filter version that produced it (`filter_version`).
 Global and Muse adapter 0.31.0 accompany this change. Muse parser0.7.0
 separately derives optional installed declaration identities; other parsers stay unchanged.
 
+- Muse validates the exact native omitted-body profile `{kind: broad_read}`.
+  Extra keys and unknown tags refuse. Its tag is erased and contributes no
+  committed file-read join, eligibility, invocation or use.
 - Muse supplemental skill evidence now uses the existing bounded shared
   filesystem inventory and privacy-filtered snapshots, according to the selected
   `none`, `metadata` or `body` mode. Imports receive no current skill inventory.
@@ -24,7 +27,7 @@ separately derives optional installed declaration identities; other parsers stay
 - Coverage stays `installed_only`; inventory does not establish trust,
   activation, eligibility, invocation, read inference or observed-no-use.
   Existing secret redaction, filtered-body hashes and snapshot limits apply.
-  No native transcript fields or capture authority change. Optional metadata
+  No retained native transcript fields or capture authority change. Optional metadata
   installed identities preserve distinct bounded logical scope/id pairs within
   existing content groups; absent-identity bytes remain unchanged. Source2,
   metadata1 and history2 remain additive-compatible with ordinary typed readers;

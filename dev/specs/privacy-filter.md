@@ -513,7 +513,9 @@ run/task, activity, turn, pending response, tool or accounting fact. It cannot
 interrupt required startup blocks. Existing v1 row bytes are unchanged.
 
 The tool-batch started profile additionally accepts exactly
-`{kind: file_read, subject: string}` alongside `{kind: ineligible}`. A completed
+`{kind: file_read, subject: string}` alongside `{kind: ineligible}` and exactly
+`{kind: broad_read}`. The latter has no subject or extra keys and supplies no
+committed file-read classification, skill eligibility, invocation or use. A completed
 outcome accepts `task_completion: {kind: complete}` alongside the existing
 `{kind: terminal, terminal: {kind: completed}}`, with the same nonnegative exact
 `output_ref_count`. The other accepted outcome is exactly
