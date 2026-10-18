@@ -766,6 +766,10 @@ usable keys still refuse. Historical destinations are import only. Review and
 export do not change configuration, capture policy, stages or archive.
 Cancellation, EOF or rejected confirmation writes no file. Export mode is 0600.
 
+One decision covers all observed keys at an exact cwd, including unlisted
+identities. Skip skips the whole cwd. The later import still checks each
+source's restrictions, configured-key compatibility and native proof.
+
 Then run agent-archive backfill --dry-run --mapping-file FILE before a
 separately confirmed import. Keep the file for exact semantic resume and undo.
 `,

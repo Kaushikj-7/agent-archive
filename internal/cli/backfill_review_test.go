@@ -2,12 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/gitremote"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -204,13 +207,13 @@ func TestRecoveryReviewReportsCloneConflictChainAndExclusions(t *testing.T) {
 				want = "project_origin_missing"
 			case reviewConflictingKey:
 				f.git(t, f.target, "config", "remote.origin.url", "https://example.test/acme/other")
-				want = "Rejected configured target: " + f.target + " (project_mapping_conflict)"
+				want = "Rejected configured target: " + strconv.Quote(f.target) + " (project_mapping_conflict)"
 			case reviewExcludedTarget:
 				f.cfg.Archive.Projects[0].Included = false
-				want = "Rejected configured target: " + f.target + " (project_mapping_conflict)"
+				want = "Rejected configured target: " + strconv.Quote(f.target) + " (project_mapping_conflict)"
 			case reviewUnavailableTarget:
 				must(t, os.RemoveAll(f.target))
-				want = "Rejected configured target: " + f.target + " (project_mapping_conflict)"
+				want = "Rejected configured target: " + strconv.Quote(f.target) + " (project_mapping_conflict)"
 			case reviewExcludedOriginal, reviewExcludedAncestor:
 				root := f.missing
 				if scenario == reviewExcludedAncestor {
@@ -404,6 +407,184 @@ func TestRecoveryReviewRefusesNoninteractiveModeBeforePrivatePlanning(t *testing
 		}
 		if _, err := os.Stat(output); !os.IsNotExist(err) {
 			t.Fatal("prompts-off review created output", err)
+		}
+	}
+}
+
+func TestRecoveryReviewEscapesMetadataAndPreservesExactExport(t *testing.T) {
+	f := newRecoveryReviewFixture(t)
+	f.missing += "-\u202e-hidden\u200b"
+	physical := f.repository(t, "physical-\x1b[2J-checkout", "https://example.test/acme/repo")
+	must(t, os.RemoveAll(f.target))
+	must(t, os.Symlink(physical, f.target))
+	const id = "11111111111111111111111111111111"
+	label := "Retired \u202e-service\u200b"
+	f.cfg.HistoricalProjects = []config.HistoricalProject{{ID: id, Label: label}}
+	f.save(t)
+	f.codex(t, "11111111-1111-4111-8111-111111111111", f.missing, "")
+	filename := "review-\u202e.json"
+	output := filepath.Join(t.TempDir(), filename)
+	before := snapshotTree(t, f.home)
+	out, errout, code := f.command(t, "2\nexport\n", "backfill", "review-projects", "--harness", "codex", "--output", output)
+	if code != 0 {
+		t.Fatal(code, out, errout)
+	}
+	if strings.ContainsAny(out, "\x1b\u202e") || !strings.Contains(out, strconv.Quote(physical)) || !strings.Contains(out, strconv.Quote(label)) || !strings.Contains(out, strconv.Quote(output)) {
+		t.Fatal("review metadata reached the terminal as active controls or ambiguous text", out)
+	}
+	data, err := os.ReadFile(output)
+	must(t, err)
+	var decoded backfill.Filters
+	must(t, backfill.ReadMappingFile(bytes.NewReader(data), &decoded))
+	if decoded.HistoricalMappings[f.missing] != id || len(decoded.HistoricalProjects) != 1 || decoded.HistoricalProjects[0].Label != label || snapshotTree(t, f.home) != before {
+		t.Fatal("safe display changed the exact exported facts or archive state", decoded)
+	}
+}
+
+func TestRecoveryReviewMakesOneDecisionForAllKeysAtExactCwd(t *testing.T) {
+	for _, choice := range []string{"historical", "configured", "skip"} {
+		t.Run(choice, func(t *testing.T) {
+			f := newRecoveryReviewFixture(t)
+			const first = "11111111-1111-4111-8111-111111111111"
+			const second = "22222222-2222-4222-8222-222222222222"
+			f.codex(t, first, f.missing, "")
+			f.codex(t, second, f.missing, "")
+			secondPath := filepath.Join(f.userHome, ".codex", "sessions", "rollout-"+second+".jsonl")
+			data, err := os.ReadFile(secondPath)
+			must(t, err)
+			must(t, os.WriteFile(secondPath, bytes.ReplaceAll(data, []byte("https://example.test/acme/repo"), []byte("https://example.test/other/repo")), 0600))
+			input := "new\nRetired mixed identities\nexport\n"
+			switch choice {
+			case "skip":
+				input = "skip\n"
+			case "configured":
+				input = "1\nexport\n"
+			}
+			output := filepath.Join(t.TempDir(), "one-cwd.json")
+			out, errout, code := f.command(t, input, "backfill", "review-projects", "--harness", "codex", "--output", output)
+			if code != 0 || strings.Count(out, "Choose an exact destination") != 1 || strings.Count(out, "Recorded repository key:") != 2 || !strings.Contains(out, "including unlisted identities") || !strings.Contains(out, "skip skips that whole cwd") || !strings.Contains(out, "compatible exact assignment for at least one observed group") || !strings.Contains(out, "project_mapping_conflict") {
+				t.Fatal("cwd-only mapping was presented as key-selective authority", code, out, errout)
+			}
+			if choice == "skip" {
+				if _, err := os.Stat(output); !os.IsNotExist(err) {
+					t.Fatal("skipped cwd exported an assignment", err)
+				}
+				return
+			}
+			data, err = os.ReadFile(output)
+			must(t, err)
+			var decoded backfill.Filters
+			must(t, backfill.ReadMappingFile(bytes.NewReader(data), &decoded))
+			if len(decoded.HistoricalMappings)+len(decoded.ProjectMappings) != 1 || choice == "historical" && decoded.HistoricalMappings[f.missing] == "" || choice == "configured" && decoded.ProjectMappings[f.missing] != f.target {
+				t.Fatal("review failed to export one exact cwd-only assignment", decoded)
+			}
+			out, errout, code = f.command(t, "", "backfill", "--yes", "--background", "--harness", "codex", "--mapping-file", output)
+			store, err := state.Open(f.home)
+			must(t, err)
+			regs, err := store.LoadRegistrations()
+			must(t, err)
+			want := 2
+			if choice == "configured" {
+				want = 1
+			}
+			if code != 0 || len(regs) != want || choice == "configured" && regs[0].NativeSessionID != first {
+				t.Fatal("cwd-wide assignment failed to preserve per-source compatibility", code, regs, out, errout)
+			}
+		})
+	}
+}
+
+func TestRecoveryReviewHistoricalAssignmentPreservesExcludedPhysicalHistory(t *testing.T) {
+	f := newRecoveryReviewFixture(t)
+	private := filepath.Join(f.userHome, "excluded-physical-checkout")
+	f.cfg.Archive.Projects = []archive.ProjectActivation{{Root: private, Included: false, ProjectID: archive.ProjectID(private)}}
+	f.save(t)
+	const thread = "11111111-1111-4111-8111-111111111111"
+	const revision = "22222222-2222-4222-8222-222222222222"
+	const selectedRevision = "33333333-3333-4333-8333-333333333333"
+	native := filepath.Join(f.userHome, ".codex")
+	must(t, os.MkdirAll(filepath.Join(native, "sessions"), 0700))
+	meta := func(cwd string, base map[string]any, ordinal int) []byte {
+		payload := map[string]any{"id": thread, "timestamp": "2026-10-13T12:00:00Z", "cwd": cwd, "source": "cli", "originator": "codex_cli_rs", "cli_version": "0.160.0", "history_mode": "paginated"}
+		if base != nil {
+			payload["history_base"] = base
+		}
+		data, err := json.Marshal(map[string]any{"type": "session_meta", "ordinal": ordinal, "payload": payload})
+		must(t, err)
+		return append(data, '\n')
+	}
+	prefix := append(meta(f.missing, nil, 0), []byte(`{"type":"event_msg","ordinal":1,"payload":{"type":"task_started","turn_id":"synthetic-task","root_turn_id":"synthetic-task","started_at":"2026-10-13T12:00:00Z"}}`+"\n")...)
+	seed := filepath.Join(native, "sessions", "rollout-"+thread+".jsonl")
+	must(t, os.WriteFile(seed, prefix, 0600))
+	current := filepath.Join(native, "sessions", "rollout-"+revision+".jsonl")
+	data := meta(private, map[string]any{"thread_id": thread, "end_ordinal_exclusive": 2, "end_byte_offset": len(prefix)}, 2)
+	data = append(data, []byte(`{"type":"response_item","ordinal":3,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic current own history"}]}}`+"\n")...)
+	must(t, os.WriteFile(current, data, 0600))
+	selected := filepath.Join(native, "sessions", "rollout-"+selectedRevision+".jsonl")
+	selectedData := meta(f.missing, map[string]any{"thread_id": revision, "end_ordinal_exclusive": 4, "end_byte_offset": len(data)}, 4)
+	selectedData = append(selectedData, []byte(`{"type":"response_item","ordinal":5,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic selected own history"}]}}`+"\n")...)
+	must(t, os.WriteFile(selected, selectedData, 0600))
+	db, err := sql.Open("sqlite", filepath.Join(native, "state_5.sqlite"))
+	must(t, err)
+	defer func() { _ = db.Close() }()
+	_, err = db.ExecContext(t.Context(), "CREATE TABLE threads(id TEXT PRIMARY KEY,rollout_path TEXT)")
+	must(t, err)
+	_, err = db.ExecContext(t.Context(), "INSERT INTO threads VALUES(?,?)", thread, selected)
+	must(t, err)
+	output := filepath.Join(t.TempDir(), "historical.json")
+	out, errout, code := f.command(t, "new\nRetired service\nexport\n", "backfill", "review-projects", "--harness", "codex", "--output", output)
+	if code != 0 {
+		t.Fatal("review could not export the otherwise permitted original cwd", code, out, errout)
+	}
+	var plan backfill.Plan
+	f.env.observeBackfillPlan = func(observed backfill.Plan) { plan = observed }
+	out, errout, code = f.command(t, "", "backfill", "--yes", "--background", "--harness", "codex", "--mapping-file", output)
+	store, err := state.Open(f.home)
+	must(t, err)
+	regs, err := store.LoadRegistrations()
+	must(t, err)
+	excluded := 0
+	for _, candidate := range plan.Candidates {
+		if candidate.Skip == backfill.SkipExcludedHistory {
+			excluded++
+		}
+	}
+	if code != 0 || len(regs) != 0 || excluded != 1 {
+		t.Fatal("reviewed assignment bypassed an excluded physical history cwd", code, regs, out, errout)
+	}
+	f.cfg.Archive.Projects = nil
+	f.save(t)
+	out, errout, code = f.command(t, "", "backfill", "--yes", "--background", "--harness", "codex", "--mapping-file", output)
+	regs, err = store.LoadRegistrations()
+	must(t, err)
+	if code != 0 || len(regs) != 1 || regs[0].HistoricalProject == nil {
+		t.Fatal("the unrestricted control did not prove supported physical history", code, regs, out, errout)
+	}
+}
+
+func TestRecoveryCwdTargetsKeepsBoundedUnionIndependentOfKeyOrder(t *testing.T) {
+	t.Parallel()
+	groups := make([]backfill.RecoveryReviewGroup, 3)
+	for i := range groups {
+		for target := range backfill.RecoveryReviewLimit {
+			outcome := sourcefacts.RecoveryMappingConflict
+			if target%2 == i {
+				outcome = ""
+			} else if i == 2 {
+				outcome = sourcefacts.RecoveryOriginUnresolved
+			}
+			groups[i].Targets = append(groups[i].Targets, backfill.RecoveryTarget{Root: fmt.Sprintf("/target/%03d", target), Outcome: outcome})
+		}
+	}
+	first := recoveryCwdTargets(groups)
+	slices.Reverse(groups)
+	second := recoveryCwdTargets(groups)
+	if len(first) != backfill.RecoveryReviewLimit || !slices.Equal(first, second) {
+		t.Fatal("cwd target union changed the owner's bounded menu or key-order semantics")
+	}
+	for _, target := range first {
+		if target.Outcome != "" {
+			t.Fatal("one compatible observed key was hidden by another key's refusal", target)
 		}
 	}
 }

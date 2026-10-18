@@ -359,6 +359,14 @@ keys are shown without relaxing existing mapping policy. Existing disabled
 historical decisions cannot be enabled by export. A historical identity with no
 current-destination permission receives it only through a later confirmed import.
 
+All observed repository keys at one exact cwd share one destination decision.
+An assignment covers every supported source at that cwd, including identities
+outside this incomplete review; repository keys are evidence rather than mapping
+selectors. `skip` skips the whole cwd. A configured choice may recover only some
+observed identities; incompatible/unresolved evidence is shown for each key.
+The later import still checks each source's restrictions, identity and native
+evidence. Paths and labels are safely quoted in the review.
+
 Review the exact JSON and type `export` to create the named file with mode 0600.
 An existing file, including a symlink, is refused. EOF, `cancel`, rejected export
 or an invalid answer writes no assignment file. Review/export never changes

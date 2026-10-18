@@ -110,23 +110,9 @@ func reviewProjectAssignments(p *prompter, cfg config.Config, review *backfill.R
 	renderRecoveryWitnesses(p.out, review.Witnesses)
 	assignments := backfill.Filters{ProjectMappings: map[string]string{}, HistoricalMappings: map[string]string{}}
 	definitions := map[string]backfill.HistoricalProjectDefinition{}
-	for _, g := range review.Groups {
-		renderRecoveryGroup(p.out, g)
-		if g.SourceRestriction != "" {
-			terminal.Printf(p.out, "  Assignment unavailable: source restriction %s.\n", g.SourceRestriction)
-			continue
-		}
-		choices := renderRecoveryChoices(p.out, cfg, definitions, g.Targets)
-		choice, selected, err := promptRecoveryChoice(p, choices)
-		if err != nil {
-			return false, err
-		}
-		if !selected {
-			continue
-		}
-		if err := addRecoveryAssignment(&assignments, definitions, g.AssignmentCwd, choice); err != nil {
-			return false, err
-		}
+	terminal.Println(p.out, "One decision covers every supported source at an exact cwd, including unlisted identities. Recorded keys are evidence, not assignment selectors; skip skips that whole cwd. A configured choice may recover only some sources. Import still checks each source's restrictions, identity and native evidence.")
+	if err := reviewRecoveryCwds(p, cfg, review.Groups, &assignments, definitions); err != nil {
+		return false, err
 	}
 	if len(assignments.ProjectMappings)+len(assignments.HistoricalMappings) == 0 {
 		terminal.Println(p.out, "No assignments selected. No file was written.")
@@ -140,8 +126,8 @@ func reviewProjectAssignments(p *prompter, cfg config.Config, review *backfill.R
 		return false, err
 	}
 	terminal.Println(p.out, "\nReview exact assignments to export (private metadata):")
-	terminal.Print(p.out, string(data))
-	answer, err := p.line(fmt.Sprintf("Write these exact assignments to %s? Type export to confirm: ", path))
+	terminal.Print(p.out, string(archive.DisplayJSON(data)))
+	answer, err := p.line(fmt.Sprintf("Write these exact assignments to %q? Type export to confirm: ", path))
 	if err != nil {
 		return false, err
 	}
@@ -152,8 +138,59 @@ func reviewProjectAssignments(p *prompter, cfg config.Config, review *backfill.R
 	if err := writePrivateMappingExclusive(path, data); err != nil {
 		return false, err
 	}
-	terminal.Printf(p.out, "Exported %d exact cwd assignments privately to %s. Review with backfill --dry-run --mapping-file before a separately confirmed import. Configuration and archive were unchanged.\n", len(assignments.ProjectMappings)+len(assignments.HistoricalMappings), path)
+	terminal.Printf(p.out, "Exported %d exact cwd assignments privately to %q. Review with backfill --dry-run --mapping-file before a separately confirmed import. Configuration and archive were unchanged.\n", len(assignments.ProjectMappings)+len(assignments.HistoricalMappings), path)
 	return true, nil
+}
+
+func reviewRecoveryCwds(p *prompter, cfg config.Config, groups []backfill.RecoveryReviewGroup, assignments *backfill.Filters, definitions map[string]backfill.HistoricalProjectDefinition) error {
+	// The planning owner sorts groups by exact assignment cwd, then key.
+	for first := 0; first < len(groups); {
+		last := first + 1
+		for last < len(groups) && groups[last].AssignmentCwd == groups[first].AssignmentCwd {
+			last++
+		}
+		cwdGroups := groups[first:last]
+		first = last
+		restricted := false
+		for _, g := range cwdGroups {
+			renderRecoveryGroup(p.out, g)
+			if g.SourceRestriction != "" {
+				terminal.Printf(p.out, "  Assignment unavailable: source restriction %s.\n", g.SourceRestriction)
+				restricted = true
+			}
+		}
+		if restricted {
+			terminal.Println(p.out, "  This exact cwd cannot be assigned by this review because an observed group is restricted.")
+			continue
+		}
+		choices := renderRecoveryChoices(p.out, cfg, definitions, recoveryCwdTargets(cwdGroups))
+		choice, selected, err := promptRecoveryChoice(p, choices)
+		if err != nil {
+			return err
+		}
+		if selected {
+			if err := addRecoveryAssignment(assignments, definitions, cwdGroups[0].AssignmentCwd, choice); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// recoveryCwdTargets offers a configured destination if at least one observed
+// group supports it. Each group's incompatible evidence remains visible, and
+// import retains its per-source checks. Unlisted identities remain unchecked.
+func recoveryCwdTargets(groups []backfill.RecoveryReviewGroup) []backfill.RecoveryTarget {
+	targets := slices.Clone(groups[0].Targets)
+	for _, group := range groups[1:] {
+		for i := range targets {
+			other := slices.IndexFunc(group.Targets, func(target backfill.RecoveryTarget) bool { return target.Root == targets[i].Root })
+			if other >= 0 && group.Targets[other].Outcome < targets[i].Outcome {
+				targets[i].Outcome = group.Targets[other].Outcome
+			}
+		}
+	}
+	return targets
 }
 
 func renderRecoveryWitnesses(out io.Writer, witnesses []backfill.RecoveryWitness) {
@@ -168,7 +205,7 @@ func renderRecoveryWitnesses(out io.Writer, witnesses []backfill.RecoveryWitness
 				state = string(w.Failure)
 			}
 		}
-		terminal.Printf(out, "  %s physical=%s included=%t %s\n", w.Root, w.PhysicalRoot, w.Included, state)
+		terminal.Printf(out, "  %q physical=%q included=%t %s\n", w.Root, w.PhysicalRoot, w.Included, state)
 	}
 }
 
@@ -177,9 +214,9 @@ func renderRecoveryGroup(out io.Writer, g backfill.RecoveryReviewGroup) {
 	if key == "" {
 		key = "unavailable"
 	}
-	terminal.Printf(out, "\nOriginal cwd: %s\nRecorded repository key: %s\nCandidates: %d\n", g.OriginalCwd, key, g.Candidates)
+	terminal.Printf(out, "\nOriginal cwd: %q\nRecorded repository key: %s\nCandidates: %d\n", g.OriginalCwd, key, g.Candidates)
 	if g.AssignmentCwd != g.OriginalCwd {
-		terminal.Printf(out, "  Exact assignment spelling: %s\n", g.AssignmentCwd)
+		terminal.Printf(out, "  Exact assignment spelling: %q\n", g.AssignmentCwd)
 	}
 	if g.MixedOriginalSpellings {
 		terminal.Println(out, "  Multiple original spellings share this exact assignment key; any observed source restriction disables assistance for the group.")
@@ -203,27 +240,36 @@ func renderRecoveryGroup(out io.Writer, g backfill.RecoveryReviewGroup) {
 	if g.NativeEvidenceUnresolved > 0 {
 		terminal.Printf(out, "  Native history/own-task evidence unresolved or unchecked: %d\n", g.NativeEvidenceUnresolved)
 	}
+	if g.SourceRestriction == "" {
+		for _, target := range g.Targets {
+			outcome := string(target.Outcome)
+			if outcome == "" {
+				outcome = "compatible for this observed group"
+			}
+			terminal.Printf(out, "  Configured target evidence: %q (%s)\n", target.Root, outcome)
+		}
+	}
 }
 
 func renderRecoveryChoices(out io.Writer, cfg config.Config, definitions map[string]backfill.HistoricalProjectDefinition, targets []backfill.RecoveryTarget) []recoveryChoice {
 	choices := []recoveryChoice{}
 	for _, target := range targets {
 		if target.Outcome != "" {
-			terminal.Printf(out, "  Rejected configured target: %s (%s)\n", target.Root, target.Outcome)
+			terminal.Printf(out, "  Rejected configured target: %q (%s)\n", target.Root, target.Outcome)
 			continue
 		}
 		choices = append(choices, recoveryChoice{root: target.Root})
-		terminal.Printf(out, "  %d. Configured: %s (compatible exact assignment)\n", len(choices), target.Root)
+		terminal.Printf(out, "  %d. Configured: %q (compatible exact assignment for at least one observed group; other sources may refuse)\n", len(choices), target.Root)
 	}
 	historical := cfg.HistoricalProjects[:min(len(cfg.HistoricalProjects), backfill.RecoveryReviewLimit)]
 	for _, project := range historical {
 		enabled, recorded := project.HistoricalPermission(cfg.DestinationID())
 		if recorded && !enabled {
-			terminal.Printf(out, "  Rejected historical target: %s %s (disabled for current destination)\n", project.ID, project.Label)
+			terminal.Printf(out, "  Rejected historical target: %s %q (disabled for current destination)\n", project.ID, project.Label)
 			continue
 		}
 		choices = append(choices, recoveryChoice{historical: backfill.HistoricalProjectDefinition{ID: project.ID, Label: project.Label}})
-		terminal.Printf(out, "  %d. Historical: %s %s (import only)\n", len(choices), project.ID, project.Label)
+		terminal.Printf(out, "  %d. Historical: %s %q (import only)\n", len(choices), project.ID, project.Label)
 	}
 	if omitted := len(cfg.HistoricalProjects) - len(historical); omitted > 0 {
 		terminal.Printf(out, "  %d historical targets unlisted; use a separately reviewed exact mapping file.\n", omitted)
@@ -231,7 +277,7 @@ func renderRecoveryChoices(out io.Writer, cfg config.Config, definitions map[str
 	for _, id := range slices.Sorted(maps.Keys(definitions)) {
 		if _, exists := cfg.HistoricalProject(id); !exists {
 			choices = append(choices, recoveryChoice{historical: definitions[id]})
-			terminal.Printf(out, "  %d. Historical: %s %s (new, import only)\n", len(choices), id, definitions[id].Label)
+			terminal.Printf(out, "  %d. Historical: %s %q (new, import only)\n", len(choices), id, definitions[id].Label)
 		}
 	}
 	return choices

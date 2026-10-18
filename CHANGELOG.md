@@ -13,6 +13,9 @@ follow [Semantic Versioning](https://semver.org/).
   overwrites an existing file. Coverage is bounded and incomplete; counts describe
   project recovery candidates, and native history/source refusals still apply.
   Review/export changes no configuration, capture policy, stages or archive.
+  One decision covers all observed keys at an exact cwd; assignments also apply
+  to unlisted identities there under ordinary per-source import checks. Private
+  review safely quotes paths/labels and escapes terminal-active JSON characters.
 
 - Deleted-worktree recovery resolves local Git origin chains consistently before
   and after project configuration. Every origin and traversed dependency must

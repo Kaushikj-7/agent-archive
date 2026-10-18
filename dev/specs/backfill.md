@@ -1723,6 +1723,18 @@ admission, stages and archive untouched. The strict existing mapping-file decode
 validates exports, including unchanged 4 MiB/16,384 limits. Canonical assignment
 identity and exact import/resume/undo ownership remain unchanged.
 
+All observed key groups for one cleaned exact assignment cwd are displayed
+before one cwd-wide decision. Configured choices are available when at least one
+observed key is compatible; incompatible/unresolved outcomes remain visible per
+key and may still refuse those sources. A restricted observed group disables
+assistance for that cwd.
+The review states that schema1 selectors contain only cwd: an assignment applies
+to every supported source at that cwd, including unlisted identities, and skip
+skips the whole cwd. Per-source exclusions, configured-key compatibility and
+native evidence checks remain mandatory during the separate import. Paths and
+labels are quoted safely, and final JSON escapes terminal-active characters
+without changing exported assignment values.
+
 The initial projection retains at most 128 groups while scanning the owner's
 existing work items, with deterministic lexical selection and repeated counts
 for retained groups. It counts omitted candidate records without constructing
