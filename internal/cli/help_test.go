@@ -43,7 +43,7 @@ func TestHelpTextIsConsistent(t *testing.T) {
 // it is asked for.
 func TestSubcommandHelp(t *testing.T) {
 	t.Parallel()
-	for _, sub := range []string{"undo", "history", "projects"} {
+	for _, sub := range []string{"undo", "history", "projects", "review-projects"} {
 		for _, args := range [][]string{{"backfill", sub, "--help"}, {"help", "backfill", sub}, {"backfill", sub, "-h"}} {
 			var out bytes.Buffer
 			if code := Run(args, nil, &out, nil, Env{}); code != 0 || !strings.HasPrefix(out.String(), "Usage: agent-archive backfill "+sub) {

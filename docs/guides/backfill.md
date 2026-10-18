@@ -343,6 +343,81 @@ File and database-only candidates receive the same diagnostic details. For
 `unsafe_format`, the `source_inspection_unavailable` detail asks you to review
 source access and format support; the skip alone cannot prove which is missing.
 
+## Private project recovery review
+
+Use a terminal to review the missing original working directories observed by
+the current planner and export exact assignments:
+
+```sh
+agent-archive backfill review-projects --harness codex --output reviewed-projects.json
+agent-archive backfill --dry-run --mapping-file reviewed-projects.json
+agent-archive backfill --mapping-file reviewed-projects.json
+```
+
+The review shows original cwds, normalized recorded repository keys, affected
+counts, current decisions, known remaining refusals and physical checkout
+evidence. These are private local metadata. Transcript content, native session
+IDs and transcript locators are omitted. Terminal input and output are required;
+JSON and piped review are unavailable. Ordinary previews do not expose this
+private evidence unless you separately supply an explicit mapping file.
+Database-only Cursor chats with a usable original folder join the same bounded
+groups as transcript files. Shared configured-target observations are reused
+across recorded keys; an incompatible key remains refused without repeatedly
+spending the lookup allowance needed by later compatible groups.
+Choose a historical destination for database-only Cursor chats. A configured
+choice at a mixed cwd can recover supported transcript files while leaving those
+database-only chats unresolved; the review reports their count explicitly.
+
+Choose a displayed compatible configured destination, an import-only historical
+project, `new` to define an import-only historical identity, or `skip`. Even a
+single compatible choice requires selection. Multiple physical clones remain
+distinct; unresolved chains, excluded sources/targets and conflicting usable
+keys are shown without relaxing existing mapping policy. Existing disabled
+historical decisions cannot be enabled by export. A historical identity with no
+current-destination permission receives it only through a later confirmed import.
+
+All observed repository keys at one exact cwd share one destination decision.
+An assignment covers every supported source at that cwd, including identities
+outside this incomplete review; repository keys are evidence rather than mapping
+selectors. `skip` skips the whole cwd. A configured choice may recover only some
+observed identities; incompatible/unresolved evidence is shown for each key.
+The later import still checks each source's restrictions, identity and native
+evidence. Paths and labels are safely quoted in the review.
+
+Review the exact JSON and type `export` to create the named file with mode 0600.
+An existing file, including a symlink, is refused. EOF, `cancel`, rejected export
+or an invalid answer writes no assignment file. Review/export never changes
+configuration, capture policy, admission, stages or archive; export is not an
+import or upload. The later import renews all ordinary policy and evidence checks.
+Assignments cover only exact original cwds and that import's supported scope;
+they do not authorize future capture. Keep the file for canonical resume/undo:
+reordering assignments or changing its filename does not create another batch.
+
+The initial assistance keeps one deterministic original spelling and shows the
+exact normalized assignment spelling when it differs. Multiple original
+spellings sharing that assignment key retain all observed source restrictions.
+Originals containing `..` path components require separate
+manual review: the assistance refuses to qualify their traversal from a cleaned
+spelling. Benign cleanups such as `.` retain the existing assignment behavior.
+Existing exact mapping/import policy and its per-source checks remain
+unchanged.
+
+This initial review has **bounded, incomplete coverage**: at most 128 observed
+cwd/key groups are retained; observed candidate records outside those groups
+are counted, with the distinct omitted group count unknown. At most 128
+configured targets, 128 existing historical choices and 128 automatic checkout
+evidence rows are shown; unlisted rows are counted. Unlisted choices require a
+separately hand-reviewed exact mapping file. Existing source and witness
+inventory windows remain in force. No
+partial window establishes uniqueness or promises a complete recovery inventory.
+Counts are candidates for project recovery, not promises of importability:
+native history, independent own-task evidence, excluded ancestors and source
+limits may still prevent import after assignment. Complete reviews across larger
+paged inventories and oversized review partitioning require later integration.
+Existing inline (128) and mapping-file (4 MiB, 16,384 assignments/definitions)
+limits are unchanged. Hand-reviewed exact files remain available independently
+of this assistance.
+
 ## Historical-only projects
 
 When the repository is gone, assign complete supported sessions to an explicit

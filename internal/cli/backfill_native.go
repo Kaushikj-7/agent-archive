@@ -28,10 +28,14 @@ func buildBackfillPlanWithLookup(ctx context.Context, env Env, home, userHome st
 	defer func() { err = errors.Join(err, lookup.CloseReadOnly()) }()
 	native := env.backfillEnvironment(userHome, cfg)
 	cache := inspectioncache.New(filepath.Join(home, "backfill-inspection-cache"))
-	writer := inspectioncache.NewWriter(ctx, cache)
-	defer writer.Close()
-	native.InspectionCache, native.ObserveInspection = cache, writer.Observe
+	native.InspectionCache = cache
+	if !env.reviewBackfillProjects {
+		writer := inspectioncache.NewWriter(ctx, cache)
+		defer writer.Close()
+		native.ObserveInspection = writer.Observe
+	}
 	native.Progress = progress
+	native.ReviewProjects = env.reviewBackfillProjects
 	native.CodexRollouts = lookup
 	var incomplete *backfill.Diagnostic
 	native.PrepareCodexProof = func(ctx context.Context, ids []string) error {

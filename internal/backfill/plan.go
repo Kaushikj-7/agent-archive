@@ -64,6 +64,9 @@ type Plan struct {
 	// RecoveryEvidenceGaps are the apps whose recovery witness evidence was
 	// incomplete, with the sessions each blocked or was recovered without.
 	RecoveryEvidenceGaps []RecoveryEvidenceGap
+	// RecoveryReview is private local metadata, populated only on request. It
+	// is never rendered by ordinary text/JSON previews or used for admission.
+	RecoveryReview *RecoveryReview `json:"-"`
 
 	// resolvedHome is Home with symlinks resolved; roots are resolved paths.
 	resolvedHome string
@@ -288,7 +291,8 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	}
 
 	env.planningProgress(PlanningStageCheckingDatabaseSessions, 0, 0)
-	if err := planCursorDatabase(ctx, env, state, r, projectFilter, since, until, workers, &plan); err != nil {
+	databaseItems, err := planCursorDatabase(ctx, env, state, r, projectFilter, since, until, workers, &plan)
+	if err != nil {
 		return Plan{}, err
 	}
 	env.planningProgress(PlanningStageFinishingPlan, 0, 0)
@@ -308,8 +312,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	if err := bindRecoveryPolicy(cfg, &plan); err != nil {
 		return Plan{}, err
 	}
-	tracePlanSelection(plan)
-	return plan, nil
+	return finishPlanReview(ctx, env, r, plan, items, databaseItems)
 }
 
 // tracePlanSelection records the completed plan without retaining candidates.
