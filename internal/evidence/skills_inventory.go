@@ -33,7 +33,7 @@ func inspectConfinedSkill(root *os.Root, relative string) (*confinedSkillInspect
 	}
 	out := &confinedSkillInspection{root: root, relative: relative, ancestors: map[string]os.FileInfo{}}
 	parts := strings.Split(relative, "/")
-	for i := range len(parts) {
+	for i := range parts {
 		name := strings.Join(parts[:i+1], "/")
 		info, err := root.Lstat(name)
 		if err != nil {

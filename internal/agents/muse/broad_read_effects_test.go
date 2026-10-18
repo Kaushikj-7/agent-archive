@@ -133,18 +133,18 @@ func TestCommittedBroadReadRawRefusals(t *testing.T) {
 			}
 		})
 	}
-	for _, kind := range []string{"foreign-owner", "foreign-run", "foreign-task", "later-call", "missing-call", "duplicate-call", "terminal-before-start"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []broadIdentityCase{broadIdentityForeignOwner, broadIdentityForeignRun, broadIdentityForeignTask, broadIdentityLaterCall, broadIdentityMissingCall, broadIdentityDuplicateCall, broadIdentityTerminalBeforeStart} {
+		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			raw := changeBroadRead(t, func(rows []map[string]any) []map[string]any {
 				call := readRow(rows, "runtime.session", "assistant_tool_calls_committed")
 				start := readRow(rows, "tool_batch.effect.started", "")
 				switch kind {
-				case "foreign-owner":
+				case broadIdentityForeignOwner:
 					object(start["stream"])["id"] = "99999999-9999-4999-8999-999999999999"
-				case "foreign-run":
+				case broadIdentityForeignRun:
 					object(call["payload"])["run_id"] = "99999999-9999-4999-8999-999999999999"
-				case "foreign-task":
+				case broadIdentityForeignTask:
 					for _, row := range rows {
 						if strings.HasPrefix(str(row["payload_type"]), "tool_batch.effect.") {
 							rec := object(object(row["payload"])["record"])
@@ -152,20 +152,20 @@ func TestCommittedBroadReadRawRefusals(t *testing.T) {
 							object(rec["task_stream"])["id"] = rec["task_id"]
 						}
 					}
-				case "missing-call":
+				case broadIdentityMissingCall:
 					object(object(call["payload"])["event"])["tool_calls"] = []any{}
-				case "duplicate-call":
+				case broadIdentityDuplicateCall:
 					e := object(object(call["payload"])["event"])
 					items := e["tool_calls"].([]any)
 					e["tool_calls"] = append(items, items[0])
-				case "later-call":
+				case broadIdentityLaterCall:
 					for i, row := range rows {
 						if str(row["payload_type"]) == "tool_batch.effect.started" {
 							rows[i-1], rows[i] = rows[i], rows[i-1]
 							break
 						}
 					}
-				case "terminal-before-start":
+				case broadIdentityTerminalBeforeStart:
 					first, last := -1, -1
 					for i, row := range rows {
 						if str(row["payload_type"]) == "tool_batch.effect.started" {
@@ -193,8 +193,8 @@ func TestCommittedBroadReadRetainedProofRefusals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{"missing-marker", "unknown-marker", "null-marker", "terminal-marker", "call", "task", "index", "owner", "missing-call", "duplicate-start"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, kind := range []broadRetainedCase{broadRetainedMissingMarker, broadRetainedUnknownMarker, broadRetainedNullMarker, broadRetainedTerminalMarker, broadRetainedCall, broadRetainedTask, broadRetainedIndex, broadRetainedOwner, broadRetainedMissingCall, broadRetainedDuplicateStart} {
+		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			b := bundleFor(t, out)
 			start, terminal, committed := -1, -1, -1
@@ -211,25 +211,25 @@ func TestCommittedBroadReadRetainedProofRefusals(t *testing.T) {
 			}
 			f := object(b.NativeRecords[start]["fields"])
 			switch kind {
-			case "missing-marker":
+			case broadRetainedMissingMarker:
 				delete(f, "effect_join")
-			case "unknown-marker":
+			case broadRetainedUnknownMarker:
 				f["effect_join"] = "future"
-			case "null-marker":
+			case broadRetainedNullMarker:
 				f["effect_join"] = nil
-			case "terminal-marker":
+			case broadRetainedTerminalMarker:
 				object(b.NativeRecords[terminal]["fields"])["effect_join"] = broadReadJoinMarker
-			case "call":
+			case broadRetainedCall:
 				f["tool_call_id"] = "other-call"
-			case "task":
+			case broadRetainedTask:
 				f["task_id"] = "99999999-9999-4999-8999-999999999999"
-			case "index":
+			case broadRetainedIndex:
 				f["model_call_index"] = json.Number("42")
-			case "owner":
+			case broadRetainedOwner:
 				object(b.NativeRecords[start]["stream"])["id"] = "99999999-9999-4999-8999-999999999999"
-			case "missing-call":
+			case broadRetainedMissingCall:
 				object(b.NativeRecords[committed]["fields"])["tool_calls"] = []any{map[string]any{"call_id": "other-call"}}
-			case "duplicate-start":
+			case broadRetainedDuplicateStart:
 				b.NativeRecords[terminal] = b.NativeRecords[start]
 			}
 			if _, err := (Parser{}).Parse(t.Context(), b); err == nil {
@@ -349,11 +349,11 @@ func TestCommittedBroadReadApprovalOverlap(t *testing.T) {
 				t.Parallel()
 				raw := changeBroadRead(t, func(rows []map[string]any) []map[string]any {
 					wire, _ := json.Marshal(request)
-					copy, _, err := decodeObject(wire)
+					requestCopy, _, err := decodeObject(wire)
 					if err != nil {
 						t.Fatal(err)
 					}
-					e := object(object(copy["payload"])["event"])
+					e := object(object(requestCopy["payload"])["event"])
 					e["tool_name"] = "read_skill"
 					if overlap == "wrong-name" {
 						e["tool_name"] = "shell"
@@ -374,7 +374,7 @@ func TestCommittedBroadReadApprovalOverlap(t *testing.T) {
 							}
 						}
 					}
-					return append(append(append([]map[string]any{}, rows[:index]...), copy), rows[index:]...)
+					return append(append(append([]map[string]any{}, rows[:index]...), requestCopy), rows[index:]...)
 				})
 				out, err := filterBytes(t, raw, agentapi.ReadLimits{})
 				if err == nil || len(out.Records) != 0 {
@@ -456,3 +456,30 @@ func TestCommittedBroadReadLateRefusalReleasesOwnership(t *testing.T) {
 		t.Fatal("broad-read late refusal ownership", err, used)
 	}
 }
+
+type broadIdentityCase string
+
+const (
+	broadIdentityForeignOwner        broadIdentityCase = "foreign-owner"
+	broadIdentityForeignRun          broadIdentityCase = "foreign-run"
+	broadIdentityForeignTask         broadIdentityCase = "foreign-task"
+	broadIdentityLaterCall           broadIdentityCase = "later-call"
+	broadIdentityMissingCall         broadIdentityCase = "missing-call"
+	broadIdentityDuplicateCall       broadIdentityCase = "duplicate-call"
+	broadIdentityTerminalBeforeStart broadIdentityCase = "terminal-before-start"
+)
+
+type broadRetainedCase string
+
+const (
+	broadRetainedMissingMarker  broadRetainedCase = "missing-marker"
+	broadRetainedUnknownMarker  broadRetainedCase = "unknown-marker"
+	broadRetainedNullMarker     broadRetainedCase = "null-marker"
+	broadRetainedTerminalMarker broadRetainedCase = "terminal-marker"
+	broadRetainedCall           broadRetainedCase = "call"
+	broadRetainedTask           broadRetainedCase = "task"
+	broadRetainedIndex          broadRetainedCase = "index"
+	broadRetainedOwner          broadRetainedCase = "owner"
+	broadRetainedMissingCall    broadRetainedCase = "missing-call"
+	broadRetainedDuplicateStart broadRetainedCase = "duplicate-start"
+)

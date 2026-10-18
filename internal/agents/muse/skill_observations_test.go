@@ -132,25 +132,27 @@ func TestNativeSkillReadRawRefusals(t *testing.T) {
 			}
 		})
 	}
-	for _, name := range []string{"schema", "causation", "foreign-owner", "duplicate-key", "duplicate-source-id", "unmaterialized"} {
-		t.Run(name, func(t *testing.T) {
+	for _, name := range []skillNativeAuthorityCase{skillNativeAuthoritySchema, skillNativeAuthorityCausation, skillNativeAuthorityForeignOwner, skillNativeAuthorityDuplicateKey, skillNativeAuthorityDuplicateSourceId, skillNativeAuthorityUnmaterialized} {
+		t.Run(string(name), func(t *testing.T) {
 			t.Parallel()
 			raw := nativeSkillReads(t, 1, func(m map[string]any) {
 				switch name {
-				case "schema":
+				case skillNativeAuthorityDuplicateKey, skillNativeAuthorityUnmaterialized:
+					// These cases mutate the complete wire below.
+				case skillNativeAuthoritySchema:
 					m["payload_schema_version"] = json.Number("2")
-				case "causation":
+				case skillNativeAuthorityCausation:
 					m["causation_id"] = "99999999-9999-4999-8999-999999999999"
-				case "foreign-owner":
+				case skillNativeAuthorityForeignOwner:
 					object(m["stream"])["id"] = "99999999-9999-4999-8999-999999999999"
-				case "duplicate-source-id":
+				case skillNativeAuthorityDuplicateSourceId:
 					object(m["payload"])["source_run_record_id"] = "44444444-4444-4444-8444-444444444444"
 				}
 			})
-			if name == "duplicate-key" {
+			if name == skillNativeAuthorityDuplicateKey {
 				raw = bytes.Replace(raw, []byte(`"skill_id":"pr10-local"`), []byte(`"skill_id":"pr10-local","skill_id":"other"`), 1)
 			}
-			if name == "unmaterialized" {
+			if name == skillNativeAuthorityUnmaterialized {
 				raw = bytes.Replace(raw, []byte(`"semantic_kind":{"kind":"chat"}`), []byte(`"semantic_kind":{"kind":"other"}`), 1)
 			}
 			if out, err := filterBytes(t, raw, agentapi.ReadLimits{}); err == nil || len(out.Records) != 0 {
@@ -166,33 +168,33 @@ func TestNativeSkillReadRetainedRefusals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"digest", "future", "evidence", "self-sequence", "source-sequence", "foreign-run", "foreign-owner", "id-case", "id-privacy", "duplicate-source"} {
-		t.Run(name, func(t *testing.T) {
+	for _, name := range []skillRetainedCase{skillRetainedDigest, skillRetainedFuture, skillRetainedEvidence, skillRetainedSelfSequence, skillRetainedSourceSequence, skillRetainedForeignRun, skillRetainedForeignOwner, skillRetainedIdCase, skillRetainedIdPrivacy, skillRetainedDuplicateSource} {
+		t.Run(string(name), func(t *testing.T) {
 			t.Parallel()
 			b := bundleFor(t, out)
 			row := b.NativeRecords[len(b.NativeRecords)-1]
 			f := object(row["fields"])
 			switch name {
-			case "digest":
+			case skillRetainedDigest:
 				f["evidence_hash"] = "sha256:" + strings.Repeat("a", 64)
-			case "future":
+			case skillRetainedFuture:
 				f["future"] = true
-			case "evidence":
+			case skillRetainedEvidence:
 				f["evidence_kind"] = "read_file"
-			case "self-sequence":
+			case skillRetainedSelfSequence:
 				f["observed_at_sequence"] = json.Number("2")
-			case "source-sequence":
+			case skillRetainedSourceSequence:
 				f["source_run_record_sequence"] = json.Number("2")
 				f["observed_at_sequence"] = json.Number("2")
-			case "foreign-run":
+			case skillRetainedForeignRun:
 				f["run_id"] = "99999999-9999-4999-8999-999999999999"
-			case "foreign-owner":
+			case skillRetainedForeignOwner:
 				object(row["stream"])["id"] = "99999999-9999-4999-8999-999999999999"
-			case "id-case":
+			case skillRetainedIdCase:
 				f["skill_id"] = "PR10-local"
-			case "id-privacy":
+			case skillRetainedIdPrivacy:
 				f["skill_id"] = "ghp_" + strings.Repeat("x", 36)
-			case "duplicate-source":
+			case skillRetainedDuplicateSource:
 				f["source_run_record_id"] = "44444444-4444-4444-8444-444444444444"
 			}
 			if _, err := (Parser{}).Parse(t.Context(), b); err == nil {
@@ -308,3 +310,29 @@ func TestNativeSkillReadOldStrictSchemaRefuses(t *testing.T) {
 		}
 	}
 }
+
+type skillNativeAuthorityCase string
+
+const (
+	skillNativeAuthoritySchema            skillNativeAuthorityCase = "schema"
+	skillNativeAuthorityCausation         skillNativeAuthorityCase = "causation"
+	skillNativeAuthorityForeignOwner      skillNativeAuthorityCase = "foreign-owner"
+	skillNativeAuthorityDuplicateKey      skillNativeAuthorityCase = "duplicate-key"
+	skillNativeAuthorityDuplicateSourceId skillNativeAuthorityCase = "duplicate-source-id"
+	skillNativeAuthorityUnmaterialized    skillNativeAuthorityCase = "unmaterialized"
+)
+
+type skillRetainedCase string
+
+const (
+	skillRetainedDigest          skillRetainedCase = "digest"
+	skillRetainedFuture          skillRetainedCase = "future"
+	skillRetainedEvidence        skillRetainedCase = "evidence"
+	skillRetainedSelfSequence    skillRetainedCase = "self-sequence"
+	skillRetainedSourceSequence  skillRetainedCase = "source-sequence"
+	skillRetainedForeignRun      skillRetainedCase = "foreign-run"
+	skillRetainedForeignOwner    skillRetainedCase = "foreign-owner"
+	skillRetainedIdCase          skillRetainedCase = "id-case"
+	skillRetainedIdPrivacy       skillRetainedCase = "id-privacy"
+	skillRetainedDuplicateSource skillRetainedCase = "duplicate-source"
+)

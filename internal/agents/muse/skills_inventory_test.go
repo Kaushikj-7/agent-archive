@@ -94,6 +94,8 @@ func TestInstalledSkillCatalogRejectsAmbiguousAndUnsupportedAuthority(t *testing
 				}
 			case inventoryCaseBytes:
 				raw = bytes.Repeat([]byte(" "), maxSkillCatalogBytes+1)
+			case inventoryCaseHash, inventoryCaseName, inventoryCaseCompat, inventoryCaseSchema, inventoryCaseDuplicateId, inventoryCaseParent, inventoryCaseAbsolute, inventoryCaseBackslash, inventoryCaseUnknownCapability, inventoryCaseDefaultsType, inventoryCaseDeclarationCap, inventoryCaseDuplicateJson:
+				// Manifest-only mutations are not selected by this catalog suite.
 			}
 			if raw == nil {
 				raw = skillWireJSON(t, registry)
@@ -156,6 +158,10 @@ func TestInstalledSkillManifestChecksHashIdentityAndFiniteDeclarations(t *testin
 				entry["enabledDefault"] = "true"
 			case inventoryCaseDeclarationCap:
 				object(manifest["capabilities"])["skills"] = make([]any, 257)
+			case inventoryCaseHash, inventoryCaseDuplicateJson:
+				// These cases mutate serialized bytes below.
+			case inventoryCaseDuplicate, inventoryCaseTrailing, inventoryCaseAbsoluteCache, inventoryCaseOtherId, inventoryCaseDigest, inventoryCaseFamily, inventoryCaseProvenance, inventoryCaseUnknownSelector, inventoryCaseNullEnabled, inventoryCaseDepth, inventoryCaseCandidateCap, inventoryCaseBytes:
+				// Catalog-only mutations are not selected by this manifest suite.
 			}
 			raw := skillWireJSON(t, manifest)
 			if name == inventoryCaseDuplicateJson {

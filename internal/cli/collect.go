@@ -665,6 +665,9 @@ func skillRootEnvironment(env Env) *agentapi.RuntimeEnvironment {
 			return xdg, xdgSet
 		case skillCodexHome:
 			return codex, codexSet
+		case skillXDGDataHome:
+			// Data home is supplied separately; this config snapshot excludes it.
+			return "", false
 		}
 		return "", false
 	}}
