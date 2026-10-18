@@ -72,7 +72,7 @@ func TestAtomicWritePreverifiedWitnessStrongIdentityAndLifetime(t *testing.T) {
 			if (err == nil) != (mode == "valid" && supported) {
 				t.Fatal("preverified result", mode, err)
 			}
-			if !restored {
+			if supported && !restored {
 				t.Fatal("cleanup scope not restored")
 			}
 			if saved != nil && saved() == nil {
@@ -129,5 +129,123 @@ func TestAtomicWritePreverifiedReleasesPolicyBeforeDirectorySync(t *testing.T) {
 	}
 	if err != nil || !synced {
 		t.Fatal("directory sync path", synced, err)
+	}
+}
+
+func TestAtomicWritePreverifiedCleanupPreservesForeignReplacement(t *testing.T) {
+	for _, mode := range []string{"replacement", "parent-substitution", "after-success-reappearance", "same-inode-rewrite"} {
+		t.Run(mode, func(t *testing.T) {
+			home := t.TempDir()
+			if err := os.Chmod(home, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(home, "nested"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			root, err := os.OpenRoot(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = root.Close() }()
+			foreignName := ""
+			err = RootedAtomicWritePreverifiedWitnessed(t.Context(), root, "nested/selected", func(w io.Writer) error { _, err := w.Write([]byte("selected")); return err }, make([]byte, 1024), func(w *AtomicWriteWitness, verify func() (func() error, error)) error {
+				rename, err := verify()
+				if err != nil {
+					return err
+				}
+				foreignName = w.state.name
+				switch mode {
+				case "replacement":
+					if err := root.Remove(foreignName); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(home, foreignName), []byte("foreign!"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					return rename()
+				case "parent-substitution":
+					if err := root.Rename("nested", "moved"); err != nil {
+						t.Fatal(err)
+					}
+					if err := root.Mkdir("nested", 0700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(home, foreignName), []byte("foreign!"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					return rename()
+				case "after-success-reappearance":
+					if err := rename(); err != nil {
+						return err
+					}
+					return os.WriteFile(filepath.Join(home, foreignName), []byte("foreign!"), 0600)
+				case "same-inode-rewrite":
+					info, err := root.Stat(foreignName)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(home, foreignName), []byte("foreign!"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Chtimes(filepath.Join(home, foreignName), info.ModTime(), info.ModTime()); err != nil {
+						t.Fatal(err)
+					}
+					return rename()
+				}
+				return errors.New("unknown fixture")
+			}, func() error { return nil })
+			if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+				if err == nil {
+					t.Fatal("unsupported strong identity accepted")
+				}
+				return
+			}
+			if (err == nil) != (mode == "after-success-reappearance") {
+				t.Fatal("selection result", mode, err)
+			}
+			raw, readErr := os.ReadFile(filepath.Join(home, foreignName))
+			if readErr != nil || string(raw) != "foreign!" {
+				t.Fatal("cleanup deleted or changed foreign replacement", readErr)
+			}
+			if mode == "parent-substitution" {
+				own := filepath.Join(home, "moved", filepath.Base(foreignName))
+				if raw, err := os.ReadFile(own); err != nil || string(raw) != "selected" {
+					t.Fatal("substituted-parent refusal lost original evidence", err)
+				}
+			}
+		})
+	}
+}
+
+func TestAtomicWritePreverifiedCleanupRecognizesOwnPartialOutput(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	failure := errors.New("synthetic partial write")
+	err = RootedAtomicWritePreverifiedWitnessed(t.Context(), root, "selected", func(w io.Writer) error {
+		if _, err := w.Write([]byte("partial")); err != nil {
+			return err
+		}
+		return failure
+	}, make([]byte, 1024), func(*AtomicWriteWitness, func() (func() error, error)) error {
+		t.Fatal("partial output reached commit")
+		return nil
+	}, func() error { return nil })
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+		if !errors.Is(err, failure) {
+			t.Fatal(err)
+		}
+	} else if err == nil {
+		t.Fatal("unsupported strong identity accepted")
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("own partial output leaked", entries, err)
 	}
 }

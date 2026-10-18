@@ -150,6 +150,16 @@ func RootedAtomicWritePreverifiedWitnessed(ctx context.Context, root *os.Root, n
 	if ctx == nil || len(scratch) == 0 || commit == nil || restoreCleanup == nil {
 		return errAtomicWitness
 	}
+	if root == nil {
+		return errAtomicWitness
+	}
+	info, err := root.Stat(".")
+	if err != nil {
+		return err
+	}
+	if _, _, known := atomicChangeIdentity(info); !known {
+		return errAtomicWitness
+	}
 	return rootedAtomicWrite(root, name, write, nil, &witnessedAtomicCommit{ctx: ctx, scratch: scratch, preverified: commit, cleanup: restoreCleanup, hash: sha256.New()})
 }
 

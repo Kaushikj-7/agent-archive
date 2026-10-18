@@ -98,10 +98,27 @@ func rootedAtomicWrite(root *os.Root, name string, write func(io.Writer) error, 
 	if err != nil {
 		return err
 	}
+	var cleanupOwner *atomicTemporaryCleanup
+	if witnessed != nil && witnessed.preverified != nil {
+		cleanupOwner, err = captureAtomicCleanup(root, temp, f, witnessed.hash)
+		if err != nil {
+			return errors.Join(err, f.Close())
+		}
+	}
 	defer func() {
 		if witnessed != nil && witnessed.cleanup != nil {
 			if e := witnessed.cleanup(); e != nil {
 				err = errors.Join(err, e)
+				return
+			}
+		}
+		if cleanupOwner != nil {
+			remove, e := cleanupOwner.removable(witnessed.ctx, witnessed.scratch)
+			if e != nil {
+				err = errors.Join(err, e)
+				return
+			}
+			if !remove {
 				return
 			}
 		}
@@ -111,12 +128,19 @@ func rootedAtomicWrite(root *os.Root, name string, write func(io.Writer) error, 
 		}
 	}()
 	output := io.Writer(f)
-	if witnessed != nil {
+	if cleanupOwner != nil {
+		output = atomicCleanupWriter{output: f, owner: cleanupOwner}
+	} else if witnessed != nil {
 		output = io.MultiWriter(f, witnessed.hash)
 	}
 	err = write(output)
 	if err == nil {
 		err = f.Sync()
+	}
+	if cleanupOwner != nil {
+		var statErr error
+		cleanupOwner.written, statErr = f.Stat()
+		err = errors.Join(err, statErr)
 	}
 	var temporaryInfo os.FileInfo
 	if witnessed != nil && err == nil {
