@@ -6,6 +6,31 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `backfill review-projects --output FILE` offers a private terminal review of
+  observed missing original cwd groups, repository evidence, compatible exact
+  configured assignments and import-only historical destinations. Export requires
+  explicit confirmation, creates a new 0600 schema-1 mapping file and never
+  overwrites an existing file. Coverage is bounded and incomplete; counts describe
+  project recovery candidates, and native history/source refusals still apply.
+  Review/export changes no configuration, capture policy, stages or archive.
+  One decision covers all observed keys at an exact cwd; assignments also apply
+  to unlisted identities there under ordinary per-source import checks. Private
+  review safely quotes paths/labels and escapes terminal-active JSON characters.
+  Database-only Cursor chats participate in the same bounded review. Usable
+  configured-target observations are shared across conflicting recorded keys,
+  preserving the lookup allowance for later compatible groups.
+  Database-only chats use historical destinations; mixed-cwd configured choices
+  disclose the database-only candidates they leave unresolved.
+
+- Backfill planning and dry runs continue supported Codex preparation and
+  inspection across bounded lookup scopes, including histories needing more
+  than five seconds of total lookup work. Native I/O timeouts and inventory
+  no-progress results stay specific. Incomplete inventory is reported while
+  independently verified sessions remain eligible. Shared native resource
+  exhaustion remains a failure. Source safety limits and
+  background work are unchanged; confirmed staging and publication keep their
+  existing bounds.
+
 - Deleted-worktree recovery resolves local Git origin chains consistently before
   and after project configuration. Every origin and traversed dependency must
   agree and remain current; physical clones remain distinct competitors. Cyclic,

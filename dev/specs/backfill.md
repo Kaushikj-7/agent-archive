@@ -376,8 +376,24 @@ action under `related_history_pending`. It describes unfinished lookup work,
 not a source resource or format refusal. Source raw-byte and individual-record
 refusals retain `source_size_limit` and `source_record_limit`; named graph,
 aggregate-history and evidence refusals retain their existing details. Skip
-precedence and admission decisions are unchanged. This diagnostic does not
-implement the renewable foreground work target below.
+precedence and admission decisions are unchanged. Codex foreground planning
+selects renewable native preparation and inspection; confirmed staging,
+admission and publication retain their existing policy. A bounded failed native
+I/O unit keeps `lookup_io_timeout` with retry advice, independently of scheduling
+allowance. Read-only inventory commits each bounded directory batch before
+yielding. Stalled or cycling opaque directory cookies return
+`lookup_no_progress`; a slice containing only unavailable directories also stops.
+A changing or unavailable prefix cannot rewind the same work indefinitely.
+At the preparation boundary only a pure `lookup_no_progress` stops inventory
+once without aborting independently provable candidates. The successful plan's
+optional `native_lookup_incomplete` object is a closed diagnostic with
+`detail: lookup_no_progress` and `action: retry`, also rendered as a fixed human
+warning even without skipped candidates. It fabricates no candidate or
+unreadable-folder count. Individual sources still prove current selection,
+lineage, own-task and confinement evidence or keep their own refusal. Joined
+cleanup, capacity, I/O and caller cancellation/deadline failures remain fatal.
+The same lookup owner and charged facts survive successful scheduling renewal;
+source snapshots still close and perform their final current-selection checks.
 
 The optional existing trace records native preparation as its own fixed phase.
 Its constant-space aggregates count initial/renewed Codex lookup allowances,
@@ -1695,6 +1711,102 @@ prevent a change after their final observation; the next admission slice or
 pass refreshes the evidence.
 
 ## Historical-only ownership and bounded mapping files
+
+### Bounded private review/export
+
+`backfill review-projects --output FILE` requests an opt-in private projection
+from the existing planning owner. It groups observed missing exact original cwds
+and recorded keys, preserves primary decisions, known secondary refusals and
+unchecked related-native evidence counts, and reports the planner's physical
+checkout observations without transcript content, locators or native IDs.
+Ordinary plan text/JSON does not render this projection. Terminal input and
+output are mandatory; JSON and piped review are explicitly unsupported.
+
+The projection folds the planning owner's existing file and finalized
+database-only Cursor work slices through one bounded group set, without a
+second database scan or a concatenated candidate inventory. The database owner
+retains the resolved folder in its existing work item and closes its snapshot
+before the private projection consumes those facts; cleanup errors still fail
+the plan. Existing duplicate/file preference and source decisions are unchanged.
+Database-only Cursor sources retain their existing historical-assignment route;
+they do not supply support for a configured-target choice. The bounded projection
+counts and discloses these members. A mixed file/database cwd retains compatible
+configured choices for supported file members, while its database-only members
+remain unresolved for that choice. Both kinds can use a supported historical
+assignment. This adds no configured recovery/admission authority for database
+sources; that capability remains outside this assistance change.
+
+Configured target suggestions call the existing exact mapping classifier and
+share its target observations and work allowance. They grant no proof or capture
+authority, do not change selected candidates and do not infer uniqueness.
+Usable target identity observations are frozen before per-group key comparison,
+so incompatible groups do not repeatedly spend the shared lookup allowance.
+Unresolved/budget outcomes retain their existing policy, and admission still
+renews frozen target evidence before accepting an exact mapping.
+Source restrictions, target exclusions, usable conflicting keys, unavailable
+target chains and existing ownership remain binding. Historical selection uses
+the existing separate opaque identity contract; disabled destination decisions
+remain unavailable. New IDs and labels are held only in the proposed file until
+a separately confirmed supported import.
+
+Every selection is explicit. Final review displays the exact schema-1 document
+and requires `export`; the local writer exclusively creates a new 0600 file,
+refuses existing files/links and removes its own incomplete output on write
+failure. Cancellation, EOF, rejection or conflicting assignments leave config,
+admission, stages and archive untouched. The strict existing mapping-file decoder
+validates exports, including unchanged 4 MiB/16,384 limits. Canonical assignment
+identity and exact import/resume/undo ownership remain unchanged.
+
+All observed key groups for one cleaned exact assignment cwd are displayed
+before one cwd-wide decision. Configured choices are available when at least one
+observed key is compatible; incompatible/unresolved outcomes remain visible per
+key and may still refuse those sources. A restricted observed group disables
+assistance for that cwd.
+The review states that schema1 selectors contain only cwd: an assignment applies
+to every supported source at that cwd, including unlisted identities, and skip
+skips the whole cwd. Per-source exclusions, configured-key compatibility and
+native evidence checks remain mandatory during the separate import. Paths and
+labels are quoted safely, and final JSON escapes terminal-active characters
+without changing exported assignment values.
+
+The initial projection retains at most 128 groups while scanning the owner's
+existing work items, with deterministic lexical selection and repeated counts
+for retained groups. It counts omitted candidate records without constructing
+an unbounded shadow inventory to count distinct omitted groups. Per-group
+configured targets, automatic witness rows and existing historical choices are
+each bounded to 128 retained rows before allocation; unlisted row counts are
+explicit. Exact target classification still uses complete existing policy and
+its shared observation allowance. Unlisted choices require a separately reviewed
+manual mapping file. Coverage is always bounded and incomplete because existing
+source/witness windows still apply. Counts describe project recovery candidates;
+project assignment does not qualify missing native history, independent own-task
+evidence or source limits. Complete cross-window grouping and oversized review
+partition attribution remain dependent on larger paged planning (P5/P6b in the
+large-backfill completion proposal). This initial assistance does not complete
+the parent P6 or change the independent exact-assignment early recovery route.
+
+Source restrictions are evaluated on each retained record's original spelling
+before aggregation. A group keeps one deterministic raw representative plus its
+existing cleaned exact assignment key, and indicates additional spellings without
+an unbounded variant list. Any restricted original disables assistance for the
+group. Because existing cwd policy cleans before symlink resolution, noncanonical
+originals containing `..` components are explicitly held for separate manual review rather than certified
+from the cleaned spelling. This conservative assistance boundary does not change
+existing mapping, canonical admission or per-source import semantics.
+
+This projection has fixed additional metadata retention: at most 128 original
+cwd/key pairs (two 4,096-byte cwd spellings and one 21-byte key), 128×128 configured-target
+records borrowing at most 128 existing bounded root strings, and 128 witness
+rows (at most two 4,096-byte paths and one 21-byte key each). Reason maps use
+the closed existing skip/diagnostic catalogs; reviewed historical definitions
+are bounded by the group limit and existing 128-character label rule. No second
+inventory or native resource ledger is introduced. Native observations continue
+through the existing resolver's shared lookup allowance and identity bounds.
+The exporter bounds assignment counts and raw string payload before JSON
+construction, then validates the exact encoded file against the existing 4 MiB
+strict reader limit.
+
+### Existing assignment and historical ownership contract
 
 Step 6a, merged in [#433](https://github.com/wangjohn/agent-archive/pull/433)
 (`18ca0c48`), adds `--mapping-file FILE`, strict JSON schema 1, bounded to 4 MiB and

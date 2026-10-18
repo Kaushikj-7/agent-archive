@@ -36,3 +36,17 @@ func trustedCodexReadHomes(cfg config.Config, env Env) ([]string, error) {
 	}
 	return homes, nil
 }
+
+// foregroundCodexRollouts selects renewable work only for foreground planning.
+// Confirmed admission and background consumers retain their existing policies.
+func foregroundCodexRollouts(ctx context.Context, store *state.Store, cfg config.Config, env Env) (*discovery.CodexRolloutLookup, []string, error) {
+	homes, err := trustedCodexReadHomes(cfg, env)
+	if err != nil {
+		return nil, nil, err
+	}
+	lookup, err := discovery.NewCodexRolloutLookupWithOptions(ctx, store, homes, discovery.CodexLookupOptions{Policy: discovery.ForegroundLookup, Now: env.nativeLookupNow})
+	if err == nil && env.observeBackfillLookup != nil {
+		env.observeBackfillLookup(lookup)
+	}
+	return lookup, homes, err
+}
