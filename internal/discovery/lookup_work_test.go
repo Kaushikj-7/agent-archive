@@ -18,6 +18,22 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
+type lookupUnitFailure string
+
+const (
+	lookupUnitTimeout   lookupUnitFailure = "timeout"
+	lookupUnitCancel    lookupUnitFailure = "cancel"
+	lookupUnitIOFailure lookupUnitFailure = "io"
+)
+
+type lookupPolicyCase string
+
+const (
+	lookupPolicyDefault    lookupPolicyCase = "default"
+	lookupPolicyBackground lookupPolicyCase = "background"
+	lookupPolicyForeground lookupPolicyCase = "foreground"
+)
+
 // simulatedLookupWork advances synctest's virtual clock at actual native unit
 // boundaries. It does not replace index copying, directory reads, SQL or source
 // interpretation. Reported duration is simulated work, never a wall benchmark.
@@ -235,8 +251,8 @@ func TestForegroundIndexCancellationAndPressureKeepCharges(t *testing.T) {
 }
 
 func TestForegroundUnitsDoNotRetryTimeoutOrHideIOFailure(t *testing.T) {
-	for _, mode := range []string{"timeout", "cancel", "io"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []lookupUnitFailure{lookupUnitTimeout, lookupUnitCancel, lookupUnitIOFailure} {
+		t.Run(string(mode), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				work := &lookupWork{now: time.Now, remaining: Budget, scopes: 1}
 				ctx, cancel := context.WithCancel(t.Context())
@@ -246,10 +262,10 @@ func TestForegroundUnitsDoNotRetryTimeoutOrHideIOFailure(t *testing.T) {
 				err := nativeUnit(ctx, func(unit context.Context) error {
 					calls++
 					switch mode {
-					case "timeout":
+					case lookupUnitTimeout:
 						<-unit.Done()
 						return unit.Err()
-					case "cancel":
+					case lookupUnitCancel:
 						cancel()
 						return ctx.Err()
 					default:
@@ -260,8 +276,8 @@ func TestForegroundUnitsDoNotRetryTimeoutOrHideIOFailure(t *testing.T) {
 					t.Fatal("failed unit was retried or counted as progress", calls, work)
 				}
 				var source *agentapi.SourceError
-				if mode == "timeout" && (!errors.As(err, &source) || source.Cause != agentapi.CauseLookupIOTimeout || source.Kind != agentapi.Unavailable) ||
-					mode == "cancel" && !errors.Is(err, context.Canceled) || mode == "io" && !errors.Is(err, io.ErrUnexpectedEOF) {
+				if mode == lookupUnitTimeout && (!errors.As(err, &source) || source.Cause != agentapi.CauseLookupIOTimeout || source.Kind != agentapi.Unavailable) ||
+					mode == lookupUnitCancel && !errors.Is(err, context.Canceled) || mode == lookupUnitIOFailure && !errors.Is(err, io.ErrUnexpectedEOF) {
 					t.Fatal("lost interruption classification", err)
 				}
 			})
@@ -364,17 +380,18 @@ func TestForegroundCatalogChunksKeepRestoredChargeAcrossScopes(t *testing.T) {
 }
 
 func TestForegroundPolicyIsExplicitAndKeepsProbeAndResourceOwnershipSeparate(t *testing.T) {
-	for _, mode := range []string{"default", "background", "foreground"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []lookupPolicyCase{lookupPolicyDefault, lookupPolicyBackground, lookupPolicyForeground} {
+		t.Run(string(mode), func(t *testing.T) {
 			root := chainRoot(t)
 			thread, _, _, tip := twoSegmentThread(t, root, 5, "")
 			db := hintDatabase(t, root, false)
 			addHint(t, db, thread, tip, chainEpoch)
 			store, _, _, _ := fixture(t)
 			var policy []CodexLookupPolicy
-			if mode == "background" {
+			switch mode {
+			case lookupPolicyBackground:
 				policy = []CodexLookupPolicy{BackgroundLookup}
-			} else if mode == "foreground" {
+			case lookupPolicyForeground:
 				policy = []CodexLookupPolicy{ForegroundLookup}
 			}
 			lookup, err := NewCodexRolloutLookup(t.Context(), store, []string{root}, policy...)
@@ -387,7 +404,7 @@ func TestForegroundPolicyIsExplicitAndKeepsProbeAndResourceOwnershipSeparate(t *
 				t.Fatal("fixture charge refused")
 			}
 			_, err = lookup.Thread(t.Context(), thread)
-			if mode == "foreground" {
+			if mode == lookupPolicyForeground {
 				if err != nil || lookup.work == nil || lookup.work.scopes != 2 || lookup.probes != 1 {
 					t.Fatal("completed foreground probe window did not renew", err)
 				}
