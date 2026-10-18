@@ -17,6 +17,8 @@ import (
 func TestNativeImportCommitPersistsStageBeforeReservationAndOwner(t *testing.T) {
 	t.Parallel()
 	f := newNativeImportPrepareFixture(t)
+	stateBudget := f.confirmation.read.resourceBudget
+	beforeState := stateBudget.Available()
 	p, err := f.prepare(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +68,16 @@ func TestNativeImportCommitPersistsStageBeforeReservationAndOwner(t *testing.T) 
 	again, err := f.native.store.CommitNativeImport(t.Context(), p)
 	if err != nil || again.NativeImport.Membership.State != archive.NativeImportAttached {
 		t.Fatal("returned receipt mutated prepared identity", err)
+	}
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.native.assertReleased(t)
+	if stateBudget.Available() != beforeState {
+		t.Fatal("prepared state bundle loan leaked", stateBudget.Available(), beforeState)
+	}
+	if p.stage.Bundle.NativeRecords != nil || p.reg.NativeImport != nil || p.read != nil || p.confirmation != nil {
+		t.Fatal("expired prepared capability retained charged payload")
 	}
 }
 
@@ -188,6 +200,7 @@ func TestNativeImportStageFirstRecoveryRefusesForeignAuthority(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			ownerID := p.reg.ArchiveSessionID
 			if err := p.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -205,7 +218,7 @@ func TestNativeImportStageFirstRecoveryRefusesForeignAuthority(t *testing.T) {
 			if err != nil || !bytes.Equal(before, after) {
 				t.Fatal("refusal changed protected control", err)
 			}
-			if _, found, err := restarted.LoadRegistration(p.reg.ArchiveSessionID); err != nil || found {
+			if _, found, err := restarted.LoadRegistration(ownerID); err != nil || found {
 				t.Fatal("refusal created owner", found, err)
 			}
 		})

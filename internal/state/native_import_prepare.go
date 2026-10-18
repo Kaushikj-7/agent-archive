@@ -244,11 +244,31 @@ func (p *PreparedNativeImport) Close() error {
 	if p.closePass != nil {
 		p.err = errors.Join(p.err, p.closePass())
 	}
-	if p.closeRead != nil {
-		p.closeRead()
+	// No charged bundle/control/source remains reachable through the expired
+	// capability after its loans are released.
+	p.stage = ImportStage{}
+	p.reg = archive.SessionRegistration{}
+	p.selected = archive.NativeImportBatchSelection{}
+	p.binding = archive.NativeSourceBinding{}
+	p.candidate = NativeImportCandidate{}
+	p.adapter = preparedImportAdapter{}
+	p.filteredDigest = ""
+	p.snapshot = nil
+	p.content = nil
+	p.input = agentapi.NativeInput{}
+	p.lookup = nil
+	p.releaseOutput = nil
+	p.closePass = nil
+	closeRead, releaseConfirmation := p.closeRead, p.releaseConfirmation
+	p.read = nil
+	p.confirmation = nil
+	p.closeRead = nil
+	p.releaseConfirmation = nil
+	if closeRead != nil {
+		closeRead()
 	}
-	if p.releaseConfirmation != nil {
-		p.releaseConfirmation()
+	if releaseConfirmation != nil {
+		releaseConfirmation()
 	}
 	return p.err
 }
