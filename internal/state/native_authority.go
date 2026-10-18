@@ -32,7 +32,7 @@ func (s *Store) guardNativeRegistrationWrite(w lockedWrite) lockedWrite {
 			return nil, false, errors.New("registration write requires typed authority")
 		}
 		next = &reg
-		if err := s.checkNativeRegistrationTransition(w.path, reg, w.nativeValidation, w.nativeAdmission); err != nil {
+		if err := s.checkNativeRegistrationTransition(w.path, reg, w.nativeValidation, w.nativeAdmission, w.nativeImport); err != nil {
 			return nil, false, err
 		}
 		return value, true, nil
@@ -44,7 +44,7 @@ func (s *Store) guardNativeRegistrationWrite(w lockedWrite) lockedWrite {
 			}
 		}
 		if next != nil {
-			return s.checkNativeRegistrationTransition(w.path, *next, w.nativeValidation, w.nativeAdmission)
+			return s.checkNativeRegistrationTransition(w.path, *next, w.nativeValidation, w.nativeAdmission, w.nativeImport)
 		}
 		return nil
 	}
@@ -55,7 +55,7 @@ func (s *Store) checkNativeRegistrationWrite(path string, next archive.SessionRe
 	return s.checkNativeRegistrationTransition(path, next, nil, nil)
 }
 
-func (s *Store) checkNativeRegistrationTransition(path string, next archive.SessionRegistration, prepared *nativeValidationCommit, admission *nativeAdmissionCommit) error {
+func (s *Store) checkNativeRegistrationTransition(path string, next archive.SessionRegistration, prepared *nativeValidationCommit, admission *nativeAdmissionCommit, imports ...*nativeImportOwnerCommit) error {
 	before, err := readSnapshot(path)
 	if err != nil {
 		return err
@@ -66,12 +66,17 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 			return err
 		}
 	}
+	if !before.found && next.Harness.Name == "muse" && nativeImportCommitArgument(imports) == nil {
+		if err := s.checkNativeImportMarkerForGenericOwner(agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: next.NativeSessionID}); err != nil {
+			return err
+		}
+	}
 	if !before.found || deletionOwner(previous) != deletionOwner(next) {
 		if err := s.checkDeletionRegistrationTransition(next); err != nil {
 			return err
 		}
 	}
-	if err := preserveNativeRegistrationAuthority(previous, next, before.found, prepared, admission); err != nil {
+	if err := preserveNativeRegistrationAuthority(previous, next, before.found, prepared, admission, imports...); err != nil {
 		return err
 	}
 	// Ordinary existing integrations keep their established compatibility paths.
@@ -82,7 +87,7 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 	if err != nil {
 		return err
 	}
-	if err := validateNativeTransitionCapabilities(cfg, next, before.found, admission); err != nil {
+	if err := validateNativeTransitionCapabilities(cfg, next, before.found, admission, imports...); err != nil {
 		return err
 	}
 	for _, root := range cfg.NativeRoots {
@@ -107,11 +112,11 @@ func (s *Store) checkNativeRegistrationTransition(path string, next archive.Sess
 	return nil
 }
 
-func validateNativeTransitionCapabilities(cfg config.Config, next archive.SessionRegistration, previousFound bool, admission *nativeAdmissionCommit) error {
+func validateNativeTransitionCapabilities(cfg config.Config, next archive.SessionRegistration, previousFound bool, admission *nativeAdmissionCommit, imports ...*nativeImportOwnerCommit) error {
 	if next.Harness.Name == "muse" && next.Replay != nil && !cfg.NativeReplayProtection {
 		return errors.New("native replay owner requires stronger writer protection")
 	}
-	if cfg.NativeImportProtection && next.Harness.Name == "muse" && !previousFound && admission == nil {
+	if cfg.NativeImportProtection && next.Harness.Name == "muse" && !previousFound && admission == nil && nativeImportCommitArgument(imports) == nil {
 		return errors.New("muse ownership requires prepared native admission or historical import")
 	}
 	if next.NativeImport != nil && (!cfg.NativeImportProtection || next.ValidateNativeImport() != nil) {
@@ -123,9 +128,18 @@ func validateNativeTransitionCapabilities(cfg config.Config, next archive.Sessio
 	return nil
 }
 
-func preserveNativeRegistrationAuthority(previous, next archive.SessionRegistration, found bool, prepared *nativeValidationCommit, admission *nativeAdmissionCommit) error {
+func preserveNativeRegistrationAuthority(previous, next archive.SessionRegistration, found bool, prepared *nativeValidationCommit, admission *nativeAdmissionCommit, imports ...*nativeImportOwnerCommit) error {
+	historical := nativeImportCommitArgument(imports)
 	if (previous.NativeImport != nil || next.NativeImport != nil) && (!found || !sameNativeImportReceipt(previous.NativeImport, next.NativeImport)) {
-		return errors.New("native import receipt requires exact prepared transition")
+		if historical == nil {
+			return errors.New("native import receipt requires exact prepared transition")
+		}
+		if err := historical.check(previous, next, found); err != nil {
+			return err
+		}
+	}
+	if historical != nil {
+		return historical.check(previous, next, found)
 	}
 	if found && (previous.NativeBinding != nil || next.NativeBinding != nil) && !sameNativeReplay(previous.Replay, next.Replay) {
 		return errors.New("native replay classification is immutable")
@@ -189,6 +203,9 @@ func (s *Store) genericNativeReservationAllowed(key agentmeta.SessionKey) error 
 	if key.Agent != agentmeta.Muse {
 		return nil
 	}
+	if err := s.checkNativeImportMarkerForGenericOwner(key); err != nil {
+		return err
+	}
 	cfg, _, err := config.Load(s.home)
 	if err != nil {
 		return err
@@ -207,4 +224,15 @@ func sameNativeImportReceipt(a, b *archive.NativeImport) bool {
 	left, le := json.Marshal(a)
 	right, re := json.Marshal(b)
 	return le == nil && re == nil && string(left) == string(right)
+}
+
+func (s *Store) checkNativeImportMarkerForGenericOwner(key agentmeta.SessionKey) error {
+	entry, found, err := s.readQualifiedIndex(key)
+	if err != nil {
+		return err
+	}
+	if found && supportedReservationPrefix(entry.NativeReservation, nativeImportReservationPrefix) {
+		return errUnsupportedNativeReservation
+	}
+	return nil
 }

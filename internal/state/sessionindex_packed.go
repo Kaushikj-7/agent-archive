@@ -82,6 +82,11 @@ func (s *Store) packedSessionIndexEntry(key agentmeta.SessionKey) (qualifiedSess
 	if err := entry.validate(key); err != nil {
 		return entry, false, err
 	}
+	// Historical reservations retain their exact physical authority even when
+	// packed. Only the purpose-specific batch/request CAS can finish them.
+	if supportedReservationPrefix(entry.NativeReservation, nativeImportReservationPrefix) {
+		return entry, true, nil
+	}
 	valid, err := s.matchingRegistration(key, entry.ArchiveSessionID)
 	if err != nil {
 		return entry, false, err
@@ -269,7 +274,7 @@ func (reader *packedIndexReader) entry(index int) (qualifiedSessionIndexEntry, e
 		return qualifiedSessionIndexEntry{}, ErrSessionIndexRecoveryRequired
 	}
 	var entry qualifiedSessionIndexEntry
-	if err := json.Unmarshal(data, &entry); err != nil {
+	if err := decodeNativeReservationIndex(data, &entry); err != nil {
 		if errors.Is(err, errUnsupportedNativeReservation) {
 			return entry, err
 		}

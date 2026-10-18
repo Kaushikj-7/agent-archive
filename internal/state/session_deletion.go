@@ -367,6 +367,11 @@ func (s *Store) saveSessionDeletionContext(ctx context.Context, j SessionDeletio
 			if err != nil {
 				return err
 			}
+			if found {
+				if err := s.checkNativeImportReservationDeletion(current); err != nil {
+					return err
+				}
+			}
 			if found && deletionOwner(current) != j.OwnerSHA256 {
 				return ErrDurableStorageRecovery
 			}
@@ -391,6 +396,9 @@ func (s *Store) saveSessionDeletionContext(ctx context.Context, j SessionDeletio
 // PrepareSessionDeletion freezes complete, exact selecting metadata under the
 // request decision. It does not itself authorize any remote deletion.
 func (s *Store) PrepareSessionDeletion(reg archive.SessionRegistration, reason RemovalReason, raw []byte, at time.Time, token string) (SessionDeletion, error) {
+	if err := s.checkNativeImportReservationDeletion(reg); err != nil {
+		return SessionDeletion{}, err
+	}
 	if reason == RemovalReasonUndo {
 		if err := s.CheckSessionUndo(reg); err != nil {
 			return SessionDeletion{}, err

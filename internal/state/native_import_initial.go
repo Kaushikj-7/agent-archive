@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
@@ -77,8 +78,18 @@ func (s *Store) resumeOwnedNativeImport(ctx context.Context, stage ImportStage, 
 
 func (s *Store) resumeOwnedNativeImportInScope(ctx context.Context, stage ImportStage, reg archive.SessionRegistration, cfg config.Config) error {
 	current, found, err := s.LoadRegistration(reg.ArchiveSessionID)
+	if err == nil && !found {
+		return s.resumeNativeImportFirstOwner(ctx, stage)
+	}
 	if err != nil || !found || current.StagedImportSHA256 != stage.SHA256 || !sameImportStageOwner(reg, current) {
 		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	entry, indexed, indexErr := s.readQualifiedIndex(agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: reg.NativeSessionID})
+	if indexErr != nil {
+		return indexErr
+	}
+	if indexed && entry.NativeReservation != "" {
+		return s.resumeNativeImportFirstOwner(ctx, stage)
 	}
 	if err := nativeImportStageFlags(cfg, current); err != nil {
 		return err

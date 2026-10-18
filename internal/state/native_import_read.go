@@ -15,11 +15,16 @@ func decodeRegistrationJSON(raw []byte, value any) error {
 	if reg, ok := value.(*archive.SessionRegistration); ok {
 		return archive.DecodeSessionRegistration(raw, reg)
 	}
+	if entry, ok := value.(*qualifiedSessionIndexEntry); ok {
+		return decodeNativeReservationIndex(raw, entry)
+	}
 	return json.Unmarshal(raw, value)
 }
 
 func (s *Store) readRegistrationJSON(path string, value any) error {
-	if _, ok := value.(*archive.SessionRegistration); !ok {
+	switch value.(type) {
+	case *archive.SessionRegistration, *qualifiedSessionIndexEntry:
+	default:
 		return local.Read(path, value)
 	}
 	owner, err := os.OpenRoot(s.home)

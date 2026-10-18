@@ -21,10 +21,14 @@ const nativeReservationPrefix = "muse-root-reservation-v1:"
 var errUnsupportedNativeReservation = errors.New("unsupported native reservation authority")
 
 func supportedNativeReservation(value string) bool {
-	if !strings.HasPrefix(value, nativeReservationPrefix) {
+	return supportedReservationPrefix(value, nativeReservationPrefix) || supportedReservationPrefix(value, nativeImportReservationPrefix)
+}
+
+func supportedReservationPrefix(value, prefix string) bool {
+	if !strings.HasPrefix(value, prefix) {
 		return false
 	}
-	digest := strings.TrimPrefix(value, nativeReservationPrefix)
+	digest := strings.TrimPrefix(value, prefix)
 	if len(digest) != sha256.Size*2 || strings.ToLower(digest) != digest {
 		return false
 	}
@@ -79,6 +83,9 @@ func (e *qualifiedSessionIndexEntry) UnmarshalJSON(raw []byte) error {
 // Generic index repair may consume a supported pending marker only after a
 // complete matching durable owner proves that prepared first admission finished.
 func (s *Store) nativeReservationOwner(entry qualifiedSessionIndexEntry) error {
+	if supportedReservationPrefix(entry.NativeReservation, nativeImportReservationPrefix) {
+		return s.nativeImportReservationOwner(entry)
+	}
 	if !supportedNativeReservation(entry.NativeReservation) {
 		return errUnsupportedNativeReservation
 	}
@@ -101,7 +108,7 @@ func (s *Store) guardNativeReservationWrite(w lockedWrite) lockedWrite {
 	w.change = func(current fileSnapshot) (any, bool, error) {
 		var prior qualifiedSessionIndexEntry
 		if current.found {
-			if err := json.Unmarshal(current.data, &prior); errors.Is(err, errUnsupportedNativeReservation) {
+			if err := decodeNativeReservationIndex(current.data, &prior); errors.Is(err, errUnsupportedNativeReservation) {
 				return nil, false, err
 			}
 		}
@@ -121,16 +128,27 @@ func (s *Store) guardNativeReservationWrite(w lockedWrite) lockedWrite {
 				return nil, false, errUnsupportedNativeReservation
 			}
 			if next.NativeReservation != prior.NativeReservation {
-				if w.nativeReservation == nil {
+				var expected string
+				var err error
+				switch {
+				case w.nativeReservation != nil && w.nativeImportReservation == nil && w.nativeImportStageReservation == nil:
+					expected, err = w.nativeReservation.reservationAuthority()
+				case w.nativeImportReservation != nil && w.nativeReservation == nil && w.nativeImportStageReservation == nil:
+					expected, err = w.nativeImportReservation.reservationAuthority()
+				case w.nativeImportStageReservation != nil && w.nativeImportReservation == nil && w.nativeReservation == nil:
+					expected, err = w.nativeImportStageReservation.reservationAuthority()
+				default:
 					return nil, false, errUnsupportedNativeReservation
 				}
-				expected, err := w.nativeReservation.reservationAuthority()
 				if err != nil || next.NativeReservation != expected {
 					return nil, false, errors.Join(errUnsupportedNativeReservation, err)
 				}
 			}
 		}
 		if prior.NativeReservation != "" && next.NativeReservation == "" {
+			if supportedReservationPrefix(prior.NativeReservation, nativeImportReservationPrefix) && w.nativeImport == nil {
+				return nil, false, errUnsupportedNativeReservation
+			}
 			key := agentmeta.SessionKey{Agent: prior.Agent, NativeID: prior.NativeID}
 			if next != indexEntry(key, prior.ArchiveSessionID) {
 				return nil, false, errUnsupportedNativeReservation

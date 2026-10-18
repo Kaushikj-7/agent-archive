@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -16,8 +17,13 @@ import (
 // CheckNativeImportConfirmationScope checks current eligibility only. It grants
 // no source, reservation or first-owner permission, and never opens native input.
 func (s *Store) CheckNativeImportConfirmationScope(ctx context.Context, scope archive.NativeImportBatchScope) error {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	if _, err := archive.NativeImportBatchScopeDigest(ctx, scope); err != nil {
 		return err
+	}
+	if _, err := os.Lstat(filepath.Join(s.home, "setup-transaction.json")); !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(ErrReadySelectionFrozen, err)
 	}
 	cfg, found, err := s.loadConfig()
 	if err != nil || !found || !cfg.NativeImportProtection || !cfg.NativeAuthorityProtection || !cfg.SupportsStagedSelection() || !cfg.Archive.Enabled || cfg.Paused || !slices.Contains(cfg.ImportedHarnesses, "muse") || cfg.DestinationID() != scope.DestinationID {
@@ -221,22 +227,32 @@ func (h *ConfirmedNativeImportBatch) checkCurrent(ctx context.Context, store *St
 		return err
 	}
 	defer release()
-	read, closeRead := h.read.WithReadBudget(ctx, h.read.resourceBudget)
+	joined, ctx, closeContext := h.read.withDurableContext(ctx)
+	defer closeContext()
+	read, closeRead := joined.WithReadBudget(ctx, joined.resourceBudget)
 	defer closeRead()
 	return WithImportBatchLock(ctx, store.home, h.control.ID, func(held *local.RootedHome) error {
-		current, err := read.readConfirmedNativeImportControl(ctx, held, h.control.ID)
-		if err != nil {
-			return err
-		}
-		identity, err := read.nativeImportConfirmationIdentity(ctx, current)
-		if err != nil || identity != h.identity {
-			return errors.Join(ErrReadySelectionFrozen, err)
-		}
-		if err := read.CheckNativeImportConfirmationScope(ctx, current.NativeImport.Scope); err != nil {
-			return err
-		}
-		return h.checkOpen(store)
+		return h.checkCurrentHeld(ctx, store, read, held)
 	})
+}
+
+// checkCurrentHeld is only used after the same batch lock is already held. It
+// avoids recursive locking while retaining the exact current-control check.
+func (h *ConfirmedNativeImportBatch) checkCurrentHeld(ctx context.Context, store, read *Store, held *local.RootedHome) error {
+	read, ctx, closeContext := read.withDurableContext(ctx)
+	defer closeContext()
+	current, err := read.readConfirmedNativeImportControl(ctx, held, h.control.ID)
+	if err != nil {
+		return err
+	}
+	identity, err := read.nativeImportConfirmationIdentity(ctx, current)
+	if err != nil || identity != h.identity {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	if err := read.CheckNativeImportConfirmationScope(ctx, current.NativeImport.Scope); err != nil {
+		return err
+	}
+	return h.checkOpen(store)
 }
 
 func (h *ConfirmedNativeImportBatch) checkOpen(store *Store) error {

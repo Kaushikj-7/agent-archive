@@ -25,6 +25,8 @@ type NativeImportCandidate struct {
 // source. Only the creating Store and still-open confirmation can consume it.
 type PreparedNativeImport struct {
 	store               *Store
+	read                *Store
+	closeRead           func()
 	self                *PreparedNativeImport
 	confirmation        *ConfirmedNativeImportBatch
 	releaseConfirmation func()
@@ -41,6 +43,13 @@ type PreparedNativeImport struct {
 	closePass           func() error
 	closed              bool
 	err                 error
+	reg                 archive.SessionRegistration
+	filteredDigest      string
+	adapter             preparedImportAdapter
+	index               qualifiedSessionIndexEntry
+	indexFound          bool
+	stage               ImportStage
+	committed           bool
 }
 
 // PrepareNativeImport filters exactly one proven selected ordinary source. It
@@ -84,6 +93,15 @@ func (s *Store) PrepareNativeImport(ctx context.Context, confirmation *Confirmed
 	checkpoint := *binding.Checkpoint
 	copied.Checkpoint = &checkpoint
 	p := &PreparedNativeImport{store: s, confirmation: confirmation, releaseConfirmation: release, candidate: candidate, selected: selected, binding: copied, snapshot: snapshot, input: input, content: content, lookup: lookup, selection: selection, closePass: closePass}
+	joined, readContext, closeContext := confirmation.read.withDurableContext(ctx)
+	p.read, p.closeRead = joined.WithReadBudget(readContext, joined.resourceBudget)
+	closeRead := p.closeRead
+	p.closeRead = func() { closeRead(); closeContext() }
+	defer func() {
+		if !keep {
+			p.closeRead()
+		}
+	}()
 	p.self = p
 	if err := p.verify(ctx); err != nil {
 		return nil, err
@@ -96,13 +114,21 @@ func (s *Store) PrepareNativeImport(ctx context.Context, confirmation *Confirmed
 		}
 		return nil, err
 	}
-	if !nativeFilteredStartupMatches(filtered, &p.binding) {
+	if filtered.History != nil || !nativeFilteredStartupMatches(filtered, &p.binding) {
 		if releaseOutput != nil {
 			releaseOutput()
 		}
 		return nil, agentapi.ErrInvalidSourceBinding
 	}
 	p.filtered, p.releaseOutput = filtered, releaseOutput
+	p.adapter = preparedImportAdapter{name: filter.Name(), version: filter.Version()}
+	p.filteredDigest, err = p.filterDigest(ctx)
+	if err != nil {
+		if releaseOutput != nil {
+			releaseOutput()
+		}
+		return nil, err
+	}
 	if err := p.verify(ctx); err != nil {
 		if releaseOutput != nil {
 			releaseOutput()
@@ -144,6 +170,12 @@ func (p *PreparedNativeImport) verify(ctx context.Context) error {
 	}
 	if err := p.confirmation.checkCurrent(ctx, p.store); err != nil {
 		return err
+	}
+	if p.filteredDigest != "" {
+		digest, err := p.filterDigest(ctx)
+		if err != nil || digest != p.filteredDigest {
+			return errors.Join(agentapi.ErrInvalidSourceBinding, err)
+		}
 	}
 	if err := p.checkPhysicalProject(); err != nil {
 		return err
@@ -212,8 +244,26 @@ func (p *PreparedNativeImport) Close() error {
 	if p.closePass != nil {
 		p.err = errors.Join(p.err, p.closePass())
 	}
+	if p.closeRead != nil {
+		p.closeRead()
+	}
 	if p.releaseConfirmation != nil {
 		p.releaseConfirmation()
 	}
 	return p.err
+}
+
+type preparedImportAdapter struct{ name, version string }
+
+func (a preparedImportAdapter) Name() string    { return a.name }
+func (a preparedImportAdapter) Version() string { return a.version }
+
+func (p *PreparedNativeImport) filterDigest(ctx context.Context) (string, error) {
+	return p.read.readyDigest(ctx, struct {
+		Transcript      archive.FilteredTranscript `json:"transcript"`
+		Records         [][]byte                   `json:"records"`
+		Text            []string                   `json:"text"`
+		Ordinals        []uint64                   `json:"ordinals"`
+		ObservedHarness archive.Harness            `json:"observed_harness"`
+	}{p.filtered, p.filtered.Records, p.filtered.Text, p.filtered.Ordinals, p.filtered.ObservedHarness})
 }
