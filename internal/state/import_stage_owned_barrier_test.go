@@ -60,13 +60,25 @@ func ownedImportReleaseCommittedFixture(t *testing.T) (*Store, archive.SessionRe
 	return s, reg, pending, raw
 }
 
+// resolvedHome returns the archive home as held roots name it: the rooted
+// home resolves symlinks, such as macOS's /var -> /private/var temp
+// directories.
+func resolvedHome(t *testing.T, s *Store) string {
+	t.Helper()
+	home, err := filepath.EvalSymlinks(s.Home())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
 func TestOwnedImportReleaseRetryRequiresDirectoryDurabilityBeforeJournalRemoval(t *testing.T) {
 	t.Parallel()
 	for _, phase := range []string{"stage-directory", "session-parent"} {
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
 			s, reg, pending, before := ownedImportReleaseCommittedFixture(t)
-			stageDirectory := filepath.Dir(filepath.Join(s.Home(), importStageRelative(reg.ArchiveSessionID)))
+			stageDirectory := filepath.Dir(filepath.Join(resolvedHome(t, s), importStageRelative(reg.ArchiveSessionID)))
 			sessionParent := filepath.Dir(stageDirectory)
 			faultPath := stageDirectory
 			if phase == "session-parent" {
@@ -136,7 +148,7 @@ func TestOwnedImportReleaseBarrierRefusesChangedRootAndCancellation(t *testing.T
 			read, closeRead := s.WithReadBudget(ctx, nil)
 			defer closeRead()
 			pendingPath := s.pendingPath(reg.ArchiveSessionID)
-			stageDirectory := filepath.Join(s.Home(), "sessions", reg.ArchiveSessionID, "import-stage")
+			stageDirectory := filepath.Join(resolvedHome(t, s), "sessions", reg.ArchiveSessionID, "import-stage")
 			changed := false
 			err := read.removeOwnedImportStageUsing(reg, func(held *os.Root) error {
 				if err := syncDurableParent(held); err != nil {
