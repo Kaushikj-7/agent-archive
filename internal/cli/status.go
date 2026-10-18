@@ -1455,14 +1455,6 @@ func importedSessionCounts(cfg config.Config, regs []archive.SessionRegistration
 	return imported, pending, withIssues
 }
 
-// importPending reports whether an imported session is pending under cfg:
-// the one definition state.Outstanding gives, for a caller that has not
-// listed the queued requests.
-func importPending(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (bool, error) {
-	owed, err := importOutstanding(store, cfg, reg)
-	return owed.Pending(), err
-}
-
 // importOutstanding is what an imported session still owes under cfg (see
 // state.Outstanding). A first import's unsettled retained stage remains owed
 // when policy holds publication; settled ongoing sessions still follow cfg.
