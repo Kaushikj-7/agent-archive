@@ -28,8 +28,8 @@ type indexAppendProof struct {
 
 // appendCurrentIndex validates the same generation and unchanged initial main,
 // then applies only newly committed frames to the existing private projection.
-// The caller closes SQLite first and poisons this view on any failure. Native
-// SQLite/WAL/SHM files are only read through confined regular-file handles.
+// The caller closes SQLite first and discards an interrupted view; other failures
+// poison it. Native SQLite/WAL/SHM files are only read through confined handles.
 func appendCurrentIndex(ctx context.Context, root string, p *privateIndex, budget *agentapi.NativeReadBudget) error {
 	reservation := budget.Reservation()
 	if err := ctx.Err(); err != nil {

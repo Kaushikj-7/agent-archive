@@ -255,6 +255,10 @@ func (l *CodexRolloutLookup) AllowanceSpent() bool {
 func (l *CodexRolloutLookup) BeginCollection() {
 	trace.Add(trace.CodexLookupScopes, 1)
 	l.remaining = Budget
+	if l.work != nil {
+		l.work.remaining = Budget
+		l.work.scopes++
+	}
 	l.probes = 0
 }
 
@@ -414,7 +418,9 @@ func (l *CodexRolloutLookup) thread(ctx context.Context, id string) (_ agentapi.
 	if cached, present := l.threads[id]; present {
 		return l.withCandidates(ctx, id, cached)
 	}
-	l.registrationHint(ctx, id)
+	if err := l.registrationHint(ctx, id); err != nil {
+		return agentapi.CodexRolloutSet{}, err
+	}
 	var current *agentapi.SourceRef
 	for _, root := range l.roots {
 		view, err := l.index(ctx, root, false)
@@ -460,25 +466,29 @@ func (l *CodexRolloutLookup) thread(ctx context.Context, id string) (_ agentapi.
 	return set, nil
 }
 
-func (l *CodexRolloutLookup) registrationHint(ctx context.Context, id string) {
-	if ctx.Err() != nil {
-		return
+func (l *CodexRolloutLookup) registrationHint(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+	// Registration state is only a best-effort locator hint. Its absence or
+	// ordinary read failures do not replace authoritative native selection.
+	var path string
 	key, err := agentmeta.NewSessionKey("codex", id)
-	if err != nil {
-		return
+	if err == nil {
+		archiveID, found, err := l.store.ArchiveSessionID(key)
+		if err == nil && found {
+			reg, found, err := l.store.LoadRegistration(archiveID)
+			if err == nil && found {
+				path = reg.TranscriptPath
+			}
+		}
 	}
-	archiveID, found, err := l.store.ArchiveSessionID(key)
-	if err != nil || !found {
-		return
+	if l.homeFor(path) != "" {
+		if _, err := l.inspect(ctx, path, id); nativeInterrupted(err) {
+			return err
+		}
 	}
-	reg, found, err := l.store.LoadRegistration(archiveID)
-	if err != nil || !found {
-		return
-	}
-	if l.homeFor(reg.TranscriptPath) != "" {
-		_, _ = l.inspect(ctx, reg.TranscriptPath, id)
-	}
+	return nil
 }
 
 // withCandidates adds the thread's observed same-thread rollouts to set and
@@ -685,6 +695,17 @@ func (l *CodexRolloutLookup) indexDeadline(ctx context.Context, root string, ref
 			}
 			view.db = nil
 			if err := appendCurrentIndex(ctx, root, view.snapshot, l.readBudget); err != nil {
+				if nativeInterrupted(err) {
+					// Interrupted append work may have changed the private file,
+					// but proves nothing about native selection. Discard it without
+					// retrying the failed unit; a later operation can start afresh.
+					if cleanupErr := view.snapshot.close(); cleanupErr != nil {
+						view.unavailable = true
+						return nil, errors.Join(err, agentapi.Wrap(agentapi.Cleanup, cleanupErr))
+					}
+					delete(l.indexes, root)
+					return nil, err
+				}
 				if errors.Is(err, errIndexChanged) && ctx.Err() == nil {
 					// A checkpoint invalidates the incremental projection, not
 					// necessarily the selected thread. Discard it completely and
