@@ -15,6 +15,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
 
 // A synthetic own materialized run carries the observed native event grammar.
@@ -46,6 +47,7 @@ func TestNativeSkillReadPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatal("qualified native skill-read report refused", err)
 	}
+	golden.Check(t, filepath.Join("testdata", "synthetic-skill-read.golden.jsonl"), append(bytes.Join(out.Records, []byte("\n")), '\n'))
 	wire := bytes.Join(out.Records, nil)
 	if bytes.Contains(wire, []byte("evidence_hash")) || bytes.Contains(wire, []byte(strings.Repeat("a", 64))) {
 		t.Fatal("original-byte native hash retained")
