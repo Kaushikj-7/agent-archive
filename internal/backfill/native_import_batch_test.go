@@ -14,6 +14,17 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
+// privateBatchHome returns an archive home with the owner-only mode that the
+// rooted batch control writer requires; t.TempDir follows the umask.
+func privateBatchHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
 func confirmedNativeBatchFixture(t *testing.T) Batch {
 	t.Helper()
 	at := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
@@ -38,7 +49,7 @@ func TestNativeImportBatchOrdinaryWireUnchanged(t *testing.T) {
 	if string(raw) != want {
 		t.Fatalf("ordinary wire changed: %s", raw)
 	}
-	home := t.TempDir()
+	home := privateBatchHome(t)
 	if err := SaveBatch(home, b); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +69,7 @@ func TestNativeImportBatchOrdinaryWireUnchanged(t *testing.T) {
 //lint:ignore tparallel the test is parallel, but its subtests share one home and batch file, in order
 func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
+	home := privateBatchHome(t)
 	b := confirmedNativeBatchFixture(t)
 	if err := SaveBatch(home, b); !errors.Is(err, archive.ErrUnsupportedNativeImport) {
 		t.Fatal("generic save minted confirmation", err)
@@ -173,7 +184,7 @@ func TestNativeImportBatchOrdinarySelectorLikeStringsRemainOrdinary(t *testing.T
 	if decoded.NativeImport != nil || decoded.DestinationID != b.DestinationID {
 		t.Fatal("ordinary value changed")
 	}
-	home := t.TempDir()
+	home := privateBatchHome(t)
 	if err := SaveBatch(home, b); err != nil {
 		t.Fatal(err)
 	}

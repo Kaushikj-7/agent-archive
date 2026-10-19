@@ -19,7 +19,7 @@ import (
 // a run with the same filters and destination, and by no other.
 func TestOpenBatch(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
+	home := privateBatchHome(t)
 	store := state.OpenReadOnly(home)
 	filters := Plan{Filters: Filters{Harnesses: []string{"claude-code"}, IncludeTemp: true}, projectFilter: []string{"/work/repo"}}.BatchFilters()
 	if filters.Harnesses[0] != "claude" || filters.ProjectIDs[0] != archive.ProjectID("/work/repo") {

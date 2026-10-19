@@ -135,7 +135,12 @@ func TestAtomicWriteWitnessZeroAndCanceledRefuse(t *testing.T) {
 	if zero.Check(nil) == nil {
 		t.Fatal("zero witness accepted")
 	}
-	root, err := os.OpenRoot(t.TempDir())
+	dir := t.TempDir()
+	// The witness requires an owner-only home; t.TempDir follows the umask.
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
