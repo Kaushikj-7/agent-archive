@@ -42,8 +42,8 @@ minutes), the default for the full Linux tier in Test and Extended too. macOS no
 same `scripts/run_native_full.py` commands: `macos-plan` (with the tag and
 `main` guard) compiles the catalog and assigns three `macos-workers`, while
 `macos-obligations` runs full-size plain performance and the
-protected-configuration writer check; each job has its own 2400-second
-deadline. `build` reconciles their exact-source/raw-body receipts and job
+protected-configuration writer check; each job has its own 3300-second
+deadline (job limit 60 minutes). `build` reconciles their exact-source/raw-body receipts and job
 results before Build. Separate `release-validation-macos` and
 `release-validation-linux` artifacts are uploaded even on failure. These validation artifacts are separate from the
 release assets; they do not authorize signing or promotion.

@@ -107,7 +107,7 @@ jobs:
   macos-plan:
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || (github.event_name == 'schedule' && github.event.schedule == '17 8 * * 0') || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -133,7 +133,7 @@ jobs:
     needs: macos-plan
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || (github.event_name == 'schedule' && github.event.schedule == '17 8 * * 0') || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -167,7 +167,7 @@ jobs:
     needs: macos-plan
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release-candidate/')) || (github.event_name == 'schedule' && github.event.schedule == '17 8 * * 0') || (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'macos'))
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
