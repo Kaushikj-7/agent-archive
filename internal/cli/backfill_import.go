@@ -47,6 +47,9 @@ const (
 	// with backfill.
 	setupImportCollectorWait = 20 * time.Second
 	backfillHooksWait        = 5 * time.Second
+	// Eight maximum-sized (32 MiB) stages leave publication headroom within
+	// the shared quota. Capacity recovery never evicts unrelated owners.
+	publicationGroupSize = 8
 )
 
 // importPlan runs steps 4 to 6 of a confirmed import: it commits the
@@ -191,14 +194,9 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	stopConfirmation = releaseOnce(stopConfirmation)
 	reg.releases = append(reg.releases, stopConfirmation)
 	// Step 4: commit the configuration, under collector.lock and hooks.lock.
-	stopWait := startActivity(stdout, "Waiting for collector…")
-	if env.importCollectorWait != nil {
-		collectorWait = env.importCollectorWait(collectorWait)
-	}
-	releaseCollector, err := lockCollectorWait(home, "backfill import", env.now(), collectorWait)
-	stopWait()
+	collectorGuard, releaseCollector, err := waitImportCollector(env, stdout, home, collectorWait)
 	if err != nil {
-		return reg, errCollectorBusy
+		return reg, err
 	}
 	// collector.lock stays held through registration, so no pass runs
 	// between a session's subagent candidates and its registration.
@@ -236,6 +234,11 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	if err != nil {
 		return reg, fmt.Errorf("open local store: %w", err)
 	}
+	// Prepared evidence may have lost its native source since the previous
+	// invocation. Resume the existing durable admission before fresh selection.
+	if err := store.ResumeAllImportAdmissions(registrationCtx); err != nil {
+		return reg, err
+	}
 	candidates := plan.Imported()
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].StartedAt.Before(candidates[j].StartedAt) })
 	stopRegister := startActivity(stdout, "Registering sessions…")
@@ -244,7 +247,7 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	if err != nil {
 		return reg, err
 	}
-	lookup, readHomes, err := passCodexRollouts(registrationCtx, state.OpenReadOnly(home), cfg, env)
+	lookup, readHomes, err := foregroundCodexRollouts(registrationCtx, state.OpenReadOnly(home), cfg, env)
 	if err != nil {
 		return reg, err
 	}
@@ -256,7 +259,8 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	}
 	var onCapacity func(context.Context) error
 	if capacityUploads {
-		onCapacity = importCapacityDrain(env, stdout, home, store, lookup, readHomes, interrupt.requested)
+		capacityOut := &pausingWriter{w: stdout, stop: stopRegister}
+		onCapacity = importCapacityDrain(env, capacityOut, home, store, batch.ID, collectorGuard, lookup, readHomes, interrupt.requested)
 	}
 	registration := backfill.Registration{
 		HistoricalSourcePolicy: func(current config.Config) func(string) bool {
@@ -275,14 +279,8 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 		Sources: env.agentRegistry(),
 		Home:    home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
 		MaxHoldSteps: env.backfillHoldSteps, CursorDatabase: env.cursorDatabase(), RepoKey: env.repoKeyResolver(),
-		AfterHold: func(sessions, subagents []string) error {
-			batch.AddSessions(sessions, subagents)
-			if err := backfill.SaveBatch(home, batch); err != nil {
-				return err
-			}
-			return env.checkpoint("registered")
-		},
-		Stop: interrupt.requested,
+		AfterHold: recordImportGroup(env, home, &batch, registrationCtx, onCapacity),
+		Stop:      interrupt.requested,
 	}
 	result, err := registration.Run(candidates)
 	reg.batch, reg.result = batch, result
@@ -312,6 +310,45 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 	return reg, nil
 }
 
+func waitImportCollector(env Env, stdout io.Writer, home string, wait time.Duration) (*local.CollectorGuard, func(), error) {
+	stopWait := startActivity(stdout, "Waiting for collector…")
+	if env.importCollectorWait != nil {
+		wait = env.importCollectorWait(wait)
+	}
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		stopWait()
+		return nil, nil, err
+	}
+	guard, release, err := lockCollectorGuardWait(home, "backfill import", env.now(), collectorNeedsGuard(cfg), wait)
+	stopWait()
+	if err != nil {
+		return nil, nil, errCollectorBusy
+	}
+	return guard, release, nil
+}
+
+func recordImportGroup(env Env, home string, batch *backfill.Batch, ctx context.Context, publish func(context.Context) error) func([]string, []string) error {
+	registered := 0
+	return func(sessions, subagents []string) error {
+		batch.AddSessions(sessions, subagents)
+		if err := backfill.SaveBatch(home, *batch); err != nil {
+			return err
+		}
+		if err := env.checkpoint("registered"); err != nil {
+			return err
+		}
+		// Publish owned groups before quota pressure can prevent freezing the
+		// next pending publication. Background imports supply no publisher.
+		registered += len(sessions) + len(subagents)
+		if publish != nil && registered >= publicationGroupSize {
+			registered = 0
+			return publish(ctx)
+		}
+		return nil
+	}
+}
+
 // completeBatch rebuilds the batch's sessions from the registrations, which
 // are the source of truth, and marks it complete.
 func completeBatch(env Env, home string, store *state.Store, batch *backfill.Batch) error {
@@ -328,13 +365,16 @@ func completeBatch(env Env, home string, store *state.Store, batch *backfill.Bat
 // finishInterruptedBatch completes the latest import when it was
 // interrupted, a run with the same options finds nothing left to import,
 // and so no later run would ever complete it.
-func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfill.Plan, cfg config.Config) error {
+func finishInterruptedBatch(env Env, stdout, stderr io.Writer, home string, plan backfill.Plan, cfg config.Config, background bool) error {
 	batches, err := backfill.LoadBatches(home)
 	if err != nil || len(batches) == 0 {
 		return err
 	}
 	last := batches[len(batches)-1]
-	if !last.Continues(plan.BatchFilters(), cfg.DestinationID()) {
+	eligible := func(batch backfill.Batch) bool {
+		return batch.UndoneAt == nil && batch.Matches(plan.BatchFilters(), cfg.DestinationID()) && (!background || batch.CompletedAt == nil)
+	}
+	if !eligible(last) {
 		return nil
 	}
 	release, err := local.NamedLock(home, "setup.lock")
@@ -349,6 +389,7 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 	if err != nil {
 		return errors.New("a collector pass is still running; run backfill again")
 	}
+	releaseCollector = releaseOnce(releaseCollector)
 	defer releaseCollector()
 	// Read the batch again under the locks: an undo or another run may have
 	// changed it since it was checked.
@@ -356,7 +397,7 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 		return err
 	}
 	latest := batches[len(batches)-1]
-	if latest.ID != last.ID || !latest.Continues(plan.BatchFilters(), cfg.DestinationID()) {
+	if latest.ID != last.ID || !eligible(latest) {
 		return nil
 	}
 	last = latest
@@ -370,10 +411,27 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 	if err := store.ResumeAllImportAdmissions(ctx); err != nil {
 		return err
 	}
-	if err := completeBatch(env, home, store, &last); err != nil {
-		return err
+	if last.CompletedAt == nil {
+		if err := completeBatch(env, home, store, &last); err != nil {
+			return err
+		}
+		terminal.Printf(stdout, "\nImport %s, which was interrupted, is complete: %s registered.\n", last.ID, countNoun(len(last.Sessions), "session"))
 	}
-	terminal.Printf(stdout, "\nImport %s, which was interrupted, is complete: %s registered.\n", last.ID, countNoun(len(last.Sessions), "session"))
+	if !background {
+		pending := &upload{env: env, home: home, batch: last.ID, sizes: map[agentmeta.SessionKey]int64{}}
+		if err := pending.refresh(); err != nil {
+			return err
+		}
+		if pending.pendingCount() == 0 {
+			return nil
+		}
+		releaseCollector()
+		watch := watchSignals(env, stdout, "Stopping after the current session; press Ctrl-C again to quit.", func() {})
+		defer watch.release()
+		if uploadImport(env, stdout, stderr, home, last.ID, plan, watch, nil) != 0 {
+			return errors.New("retained import publication is unfinished; run agent-archive backfill again with the same options")
+		}
+	}
 	return nil
 }
 
@@ -631,15 +689,19 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 
 	var passErr error
 	lastProgress := time.Now()
-	for len(u.pending) > 0 && !stop() {
-		before := len(u.pending)
-		result, err := runPass(env, false, passOptions{progress: u.observe, stop: stop})
+	for u.pendingCount() > 0 && !stop() {
+		before := u.pendingCount()
+		result, err := runPass(env, false, passOptions{progress: u.observe, stop: stop, importBatch: batchID})
 		result.CloseStagedResults()
 		u.stopFinishing()
 		if refreshErr := u.refresh(); refreshErr != nil && err == nil {
 			err = refreshErr
 		}
-		if len(u.pending) < before {
+		// Child publication can enqueue relationship evidence for a parent
+		// published earlier in this pass. Its pending count stays unchanged,
+		// but the exact completed publications allow the next pass to settle it.
+		progressed := u.pendingCount() < before || len(result.Published) > 0
+		if progressed {
 			lastProgress = time.Now()
 		}
 		if errors.Is(err, local.ErrBusy) {
@@ -666,7 +728,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 			break
 		}
 		u.draw(!u.terminal)
-		if len(u.pending) >= before {
+		if !progressed {
 			break
 		}
 	}
@@ -675,16 +737,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 		terminal.Println(stdout)
 	}
 
-	switch {
-	case len(u.pending) == 0:
-		terminal.Printf(stdout, "Uploaded %s (%s).\n", countNoun(u.total, "session"), backfill.FormatSize(u.totalBytes))
-	case interrupt.requested():
-		terminal.Printf(stdout, "Stopped. The remaining %s will be uploaded by the background collector.\n", countNoun(len(u.pending), "session"))
-	case errors.Is(passErr, errPaused):
-		terminal.Printf(stdout, "Collection is paused. The remaining %s will be uploaded after agent-archive resume.\n", countNoun(len(u.pending), "session"))
-	default:
-		terminal.Printf(stdout, "%s not uploaded yet. The background collector keeps trying; run agent-archive status to follow it.\n", countNoun(len(u.pending), "session"))
-	}
+	u.printCompletion(stdout, passErr, interrupt.requested())
 	printImportHints(stdout, batchID)
 	if interrupt.requested() || errors.Is(passErr, errPaused) {
 		return 0
@@ -693,10 +746,29 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 		terminal.Printf(stderr, "agent-archive: backfill: upload: %v\n", passErr)
 		return 1
 	}
-	if len(u.pending) > 0 {
+	if u.pendingCount() > 0 {
 		return 1
 	}
 	return 0
+}
+
+// printCompletion treats a failed zero census as unknown, never success.
+// Known counts keep their existing policy, pause and interruption messages.
+func (u *upload) printCompletion(stdout io.Writer, passErr error, interrupted bool) {
+	switch {
+	case passErr != nil && u.pendingCount() == 0:
+		terminal.Println(stdout, "Import publication is unfinished.")
+	case u.pendingCount() == 0:
+		terminal.Printf(stdout, "Uploaded %s (%s).\n", countNoun(u.total, "session"), backfill.FormatSize(u.totalBytes))
+	case interrupted:
+		terminal.Printf(stdout, "Stopped. The remaining %s will be uploaded by the background collector.\n", u.pendingDescription())
+	case errors.Is(passErr, errPaused):
+		terminal.Printf(stdout, "Collection is paused. The remaining %s will be uploaded after agent-archive resume.\n", u.pendingDescription())
+	case u.policyBlocked+u.childrenPolicyBlocked > 0:
+		terminal.Printf(stdout, "%s retained but not remotely verified because current policy prevents publication. Review the configuration, then run agent-archive backfill again with the same options.\n", importPendingDescription(u.policyBlocked, u.childrenPolicyBlocked))
+	default:
+		terminal.Printf(stdout, "%s not uploaded yet. The background collector keeps trying; run agent-archive status to follow it.\n", u.pendingDescription())
+	}
 }
 
 // upload tracks a batch's sessions while they upload.
@@ -714,8 +786,13 @@ type upload struct {
 	finishMu sync.Mutex
 	finish   *spinner
 
-	total      int
-	totalBytes int64
+	total         int
+	totalBytes    int64
+	policyBlocked int
+	// Linked children have their own publication obligations, but do not add
+	// independent sessions to the existing displayed parent totals.
+	childrenPending       int
+	childrenPolicyBlocked int
 	// pending maps each session still to upload to its size.
 	pending map[string]int64
 }
@@ -735,23 +812,64 @@ func (u *upload) refresh() error {
 	if err != nil {
 		return err
 	}
-	u.total, u.totalBytes, u.pending = 0, 0, map[string]int64{}
+	u.total, u.totalBytes, u.policyBlocked, u.childrenPending, u.pending = 0, 0, 0, 0, map[string]int64{}
+	u.childrenPolicyBlocked = 0
 	for _, reg := range regs {
-		if !reg.InBatch(u.batch) || !independentImportedSession(reg) {
+		if !reg.InBatch(u.batch) {
+			continue
+		}
+		owed, err := importOutstanding(store, cfg, reg)
+		if err != nil {
+			return err
+		}
+		if !independentImportedSession(reg) {
+			if owed.Pending() {
+				u.childrenPending++
+				if owed.StagedImport && !cfg.AcceptSession(reg) {
+					u.childrenPolicyBlocked++
+				}
+			}
 			continue
 		}
 		size := u.size(reg)
 		u.total++
 		u.totalBytes += size
-		waiting, err := importPending(store, cfg, reg)
-		if err != nil {
-			return err
+		waiting := owed.Pending()
+		if waiting && owed.StagedImport && !cfg.AcceptSession(reg) {
+			u.policyBlocked++
 		}
 		if waiting {
 			u.pending[reg.ArchiveSessionID] = size
 		}
 	}
+	batch, err := uploadBatch(u.home, u.batch)
+	if err != nil {
+		return err
+	}
+	children, blocked, err := pendingImportChildren(store, cfg, regs, batch)
+	u.childrenPending += children
+	u.childrenPolicyBlocked += blocked
+	if err != nil {
+		return err
+	}
 	return nil
+}
+
+func (u *upload) pendingCount() int { return len(u.pending) + u.childrenPending }
+
+func (u *upload) pendingDescription() string {
+	return importPendingDescription(len(u.pending), u.childrenPending)
+}
+
+func importPendingDescription(sessions, children int) string {
+	var parts []string
+	if sessions > 0 {
+		parts = append(parts, countNoun(sessions, "session"))
+	}
+	if children > 0 {
+		parts = append(parts, countNoun(children, "subagent transcript"))
+	}
+	return strings.Join(parts, " and ")
 }
 
 func (u *upload) size(reg archive.SessionRegistration) int64 {
@@ -781,7 +899,7 @@ func (u *upload) observe(p collector.Progress) {
 		return
 	}
 	delete(u.pending, p.ArchiveSessionID)
-	if len(u.pending) == 0 {
+	if u.pendingCount() == 0 {
 		// Live terminals replace the count line with a finishing spinner
 		// while the pass wraps up. Non-TTY keeps one count line per pass
 		// (drawn after runPass returns), so a mid-pass empty pending set
@@ -909,6 +1027,10 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 // has newer work to upload.
 func batchUploadState(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, b backfill.Batch, latest bool) (string, error) {
 	registered, subagents, waiting, rechecking, updating := 0, 0, 0, 0, 0
+	childrenPending, _, err := pendingImportChildren(store, cfg, regs, b)
+	if err != nil {
+		return "", err
+	}
 	staged, verified := 0, 0
 	for _, reg := range regs {
 		if !reg.InBatch(b.ID) {
@@ -916,6 +1038,13 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 		}
 		if !independentImportedSession(reg) {
 			subagents++
+			owed, err := importOutstanding(store, cfg, reg)
+			if err != nil {
+				return "", err
+			}
+			if owed.Pending() {
+				childrenPending++
+			}
 			continue
 		}
 		registered++
@@ -927,6 +1056,9 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 			}
 			if summary.Published {
 				verified++
+			} else if !cfg.AcceptSession(reg) {
+				waiting++
+				continue
 			}
 		}
 		owed, err := importOutstanding(store, cfg, reg)
@@ -935,6 +1067,8 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 		}
 		switch {
 		case !owed.Pending():
+		case owed.StagedImport:
+			waiting++
 		case owed.Rechecking():
 			rechecking++
 		case owed.Published:
@@ -944,22 +1078,7 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 		}
 	}
 	if b.UndoneAt != nil {
-		projects := 0
-		for _, p := range cfg.Archive.Projects {
-			// A project undo kept for another import is that import's now.
-			if p.Included && slices.Contains(b.ProjectsAdded, p.ProjectID) && !slices.Contains(b.ProjectsExcluded, p.ProjectID) && !slices.Contains(b.ProjectsKept, p.ProjectID) {
-				projects++
-			}
-		}
-		switch {
-		case registered > 0:
-			return fmt.Sprintf("partly undone; %s left", countNoun(registered, "session")), nil
-		case subagents > 0:
-			return fmt.Sprintf("partly undone; %s left", countNoun(subagents, "subagent transcript")), nil
-		case projects > 0:
-			return fmt.Sprintf("partly undone; %s left", countNoun(projects, "project")), nil
-		}
-		return "undone", nil
+		return undoneBatchUploadState(cfg, b, registered, subagents), nil
 	}
 	switch {
 	case b.CompletedAt == nil && latest && len(b.StagedSessions) > 0:
@@ -973,7 +1092,33 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 	case registered == 0:
 		return "removed", nil
 	}
-	return batchUploadSummary(registered, staged, verified, waiting, rechecking, updating), nil
+	summary := batchUploadSummary(registered, staged, verified, waiting, rechecking, updating)
+	if childrenPending > 0 {
+		if waiting+rechecking+updating == 0 {
+			summary = fmt.Sprintf("%d registered; %d remotely verified", registered, verified)
+		}
+		summary += "; " + countNoun(childrenPending, "subagent transcript") + " waiting"
+	}
+	return summary, nil
+}
+
+func undoneBatchUploadState(cfg config.Config, b backfill.Batch, registered, subagents int) string {
+	projects := 0
+	for _, p := range cfg.Archive.Projects {
+		// A project undo kept for another import is that import's now.
+		if p.Included && slices.Contains(b.ProjectsAdded, p.ProjectID) && !slices.Contains(b.ProjectsExcluded, p.ProjectID) && !slices.Contains(b.ProjectsKept, p.ProjectID) {
+			projects++
+		}
+	}
+	switch {
+	case registered > 0:
+		return fmt.Sprintf("partly undone; %s left", countNoun(registered, "session"))
+	case subagents > 0:
+		return fmt.Sprintf("partly undone; %s left", countNoun(subagents, "subagent transcript"))
+	case projects > 0:
+		return fmt.Sprintf("partly undone; %s left", countNoun(projects, "project"))
+	}
+	return "undone"
 }
 
 // batchUploadSummary keeps first-publication progress separate from later work.
@@ -997,8 +1142,11 @@ func batchUploadSummary(registered, staged, verified, waiting, rechecking, updat
 	return upload
 }
 
-func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.Store, lookup agentapi.CodexRolloutLookup, readHomes []string, stop func() bool) func(context.Context) error {
+func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.Store, batchID string, guard *local.CollectorGuard, lookup agentapi.CodexRolloutLookup, readHomes []string, stop func() bool) func(context.Context) error {
 	return func(ctx context.Context) error {
+		if stop != nil && stop() {
+			return backfill.ErrStopped
+		}
 		if trace.Enabled() {
 			started := time.Now()
 			defer func() {
@@ -1017,9 +1165,17 @@ func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.St
 		if err != nil {
 			return err
 		}
-		result, err := collector.Run(ctx, store, remote, collector.Options{Sources: env.agentRegistry(), Parsers: parsersFor(env), Decoders: env.agentRegistry(), MachineID: current.MachineID, Now: env.Now, AcceptSession: current.AcceptSession, HistoricalProjectLabel: current.HistoricalProjectLabel, SkillEvidence: current.EffectiveSkillEvidence(), RequireSkillUse: current.RequireSkillUse, CursorDatabase: env.cursorDatabase(), CodexRollouts: lookup, ConfiguredCodexHomes: readHomes, NativeRoots: current.NativeRoots, RepoKey: env.repoKey, Stop: stop})
+		previous, _ := store.LoadStatus()
+		result, err := collector.Run(ctx, store, remote, collector.Options{CollectorGuard: guard, CatalogDestination: config.DestinationID(current.Storage), Sources: env.agentRegistry(), Parsers: parsersFor(env), Decoders: env.agentRegistry(), MachineID: current.MachineID, Now: env.Now, AcceptSession: current.AcceptSession, PendingOnly: true, SelectSession: func(reg archive.SessionRegistration) bool {
+			return reg.InBatch(batchID)
+		}, HistoricalProjectLabel: current.HistoricalProjectLabel, SkillEvidence: current.EffectiveSkillEvidence(), RequireSkillUse: current.RequireSkillUse, CursorDatabase: env.cursorDatabase(), CodexRollouts: lookup, ConfiguredCodexHomes: readHomes, NativeRoots: current.NativeRoots, RepoKey: env.repoKey, Stop: stop})
 		defer result.CloseStagedResults()
-		return reportImportCapacityDrain(stdout, result, err)
+		issueErr := recordSelectedPassSessionIssues(store, result, previous)
+		reportErr := errors.Join(reportImportCapacityDrain(stdout, result, err), issueErr)
+		if stop != nil && stop() {
+			return errors.Join(backfill.ErrStopped, reportErr)
+		}
+		return reportErr
 	}
 }
 
@@ -1051,9 +1207,11 @@ func reportImportCapacityDrain(stdout io.Writer, result collector.Result, collec
 }
 
 func prepareImportLookup(registrationCtx context.Context, lookup *discovery.CodexRolloutLookup, candidates []backfill.Candidate) error {
+	seen := map[string]bool{}
 	for _, candidate := range candidates {
-		if candidate.Harness == archive.HarnessCodex {
-			if _, err := lookup.Thread(registrationCtx, candidate.NativeSessionID); err != nil && registrationCtx.Err() != nil {
+		if candidate.Harness == archive.HarnessCodex && !seen[candidate.NativeSessionID] {
+			seen[candidate.NativeSessionID] = true
+			if _, err := lookup.Thread(registrationCtx, candidate.NativeSessionID); err != nil && (registrationCtx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || lookupIOTimeout(err) || agentapi.HasFailure(err, agentapi.Cleanup)) {
 				return err
 			}
 		}
@@ -1061,6 +1219,11 @@ func prepareImportLookup(registrationCtx context.Context, lookup *discovery.Code
 	for {
 		health, err := lookup.ObserveReadOnly(registrationCtx)
 		if err != nil {
+			if registrationCtx.Err() == nil && lookupNoProgressOnly(err) {
+				// Inventory is not source authority. Each new selection still
+				// validates its current complete history while staging.
+				return nil
+			}
 			return err
 		}
 		if !health.Pending {

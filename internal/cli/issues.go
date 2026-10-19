@@ -254,6 +254,44 @@ func recordSessionIssues(localStore *state.Store, sessionErrs map[string]error, 
 	}
 	issues := classifySessions(sessionErrs, isSubagent)
 	issues.carryRetrying(current, isSubagent)
+	return saveSessionIssues(localStore, current, issues, old)
+}
+
+// recordSelectedPassSessionIssues consumes the collector's merged owner codes,
+// including untouched non-backoff failures. The caller holds collector.lock
+// across the prior snapshot, collection and this aggregate-summary replacement.
+func recordSelectedPassSessionIssues(localStore *state.Store, result collector.Result, previous state.Status) error {
+	current, err := localStore.LoadStatus()
+	if err != nil {
+		return err
+	}
+	isSubagent := subagentLookup(localStore)
+	issues := classifySessions(result.Errors, isSubagent)
+	issues.carryCodes(current.SessionIssues, isSubagent)
+	prior := classifySessions(nil, isSubagent)
+	prior.carryCodes(previous.SessionIssues, isSubagent)
+	current.ReplaceLastError(collector.FailedSessionsProblem(len(result.Errors)), "")
+	_, err = saveSessionIssues(localStore, current, issues, prior.summary())
+	return err
+}
+
+func (i sessionIssues) carryCodes(codes map[string]string, isSubagent func(string) bool) {
+	for id, code := range codes {
+		if _, recorded := i.codes[id]; recorded {
+			continue
+		}
+		i.codes[id] = code
+		tally := i.tallies[code]
+		if isSubagent(id) {
+			tally.subagents++
+		} else {
+			tally.sessions++
+		}
+		i.tallies[code] = tally
+	}
+}
+
+func saveSessionIssues(localStore *state.Store, current state.Status, issues sessionIssues, old string) (string, error) {
 	current.SessionIssues = issues.codes
 	current.IssueCounts = make(map[string]int, len(issues.tallies))
 	for code, tally := range issues.tallies {

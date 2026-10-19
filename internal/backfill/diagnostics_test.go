@@ -17,7 +17,7 @@ import (
 )
 
 func TestRecoveryOutcomesSurvivePlanningAndPrecedence(t *testing.T) {
-	outcomes := []sourcefacts.RecoveryOutcome{sourcefacts.RecoveryBudgetExhausted, sourcefacts.RecoveryInventoryUnavailable, sourcefacts.RecoveryExcluded, sourcefacts.RecoveryAmbiguous, sourcefacts.RecoveryRepositoryUnavailable, sourcefacts.RecoveryMappingConflict, sourcefacts.RecoverySubtreeUnavailable, sourcefacts.RecoveryUnavailable}
+	outcomes := []sourcefacts.RecoveryOutcome{sourcefacts.RecoveryBudgetExhausted, sourcefacts.RecoveryInventoryUnavailable, sourcefacts.RecoveryExcluded, sourcefacts.RecoveryAmbiguous, sourcefacts.RecoveryRepositoryUnavailable, sourcefacts.RecoveryMappingConflict, sourcefacts.RecoverySubtreeUnavailable, sourcefacts.RecoveryUnavailable, sourcefacts.RecoveryOriginCycle, sourcefacts.RecoveryOriginMissing, sourcefacts.RecoveryOriginUnreadable, sourcefacts.RecoveryOriginConflict, sourcefacts.RecoveryOriginUnsupported, sourcefacts.RecoveryOriginUnresolved, sourcefacts.RecoveryOriginLimit, sourcefacts.RecoveryOriginChanged}
 	for _, outcome := range outcomes {
 		t.Run(string(outcome), func(t *testing.T) {
 			w := &work{t: &transcript{}, c: Candidate{StartedAt: fixedNow.Add(-time.Hour)}, res: resolution{skip: SkipWorktreeUnresolved, outcome: outcome}}
@@ -65,7 +65,9 @@ const untrustedDetail DiagnosticDetail = "untrusted transcript content"
 func TestDiagnosticsAreBoundedContentFreeAndJSONOptional(t *testing.T) {
 	p := Plan{Filters: Filters{Harnesses: []string{"codex"}}}
 	for range 5000 {
-		p.Candidates = append(p.Candidates, Candidate{Harness: "codex", NativeSessionID: "private-native-id", TranscriptPath: "/private/native/locator.jsonl", SourceKey: "credential-secret", Skip: SkipWorktreeUnresolved, Diagnostic: candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryAmbiguous, noGapCause)})
+		diagnostic := candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryAmbiguous, noGapCause)
+		diagnostic.Residual = untrustedDetail
+		p.Candidates = append(p.Candidates, Candidate{Harness: "codex", NativeSessionID: "private-native-id", TranscriptPath: "/private/native/locator.jsonl", SourceKey: "credential-secret", Skip: SkipWorktreeUnresolved, Diagnostic: diagnostic})
 	}
 	p.Candidates = append(p.Candidates, Candidate{Skip: SkipWorktreeUnresolved, Diagnostic: &Diagnostic{Detail: untrustedDetail}})
 	var text, structured bytes.Buffer
@@ -233,6 +235,12 @@ func TestNativeRefusalDetailsPreserveJoinsPrivacyAndPrecedence(t *testing.T) {
 		err  error
 		want DiagnosticDetail
 	}{
+		{"lookup allowance", agentapi.WithCause(agentapi.Wrap(agentapi.Limit, secret), agentapi.CauseLookupAllowanceSpent), DetailLookupAllowanceSpent},
+		{"wrapped joined lookup allowance", fmt.Errorf("private path: %w", errors.Join(agentapi.WithCause(agentapi.Wrap(agentapi.Limit, secret), agentapi.CauseLookupAllowanceSpent), archive.ErrRelatedHistory)), DetailLookupAllowanceSpent},
+		{"raw source limit", agentapi.RawLimit(65, 64, nil), DetailSourceSizeLimit},
+		{"source record limit", agentapi.Wrap(agentapi.Limit, archive.ErrRecordTooLarge), DetailSourceRecordLimit},
+		{"history record limit", agentapi.WithCause(agentapi.Wrap(agentapi.Limit, secret), agentapi.CauseHistoryRecordLimit), DetailHistoryRecordLimit},
+		{"history graph limit", agentapi.WithCause(agentapi.Wrap(agentapi.Limit, secret), agentapi.CauseRolloutHistoryDepthLimit), DetailRolloutHistoryDepthLimit},
 		{"history base", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseHistoryBaseUnavailable), DetailHistoryBaseUnavailable},
 		{"rollout tip", agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseRolloutTipAmbiguous), DetailRolloutTipAmbiguous},
 		{"dependency", errors.Join(agentapi.WithCause(agentapi.Wrap(agentapi.Unavailable, secret), agentapi.CauseHistoryDependencyUnavailable), archive.ErrRelatedHistory), DetailHistoryDependencyUnavailable},

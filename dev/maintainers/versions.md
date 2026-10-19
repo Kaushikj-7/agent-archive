@@ -52,6 +52,19 @@ without changing retained fields, parser interpretation or schemas. The version
 
 ## What a bump does
 
+Trusted Codex native-home alias rebasing changes only private indexed locator
+handling. The same approved home identity, confined source and final native
+selection remain required. It neither rewrites durable bindings nor changes
+source bytes, metadata derivation, private proof formats or uploaded schemas;
+filter, adapter, parser and permanent writer versions are unchanged.
+
+Private recovery review/export reuses mapping-file schema 1 and existing exact
+configured/historical assignment semantics. Its opt-in grouped observations are
+not persisted in ordinary plan output, configuration, registrations or uploaded
+data; export is an explicitly authorized local file. It changes no filter,
+adapter, parser, published schema or permanent writer version. Existing mapping
+limits, strict decoding and canonical semantic identity are unchanged.
+
 The collector compares each session's last scan (its scan signature) with the
 running build's parser, filter, and adapter versions. When the filter or
 adapter differs, it re-reads the transcript, filters it again, and
@@ -62,6 +75,17 @@ exactly what was retained); a changed one is published as usual. Nothing
 is re-uploaded unless it changed.
 
 ## Rules for contributors
+
+Confirmed backfill continuation and group publication use the existing import
+stage, batch, pending-publication and readback formats. The fresh confirmed-stage
+policy check adds no durable fields or permission. Native selection, privacy
+filtering and metadata derivation are unchanged, so no filter, adapter, parser,
+schema or permanent writer version changes apply. Retrying an ordinary first
+import stage also reuses that validated stage's original capture instant through
+envelope construction, rather than assigning the later collector clock. This
+restores already-selected capture provenance without changing native filtering,
+adapter output, parser algorithms or persisted fields. Already frozen pending
+publication bytes and proofs are retried unchanged.
 
 - **Any change to filtered output** — a key kept or dropped, a redaction
   pattern, a new block type — bumps `FilterVersion` and adds a section to the
@@ -181,7 +205,10 @@ journals have no selecting commit; ready journals bind the complete source set.
 The same held root durably establishes the writer fence before emitting these
 records. Older configuration writers reject the new marker, and older journal
 readers reject the new outer version rather than interpreting its authority as
-legacy state. Unknown and mixed selecting protocols fail closed.
+legacy state. Unknown and mixed selecting protocols fail closed. Settled
+`publication_version: 5` state marks inline payloads `released` instead of
+storing their bytes; the digests it binds are unchanged, it still reads state
+that kept the bytes, and pending journals refuse `released`.
 
 This is a capability layer over existing configuration, preserving every lower
 consent, search, import and selection protection. It does not redefine ordinary
@@ -456,3 +483,16 @@ concrete binding; it is never sufficient source/admission authority by itself.
 Only exact fresh concrete preparation may reuse a pending reservation. Supported
 cleanup requires a complete matching durable Muse owner/proof/binding; missing,
 mismatched and unsupported pending authority is preserved/refused.
+
+Local-origin-chain recovery changes private repository classification and renewed
+ownership evidence only. Its `local-origin-chain-v1` observer-scope discriminator
+invalidates earlier disposable cached observations, including positive identities
+that did not follow every local origin. The optional closed `Failure` in disposable
+recovery inventory carries only fixed outcomes; older readers may discard it and
+reobserve. Existing admitted ownership, configuration writer fences and published
+proof/source/metadata schemas are unchanged. Public RepoKey/ProjectKey annotation
+algorithms and retained content/metadata derivation are unchanged, so this change
+allocates no filter, adapter, parser or permanent writer version.
+Renewing incomplete entries in existing disposable inventory and recognizing
+unambiguous colon-containing filesystem origins add no persisted fields or
+authority formats; the same version assessment applies.

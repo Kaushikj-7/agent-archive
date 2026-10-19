@@ -1455,25 +1455,25 @@ func importedSessionCounts(cfg config.Config, regs []archive.SessionRegistration
 	return imported, pending, withIssues
 }
 
-// importPending reports whether an imported session is pending under cfg:
-// the one definition state.Outstanding gives, for a caller that has not
-// listed the queued requests.
-func importPending(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (bool, error) {
-	owed, err := importOutstanding(store, cfg, reg)
-	return owed.Pending(), err
-}
-
 // importOutstanding is what an imported session still owes under cfg (see
-// state.Outstanding), or nothing for a session cfg does not publish.
+// state.Outstanding). A first import's unsettled retained stage remains owed
+// when policy holds publication; settled ongoing sessions still follow cfg.
 func importOutstanding(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (state.Outstanding, error) {
-	if !cfg.AcceptSession(reg) {
+	if !cfg.AcceptSession(reg) && reg.StagedImportSHA256 == "" {
 		return state.Outstanding{}, nil
 	}
 	_, requested, err := store.LoadRequest(reg.ArchiveSessionID)
 	if err != nil {
 		return state.Outstanding{}, err
 	}
-	return store.Outstanding(reg, requested)
+	owed, err := store.Outstanding(reg, requested)
+	if err != nil {
+		return owed, err
+	}
+	if !cfg.AcceptSession(reg) && !owed.StagedImport {
+		return state.Outstanding{}, nil
+	}
+	return owed, nil
 }
 
 const (
@@ -3070,6 +3070,10 @@ func (sc statusScreen) addCodexDiscoveryRow(row *statusRow, app appStatus) {
 		}
 		if app.Discovery.Outcomes[string(sourcefacts.RecoveryInventoryUnavailable)] > 0 || app.Discovery.Outcomes[string(sourcefacts.RecoveryBudgetExhausted)] > 0 {
 			row.notes = append(row.notes, statusNote{sc.info(), "Project repository inventory pending. Restore configured checkout access if needed and ensure local Git supports config path queries, then run sync to advance bounded recovery."})
+		}
+		if projectOriginEvidencePending(app.Discovery.Outcomes) {
+			row.mark = s.warnMark()
+			row.notes = append(row.notes, statusNote{s.warnMark(), "Project Git origin evidence pending. Local origin chains must resolve completely before recovery; run backfill --dry-run for the specific reason, then restore origin access or review an exact --map-project assignment."})
 		}
 	}
 	if discoveryEnabled(app) && (len(app.Discovery.Errors) > 0 || app.Discovery.Outcomes["source_unavailable"] > 0) {
