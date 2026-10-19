@@ -226,7 +226,7 @@ func TestReadySelectionCaseAliasAuthorityRefusal(t *testing.T) {
 	}
 }
 
-func TestReadySelectionDigestChargesBothEncoderViews(t *testing.T) {
+func TestReadySelectionDigestChargesOneEncoderView(t *testing.T) {
 	s := newTestStore(t)
 	value := strings.Repeat("x", 96<<10)
 	raw, err := json.Marshal(value)
@@ -234,13 +234,13 @@ func TestReadySelectionDigestChargesBothEncoderViews(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, extra := range []int64{-1, 0} {
-		limit := int64(32<<10) + 2*int64(len(raw)) + extra
+		limit := int64(32<<10) + int64(len(raw)) + extra
 		budget := agentapi.NewNativeReadBudget(limit)
 		read, closeRead := s.WithReadBudget(t.Context(), budget)
 		_, err = read.readyDigest(t.Context(), value)
 		closeRead()
 		if (extra < 0) != (err != nil) {
-			t.Fatalf("two-view allowance extra=%d err=%v", extra, err)
+			t.Fatalf("one-view allowance extra=%d err=%v", extra, err)
 		}
 		if budget.Available() != limit {
 			t.Fatal("digest retained scratch or encoder reservation")

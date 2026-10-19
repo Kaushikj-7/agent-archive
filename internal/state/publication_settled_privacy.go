@@ -68,7 +68,7 @@ func settledPrivacySHA(p SettledPrivacyPreparation) string {
 
 func (s *Store) mintSettledPrivacy(p publishedState) (publishedState, error) {
 	reservation := s.readReservation()
-	release, err := s.publicationValidationLoan(s.durableContext(), p)
+	release, err := s.publicationValidationLoan(p)
 	if err != nil {
 		return p, err
 	}
@@ -171,9 +171,9 @@ func sameOptionalTime(a, b *time.Time) bool {
 // publicationValidationLoan covers metadata decode views, binding slices/maps,
 // and overlapping encoder buffers before any selecting validation allocates.
 // Source payload bytes remain borrowed; validation hashes them without cloning.
-func (s *Store) publicationValidationLoan(ctx context.Context, p publishedState) (func(), error) {
+func (s *Store) publicationValidationLoan(p publishedState) (func(), error) {
 	reservation := s.readReservation()
-	if err := ctx.Err(); err != nil {
+	if err := s.durableContext().Err(); err != nil {
 		return nil, err
 	}
 	if s.resourceBudget == nil {
@@ -222,7 +222,9 @@ func (s *Store) publicationValidationLoan(ctx context.Context, p publishedState)
 }
 
 func (s *Store) validateSelectingPublishedBudgeted(ctx context.Context, p publishedState) error {
-	release, err := s.publicationValidationLoan(ctx, p)
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
+	release, err := s.publicationValidationLoan(p)
 	if err != nil {
 		return err
 	}
@@ -236,10 +238,7 @@ func (s *Store) validateSelectingPublishedBudgeted(ctx context.Context, p publis
 		return e
 	}
 	defer end()
-	if err := p.validateSelectingPublishedWithFacts(facts); err != nil {
-		return err
-	}
-	return ctx.Err()
+	return p.validateSelectingPublishedWithFacts(facts)
 }
 
 func settledPrivacyOwnerChanged(p SettledPrivacyPreparation, next archive.Metadata) bool {
