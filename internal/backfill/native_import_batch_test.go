@@ -38,7 +38,10 @@ func TestNativeImportBatchOrdinaryWireUnchanged(t *testing.T) {
 	if string(raw) != want {
 		t.Fatalf("ordinary wire changed: %s", raw)
 	}
-	home := privateBatchHome(t)
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := SaveBatch(home, b); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +60,10 @@ func TestNativeImportBatchOrdinaryWireUnchanged(t *testing.T) {
 
 func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 	t.Parallel()
-	home := privateBatchHome(t)
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	b := confirmedNativeBatchFixture(t)
 	if err := SaveBatch(home, b); !errors.Is(err, archive.ErrUnsupportedNativeImport) {
 		t.Fatal("generic save minted confirmation", err)
@@ -69,38 +75,41 @@ func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 	if err := SaveBatch(home, b); err != nil {
 		t.Fatal(err)
 	}
+	original, err := os.ReadFile(batchPath(home, b.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing := b
 	for name, change := range map[string]func(*Batch){
 		"drop":        func(b *Batch) { b.NativeImport = nil },
 		"destination": func(b *Batch) { b.DestinationID += "other" },
 		"started":     func(b *Batch) { b.StartedAt = b.StartedAt.Add(time.Second) },
 		"scope": func(b *Batch) {
-			copied := *b.NativeImport
-			copied.ScopeSHA256 = strings.Repeat("f", 64)
-			b.NativeImport = &copied
+			confirmation := *b.NativeImport
+			confirmation.ScopeSHA256 = strings.Repeat("f", 64)
+			b.NativeImport = &confirmation
 		},
 		"instance": func(b *Batch) {
-			copied := *b.NativeImport
-			copied.Instance = strings.Repeat("f", 32)
-			b.NativeImport = &copied
+			confirmation := *b.NativeImport
+			confirmation.Instance = strings.Repeat("f", 32)
+			b.NativeImport = &confirmation
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			home := privateBatchHome(t)
-			b := confirmedNativeBatchFixture(t)
-			if err := local.Write(batchPath(home, b.ID), b); err != nil {
+			home := t.TempDir()
+			if err := os.Chmod(home, 0700); err != nil {
 				t.Fatal(err)
 			}
-			original, err := os.ReadFile(batchPath(home, b.ID))
-			if err != nil {
+			if err := local.Write(batchPath(home, existing.ID), existing); err != nil {
 				t.Fatal(err)
 			}
-			next := b
+			next := existing
 			change(&next)
 			if err := SaveBatch(home, next); err == nil {
 				t.Fatal("authority changed")
 			}
-			got, _ := os.ReadFile(batchPath(home, b.ID))
+			got, _ := os.ReadFile(batchPath(home, existing.ID))
 			if !bytes.Equal(got, original) {
 				t.Fatal("refused write changed control")
 			}
@@ -140,7 +149,10 @@ func TestNativeImportBatchUnreadableAuthorityPreventsFallback(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			home := privateBatchHome(t)
+			home := t.TempDir()
+			if err := os.Chmod(home, 0700); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.MkdirAll(filepath.Join(home, "imports"), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -178,7 +190,10 @@ func TestNativeImportBatchOrdinarySelectorLikeStringsRemainOrdinary(t *testing.T
 	if decoded.NativeImport != nil || decoded.DestinationID != b.DestinationID {
 		t.Fatal("ordinary value changed")
 	}
-	home := privateBatchHome(t)
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := SaveBatch(home, b); err != nil {
 		t.Fatal(err)
 	}
@@ -186,14 +201,4 @@ func TestNativeImportBatchOrdinarySelectorLikeStringsRemainOrdinary(t *testing.T
 	if err != nil || len(batches) != 1 || batches[0].NativeImport != nil {
 		t.Fatal("ordinary persisted batch changed domain", err)
 	}
-}
-
-// privateBatchHome returns an owner-only archive home, as setup creates.
-func privateBatchHome(t *testing.T) string {
-	t.Helper()
-	home := t.TempDir()
-	if err := os.Chmod(home, 0700); err != nil {
-		t.Fatal(err)
-	}
-	return home
 }

@@ -74,7 +74,7 @@ Import history
   agent-archive migrate     Migrate to an isolated catalog destination
 
 Evaluate agents
-  agent-archive eval        Export sessions for an evaluation tool (JSON Lines)
+  agent-archive eval        Export sessions or prepare replay launch plans
 
 Maintenance
   agent-archive uninstall   Remove integrations; keep local data
@@ -1210,7 +1210,7 @@ given.
   --output FILE         Write to FILE (mode 0600) instead of printing it
   --force               With --output, replace FILE if it exists
   --no-preamble         Omit the note addressed to the receiving agent
-  --to NAME             Start claude, codex, or cursor without asking (its
+  --to NAME             Start claude, codex, cursor, or muse (its
                         CLI must be on PATH). It reads a private copy of the
                         handoff, kept 7 days. With no session named, hands
                         off the agent session it runs in, else picks one on
@@ -1229,6 +1229,7 @@ given.
                         and the first 8 characters of SESSION_ID)
   -- ARGS               Everything after -- goes to the launched agent, after
                         any arguments set in config.json's handoff.args
+                        For muse, an initial exec selects the headless command
 Example: agent-archive handoff
 Example: agent-archive handoff --to codex
 Example: agent-archive handoff "fix the auth bug" --harness codex --to claude
@@ -1267,10 +1268,12 @@ Guide: [Export sessions for evaluation](../guides/eval-export.md); records in [e
 ```text
 Usage: agent-archive eval export SESSION_ID... | --ids-from - | --scan
        | --file PATH --harness NAME [--detail metadata|full] [--max-bytes N]
+       agent-archive eval replay-plan --harness muse < request.json
 
 Export sessions for an evaluation tool, one JSON Lines record per session
 (schemas/eval-export.schema.json), from the archive or from transcripts on
-this machine. Read-only and never interactive.
+this machine. Read-only and never interactive. The replay-plan action prepares
+private launch artifacts for an external replay runner.
 ```
 
 No flags.
@@ -1329,6 +1332,25 @@ Nothing is uploaded or written.
 | `--since` | a value | — |
 | `--until` | a value | — |
 | `--workers` | a value | `0` |
+
+## agent-archive eval replay-plan
+
+Guide: [Prepare replay launch artifacts](../guides/muse-replay-plan.md).
+
+```text
+Usage: agent-archive eval replay-plan --harness muse < request.json
+
+Prepare one bounded, versioned JSON replay launch plan from explicit file and
+ownership observations. Planning reads no settings or archive state and changes
+no files. The request and response each have a 64 KiB aggregate limit.
+
+The plan reports qualified:false. Native launch, forwarding qualification and
+runner lifetime belong to the external runner; ordinary handoff stays unchanged.
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--harness` | a value | — |
 
 ## agent-archive uninstall
 

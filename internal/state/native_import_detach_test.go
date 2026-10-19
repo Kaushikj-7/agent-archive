@@ -149,7 +149,7 @@ func TestNativeImportExactUndoPreservesInitialACKAndFrozenStage(t *testing.T) {
 	if err := os.RemoveAll(f.candidate.Root.Canonical); err != nil {
 		t.Fatal(err)
 	}
-	changeNativeImportInitialConfig(t, s, current, configChangeRemoved)
+	changeNativeImportInitialConfig(t, s, current, nativeInitialTestRemoved)
 	reopened, err := Open(s.home)
 	if err != nil {
 		t.Fatal(err)

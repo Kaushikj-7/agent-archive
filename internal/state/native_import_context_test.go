@@ -42,7 +42,7 @@ func TestDurableReadExplicitCancellationOnUnscopedAndWarmStore(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
 				for _, store := range []*Store{s, scoped} {
-					if err := store.CheckDurableReadRootsContext(ctx); !errors.Is(err, context.Canceled) {
+					if _, err := store.inspectDurableReadRoots(ctx); !errors.Is(err, context.Canceled) {
 						t.Fatal("explicit root cancellation lost", err)
 					}
 					if err := store.ResumeGenerationRecoveries(ctx); !errors.Is(err, context.Canceled) {
@@ -58,7 +58,7 @@ func TestDurableReadExplicitCancellationOnUnscopedAndWarmStore(t *testing.T) {
 				if budget.Available() != 8<<20 {
 					t.Fatal("cancelled inspection retained data")
 				}
-				if err := scoped.CheckDurableReadRootsContext(t.Context()); err != nil {
+				if _, err := scoped.inspectDurableReadRoots(t.Context()); err != nil {
 					t.Fatal("cancelled invocation poisoned live receiver", err)
 				}
 				if absent {
@@ -87,7 +87,7 @@ func TestNativeImportExplicitCancellationPreservesTypedAndReleasedAuthority(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := published.ValidateNativeImportAuthority(t.Context(), reg); err != nil {
+	if err := published.validateNativeImportAuthority(t.Context(), reg); err != nil {
 		t.Fatal("actual released authority", err)
 	}
 	assertCancelledNativeImportAuthority(t, published, reg)
@@ -103,7 +103,7 @@ func TestNativeImportExplicitCancellationPreservesTypedAndReleasedAuthority(t *t
 		t.Fatal("successor did not use v5")
 	}
 	assertCancelledNativeImportAuthority(t, published, reg)
-	if err := published.ValidateNativeImportAuthority(t.Context(), reg); err != nil {
+	if err := published.validateNativeImportAuthority(t.Context(), reg); err != nil {
 		t.Fatal("live v5 authority lost", err)
 	}
 	// Independently restore an actual interrupted initial typed ACK, including
@@ -120,7 +120,7 @@ func TestNativeImportExplicitCancellationPreservesTypedAndReleasedAuthority(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	active, err := initial.NativeImportStageActive(t.Context(), reg)
+	active, err := initial.nativeImportStageActive(t.Context(), reg)
 	if err != nil || !active {
 		t.Fatal("actual typed stage not active", err)
 	}
@@ -130,7 +130,7 @@ func TestNativeImportExplicitCancellationPreservesTypedAndReleasedAuthority(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := initial.NativeImportStageActive(ctx, reg); !errors.Is(err, context.Canceled) {
+	if _, err := initial.nativeImportStageActive(ctx, reg); !errors.Is(err, context.Canceled) {
 		t.Fatal("typed authority lost explicit cancellation", err)
 	}
 	guard, err := local.LockCollectorGuard(s.Home())
@@ -158,10 +158,10 @@ func assertCancelledNativeImportAuthority(t *testing.T, published *Published, re
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := published.ValidateNativeImportAuthority(ctx, reg); !errors.Is(err, context.Canceled) {
+	if err := published.validateNativeImportAuthority(ctx, reg); !errors.Is(err, context.Canceled) {
 		t.Fatal("released authority lost explicit cancellation", err)
 	}
-	if _, err := published.NativeImportStageActive(ctx, reg); !errors.Is(err, context.Canceled) {
+	if _, err := published.nativeImportStageActive(ctx, reg); !errors.Is(err, context.Canceled) {
 		t.Fatal("stage classification lost explicit cancellation", err)
 	}
 	after, err := os.ReadFile(published.store.publishedPath(reg.ArchiveSessionID))

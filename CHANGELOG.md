@@ -12,11 +12,6 @@ follow [Semantic Versioning](https://semver.org/).
   and open no storage. Exact batch undo detaches only its memberships. Child
   coverage and missing-worktree/mapping overrides remain unavailable.
 
-- `list --source local` and `show --source local` inspect bounded native sessions
-  before setup, including qualified Muse roots with `--harness muse`. Selected
-  sources receive complete privacy validation. These reads do not open storage,
-  enable capture or write archive state; partial discovery remains explicit.
-
 - Muse installed versions use a bounded, update-disabled `--version` probe.
   Skill installation shares `.agents/skills` with Codex and Cursor. Muse skill
   evidence follows the existing `none`, `metadata` and `body` settings, with
@@ -106,6 +101,25 @@ follow [Semantic Versioning](https://semver.org/).
   retry) from source byte/record limits and missing history evidence. Pending
   sessions keep their existing eligibility checks. Content-free traces count
   lookup scopes, native preparation/inspection attempts and unfinished candidates.
+
+- `eval replay-plan --harness muse` prepares bounded, versioned replay launch
+  artifacts through the production hook planner for an external runner. It
+  preserves observed settings and reports preparation only; native replay
+  forwarding remains unqualified.
+
+- `handoff --to muse` starts a new Muse conversation using the existing private,
+  filtered context artifact and normal permissions. Muse transcripts can also
+  hand off to Claude Code, Codex and Cursor. Ordinary handoffs clear a calling
+  replay marker so the new conversation is not mistaken for a replay. Native
+  Muse replay forwarding remains unqualified.
+
+- `handoff --to muse -- exec ...` places `exec` before the workspace option,
+  so Muse recognizes the headless command and its options.
+
+- `list --source local` and `show --source local` inspect bounded native sessions
+  before setup, including qualified Muse roots with `--harness muse`. Selected
+  sources receive complete privacy validation. These reads do not open storage,
+  enable capture or write archive state; partial discovery remains explicit.
 
 - Prepare guarded capture of newly started Muse sessions, with explicit home,
   project and capture-window checks before ownership. Public setup remains

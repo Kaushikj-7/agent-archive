@@ -752,7 +752,7 @@ func (s *Store) resumeStagedOwner(ctx context.Context, id string, remote StagedR
 			if _, _, selected := published.LastPublished(); !selected && published.state.PublicationVersion == 0 {
 				return s.checkUnpublishedNativeImportRelease(ctx, reg)
 			}
-			return published.ValidateNativeImportAuthority(ctx, reg)
+			return published.validateNativeImportAuthority(ctx, reg)
 		}
 		return nil
 	}

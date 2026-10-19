@@ -9,13 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/nativesessions"
 )
-
-const unsupportedMuseDestination handoffDestination = handoffDestination(agentmeta.Muse)
 
 func TestMusePresenceCannotSelectCurrentOrLatestSession(t *testing.T) {
 	t.Parallel()
@@ -52,7 +49,7 @@ func TestMusePresenceCannotSelectCurrentOrLatestSession(t *testing.T) {
 	}
 }
 
-func TestMuseRuntimeCannotConfigureCaptureOrLaunch(t *testing.T) {
+func TestMuseRuntimeCannotConfigureCapture(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	// Setup takes its ordinary coordination lock before validating answers.
@@ -90,12 +87,10 @@ func TestMuseRuntimeCannotConfigureCaptureOrLaunch(t *testing.T) {
 	if err != nil || len(lock) != 0 {
 		t.Fatalf("ordinary lock contents changed: %q %v", lock, err)
 	}
-	if _, err := buildLaunchSpec(unsupportedMuseDestination, "prompt", "/context.md", home, nil, env); err == nil {
-		t.Fatal("runtime-only integration launched")
-	}
-	opts := handoffOptions{to: "muse"}
-	if message := validateHandoffOptionsWithCatalog(&opts, false, env.agentRegistry().Catalog()); message == "" {
-		t.Fatal("runtime-only launch flag accepted")
+
+	opts := handoffOptions{to: "muse", format: "markdown", source: "auto"}
+	if message := validateHandoffOptionsWithCatalog(&opts, false, env.agentRegistry().Catalog()); message != "" {
+		t.Fatal("Muse handoff target rejected:", message)
 	}
 	if p, f, ok := env.agentRegistry().LookupSources("muse"); !ok || p == nil || f == nil {
 		t.Fatal("explicit local source unavailable")

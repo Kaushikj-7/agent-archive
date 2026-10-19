@@ -14,6 +14,17 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
+type nativeInitialTestMode string
+
+const (
+	nativeInitialTestAbsentFiles nativeInitialTestMode = "absent-files"
+	nativeInitialTestRemoved     nativeInitialTestMode = "removed"
+	nativeInitialTestRevision    nativeInitialTestMode = "revision"
+	nativeInitialTestDestination nativeInitialTestMode = "destination"
+	nativeInitialTestProject     nativeInitialTestMode = "project"
+	nativeInitialTestFlag        nativeInitialTestMode = "flag"
+)
+
 func restoreNativeImportBeforeRelease(t *testing.T, s *Store, reg archive.SessionRegistration, snapshot nativeImportReleaseSnapshot, acknowledged bool) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(s.Home(), importStageRelative(reg.ArchiveSessionID)), snapshot.stage, 0600); err != nil {
@@ -34,14 +45,14 @@ func restoreNativeImportBeforeRelease(t *testing.T, s *Store, reg archive.Sessio
 	}
 }
 
-func changeNativeImportInitialConfig(t *testing.T, s *Store, reg archive.SessionRegistration, mode nativeImportConfigChange) {
+func changeNativeImportInitialConfig(t *testing.T, s *Store, reg archive.SessionRegistration, mode nativeInitialTestMode) {
 	t.Helper()
 	cfg, _, err := config.Load(s.Home())
 	if err != nil {
 		t.Fatal(err)
 	}
 	previous := cfg
-	if mode == configChangeAbsentFiles {
+	if mode == nativeInitialTestAbsentFiles {
 		if len(cfg.NativeRoots) != 1 {
 			t.Fatal("configured root fixture")
 		}
@@ -51,19 +62,17 @@ func changeNativeImportInitialConfig(t *testing.T, s *Store, reg archive.Session
 		return
 	}
 	switch mode {
-	case configChangeAbsentFiles:
-		t.Fatal("absent files leave configuration unchanged")
-	case configChangeRemoved:
+	case nativeInitialTestRemoved:
 		cfg.Harnesses, cfg.ImportedHarnesses, cfg.NativeRoots = []string{"codex"}, []string{"muse"}, nil
-	case configChangeRevision:
+	case nativeInitialTestRevision:
 		cfg.NativeRoots = append([]archive.NativeRoot(nil), cfg.NativeRoots...)
 		cfg.NativeRoots[0].Revision = "two"
-	case configChangeDestination:
+	case nativeInitialTestDestination:
 		cfg.Storage.Bucket += "-changed"
-	case configChangeProject:
+	case nativeInitialTestProject:
 		cfg.Archive.Projects = append([]archive.ProjectActivation(nil), cfg.Archive.Projects...)
 		cfg.Archive.Projects[0].Included = false
-	case configChangeFlag:
+	case nativeInitialTestFlag:
 		// Actual setup cannot remove this sticky flag. Model a stale/out-of-band
 		// writer to prove the consuming API independently fails closed.
 		path := filepath.Join(s.Home(), "config.json")
@@ -82,6 +91,8 @@ func changeNativeImportInitialConfig(t *testing.T, s *Store, reg archive.Session
 			t.Fatal(err)
 		}
 		return
+	case nativeInitialTestAbsentFiles:
+		t.Fatal("unknown fixture mode", mode)
 	default:
 		t.Fatal("unknown fixture mode", mode)
 	}
@@ -96,7 +107,7 @@ func changeNativeImportInitialConfig(t *testing.T, s *Store, reg archive.Session
 
 func TestNativeImportInitialStageUsesCurrentConfiguredRootUntilExactACK(t *testing.T) {
 	for _, acknowledged := range []bool{false, true} {
-		for _, mode := range []nativeImportConfigChange{configChangeAbsentFiles, configChangeRemoved, configChangeRevision, configChangeDestination, configChangeProject, configChangeFlag} {
+		for _, mode := range []nativeInitialTestMode{nativeInitialTestAbsentFiles, nativeInitialTestRemoved, nativeInitialTestRevision, nativeInitialTestDestination, nativeInitialTestProject, nativeInitialTestFlag} {
 			t.Run(fmt.Sprintf("ack=%v/%s", acknowledged, mode), func(t *testing.T) {
 				var snapshot nativeImportReleaseSnapshot
 				s, reg, _ := releasedNativeImportFixture(t, &snapshot)
@@ -112,7 +123,7 @@ func TestNativeImportInitialStageUsesCurrentConfiguredRootUntilExactACK(t *testi
 					t.Fatal(err)
 				}
 				validationErr := s.validateStagedSelection(t.Context(), snapshot.publication)
-				allow := mode == configChangeAbsentFiles || acknowledged && (mode == configChangeRemoved || mode == configChangeRevision)
+				allow := mode == nativeInitialTestAbsentFiles || acknowledged && (mode == nativeInitialTestRemoved || mode == nativeInitialTestRevision)
 				if allow && validationErr != nil {
 					t.Fatal("exact staged source refused", validationErr)
 				}
@@ -123,7 +134,7 @@ func TestNativeImportInitialStageUsesCurrentConfiguredRootUntilExactACK(t *testi
 				candidate.StagedSelection, candidate.CursorSelection, candidate.Selection = nil, nil, nil
 				candidate.JournalVersion = 0
 				_, freezeErr := s.FreezeStagedSelection(t.Context(), reg.ArchiveSessionID, candidate, ReadyPredecessorAbsent, nil)
-				if mode == configChangeAbsentFiles {
+				if mode == nativeInitialTestAbsentFiles {
 					if freezeErr != nil {
 						t.Fatal("unchanged configured root required native filesystem", freezeErr)
 					}
@@ -158,7 +169,7 @@ func TestNativeImportInitialStageNeverBorrowsDifferentACK(t *testing.T) {
 	var snapshot nativeImportReleaseSnapshot
 	s, reg, _ := releasedNativeImportFixture(t, &snapshot)
 	restoreNativeImportBeforeRelease(t, s, reg, snapshot, true)
-	changeNativeImportInitialConfig(t, s, reg, configChangeRemoved)
+	changeNativeImportInitialConfig(t, s, reg, nativeInitialTestRemoved)
 	// Change the candidate's source/body/proof consistently through an actual
 	// factory under the old config is forbidden above. A different stored ACK
 	// also cannot excuse the original candidate: even a marker-only rewrite
@@ -190,15 +201,3 @@ func TestNativeImportInitialStageNeverBorrowsDifferentACK(t *testing.T) {
 		t.Fatal("different selecting ACK excused removed initial root")
 	}
 }
-
-// nativeImportConfigChange names how a test changes the initial import configuration.
-type nativeImportConfigChange string
-
-const (
-	configChangeAbsentFiles nativeImportConfigChange = "absent-files"
-	configChangeDestination nativeImportConfigChange = "destination"
-	configChangeFlag        nativeImportConfigChange = "flag"
-	configChangeProject     nativeImportConfigChange = "project"
-	configChangeRemoved     nativeImportConfigChange = "removed"
-	configChangeRevision    nativeImportConfigChange = "revision"
-)

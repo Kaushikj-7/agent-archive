@@ -138,7 +138,8 @@ func (s *Store) nativeImportStagedCandidate(ctx context.Context, id string, cand
 	var q *StagedSelection
 	var metadata []byte
 	if candidate != nil {
-		if valid := candidate.ValidateReadySlot(id) == nil; !valid {
+		valid := candidate.ValidateReadySlot(id) == nil
+		if !valid {
 			return nil, nil, false, nil
 		}
 		if err := s.validateStagedSelection(ctx, *candidate); err != nil {

@@ -262,9 +262,6 @@ func (s *Store) loadDurableInspectionConfig(home *local.RootedHome) (cfg config.
 }
 
 func (s *Store) inspectDurableReadRoots(ctx context.Context) (cfg config.Config, err error) {
-	if err := ctx.Err(); err != nil {
-		return cfg, err
-	}
 	home, err := local.OpenRootedHome(s.home)
 	if errors.Is(err, os.ErrNotExist) {
 		return cfg, ctx.Err()
@@ -274,16 +271,12 @@ func (s *Store) inspectDurableReadRoots(ctx context.Context) (cfg config.Config,
 	}
 	defer func() { err = errors.Join(err, home.Close()) }()
 	cfg, _, err = s.inspectHeldDurableReadRoots(ctx, home)
-	return cfg, errors.Join(err, ctx.Err())
+	return cfg, err
 }
 
 func (s *Store) inspectHeldDurableReadRoots(ctx context.Context, home *local.RootedHome) (cfg config.Config, found bool, err error) {
-	if err := ctx.Err(); err != nil {
-		return cfg, false, err
-	}
-	bound := *s
-	bound.resourceContext = ctx
-	s = &bound
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	cfg, found, err = s.loadDurableInspectionConfig(home)
 	if err != nil {
 		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
@@ -395,13 +388,7 @@ func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner, 
 // CheckDurableReadRoots refuses anonymous recovery work before native content is read.
 // It reuses bounded observations, never ownership or cleanup authority.
 func (s *Store) CheckDurableReadRoots() error {
-	return s.CheckDurableReadRootsContext(s.durableContext())
-}
-
-// CheckDurableReadRootsContext retains the caller's cancellation through cached
-// and absent-root inspection without creating a new data ownership scope.
-func (s *Store) CheckDurableReadRootsContext(ctx context.Context) error {
-	_, err := s.inspectDurableReadRoots(ctx)
+	_, err := s.inspectDurableReadRoots(s.durableContext())
 	return err
 }
 

@@ -80,12 +80,12 @@ func (s *Store) PrepareNativeAdmission(ctx context.Context, candidate NativeAdmi
 		return nil, errors.New("native source does not belong to intended physical project")
 	}
 	now := time.Now().UTC()
-	var capturedReplay *archive.Replay
+	var replay *archive.Replay
 	if observed.Replay != nil {
-		replay := *observed.Replay
-		capturedReplay = &replay
+		marker := *observed.Replay
+		replay = &marker
 	}
-	reg := archive.SessionRegistration{NativeSessionID: observed.NativeSessionID, Harness: archive.Harness{Name: "muse"}, NativeAdmission: observed.NativeAdmission, Replay: capturedReplay, NativeBinding: binding, TranscriptPath: binding.Path, ProjectRoot: candidate.ProjectRoot, ProjectID: candidate.ProjectID, DestinationID: observed.DestinationID, SessionStartedAt: binding.NativeCreatedAt, RegisteredAt: now, AdmittedAt: now, HookObservedAt: observed.ObservedAt, Origin: archive.SessionOriginHook, StartedAtSource: archive.StartedAtSourceTranscript}
+	reg := archive.SessionRegistration{Replay: replay, NativeSessionID: observed.NativeSessionID, Harness: archive.Harness{Name: "muse"}, NativeAdmission: observed.NativeAdmission, NativeBinding: binding, TranscriptPath: binding.Path, ProjectRoot: candidate.ProjectRoot, ProjectID: candidate.ProjectID, DestinationID: observed.DestinationID, SessionStartedAt: binding.NativeCreatedAt, RegisteredAt: now, AdmittedAt: now, HookObservedAt: observed.ObservedAt, Origin: archive.SessionOriginHook, StartedAtSource: archive.StartedAtSourceTranscript}
 	p := &PreparedNativeAdmission{store: s, candidate: candidate, snapshot: snapshot, input: input, content: content, lookup: lookup, selection: selection, closePass: closePass, reg: reg}
 	if err := p.checkPolicy(ctx, now); err != nil {
 		return nil, err

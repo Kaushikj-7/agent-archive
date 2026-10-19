@@ -18,8 +18,7 @@ import (
 func hostileLocalNative(t *testing.T) (Env, string) {
 	t.Helper()
 	env, data, base, _ := museNativeEnv(t)
-	component := "checkout" + string([]rune{0x202e, 0x009b})
-	workspace := filepath.Join(base, component)
+	workspace := filepath.Join(base, "checkout"+string([]rune{0x202e, 0x009b}))
 	err := os.Mkdir(workspace, 0o700)
 	if err != nil {
 		t.Fatal(err)
