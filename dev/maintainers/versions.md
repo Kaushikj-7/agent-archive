@@ -76,6 +76,17 @@ is re-uploaded unless it changed.
 
 ## Rules for contributors
 
+Confirmed backfill continuation and group publication use the existing import
+stage, batch, pending-publication and readback formats. The fresh confirmed-stage
+policy check adds no durable fields or permission. Native selection, privacy
+filtering and metadata derivation are unchanged, so no filter, adapter, parser,
+schema or permanent writer version changes apply. Retrying an ordinary first
+import stage also reuses that validated stage's original capture instant through
+envelope construction, rather than assigning the later collector clock. This
+restores already-selected capture provenance without changing native filtering,
+adapter output, parser algorithms or persisted fields. Already frozen pending
+publication bytes and proofs are retried unchanged.
+
 - **Any change to filtered output** — a key kept or dropped, a redaction
   pattern, a new block type — bumps `FilterVersion` and adds a section to the
   [filter changelog](../specs/privacy-filter-changelog.md), updates the
@@ -194,7 +205,10 @@ journals have no selecting commit; ready journals bind the complete source set.
 The same held root durably establishes the writer fence before emitting these
 records. Older configuration writers reject the new marker, and older journal
 readers reject the new outer version rather than interpreting its authority as
-legacy state. Unknown and mixed selecting protocols fail closed.
+legacy state. Unknown and mixed selecting protocols fail closed. Settled
+`publication_version: 5` state marks inline payloads `released` instead of
+storing their bytes; the digests it binds are unchanged, it still reads state
+that kept the bytes, and pending journals refuse `released`.
 
 This is a capability layer over existing configuration, preserving every lower
 consent, search, import and selection protection. It does not redefine ordinary

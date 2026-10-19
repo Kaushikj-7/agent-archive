@@ -938,11 +938,12 @@ publication. History reports admitted and remotely verified uploads separately.
   --yes                 Skip the confirmation (required without a terminal)
   --background          Stage and register sessions, then exit; the background
                         collector verifies and uploads them
-Codex preparation and inspection renew bounded native lookup work; source
-safety limits still apply.
+Planning and staging renew bounded lookup work; source safety limits apply.
+Foreground imports verify owned groups before staging more within the quota.
 Codex index paths may use a verified alias of an already trusted native home.
-Incomplete Codex lookup inventory is reported; independently verified sessions
-remain eligible.
+Incomplete native inventory is reported; verified sessions remain eligible.
+Codex own-task refusals distinguish no own records in a validated snapshot from
+own records whose independent activity remains unqualified.
 A dry-run plan does not establish completed staging or publication.
 See agent-archive help backfill history, agent-archive help backfill projects,
 agent-archive help backfill review-projects, and
@@ -1116,8 +1117,9 @@ prefixes select beyond the first 50 filtered previews. Scrolling past the last
 row (o when reading lines) loads another 50; / filters loaded rows only. Word
 queries report their bounded preview window.
 --project requires a directory; --all-projects explicitly broadens the scope.
-Local --latest ranks file modification time and requires complete identity
-coverage. Direct --to uses an exact current identity or asks for selection;
+Local --latest ranks file modification time. Enumeration must finish, and no
+unresolved history may be as recent as the selected session. Missing checkouts
+are skipped. Direct --to uses an exact current identity or asks for selection;
 it never guesses newest. --source archive requires setup. No capture hooks,
 credentials, configuration, registrations or scheduler are created. Private
 temporary launch files survive launch; later local handoffs clean owned files

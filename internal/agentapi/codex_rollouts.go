@@ -149,10 +149,25 @@ type SourceOwnTaskFacts interface {
 	FirstOwnTask(context.Context) (OwnTaskFacts, error)
 }
 
+// OwnRecordState describes records in one validated native own span, never
+// conversational activity, thread completeness or capture permission.
+// Its zero value means the snapshot cannot establish either finite observation.
+type OwnRecordState string
+
+const (
+	// OwnRecordsNone identifies an explicit native own boundary at committed EOF.
+	OwnRecordsNone OwnRecordState = "none"
+	// OwnRecordsPresent identifies records beyond an explicit native own boundary.
+	// Unknown and control records also count; their activity remains unqualified.
+	OwnRecordsPresent OwnRecordState = "present"
+)
+
 // AdmissionEvidence combines facts from one opened snapshot before admission.
 type AdmissionEvidence struct {
 	Binding SourceBinding
 	Task    OwnTaskFacts
+	// OwnRecords is ephemeral diagnostic evidence, excluded from serialized proof.
+	OwnRecords OwnRecordState `json:"-"`
 }
 
 // SourceAdmissionEvidence gathers original facts and first-owned task evidence,

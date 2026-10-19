@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -209,6 +210,14 @@ func TestLargeGrowingSessionPassesStayFast(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("republication after one new record: %s; published state %d KB", grown, stateInfo.Size()>>10)
+	// The settled state keeps the source bundle once; the uploaded source's
+	// compressed bytes are bound by digest, not stored again per payload.
+	if inline := settledInlinePayloads(t, filepath.Join(home, "published", "session-1.json")); inline != 0 {
+		t.Errorf("published state stores %d inline source payloads after the commit settled; want none", inline)
+	}
+	if timed && stateInfo.Size() > 36<<20 {
+		t.Errorf("published state is %d KB, want under 36 MB", stateInfo.Size()>>10)
+	}
 
 	now = now.Add(time.Hour)
 	opts.ParserVersion = "perf-next-parser"
@@ -297,6 +306,37 @@ func appendRecord(t *testing.T, path, line string) {
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// settledInlinePayloads counts the source payloads in a published state file
+// that carry their compressed bytes inline.
+func settledInlinePayloads(t *testing.T, path string) int {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type payload struct {
+		Payload struct {
+			Inline []byte `json:"inline"`
+		} `json:"payload"`
+	}
+	var wire struct {
+		Payloads    []payload `json:"payloads"`
+		Preparation struct {
+			Inputs []payload `json:"inputs"`
+		} `json:"preparation"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, p := range append(wire.Payloads, wire.Preparation.Inputs...) {
+		if len(p.Payload.Inline) > 0 {
+			n++
+		}
+	}
+	return n
 }
 
 func TestLargeNativeGrowingSessionRetainsBudgetProgress(t *testing.T) {

@@ -86,8 +86,9 @@ format fence or per-source limit is changed by this specification edit.
 The lookup constructor accepts an explicit `ForegroundLookup` scheduling policy;
 its omitted/zero policy retains background behavior. The backfill CLI selects
 foreground policy for preparation and inspection, including confirmation's
-preview. Read-only inventory retains its queue, validated observations and
-charged ledger across finite probe/entry slices; a slice that advances neither
+preview and explicit confirmed staging. Read-only inventory retains its queue,
+validated observations and charged ledger across finite probe/entry slices;
+a slice that advances neither
 its cursor nor a completed batch ends with `lookup_no_progress`. Completed
 bounded directory batches commit their opaque cookie before yielding, so a
 changing prefix cannot keep rewinding that slice. Lower distinct cookies remain
@@ -97,8 +98,9 @@ lookup diagnostic; independently provable candidates remain eligible. Required
 native evidence is still checked per source, and genuine I/O, resource, cleanup
 and cancellation failures cannot be swallowed by that incomplete result.
 Requested thread identities are deduplicated. A failed bounded I/O unit returns
-immediately and is not retried by preparation. Confirmed staging/admission/
-publication retains its existing policy and remains delivery PR 4.
+immediately and is not retried by preparation. Foreground confirmed imports
+publish and verify owned groups under the existing durable staging quota;
+scheduled collection retains its bounded background policy.
 
 Maintained actual CLI synthetic tests cover small and 512-candidate cold/warm
 planning, spent preparation, one supported history over five simulated seconds,
@@ -346,7 +348,10 @@ Private pending state retains legacy active-source fields and adds a versioned
 commit identity plus up to 65 exact source payload references: one current and
 64 preserved revisions. The revision-reference limit is independent of the
 64 physical graph-span limit. Inline compressed replay payload descriptors are capped at
-128 MiB in aggregate; the active payload is stored once. The collector preserves
+128 MiB in aggregate; the active payload is stored once. Once a commit settles,
+published state keeps no inline bytes: each inline payload is marked `released`
+and bound by its reference's digest and size, so commit and preparation digests
+are unchanged; journals refuse `released` payloads. The collector preserves
 its existing 32 MiB compressed-object producer, resolver and retained-reader
 ceiling, independently of the 128 MiB filtered-data ceiling. Generic ref-only
 state/storage descriptors can exceed that aggregate and retain a 128 MiB
@@ -450,6 +455,18 @@ first tasks remain rejected until their source observation changes; missing or
 partial tasks and unavailable, canceled or budget-limited reads remain retryable.
 All qualified history imports establish the permanent writer protection before
 registration, including forks whose public native-child flag is absent.
+
+Backfill's optional missing-task diagnostic residual uses only the existing
+validated snapshot spans after final source/current-selection checks.
+`no_own_records_in_snapshot` requires an explicit native own boundary at committed
+EOF with no uncommitted leaf tail; a retained-only boundary is insufficient.
+`own_records_without_task` establishes own-side record presence, including control
+and unknown records, without interpreting independent activity. Missing bounds,
+clipped tails, unavailable spans and failed checks remain unknown. These are
+captured-snapshot observations, not permanent thread emptiness: captured-prefix
+currentness still permits later appends. The existing `own_task_missing` primary
+refusal/action, first-invalid-task precedence, admission and retained outputs are
+unchanged. The ephemeral observation is excluded from serialized source proof.
 
 Each native child carries its own origin, admission, destination and import batch.
 Missing parent links do not prevent independently admissible capture. Relationship

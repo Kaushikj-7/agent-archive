@@ -370,6 +370,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: python3 -B scripts/ci_run_identity.py --output "$RUNNER_TEMP/test-run-identity/identity.json"
       - name: Preserve bounded run identity
+        id: run-identity
         if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -437,12 +438,18 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
+          IDENTITY_ARTIFACT_ID: ${{ steps.run-identity.outputs.artifact-id }}
         run: |
           trusted_base=$(git rev-parse HEAD^1)
           export CI_PERFORMANCE_TRUSTED_BASE="$trusted_base"
           if git cat-file -e "$trusted_base:scripts/ci_performance_gate.py" 2>/dev/null; then
             mkdir -p "$RUNNER_TEMP/trusted-performance"
             git archive "$trusted_base" scripts | tar -x -C "$RUNNER_TEMP/trusted-performance"
+            # Keep the original ZIP: the gate authenticates its API digest if
+            # merging the PR removes its association while this run is active.
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$IDENTITY_ARTIFACT_ID/zip" \
+              > "$RUNNER_TEMP/test-run-identity.zip"
+            export CI_PERFORMANCE_IDENTITY_ARCHIVE="$IDENTITY_ARTIFACT_ID:$RUNNER_TEMP/test-run-identity.zip"
             python3 -B "$RUNNER_TEMP/trusted-performance/scripts/ci_performance_gate.py" \
               --policy "$RUNNER_TEMP/trusted-performance/scripts/ci_performance_policy.json" \
               --exceptions scripts/ci_performance_exceptions.json \

@@ -101,6 +101,9 @@ func runOnePass(env Env, quietOnBusy bool) (collector.Result, error) {
 type passOptions struct {
 	progress func(collector.Progress)
 	stop     func() bool
+	// importBatch restricts explicit import publication to its existing owners.
+	// Ordinary scheduled/sync passes retain discovery and global maintenance.
+	importBatch string
 }
 
 func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, error) {
@@ -153,7 +156,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		return collector.Result{}, fmt.Errorf("open local store: %w", err)
 	}
 
-	guard, unlock, err := lockCollectorGuard(home, collectorPassHolder(quietOnBusy, pass), env.now(), cfg.Storage.EffectiveArchiveFormat())
+	guard, unlock, err := lockCollectorGuard(home, collectorPassHolder(quietOnBusy, pass), env.now(), collectorNeedsGuard(cfg))
 	if err != nil {
 		if errors.Is(err, local.ErrBusy) {
 			if quietOnBusy {
@@ -196,14 +199,13 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 			recoveryErr = recoverPassSessionIndex(ctx, localStore, recoveryBudget)
 		}
 	}
-	rollouts, readHomes, err := passCodexRollouts(ctx, localStore, cfg, env)
+	rollouts, readHomes, err := collectorRollouts(ctx, localStore, cfg, env, pass)
 	if err != nil {
 		recordPreflightError(localStore, err)
 		return collector.Result{}, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, rollouts.Close()) }()
-	observer := &gitremote.IdentityObserver{}
-	_, discoveryErr := discovery.Run(ctx, localStore, cfg, discovery.Options{Sources: registryFor(env), Now: env.Now, Stop: stop, Rollouts: rollouts, RepositoryIdentity: observer.Lookup, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
+	discoveryErr := discoverCollectorPass(ctx, localStore, cfg, env, pass, stop, rollouts)
 	if discoveryErr != nil {
 		recordPreflightError(localStore, errors.Join(recoveryErr, discoveryErr))
 	}
@@ -220,23 +222,16 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 
 	// Registration gets an independent budget after capture and retention,
 	// including their failure paths. It cannot cause either to be skipped.
-	defer func() { _ = publishMachineLocked(context.Background(), home, cfg, env, objectStore, false) }()
+	if pass.importBatch == "" {
+		defer func() { _ = publishMachineLocked(context.Background(), home, cfg, env, objectStore, false) }()
+	}
 	// The previous pass's time, read before this pass overwrites it: the
 	// retention sweep checks the clock against it (see retention.Options).
-	var previousScanAt time.Time
-	if previous, err := localStore.LoadStatus(); err == nil {
-		previousScanAt = previous.LastScanAt
-	}
-	labelHomes := []string{}
-	if cfg.Discovery != nil {
-		labelHomes = append(labelHomes, cfg.Discovery.CodexHomes...)
-	}
-	if len(labelHomes) == 0 {
-		if userHome, err := env.userHomeDir(); err == nil {
-			if file := env.hookFiles(userHome)["codex"]; file != "" {
-				labelHomes = append(labelHomes, filepath.Dir(file))
-			}
-		}
+	previous, _ := localStore.LoadStatus()
+	labelHomes := collectorLabelHomes(cfg, env)
+	var selectSession func(archive.SessionRegistration) bool
+	if pass.importBatch != "" {
+		selectSession = func(reg archive.SessionRegistration) bool { return reg.InBatch(pass.importBatch) }
 	}
 	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
 		CollectorGuard:           guard,
@@ -257,6 +252,8 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		SupplementalEvidence:     skillObserver(env, cfg.EffectiveSkillEvidence()),
 		SkillEvidence:            cfg.EffectiveSkillEvidence(),
 		AcceptSession:            cfg.AcceptSession,
+		SelectSession:            selectSession,
+		PendingOnly:              pass.importBatch != "",
 		HistoricalProjectLabel:   cfg.HistoricalProjectLabel,
 		Now:                      env.Now,
 		RequireSkillUse:          cfg.RequireSkillUse,
@@ -275,13 +272,63 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 	if err != nil {
 		return result, err
 	}
+	if pass.importBatch != "" {
+		// Imported publications already verify their exact source set and
+		// metadata before acknowledging requests or releasing selected staging.
+		// Global verification and retention belong to ordinary collection.
+		return result, recordImportPass(home, cfg, env, localStore, quietOnBusy, result, previous)
+	}
 
 	summary, verifyErr, err := verifyAndRecordPass(ctx, home, cfg, env, localStore, objectStore, quietOnBusy, result)
 	if err != nil {
 		return result, err
 	}
 
-	return finishPassWithRetention(home, env, cfg, localStore, objectStore, previousScanAt, result, summary, verifyErr)
+	return finishPassWithRetention(home, env, cfg, localStore, objectStore, previous.LastScanAt, result, summary, verifyErr)
+}
+
+func collectorRollouts(ctx context.Context, store *state.Store, cfg config.Config, env Env, pass passOptions) (*discovery.CodexRolloutLookup, []string, error) {
+	if pass.importBatch != "" {
+		return foregroundCodexRollouts(ctx, store, cfg, env)
+	}
+	return passCodexRollouts(ctx, store, cfg, env)
+}
+
+func discoverCollectorPass(ctx context.Context, store *state.Store, cfg config.Config, env Env, pass passOptions, stop func() bool, rollouts *discovery.CodexRolloutLookup) error {
+	if pass.importBatch != "" {
+		return nil
+	}
+	observer := &gitremote.IdentityObserver{}
+	_, err := discovery.Run(ctx, store, cfg, discovery.Options{Sources: registryFor(env), Now: env.Now, Stop: stop, Rollouts: rollouts, RepositoryIdentity: observer.Lookup, RepositoryIdentityCurrent: gitremote.ProjectIdentityCurrent})
+	return err
+}
+
+func collectorLabelHomes(cfg config.Config, env Env) []string {
+	homes := []string{}
+	if cfg.Discovery != nil {
+		homes = append(homes, cfg.Discovery.CodexHomes...)
+	}
+	if len(homes) == 0 {
+		if userHome, err := env.userHomeDir(); err == nil {
+			if file := env.hookFiles(userHome)["codex"]; file != "" {
+				homes = append(homes, filepath.Dir(file))
+			}
+		}
+	}
+	return homes
+}
+
+func recordImportPass(home string, cfg config.Config, env Env, store *state.Store, quietOnBusy bool, result collector.Result, previous state.Status) error {
+	if health := passStorageHealth(result); health != "not_checked" {
+		if err := recordStorageHealth(home, cfg, env, quietOnBusy, health); err != nil {
+			return err
+		}
+	}
+	return recordSelectedPassSessionIssues(store, result, previous)
+}
+
+func collectorNeedsGuard(cfg config.Config) bool {
+	return cfg.Storage.EffectiveArchiveFormat() == destination.FormatCatalogV4 || cfg.SupportsStagedSelection()
 }
 
 // verifyAndRecordPass performs read-back verification and records per-session
@@ -298,16 +345,22 @@ func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, en
 			return "", verifyErr, err
 		}
 	}
-	if len(result.Errors) > 0 || len(result.RetryLater) > 0 {
-		// In place of collector.Run's own count of the same sessions; the
-		// pass's other problems stay. A session the pass held on its
-		// backoff schedule keeps its issue (see recordSessionIssues).
-		summary, err = recordSessionIssues(localStore, result.Errors, subagentLookup(localStore), collector.FailedSessionsProblem(len(result.Errors)))
-		if err != nil {
-			return "", verifyErr, err
-		}
+	summary, err = recordPassSessionIssues(localStore, result)
+	if err != nil {
+		return "", verifyErr, err
 	}
 	return summary, verifyErr, nil
+}
+
+// recordPassSessionIssues preserves per-owner failures for both scoped import
+// publication and ordinary collection, independently of global maintenance.
+func recordPassSessionIssues(localStore *state.Store, result collector.Result) (string, error) {
+	if len(result.Errors) == 0 && len(result.RetryLater) == 0 {
+		return "", nil
+	}
+	// Replace collector.Run's count while retaining other problems and the
+	// existing backoff issues for sessions not retried on this pass.
+	return recordSessionIssues(localStore, result.Errors, subagentLookup(localStore), collector.FailedSessionsProblem(len(result.Errors)))
 }
 
 // finishPassWithRetention gives cleanup its own deadline after collection.
