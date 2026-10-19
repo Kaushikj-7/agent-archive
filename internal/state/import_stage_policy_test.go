@@ -39,6 +39,7 @@ func TestConfirmedImportPolicyCauseDistinguishesKnownRefusal(t *testing.T) {
 			bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "test", AdapterVersion: "test-v1", FilterVersion: archive.FilterVersion, CapturedAt: reg.RegisteredAt}, NativeRecords: []map[string]any{{"synthetic": "policy control"}}}
 			mode := cfg.EffectiveSkillEvidence()
 			switch name {
+			case confirmedPolicyAccepted, confirmedPolicyUnreadable, confirmedPolicyMissing:
 			case confirmedPolicyPaused:
 				cfg.Paused = true
 			case confirmedPolicyDisabled:
@@ -55,6 +56,7 @@ func TestConfirmedImportPolicyCauseDistinguishesKnownRefusal(t *testing.T) {
 			}
 			path := filepath.Join(s.Home(), "config.json")
 			switch name {
+			case confirmedPolicyAccepted, confirmedPolicyPaused, confirmedPolicyDisabled, confirmedPolicyDestination, confirmedPolicyHarness, confirmedPolicyPrivacy:
 			case confirmedPolicyUnreadable:
 				if err := os.WriteFile(path, []byte("{synthetic-unreadable"), 0600); err != nil {
 					t.Fatal(err)
