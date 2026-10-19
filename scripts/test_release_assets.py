@@ -537,7 +537,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         bodies = steps(text)
         test = next(body for body in bodies if 'name: Test\n' in body)
         plan = 'python3 -B scripts/run_ci_tier.py --plan --tier full --output release-tier-results/plan.json'
-        run = 'python3 -B scripts/run_ci_tier.py --tier full --suite linux --seconds 2400 --output release-tier-results'
+        run = 'python3 -B scripts/run_ci_tier.py --tier full --suite linux --seconds 3300 --output release-tier-results'
         verify = 'python3 -B scripts/run_ci_tier.py --verify --tier full --suite linux --extra-plan release-tier-results/plan.json --output release-tier-results'
         self.assertLess(test.index(plan), test.index(run))
         self.assertLess(test.index(run), test.index(verify))
@@ -549,9 +549,9 @@ class ReleaseWorkflowTest(unittest.TestCase):
         build = next(body for body in bodies if 'name: Build\n' in body)
         self.assertLess(bodies.index(test), bodies.index(evidence))
         self.assertLess(bodies.index(evidence), bodies.index(build))
-        # The job outlives the tier's 40-minute deadline with room for setup,
-        # vet, scripts and the build.
-        self.assertRegex(text, r'(?m)^    timeout-minutes: 60$')
+        # The job outlives the full Linux tier's 55-minute deadline with room
+        # for setup, vet, scripts and the build.
+        self.assertRegex(text, r'(?m)^    timeout-minutes: 80$')
 
     def native_runs(self, workflow, job):
         found = []
