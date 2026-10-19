@@ -60,7 +60,7 @@ S3 credentials stay in your AWS profile.
 | `refresh-skips/<id>.json` | A session whose metadata this build can't refresh (`metadata_underivable`, or `source_unavailable` when the recorded source is gone), with the parser version and source key it applies to. It is not retried until either changes; `status` counts these as unrefreshable summaries. |
 | `forgotten/<hash>.json` | A record of each session retention or undo removed, so backfill doesn't import it again. |
 | `status.json` | The collector's last pass: scan and publish times, counts, errors. |
-| `status-summary.json` | Bounded [version-1 overview](../../schemas/status-summary.schema.json), written after ordinary collection under its lock. Bound to the capture configuration; not an authority for capture, publication or deletion. |
+| `status-summary.json` | Bounded [version-1 overview](../../schemas/status-summary.schema.json), written after ordinary collection under its lock, including unresolved read-back failures. Scoped imports update only the last successful upload. Bound to the capture configuration, including Muse's window and policy; not an authority for capture, publication or deletion. |
 | `status-progress.json` | Throttled [version-1 phase and counts](../../schemas/status-progress.schema.json) for the active collector. Removed at pass exit; trusted for display only with a matching live PID and collector lock. |
 
 **Pending sessions.** A session is *pending* when these files say the

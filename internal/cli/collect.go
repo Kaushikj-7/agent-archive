@@ -294,7 +294,8 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 	}
 
 	statusProgress.phase(statusVerifying)
-	summary, verifyErr, err := verifyAndRecordPass(ctx, home, cfg, env, localStore, objectStore, quietOnBusy, result)
+	verification, summary, verifyErr, err := verifyAndRecordPass(ctx, home, cfg, env, localStore, objectStore, quietOnBusy, result)
+	statusProgress.verification = &verification
 	if err != nil {
 		return result, err
 	}
@@ -350,22 +351,23 @@ func collectorNeedsGuard(cfg config.Config) bool {
 // verifyAndRecordPass performs read-back verification and records per-session
 // failures, returning the summary it recorded for them ("" when none failed).
 // Verification is returned separately so retention still runs first.
-func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, env Env, localStore *state.Store, objectStore storage.ObjectStore, quietOnBusy bool, result collector.Result) (summary string, verifyErr error, err error) {
+func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, env Env, localStore *state.Store, objectStore storage.ObjectStore, quietOnBusy bool, result collector.Result) (verification verificationSummary, summary string, verifyErr error, err error) {
 	// A read-back verification failure is reported after the retention
 	// sweep: it is no reason to skip cleanup.
-	if _, err := verifyPublicationsWithin(ctx, home, cfg, env, localStore, objectStore); err != nil {
+	verification, err = verifyPublicationsWithin(ctx, home, cfg, env, localStore, objectStore)
+	if err != nil {
 		verifyErr = fmt.Errorf("read-back verification: %w", err)
 	}
 	if health := passStorageHealth(result); health != "not_checked" {
 		if err := recordStorageHealth(home, cfg, env, quietOnBusy, health); err != nil {
-			return "", verifyErr, err
+			return verification, "", verifyErr, err
 		}
 	}
 	summary, err = recordPassSessionIssues(localStore, result)
 	if err != nil {
-		return "", verifyErr, err
+		return verification, "", verifyErr, err
 	}
-	return summary, verifyErr, nil
+	return verification, summary, verifyErr, nil
 }
 
 // recordPassSessionIssues preserves per-owner failures for both scoped import

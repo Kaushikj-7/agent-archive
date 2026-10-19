@@ -298,7 +298,7 @@ func TestStatusSummarySizeDoesNotGrowWithIssues(t *testing.T) {
 	store, err := state.Open(home)
 	must(t, err)
 	must(t, store.SaveStatus(record))
-	must(t, saveStatusSummary(home, cfg, env, env.now(), nil, false))
+	must(t, beginStatusProgress(home, cfg, env).saveSummary(cfg, nil, true))
 	data, err := os.ReadFile(filepath.Join(home, statusSummaryFile))
 	must(t, err)
 	if len(data) > 1024 || strings.Contains(string(data), "synthetic-session") {
@@ -315,7 +315,7 @@ func TestStatusSummaryDoesNotInheritAnotherDestinationsUpload(t *testing.T) {
 	must(t, err)
 	// The legacy collector record retains the old destination's timestamp.
 	must(t, store.SaveStatus(state.Status{LastScanAt: env.now(), LastPublishedAt: env.now().Add(-time.Minute)}))
-	must(t, saveStatusSummary(home, cfg, env, env.now(), nil, false))
+	must(t, beginStatusProgress(home, cfg, env).saveSummary(cfg, nil, true))
 	var summary statusSummary
 	must(t, local.Read(filepath.Join(home, statusSummaryFile), &summary))
 	if !summary.LastPublishedAt.IsZero() {

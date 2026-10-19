@@ -137,7 +137,7 @@ func TestPassThatOnlyHeldARetryRecordsItsIssue(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := pairStatusEnv(t, f.home, f.userHome, f.now, "codex")
-	summary, verifyErr, err := verifyAndRecordPass(t.Context(), f.home, f.cfg, env, f.store, storagetest.NewMemoryStore(), false, collector.Result{RetryLater: held})
+	_, summary, verifyErr, err := verifyAndRecordPass(t.Context(), f.home, f.cfg, env, f.store, storagetest.NewMemoryStore(), false, collector.Result{RetryLater: held})
 	if err != nil || verifyErr != nil {
 		t.Fatalf("verifyAndRecordPass err=%v verify=%v", err, verifyErr)
 	}

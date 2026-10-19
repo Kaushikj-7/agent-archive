@@ -169,6 +169,14 @@ func TestReadBackFailureBacksOffAndDoesNotFailSync(t *testing.T) {
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)
 	env.Now = func() time.Time { return now }
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
+	env.Scheduler = newFakeScheduler(t, "loaded")
+	assertOverview := func(want overviewState) {
+		t.Helper()
+		overview, err := readStatusOverview(env)
+		if err != nil || overview.state != want || want == overviewAttention && !strings.Contains(overview.problem, "read-back") {
+			t.Fatalf("read-back overview=%+v err=%v, want %s", overview, err, want)
+		}
+	}
 
 	var out, errOut bytes.Buffer
 	if code := runSyncCommand(nil, &out, &errOut, env); code != 0 || strings.Contains(out.String(), "read-back") {
@@ -191,6 +199,11 @@ func TestReadBackFailureBacksOffAndDoesNotFailSync(t *testing.T) {
 
 	// Before the retry time nothing is attempted; each later failure waits
 	// longer, up to the cap.
+	assertOverview(overviewAttention)
+	result, err := runOnePass(env, true)
+	defer result.CloseStagedResults()
+	must(t, err)
+	assertOverview(overviewAttention)
 	if summary, err := verifyPublications(home, cfg, env, store, remote); err != nil || summary.Attempted != 0 || summary.Deferred != 1 {
 		t.Fatalf("retried before backoff elapsed: %#v %v", summary, err)
 	}
@@ -212,6 +225,10 @@ func TestReadBackFailureBacksOffAndDoesNotFailSync(t *testing.T) {
 	if summary, err := verifyPublications(home, cfg, env, store, remote); err != nil || summary.Verified != 1 {
 		t.Fatalf("%#v %v", summary, err)
 	}
+	result, err = runOnePass(env, true)
+	defer result.CloseStagedResults()
+	must(t, err)
+	assertOverview(overviewWorking)
 	view, err = readStatus(env)
 	if err != nil {
 		t.Fatal(err)
@@ -234,7 +251,7 @@ func TestReadBackMismatchIsDistinctFromTransientFailure(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if summary, err := verifyPublications(home, cfg, env, store, remote); err != nil || summary.Mismatched != 1 || summary.Failed != 0 {
+	if summary, err := verifyPublications(home, cfg, env, store, remote); err != nil || summary.Mismatched != 1 || summary.Failed != 0 || summary.UnresolvedFailures != 1 {
 		t.Fatalf("%#v %v", summary, err)
 	}
 	record, err := readVerification(home, "s0")
@@ -247,6 +264,9 @@ func TestReadBackMismatchIsDistinctFromTransientFailure(t *testing.T) {
 	}
 	if app := view.Apps[0]; app.VerificationState != "read_back_mismatch" || !strings.Contains(app.VerificationDetail, "mismatch") {
 		t.Fatalf("%+v", app)
+	}
+	if summary, err := verifyPublications(home, cfg, env, store, remote); err != nil || summary.Attempted != 0 || summary.UnresolvedFailures != 1 {
+		t.Fatalf("deferred mismatch disappeared: %+v %v", summary, err)
 	}
 }
 
@@ -264,7 +284,7 @@ func TestReadBackCapsAttemptsPerPassOldestFirst(t *testing.T) {
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)
 	env.Now = func() time.Time { return now }
 	summary, err := verifyPublications(home, cfg, env, store, remote)
-	if err != nil || summary.Attempted != maxVerificationsPerPass || summary.Deferred != 2 {
+	if err != nil || summary.Attempted != maxVerificationsPerPass || summary.Deferred != 2 || summary.UnresolvedFailures != maxVerificationsPerPass {
 		t.Fatalf("%#v %v", summary, err)
 	}
 	for i := range total {
@@ -278,8 +298,18 @@ func TestReadBackCapsAttemptsPerPassOldestFirst(t *testing.T) {
 	}
 	// The next pass reaches the two newest while the first five wait out
 	// their backoff.
-	if summary, err := verifyPublications(home, cfg, env, store, remote); err != nil || summary.Attempted != 2 || summary.Deferred != maxVerificationsPerPass {
+	if summary, err := verifyPublications(home, cfg, env, store, remote); err != nil || summary.Attempted != 2 || summary.Deferred != maxVerificationsPerPass || summary.UnresolvedFailures != total {
 		t.Fatalf("%#v %v", summary, err)
+	}
+	// Existing failures survive both an exhausted budget and a pass cap.
+	now = now.Add(2 * time.Minute)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if summary, err := verifyPublicationsWithin(ctx, home, cfg, env, store, remote); err != nil || summary.Attempted != 0 || summary.Deferred != total || summary.UnresolvedFailures != total {
+		t.Fatalf("budget hid failures: %+v %v", summary, err)
+	}
+	if summary, err := verifyPublications(home, cfg, env, store, remote); err != nil || summary.Attempted != maxVerificationsPerPass || summary.Deferred != 2 || summary.UnresolvedFailures != total {
+		t.Fatalf("pass cap hid failures: %+v %v", summary, err)
 	}
 }
 

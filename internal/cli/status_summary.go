@@ -12,8 +12,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -39,15 +41,16 @@ const (
 // statusSummary is disposable display evidence. Its size does not depend on
 // session history, and it never grants permission to mutate archive state.
 type statusSummary struct {
-	Version         int           `json:"version"`
-	ConfigurationID string        `json:"configuration_id"`
-	ObservedAt      time.Time     `json:"observed_at"`
-	CompletedAt     time.Time     `json:"completed_at,omitzero"`
-	LastPublishedAt time.Time     `json:"last_published_at,omitzero"`
-	Pending         int           `json:"pending"`
-	PendingKnown    bool          `json:"pending_known"`
-	Problem         statusProblem `json:"problem,omitempty"`
-	Notices         int           `json:"notices"`
+	Version              int           `json:"version"`
+	ConfigurationID      string        `json:"configuration_id"`
+	ObservedAt           time.Time     `json:"observed_at"`
+	CompletedAt          time.Time     `json:"completed_at,omitzero"`
+	LastPublishedAt      time.Time     `json:"last_published_at,omitzero"`
+	Pending              int           `json:"pending"`
+	PendingKnown         bool          `json:"pending_known"`
+	Problem              statusProblem `json:"problem,omitempty"`
+	Notices              int           `json:"notices"`
+	VerificationFailures int           `json:"verification_failures,omitempty"`
 }
 
 type statusPhase string
@@ -74,7 +77,24 @@ type statusProgress struct {
 // Writer-protection upgrades and refreshed observation timestamps do not change
 // what a pass collected. Only capture policy, destination and retention do.
 func statusConfigurationID(cfg config.Config) string {
-	cfg = config.Config{
+	// Use plain policy data, not Config's protected-writer serializer: a
+	// projection deliberately omits writer capabilities and issuance floors.
+	policy := struct {
+		MachineID          string                     `json:"machine_id"`
+		Storage            destination.Config         `json:"storage"`
+		DestinationSince   time.Time                  `json:"destination_since"`
+		Archive            archive.Config             `json:"archive"`
+		Harnesses          []string                   `json:"harnesses"`
+		ImportedHarnesses  []string                   `json:"imported_harnesses"`
+		NativeRoots        []archive.NativeRoot       `json:"native_roots"`
+		HistoricalProjects []config.HistoricalProject `json:"historical_projects"`
+		CodexCapture       *config.CodexCaptureConfig `json:"codex_capture"`
+		Discovery          *config.DiscoveryConfig    `json:"discovery"`
+		MuseCapture        *config.MuseCaptureConfig  `json:"muse_capture"`
+		RequireSkillUse    bool                       `json:"require_skill_use"`
+		SkillEvidence      config.SkillEvidence       `json:"skill_evidence"`
+		RetentionDays      int                        `json:"retention_days"`
+	}{
 		MachineID: cfg.MachineID, Storage: cfg.Storage, DestinationSince: cfg.DestinationSince,
 		Archive: cfg.Archive, Harnesses: cfg.Harnesses, ImportedHarnesses: cfg.ImportedHarnesses,
 		NativeRoots: cfg.NativeRoots, HistoricalProjects: cfg.HistoricalProjects,
@@ -82,7 +102,11 @@ func statusConfigurationID(cfg config.Config) string {
 		RequireSkillUse: cfg.RequireSkillUse,
 		SkillEvidence:   cfg.SkillEvidence, RetentionDays: cfg.RetentionDays,
 	}
-	data, _ := json.Marshal(cfg)
+	data, err := json.Marshal(policy)
+	if err != nil {
+		// An empty identity is never accepted by summary or progress readers.
+		return ""
+	}
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:])
 }
@@ -124,7 +148,7 @@ func readStatusFile(root *os.Root, name string, limit int64, value any) (found b
 }
 
 func validStatusSummary(summary statusSummary, configurationID string, now time.Time) bool {
-	if summary.Version != 1 || summary.ConfigurationID != configurationID || summary.ObservedAt.IsZero() || summary.ObservedAt.After(now) || summary.CompletedAt.After(summary.ObservedAt) || summary.LastPublishedAt.After(summary.ObservedAt) || summary.Pending < 0 || summary.Notices < 0 {
+	if configurationID == "" || summary.Version != 1 || summary.ConfigurationID != configurationID || summary.ObservedAt.IsZero() || summary.ObservedAt.After(now) || summary.CompletedAt.After(summary.ObservedAt) || summary.LastPublishedAt.After(summary.ObservedAt) || summary.Pending < 0 || summary.Notices < 0 || summary.VerificationFailures < 0 {
 		return false
 	}
 	switch summary.Problem {
@@ -164,19 +188,22 @@ func summarizedStatusProblem(record state.Status, passErr error) (statusProblem,
 	return statusProblemNone, notices
 }
 
-// saveStatusSummary runs under collector.lock after verification and cleanup.
+// saveSummary runs under collector.lock after verification and cleanup.
 // Reading the already-produced status adds no session or publication enumeration.
-func saveStatusSummary(home string, cfg config.Config, env Env, started time.Time, passErr error, published bool) (err error) {
-	record, err := state.OpenReadOnly(home).LoadStatus()
+func (w *statusProgressWriter) saveSummary(cfg config.Config, passErr error, fullPass bool) (err error) {
+	id, now := statusConfigurationID(cfg), w.env.now().UTC()
+	if id == "" {
+		return errors.New("cannot identify status capture policy")
+	}
+	record, err := state.OpenReadOnly(w.home).LoadStatus()
 	if err != nil {
 		return err
 	}
-	root, err := local.OpenRootedHome(home)
+	root, err := local.OpenRootedHome(w.home)
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	id, now := statusConfigurationID(cfg), env.now().UTC()
 	var previous statusSummary
 	found, readErr := readStatusFile(root.Root, statusSummaryFile, statusFileLimit, &previous)
 	if readErr != nil || !found || !validStatusSummary(previous, id, now) {
@@ -184,16 +211,21 @@ func saveStatusSummary(home string, cfg config.Config, env Env, started time.Tim
 	}
 	summary := previous
 	summary.Version, summary.ConfigurationID, summary.ObservedAt = 1, id, now
-	if !record.LastScanAt.IsZero() && !record.LastScanAt.Before(started) {
-		summary.CompletedAt = now
-		summary.Pending, summary.PendingKnown = record.PendingCount, true
-		// The legacy status timestamp can belong to a prior destination. Only
-		// this pass's publication events or a matching summary establish it.
-		if published {
-			summary.LastPublishedAt = record.LastPublishedAt
+	// A scoped import proves uploads for this configuration, independently
+	// of the last whole-archive scan, pending count and health observations.
+	if w.progress.Published > 0 {
+		summary.LastPublishedAt = w.lastPublishedAt
+	}
+	if fullPass {
+		if !record.LastScanAt.IsZero() && !record.LastScanAt.Before(w.started) {
+			summary.CompletedAt = now
+			summary.Pending, summary.PendingKnown = record.PendingCount, true
+		}
+		summary.Problem, summary.Notices = summarizedStatusProblem(record, passErr)
+		if w.verification != nil {
+			summary.VerificationFailures = w.verification.UnresolvedFailures
 		}
 	}
-	summary.Problem, summary.Notices = summarizedStatusProblem(record, passErr)
 	if err := root.Check(); err != nil {
 		return err
 	}
@@ -201,10 +233,12 @@ func saveStatusSummary(home string, cfg config.Config, env Env, started time.Tim
 }
 
 type statusProgressWriter struct {
-	home     string
-	env      Env
-	started  time.Time
-	progress statusProgress
+	home            string
+	env             Env
+	started         time.Time
+	progress        statusProgress
+	verification    *verificationSummary
+	lastPublishedAt time.Time
 }
 
 func beginStatusProgress(home string, cfg config.Config, env Env) *statusProgressWriter {
@@ -228,6 +262,7 @@ func (w *statusProgressWriter) processed(progress collector.Progress) {
 	w.progress.Processed++
 	if progress.Published {
 		w.progress.Published++
+		w.lastPublishedAt = w.env.now().UTC()
 	}
 	if w.env.now().Sub(w.progress.UpdatedAt) >= statusProgressInterval {
 		w.write()
@@ -244,14 +279,17 @@ func (w *statusProgressWriter) observe(forward func(collector.Progress)) func(co
 }
 
 func (w *statusProgressWriter) write() {
+	if w.progress.ConfigurationID == "" {
+		return
+	}
 	w.progress.UpdatedAt = w.env.now().UTC()
 	_ = local.Write(filepath.Join(w.home, statusProgressFile), w.progress)
 }
 
 func (w *statusProgressWriter) finish(cfg config.Config, passErr error, fullPass bool) {
-	// A scoped import has not checked all sources, verification or retention.
-	if fullPass {
-		if err := saveStatusSummary(w.home, cfg, w.env, w.started, passErr, w.progress.Published > 0); err != nil {
+	// A scoped import updates only proven uploads, never global health.
+	if fullPass || w.progress.Published > 0 {
+		if err := w.saveSummary(cfg, passErr, fullPass); err != nil {
 			// A failed replacement must not leave an older healthy summary looking current.
 			_ = os.Remove(filepath.Join(w.home, statusSummaryFile))
 		}

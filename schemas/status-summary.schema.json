@@ -42,6 +42,11 @@
     "notices": {
       "type": "integer",
       "minimum": 0
+    },
+    "verification_failures": {
+      "description": "Unresolved read-back failures or mismatches, including deferred retries, at the last verification pass.",
+      "type": "integer",
+      "minimum": 0
     }
   },
   "required": [

@@ -164,6 +164,17 @@ func TestStatusReportsImportsWithGapsOrFailedScans(t *testing.T) {
 	if code := runStatusCommand([]string{"--json"}, &out, &out, env); code != 0 || !strings.Contains(out.String(), `"imported_with_issues": 2`) {
 		t.Fatalf("status --json (exit %d):\n%s", code, out.String())
 	}
+	for _, importedOnly := range []bool{false, true} {
+		if importedOnly {
+			cfg = mustLoadConfig(t, home)
+			cfg.Harnesses, cfg.ImportedHarnesses = []string{"claude"}, []string{"codex"}
+			must(t, config.Save(home, cfg))
+		}
+		out.Reset()
+		if code := runStatusCommand([]string{"--issues"}, &out, &out, env); code != 0 || !strings.Contains(out.String(), "2 imported sessions have a capture gap or failed scan") {
+			t.Fatalf("status --issues importedOnly=%v (exit %d):\n%s", importedOnly, code, &out)
+		}
+	}
 }
 
 // Without imports, the text status has no Imported line.

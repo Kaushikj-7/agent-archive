@@ -7,13 +7,17 @@ bodies, discover applications, access credentials, or contact storage.
 
 Collection writes a bounded, versioned advisory summary tied to its configuration,
 plus throttled phase/progress observations while holding the collector lock.
+The summary retains unresolved read-back failures through deferred retries.
+Scoped imports update upload evidence without refreshing global health.
 Status reads saved application detections and makes scheduler queries within one shared 150 ms budget.
 Missing, incompatible, changed-configuration or stale evidence is unknown rather
-than a reason to recompute history. Activity requires current lock/process evidence;
+than a reason to recompute history. Activity requires current collection-holder,
+lock and process evidence; maintenance holders are busy without collection progress;
 an idle scheduled collector is normal. These files never authorize capture,
 publication, deletion or recovery.
 
-`status --issues` explicitly loads detailed problems and capture gaps. Existing
+`status --issues` explicitly loads detailed problems, capture gaps, import failures
+and missing-transcript notices, including imported-only agents. Existing
 app, verbose and version-4 JSON views retain their detailed evidence. Default
 status prints directly, with commands to open the deeper views.
 

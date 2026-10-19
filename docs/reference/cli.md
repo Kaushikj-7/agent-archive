@@ -409,7 +409,8 @@ Missing or stale summaries stay unknown until collection records a new one.
 Detected agents show when setup observed them and whether archiving is enabled;
 detection alone does not prove capture. Default status does not scan sessions.
 No conversations are printed and no cloud request is made.
---issues opens recorded failures, capture gaps and recovery steps.
+--issues opens failures, capture gaps, missing transcripts and recovery steps,
+including problems with imported sessions.
 APP (claude, codex or cursor) shows that app's sessions and projects.
 --verbose opens all capture evidence, project progress, skills, imports,
 codes, exact times, paths and raw errors. --issues cannot be combined
