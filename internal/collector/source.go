@@ -23,8 +23,11 @@ import (
 
 // sourceState carries a provider observation and legacy equality facts.
 type sourceState struct {
-	binding  *agentapi.SourceBinding
-	prepared *preparedNativeValidation
+	skillContent          agentapi.SkillContentJoin
+	skillContentRestored  bool
+	skillContentFinalized bool
+	binding               *agentapi.SourceBinding
+	prepared              *preparedNativeValidation
 	// relocated is where an unbound Codex registration's rollout was read
 	// from when Codex had renamed it (see agentapi.SourceRelocation).
 	relocated   string
@@ -416,7 +419,7 @@ func (r providerReader) filter(ctx context.Context, adapter archive.Adapter, max
 		if r.ref.Kind == archive.SourceKindFile {
 			transcriptFilters.Add(1)
 		}
-		out, err = r.filterOwned(ctx, f, in, c)
+		out, observed.skillContent, err = r.filterSkillContentOwned(ctx, f, in, c)
 	}
 	if err != nil {
 		return out, observed, translateSourceError(r.observePendingHistory(ctx, err))
@@ -879,6 +882,22 @@ func (r providerReader) snapshotBinding(ctx context.Context, snap agentapi.Sourc
 		return nil, errors.New("native original creation evidence changed")
 	}
 	return binding, nil
+}
+
+// Only the active ordinary collector may retain a private skill-content join.
+// Other source consumers and nonattested decorators keep their ordinary filter.
+func (r providerReader) filterSkillContentOwned(ctx context.Context, filter agentapi.TranscriptFilter, in agentapi.NativeInput, c agentapi.FilterContext) (archive.FilteredTranscript, agentapi.SkillContentJoin, error) {
+	if r.resourceOwner != nil && !r.localRead && !r.resourceOwner.reg.Imported() && r.resourceOwner.opts.SupplementalSkillContent != nil {
+		if f, ok := filter.(agentapi.SkillContentJoinFilter); ok && f.SkillContentJoinFor(filter) {
+			out, join, release, err := f.FilterSkillContentLeased(ctx, in, c, r.resourceOwner.readBudget())
+			if err == nil {
+				r.resourceOwner.retainedReleases = append(r.resourceOwner.retainedReleases, release)
+			}
+			return out, join, err
+		}
+	}
+	out, err := r.filterOwned(ctx, filter, in, c)
+	return out, nil, err
 }
 
 func (r providerReader) filterOwned(ctx context.Context, filter agentapi.TranscriptFilter, in agentapi.NativeInput, c agentapi.FilterContext) (archive.FilteredTranscript, error) {

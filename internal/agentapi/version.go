@@ -15,10 +15,12 @@ type ApplicationDiscovery struct {
 // VersionProbeKind restricts host execution to current supported probe operations.
 type VersionProbeKind uint8
 
-// VersionCLI and VersionBundle select executable and bundle metadata observations.
+// VersionCLI, VersionBundle and VersionMuseCLI select fixed native observations.
 const (
 	VersionCLI VersionProbeKind = iota + 1
 	VersionBundle
+	// VersionMuseCLI disables Muse launcher automatic updates for --version.
+	VersionMuseCLI
 )
 
 // VersionProbe supplies only a resolved executable or plist, never arbitrary argv.

@@ -331,6 +331,9 @@ func projectRuntimeSession(r retained, p map[string]any) (map[string]any, error)
 	event := object(p["event"])
 	ek := runtimeEvent(str(event["kind"]))
 	f["event_kind"] = string(ek)
+	if kind == roleRun && ek == eventSkillReadObserved {
+		return projectSkillRead(r, p, event)
+	}
 	if kind == roleRun && (ek == eventAssistantToolCallsCommitted || ek == eventToolResultBatchCommitted) {
 		return projectTools(r, p, event)
 	}
@@ -423,7 +426,7 @@ func optionalRuntime(kind runtimeRole, event runtimeEvent) bool {
 			return false
 		case eventProposed, eventAccepted, eventScheduled, eventSideEffectIntent, eventStarted, eventStatus, eventCompleted, eventFailed, eventCancelled:
 			return true
-		case eventAssistantMessageCommitted, eventAssistantToolCallsCommitted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
+		case eventSkillReadObserved, eventAssistantMessageCommitted, eventAssistantToolCallsCommitted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
 			return false
 		}
 		return false
@@ -436,7 +439,7 @@ func optionalRuntime(kind runtimeRole, event runtimeEvent) bool {
 		return false
 	case eventHookRunStarted, eventHookRunTerminal, eventContextBlockDiagnostic, eventModelRequestConfigured, eventContextBlockUpdated, eventProviderRequestOptionsConfigured, eventModelInputTraceRecorded, eventTaskStreamLinked, eventModelResponseCreated, eventGoalUsageAttribution, eventModelCompleted, eventResourceUsageSampled, eventTerminal, eventAssistantToolCallsCommitted, eventToolResultBatchCommitted, eventSideEffectIntent, eventCompleted, eventFailed:
 		return true
-	case eventAccepted, eventAssistantMessageCommitted, eventCancelled, eventProposed, eventScheduled, eventStarted, eventStatus:
+	case eventSkillReadObserved, eventAccepted, eventAssistantMessageCommitted, eventCancelled, eventProposed, eventScheduled, eventStarted, eventStatus:
 		return false
 	}
 	return false

@@ -28,16 +28,23 @@ func (memoryInput) Records(context.Context, bool, int64, int64, func([]byte) boo
 }
 
 func FuzzMuseNative(f *testing.F) {
-	for _, name := range []string{"synthetic-exec-empty.jsonl", "synthetic-exec-conversation.jsonl", "synthetic-msp-empty.jsonl", "synthetic-msp-conversation.jsonl", "synthetic-native-omissions.jsonl", "synthetic-model-resolution-omissions.jsonl", "synthetic-route-startup.jsonl", "synthetic-own-observations.jsonl", "synthetic-own-tools.jsonl", "synthetic-committed-read-effects.jsonl"} {
+	for _, name := range []string{"synthetic-exec-empty.jsonl", "synthetic-exec-conversation.jsonl", "synthetic-msp-empty.jsonl", "synthetic-msp-conversation.jsonl", "synthetic-native-omissions.jsonl", "synthetic-model-resolution-omissions.jsonl", "synthetic-route-startup.jsonl", "synthetic-own-observations.jsonl", "synthetic-own-tools.jsonl", "synthetic-committed-read-effects.jsonl", "synthetic-skill-read.jsonl"} {
 		raw, e := os.ReadFile(filepath.Join("testdata", name))
 		if e != nil {
 			f.Fatal(e)
 		}
 		f.Add(raw)
 		if name == "synthetic-native-omissions.jsonl" {
+			f.Add(bytes.Replace(raw, []byte(`"parallel_profile":{"kind":"ineligible"}`), []byte(`"parallel_profile":{"kind":"broad_read"}`), 1))
 			read := bytes.Replace(raw, []byte(`"parallel_profile":{"kind":"ineligible"}`), []byte(`"parallel_profile":{"kind":"file_read","subject":"PRIVATE_EFFECT_SUBJECT_SENTINEL"}`), 1)
 			f.Add(bytes.Replace(read, []byte(`"task_completion":{"kind":"terminal","terminal":{"kind":"completed"}}`), []byte(`"task_completion":{"kind":"complete"}`), 1))
 			f.Add(bytes.Replace(read, []byte(`"outcome":{"kind":"completed","output_ref_count":1,"task_completion":{"kind":"terminal","terminal":{"kind":"completed"}}}`), []byte(`"outcome":{"kind":"failed","reason":"PRIVATE_EFFECT_REASON_SENTINEL"}`), 1))
+		}
+		if name == "synthetic-committed-read-effects.jsonl" {
+			broad := bytes.ReplaceAll(raw, []byte(`"read_file"`), []byte(`"read_skill"`))
+			// The exact profile is substituted without retaining a subject.
+			broad = bytes.Replace(broad, []byte(`"parallel_profile":{"kind":"file_read","subject":"PRIVATE_EFFECT_SUBJECT_SENTINEL"}`), []byte(`"parallel_profile":{"kind":"broad_read"}`), 1)
+			f.Add(broad)
 		}
 		if name == "synthetic-exec-empty.jsonl" {
 			f.Add(bytes.Replace(raw, []byte(`,"model_id":"synthetic-model"`), nil, 1))
@@ -71,7 +78,7 @@ func FuzzMuseNative(f *testing.F) {
 }
 
 func FuzzMuseRetained(f *testing.F) {
-	for _, name := range []string{"synthetic-exec-empty.golden.jsonl", "synthetic-msp-conversation.golden.jsonl", "synthetic-native-omissions.golden.jsonl", "synthetic-model-resolution-omissions.golden.jsonl", "synthetic-route-startup.golden.jsonl", "synthetic-own-observations.golden.jsonl", "synthetic-own-tools.golden.jsonl", "synthetic-committed-read-effects.golden.jsonl"} {
+	for _, name := range []string{"synthetic-exec-empty.golden.jsonl", "synthetic-msp-conversation.golden.jsonl", "synthetic-native-omissions.golden.jsonl", "synthetic-model-resolution-omissions.golden.jsonl", "synthetic-route-startup.golden.jsonl", "synthetic-own-observations.golden.jsonl", "synthetic-own-tools.golden.jsonl", "synthetic-committed-read-effects.golden.jsonl", "synthetic-skill-read.golden.jsonl", "synthetic-skill-content.golden.jsonl"} {
 		raw, e := os.ReadFile(filepath.Join("testdata", name))
 		if e != nil {
 			f.Fatal(e)

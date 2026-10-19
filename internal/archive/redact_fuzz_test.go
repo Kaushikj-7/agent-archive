@@ -27,6 +27,9 @@ func FuzzRedactSensitive(f *testing.F) {
 	f.Add(`"` + begin + " " + body + " " + body)
 	f.Fuzz(func(t *testing.T, in string) {
 		once, _ := redactSensitive(in)
+		if once != in && !strings.Contains(once, redactedMarker) {
+			t.Fatal("credential redaction changed content without preserving its marker")
+		}
 		twice, _ := redactSensitive(once)
 		if twice != once {
 			t.Fatalf("not idempotent:\n in   %q\n once %q\n twice %q", in, once, twice)
