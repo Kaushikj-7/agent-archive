@@ -12,9 +12,20 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
+// privateBatchTestHome returns an archive home with the owner-only mode that
+// OpenRootedHome requires; t.TempDir follows the umask.
+func privateBatchTestHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
 func TestNativeImportBatchLockSerializesBeforeRequest(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
+	home := privateBatchTestHome(t)
 	if err := os.Mkdir(filepath.Join(home, "request-locks"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +44,11 @@ func TestNativeImportBatchLockSerializesBeforeRequest(t *testing.T) {
 			return nil
 		})
 	}()
-	<-entered
+	select {
+	case <-entered:
+	case err := <-done:
+		t.Fatal("first batch writer did not enter", err)
+	}
 	acquired := make(chan struct{})
 	second := make(chan error, 1)
 	go func() {
@@ -55,7 +70,7 @@ func TestNativeImportBatchLockSerializesBeforeRequest(t *testing.T) {
 
 func TestNativeImportBatchReplacementRechecksAfterPreparation(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
+	home := privateBatchTestHome(t)
 	if err := local.WriteBytes(filepath.Join(home, "imports", "2026-10-17-1.json"), []byte(`{"undone_at":null}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +90,11 @@ func TestNativeImportBatchReplacementRechecksAfterPreparation(t *testing.T) {
 			return nil
 		})
 	}()
-	<-encoded
+	select {
+	case <-encoded:
+	case err := <-done:
+		t.Fatal("replacement did not prepare", err)
+	}
 	undone := []byte(`{"undone_at":"2026-10-17T12:00:00Z"}`)
 	if err := WithImportBatchLock(t.Context(), home, "2026-10-17-1", func(held *local.RootedHome) error {
 		return local.RootedAtomicWriteChecked(held.Root, "imports/2026-10-17-1.json", func(w io.Writer) error { _, err := w.Write(undone); return err }, func(rename func() error) error { return rename() })
@@ -100,7 +119,7 @@ func TestNativeImportBatchLockInspectionRefusesUnknownContent(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"valid", "name", "content", "directory", "symlink"} {
 		t.Run(mode, func(t *testing.T) {
-			home := t.TempDir()
+			home := privateBatchTestHome(t)
 			if err := WithImportBatchLock(t.Context(), home, "2026-10-17-1", func(*local.RootedHome) error { return nil }); err != nil {
 				t.Fatal(err)
 			}
