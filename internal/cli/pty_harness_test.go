@@ -42,17 +42,20 @@ const ptyHarnessStopGrace = 10 * time.Second
 // after the stop; a script's comes at once. For a caught SIGCONT, macOS
 // resumes the threads on every one, so the next SIGCONT continues such a
 // process, and to one already running it is harmless. A process that stops
-// itself again is reported by waitpid, and fails here.
+// itself again is reported by waitpid, which is asked before running() and
+// before each SIGCONT after the first, so such a stop fails here instead of
+// being continued.
 const ptyHarnessPrelude = `import os as _os, signal as _signal
 def _stopped(signum, frame): raise RuntimeError("stopped at the Go test's deadline")
 _signal.signal(_signal.SIGTERM, _stopped)
 def continue_job(pid, running, pump):
+    _os.kill(pid, _signal.SIGCONT)
     while True:
-        _os.kill(pid, _signal.SIGCONT)
-        if running(): return
         pump()
         changed, status = _os.waitpid(pid, _os.WUNTRACED | _os.WNOHANG)
         if changed: raise RuntimeError('the job stopped or ended again after continuing', status)
+        if running(): return
+        _os.kill(pid, _signal.SIGCONT)
 `
 
 // runPTYScript runs a Python PTY harness script with args and returns what
@@ -133,5 +136,58 @@ finally:
 	}
 	if alive {
 		t.Errorf("the harness's child %d outlived it", pid)
+	}
+}
+
+// continue_job keeps continuing a stopped job until it runs, as when macOS
+// loses the first SIGCONT, and never continues a stop that comes after: one
+// that comes even after the job looks running, as key mode stays on while
+// a job is stopped, is left for the script to see. The child here stops
+// itself and runs on only after a second SIGCONT, simulating a first one
+// that did nothing without the kernel's race.
+func TestPTYHarnessContinuesAStoppedJobUntilItRuns(t *testing.T) {
+	t.Parallel()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("PTY harness requires Python 3")
+	}
+	script := `import os, select, signal, subprocess, sys
+child = r'''
+import os, signal, sys
+continued = [0]
+signal.signal(signal.SIGCONT, lambda *a: continued.__setitem__(0, continued[0] + 1))
+os.kill(os.getpid(), signal.SIGSTOP)
+while continued[0] < 2: signal.pause()
+os.write(1, b'running')
+if sys.argv[1] == 'stops-again':
+    os.kill(os.getpid(), signal.SIGSTOP)
+    os.write(1, b' and continued again')
+'''
+p = subprocess.Popen([sys.executable, '-c', child, sys.argv[1]], stdout=subprocess.PIPE)
+out = b''
+def pump():
+    global out
+    if select.select([p.stdout], [], [], .05)[0]: out += os.read(p.stdout.fileno(), 100)
+try:
+    _, status = os.waitpid(p.pid, os.WUNTRACED)
+    assert os.WIFSTOPPED(status), status
+    try:
+        continue_job(p.pid, lambda: b'running' in out, pump)
+    except RuntimeError as e:
+        print('stopped again', e); sys.exit()
+    while sys.argv[1] == 'stops-again':
+        pid, status = os.waitpid(p.pid, os.WUNTRACED | os.WNOHANG)
+        if pid: print('stopped again', status); sys.exit()
+        if b'again' in out: print('continued twice', out); sys.exit()
+        pump()
+    print('continued')
+finally:
+    p.kill()
+`
+	for mode, want := range map[string]string{"runs-after-two": "continued", "stops-again": "stopped again"} {
+		out, err := runPTYScript(t, python, script, mode)
+		if err != nil || !strings.HasPrefix(string(out), want) {
+			t.Errorf("%s: %v %s, want %q", mode, err, out, want)
+		}
 	}
 }
