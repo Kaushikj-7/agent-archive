@@ -249,23 +249,9 @@ func (s *Store) finishStagedRelease(ctx context.Context, id string, q *StagedSel
 		return err
 	}
 	defer unlock()
-	current, requested, err := s.LoadRequest(id)
+	coveredRequest, err := s.stagedReleaseCoveredRequest(ctx, id, q)
 	if err != nil {
 		return err
-	}
-	coveredRequest := requested
-	if requested && (!q.HadRequest || current.Token != q.CoveredToken) {
-		reg, found, err := s.LoadRegistration(id)
-		if err != nil || !found || reg.NativeImport == nil || reg.NativeImport.Membership.State != archive.NativeImportDetached {
-			return errors.Join(ErrReadySelectionFrozen, err)
-		}
-		digest, err := s.nativeImportStagedAdmissionDigest(ctx, reg, q)
-		if err != nil || digest != q.Core.AdmissionContext {
-			return errors.Join(ErrReadySelectionFrozen, err)
-		}
-		// Only the old selecting ACK is being finished. This later independent
-		// request remains byte-for-byte untouched and is never covered by that ACK.
-		coveredRequest = false
 	}
 	stage, staged, err := s.loadPreparedImportStage(ctx, id)
 	if err != nil {
@@ -307,6 +293,28 @@ func (s *Store) finishStagedRelease(ctx context.Context, id string, q *StagedSel
 	}
 	progress.Phase = stagedReleaseReleased
 	return s.writeDurableGuard(ctx, g, stagedControl(id, stagedReleaseProgressName), progress)
+}
+
+// stagedReleaseCoveredRequest reports whether the current request is the one covered by the selecting ACK; the caller holds the request lock.
+func (s *Store) stagedReleaseCoveredRequest(ctx context.Context, id string, q *StagedSelection) (bool, error) {
+	current, requested, err := s.LoadRequest(id)
+	if err != nil {
+		return false, err
+	}
+	if requested && (!q.HadRequest || current.Token != q.CoveredToken) {
+		reg, found, err := s.LoadRegistration(id)
+		if err != nil || !found || reg.NativeImport == nil || reg.NativeImport.Membership.State != archive.NativeImportDetached {
+			return false, errors.Join(ErrReadySelectionFrozen, err)
+		}
+		digest, err := s.nativeImportStagedAdmissionDigest(ctx, reg, q)
+		if err != nil || digest != q.Core.AdmissionContext {
+			return false, errors.Join(ErrReadySelectionFrozen, err)
+		}
+		// Only the old selecting ACK is being finished. This later independent
+		// request remains byte-for-byte untouched and is never covered by that ACK.
+		return false, nil
+	}
+	return requested, nil
 }
 
 func (s *Store) writeStagedControl(ctx context.Context, id string, name stagedControlName, value any) error {

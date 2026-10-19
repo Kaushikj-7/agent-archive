@@ -154,6 +154,11 @@ func preserveNativeRegistrationAuthority(previous, next archive.SessionRegistrat
 	if admission != nil {
 		return admission.check(next, found)
 	}
+	return preserveNativeBindingAuthority(previous, next, found, prepared)
+}
+
+// preserveNativeBindingAuthority checks checkpoint and binding facts for a write without admission or import authority.
+func preserveNativeBindingAuthority(previous, next archive.SessionRegistration, found bool, prepared *nativeValidationCommit) error {
 	if prepared != nil {
 		if err := prepared.check(previous, next, found); err != nil {
 			return err

@@ -57,7 +57,7 @@ type PreparedNativeImport struct {
 // it owns snapshot and closePass; callers retain their ownership on failure.
 func (s *Store) PrepareNativeImport(ctx context.Context, confirmation *ConfirmedNativeImportBatch, candidate NativeImportCandidate, snapshot agentapi.SourceSnapshot, input agentapi.NativeInput, filter agentapi.TranscriptFilter, filterContext agentapi.FilterContext, lookup agentapi.NativeLocatorLookup, selection string, budget *agentapi.NativeReadBudget, closePass func() error) (*PreparedNativeImport, error) {
 	content, leased, evidence, valid := nativeAdmissionInputs(snapshot, input, filter)
-	if s.hook || !valid || lookup == nil || selection == "" || budget == nil || closePass == nil || candidate.Root.Agent != "muse" || candidate.Root.Validate() != nil || !filepath.IsAbs(candidate.ProjectRoot) || !validNativeAdmissionProjectID(candidate.ProjectID) {
+	if !s.validNativeImportPrepareArguments(valid, candidate, lookup, selection, budget, closePass) {
 		return nil, agentapi.ErrInvalidSourceBinding
 	}
 	release, err := confirmation.borrow(s)
@@ -92,11 +92,24 @@ func (s *Store) PrepareNativeImport(ctx context.Context, confirmation *Confirmed
 	copied := *binding
 	checkpoint := *binding.Checkpoint
 	copied.Checkpoint = &checkpoint
-	p := &PreparedNativeImport{store: s, confirmation: confirmation, releaseConfirmation: release, candidate: candidate, selected: selected, binding: copied, snapshot: snapshot, input: input, content: content, lookup: lookup, selection: selection, closePass: closePass}
 	joined, readContext, closeContext := confirmation.read.withDurableContext(ctx)
-	p.read, p.closeRead = joined.WithReadBudget(readContext, joined.resourceBudget)
-	closeRead := p.closeRead
-	p.closeRead = func() { closeRead(); closeContext() }
+	read, closeRead := joined.WithReadBudget(readContext, joined.resourceBudget)
+	p := &PreparedNativeImport{
+		store:               s,
+		confirmation:        confirmation,
+		releaseConfirmation: release,
+		candidate:           candidate,
+		selected:            selected,
+		binding:             copied,
+		snapshot:            snapshot,
+		input:               input,
+		content:             content,
+		lookup:              lookup,
+		selection:           selection,
+		closePass:           closePass,
+		read:                read,
+		closeRead:           func() { closeRead(); closeContext() },
+	}
 	defer func() {
 		if !keep {
 			p.closeRead()
@@ -107,36 +120,46 @@ func (s *Store) PrepareNativeImport(ctx context.Context, confirmation *Confirmed
 		return nil, err
 	}
 	filterContext.StartedAt = binding.NativeCreatedAt
-	filtered, releaseOutput, err := leased.FilterLeased(ctx, input, filterContext, budget)
-	if err != nil {
-		if releaseOutput != nil {
-			releaseOutput()
-		}
+	if err := p.filterSource(ctx, leased, filter, filterContext, budget); err != nil {
 		return nil, err
 	}
-	if filtered.History != nil || !nativeFilteredStartupMatches(filtered, &p.binding) {
+	keep = true
+	return p, nil
+}
+
+// validNativeImportPrepareArguments reports whether the store and arguments can prepare one ordinary Muse source.
+func (s *Store) validNativeImportPrepareArguments(valid bool, candidate NativeImportCandidate, lookup agentapi.NativeLocatorLookup, selection string, budget *agentapi.NativeReadBudget, closePass func() error) bool {
+	if s.hook || !valid || lookup == nil || selection == "" || budget == nil || closePass == nil {
+		return false
+	}
+	return candidate.Root.Agent == "muse" && candidate.Root.Validate() == nil && filepath.IsAbs(candidate.ProjectRoot) && validNativeAdmissionProjectID(candidate.ProjectID)
+}
+
+// filterSource filters the verified source once, binds its digest and re-verifies; it releases the output on failure.
+func (p *PreparedNativeImport) filterSource(ctx context.Context, leased agentapi.LeasedTranscriptFilter, filter agentapi.TranscriptFilter, filterContext agentapi.FilterContext, budget *agentapi.NativeReadBudget) error {
+	filtered, releaseOutput, err := leased.FilterLeased(ctx, p.input, filterContext, budget)
+	fail := func(err error) error {
 		if releaseOutput != nil {
 			releaseOutput()
 		}
-		return nil, agentapi.ErrInvalidSourceBinding
+		return err
+	}
+	if err != nil {
+		return fail(err)
+	}
+	if filtered.History != nil || !nativeFilteredStartupMatches(filtered, &p.binding) {
+		return fail(agentapi.ErrInvalidSourceBinding)
 	}
 	p.filtered, p.releaseOutput = filtered, releaseOutput
 	p.adapter = preparedImportAdapter{name: filter.Name(), version: filter.Version()}
 	p.filteredDigest, err = p.filterDigest(ctx)
 	if err != nil {
-		if releaseOutput != nil {
-			releaseOutput()
-		}
-		return nil, err
+		return fail(err)
 	}
 	if err := p.verify(ctx); err != nil {
-		if releaseOutput != nil {
-			releaseOutput()
-		}
-		return nil, err
+		return fail(err)
 	}
-	keep = true
-	return p, nil
+	return nil
 }
 
 func selectedNativeImport(h *ConfirmedNativeImportBatch, candidate NativeImportCandidate) (archive.NativeImportBatchSelection, error) {
@@ -273,9 +296,13 @@ func (p *PreparedNativeImport) Close() error {
 	return p.err
 }
 
-type preparedImportAdapter struct{ name, version string }
+type preparedImportAdapter struct {
+	name    string
+	version string
+}
 
-func (a preparedImportAdapter) Name() string    { return a.name }
+func (a preparedImportAdapter) Name() string { return a.name }
+
 func (a preparedImportAdapter) Version() string { return a.version }
 
 func (p *PreparedNativeImport) filterDigest(ctx context.Context) (string, error) {

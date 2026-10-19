@@ -337,6 +337,17 @@ func (s *Store) validateStagedSelectionWithSource(ctx context.Context, p Pending
 	if err != nil || admission != q.Core.AdmissionContext {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
+	if err := s.validateStagedSelectionDigests(ctx, p, q, stage); err != nil {
+		return err
+	}
+	if err := s.validateStagedPendingMetadata(ctx, p, q); err != nil {
+		return err
+	}
+	return s.validateNativeImportStagedConfig(ctx, cfg, reg, p)
+}
+
+// validateStagedSelectionDigests checks the roster, bundle, policy, binding and metadata digests against the staged proof.
+func (s *Store) validateStagedSelectionDigests(ctx context.Context, p PendingPublication, q *StagedSelection, stage ImportStage) error {
 	checks := []struct {
 		value any
 		want  string
@@ -351,10 +362,7 @@ func (s *Store) validateStagedSelectionWithSource(ctx context.Context, p Pending
 	if err != nil || binding != q.Core.BindingSHA256 || readySHA(p.MetadataBytes) != q.Core.MetadataSHA256 {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	if err := s.validateStagedPendingMetadata(ctx, p, q); err != nil {
-		return err
-	}
-	return s.validateNativeImportStagedConfig(ctx, cfg, reg, p)
+	return nil
 }
 
 func (p *Published) saveStagedPublication(pending PendingPublication, at time.Time) error {
