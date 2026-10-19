@@ -33,9 +33,9 @@ const (
 // the record while the lock is held.
 type collectorLockRecord struct {
 	// Holder names the command: "collect", "sync", "backfill import", ...
-	Holder collectorHolder `json:"holder"`
-	PID    int             `json:"pid"`
-	Since  time.Time       `json:"since"`
+	Holder string    `json:"holder"`
+	PID    int       `json:"pid"`
+	Since  time.Time `json:"since"`
 }
 
 // collectLockStuckAfter is how long collector.lock can be held before
@@ -103,7 +103,7 @@ func recordCollectorLock(home, holder string, now time.Time, lock func() (func()
 	_ = os.Remove(path)
 	// Best effort: without the record status cannot call a hold stuck, which
 	// is the safe direction to fail in.
-	_ = local.Write(path, collectorLockRecord{Holder: collectorHolder(holder), PID: os.Getpid(), Since: now.UTC()})
+	_ = local.Write(path, collectorLockRecord{Holder: holder, PID: os.Getpid(), Since: now.UTC()})
 	return func() {
 		_ = os.Remove(path) // a record left behind is overwritten by the next holder
 		unlock()

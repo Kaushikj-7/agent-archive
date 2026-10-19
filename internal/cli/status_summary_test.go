@@ -132,11 +132,18 @@ func TestScopedUploadWithoutMatchingSummaryKeepsGlobalHealthUnknown(t *testing.T
 
 func TestStatusOverviewDistinguishesCollectionFromMaintenance(t *testing.T) {
 	t.Parallel()
-	for _, holder := range []collectorHolder{collectorHolderSync, collectorHolderScheduled, collectorHolderBackfillUpload, collectorHolderLegacyCollect, "purge apply", "migrate", "machine rename", "backfill projects", "backfill undo", "unknown command"} {
-		t.Run(string(holder), func(t *testing.T) {
+	for _, tc := range []struct {
+		holder     string
+		collection bool
+	}{
+		{"sync", true}, {"scheduled collection", true}, {"backfill upload", true}, {"collect", true},
+		{"purge apply", false}, {"migrate", false}, {"machine rename", false},
+		{"backfill projects", false}, {"backfill undo", false}, {"unknown command", false},
+	} {
+		t.Run(tc.holder, func(t *testing.T) {
 			t.Parallel()
 			home, env, cfg, _ := overviewFixture(t)
-			unlock, err := lockCollector(home, string(holder), env.now().Add(-3*time.Hour))
+			unlock, err := lockCollector(home, tc.holder, env.now().Add(-3*time.Hour))
 			must(t, err)
 			defer unlock()
 			// Even matching leftover progress cannot turn maintenance into collection.
@@ -144,12 +151,11 @@ func TestStatusOverviewDistinguishesCollectionFromMaintenance(t *testing.T) {
 			w.phase(statusCollecting)
 			view, err := readStatusOverview(env)
 			must(t, err)
-			switch holder {
-			case collectorHolderSync, collectorHolderScheduled, collectorHolderBackfillUpload, collectorHolderLegacyCollect:
+			if tc.collection {
 				if view.state != overviewAttention || !strings.Contains(view.problem, "expected lifetime") {
 					t.Fatalf("collection lost overdue warning: %+v", view)
 				}
-			default:
+			} else {
 				if view.state == overviewProcessing || view.state == overviewAttention || !strings.Contains(view.background, "another operation") {
 					t.Fatalf("maintenance reported as collection: %+v", view)
 				}

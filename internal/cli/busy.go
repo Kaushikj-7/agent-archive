@@ -13,7 +13,7 @@ func lockHolder(home string) string {
 	if !ok || !processAlive(record.PID) {
 		return "another agent-archive command"
 	}
-	name := "agent-archive " + string(record.Holder)
+	name := "agent-archive " + record.Holder
 	if record.Holder == "collect" {
 		name = "the background collector"
 	}
