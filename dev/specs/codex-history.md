@@ -453,6 +453,18 @@ partial tasks and unavailable, canceled or budget-limited reads remain retryable
 All qualified history imports establish the permanent writer protection before
 registration, including forks whose public native-child flag is absent.
 
+Backfill's optional missing-task diagnostic residual uses only the existing
+validated snapshot spans after final source/current-selection checks.
+`no_own_records_in_snapshot` requires an explicit native own boundary at committed
+EOF with no uncommitted leaf tail; a retained-only boundary is insufficient.
+`own_records_without_task` establishes own-side record presence, including control
+and unknown records, without interpreting independent activity. Missing bounds,
+clipped tails, unavailable spans and failed checks remain unknown. These are
+captured-snapshot observations, not permanent thread emptiness: captured-prefix
+currentness still permits later appends. The existing `own_task_missing` primary
+refusal/action, first-invalid-task precedence, admission and retained outputs are
+unchanged. The ephemeral observation is excluded from serialized source proof.
+
 Each native child carries its own origin, admission, destination and import batch.
 Missing parent links do not prevent independently admissible capture. Relationship
 repair uses the existing registration inventory, scoped to the same native source

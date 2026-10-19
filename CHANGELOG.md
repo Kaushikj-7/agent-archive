@@ -21,6 +21,11 @@ follow [Semantic Versioning](https://semver.org/).
   retained evidence's original capture time. Scoped publication preserves unrelated
   sessions' retry schedules, deferral clocks and actionable issues.
 
+- Codex backfill missing-task diagnostics distinguish a validated snapshot with
+  no own records from own records without task proof. Unknown tails, missing
+  boundaries and dependencies remain uncertain. Text, JSON and private project
+  review preserve the existing refusal and capture requirements.
+
 - `sync` and scheduled collection can publish supported protected legacy imports
   from their frozen staged evidence after native deletion. They acquire the real
   collector guard required for exact publication and recovery.

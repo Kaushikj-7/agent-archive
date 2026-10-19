@@ -31,8 +31,9 @@ const (
 // to their primary skip code. Inventory diagnostics fabricate no candidate count.
 // Detail is a fixed code, never a native ID, path, Git stderr or transcript field.
 type Diagnostic struct {
-	Detail DiagnosticDetail `json:"detail"`
-	Action DiagnosticAction `json:"action"`
+	Detail   DiagnosticDetail `json:"detail"`
+	Action   DiagnosticAction `json:"action"`
+	Residual DiagnosticDetail `json:"residual,omitempty"`
 }
 
 // DiagnosticSummary counts a fixed diagnostic without exposing individual sources.
@@ -155,6 +156,30 @@ const (
 	// DetailSourceAndLookupRequireTheSameChargeLedger describes the source and lookup require the same charge ledger refusal.
 	DetailSourceAndLookupRequireTheSameChargeLedger DiagnosticDetail = DiagnosticDetail(agentapi.CauseSourceAndLookupRequireTheSameChargeLedger)
 )
+
+// Native residuals refine missing-task diagnostics without changing their
+// primary refusal or interpreting own records as independent activity.
+const (
+	// DetailNoOwnRecordsInSnapshot reports no records in a validated native own span.
+	DetailNoOwnRecordsInSnapshot DiagnosticDetail = "no_own_records_in_snapshot"
+	// DetailOwnRecordsWithoutTask reports records without first-own-task proof.
+	DetailOwnRecordsWithoutTask DiagnosticDetail = "own_records_without_task"
+)
+
+var nativeResidualDescriptions = map[DiagnosticDetail]string{
+	DetailNoOwnRecordsInSnapshot: "No own records in the validated source snapshot.",
+	DetailOwnRecordsWithoutTask:  "Own records remain without first own-task evidence; independent activity is unqualified.",
+}
+
+// diagnosticResidual accepts only finite facts for the matching primary refusal.
+func diagnosticResidual(d Diagnostic) DiagnosticDetail {
+	if d.Detail == DetailOwnTaskMissing {
+		if _, known := nativeResidualDescriptions[d.Residual]; known {
+			return d.Residual
+		}
+	}
+	return ""
+}
 
 type diagnosticDescription struct {
 	action DiagnosticAction
@@ -303,9 +328,11 @@ func (p Plan) Diagnostics() []DiagnosticSummary {
 		if !ok {
 			continue
 		}
-		key := string(c.Skip) + "\x00" + string(c.Diagnostic.Detail)
+		residual := diagnosticResidual(*c.Diagnostic)
+		key := string(c.Skip) + "\x00" + string(c.Diagnostic.Detail) + "\x00" + string(residual)
 		summary := counts[key]
 		summary.Skip, summary.Detail, summary.Action = c.Skip, c.Diagnostic.Detail, d.action
+		summary.Residual = residual
 		summary.Count++
 		counts[key] = summary
 	}
@@ -323,7 +350,11 @@ func (p Plan) Diagnostics() []DiagnosticSummary {
 
 func renderDiagnostics(w io.Writer, p Plan) {
 	for _, d := range p.Diagnostics() {
-		terminal.Printf(w, "      %d: %s\n", d.Count, diagnosticDescriptions[d.Detail].text)
+		text := diagnosticDescriptions[d.Detail].text
+		if residual := diagnosticResidual(d.Diagnostic); residual != "" {
+			text = nativeResidualDescriptions[residual]
+		}
+		terminal.Printf(w, "      %d: %s\n", d.Count, text)
 	}
 }
 

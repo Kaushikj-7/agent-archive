@@ -935,7 +935,13 @@ project.
 
 ## Discovery
 
-Discovery is read-only. It never follows a path found inside a transcript. The
+Discovery is read-only. It never follows a path found inside a transcript.
+For a required but unseen native own task, optional `diagnostics[].residual`
+separates `no_own_records_in_snapshot` from `own_records_without_task` using
+validated native span observations. Unknown observations omit the field. The
+primary `related_history_pending` / `own_task_missing` decision and action remain
+unchanged; records are not interpreted as independent activity. Ordinary text and
+the private review projection consume this same final candidate diagnostic. The
 plan runs each app's existing adapter over the whole transcript, as the
 collector will, so the plan's counts are what gets imported. Transcripts that
 would become permanently blocked registrations are skipped instead: those the
