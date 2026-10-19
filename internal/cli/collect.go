@@ -117,6 +117,24 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	return result, err
 }
 
+// admitPassSessionIndexRecovery gives local identity recovery part of the
+// remaining pass budget. Local identity recovery and admission must not depend
+// on credentials or storage availability. Source observation retains its own
+// short budget. The complete authority census precedes the application
+// allowance. Give it part of the remaining pass budget so a census slower than
+// four seconds does not consume every future slice before any owner can be
+// applied.
+func admitPassSessionIndexRecovery(ctx context.Context, localStore *state.Store, started time.Time, stop func() bool) error {
+	if stop() {
+		return nil
+	}
+	recoveryBudget := (collectSoftDeadline - time.Since(started)) / 2
+	if recoveryBudget <= 0 {
+		return nil
+	}
+	return recoverPassSessionIndex(ctx, localStore, recoveryBudget)
+}
+
 // recoverPassSessionIndex runs only after the caller admits a positive soft
 // budget. It preserves real recovery failures for the pass status.
 func recoverPassSessionIndex(ctx context.Context, localStore *state.Store, recoveryBudget time.Duration) error {
@@ -189,18 +207,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		recordPreflightError(localStore, err)
 		return collector.Result{}, err
 	}
-	// Local identity recovery and admission must not depend on credentials or
-	// storage availability. Source observation retains its own short budget.
-	// The complete authority census precedes the application allowance. Give it
-	// part of the remaining pass budget so a census slower than four seconds
-	// does not consume every future slice before any owner can be applied.
-	var recoveryErr error
-	if !stop() {
-		recoveryBudget := (collectSoftDeadline - time.Since(started)) / 2
-		if recoveryBudget > 0 {
-			recoveryErr = recoverPassSessionIndex(ctx, localStore, recoveryBudget)
-		}
-	}
+	recoveryErr := admitPassSessionIndexRecovery(ctx, localStore, started, stop)
 	rollouts, readHomes, err := collectorRollouts(ctx, localStore, cfg, env, pass)
 	if err != nil {
 		recordPreflightError(localStore, err)
