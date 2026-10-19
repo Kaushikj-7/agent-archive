@@ -739,7 +739,7 @@ func TestLongDisplaysArePagedOnATerminal(t *testing.T) {
 		color bool
 	}{
 		{"show", showEnv, []string{"show", id}, true},
-		{"status", statusEnv, []string{"status"}, true},
+		{"status", statusEnv, []string{"status", "--verbose"}, true},
 		{"purge plan", purgeEnv, []string{"purge", "plan"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

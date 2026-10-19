@@ -49,7 +49,7 @@ func TestStatusCountsSessionsWithCaptureGapsNotGapEntries(t *testing.T) {
 		t.Fatalf("sessions=%d gaps=%d sessions with gaps=%d", app.Sessions, len(app.CaptureGaps), app.SessionsWithCaptureGaps)
 	}
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 {
+	if code := runStatusCommand([]string{"codex"}, &out, os.Stderr, env); code != 0 {
 		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
 	text := out.String()

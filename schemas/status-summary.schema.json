@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Local compact status summary",
+  "description": "Private, disposable display evidence only; never authorizes capture, publication, deletion or recovery. Readers reject incompatible versions and configuration IDs.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "configuration_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_published_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "pending": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "pending_known": {
+      "type": "boolean"
+    },
+    "problem": {
+      "enum": [
+        "collection",
+        "storage",
+        "capture",
+        "local_state"
+      ]
+    },
+    "notices": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "verification_failures": {
+      "description": "Unresolved read-back failures or mismatches, including deferred retries, at the last verification pass.",
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "version",
+    "configuration_id",
+    "observed_at",
+    "pending",
+    "pending_known",
+    "notices"
+  ]
+}

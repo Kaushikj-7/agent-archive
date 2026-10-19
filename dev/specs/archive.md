@@ -26,7 +26,7 @@ No Agent Archive account or hosted service is required. The user supplies an exi
 | Command | User-facing behavior |
 | --- | --- |
 | `agent-archive setup` | Guided first-time setup or safe reconfiguration |
-| `agent-archive status` | Show storage, collector, hooks, application capture coverage, pending uploads, and actionable errors |
+| `agent-archive status` | Show compact collection health, uploads, queue and detected agents; `--issues`, `--verbose` and app views open detailed evidence |
 | `agent-archive sync` | Run one collection/upload pass now; preserve queued work on failure |
 | `agent-archive pause` | Persistently pause collection, uploads, and remote cleanup without deleting data |
 | `agent-archive resume` | Resume scheduled work and process pending eligible sessions |
@@ -103,7 +103,7 @@ Codex capture            Verified
 Claude Code capture      Waiting for first session
 ```
 
-Configuration may finish while application verification is pending, but `status` must show that distinction. Never label every integration verified based only on a successful bucket connection.
+Configuration may finish while application verification is pending. Compact `status` distinguishes detected agents from archiving enablement; `status APP` and `status --verbose` show capture and verification evidence. Never label an integration verified based only on a successful bucket connection.
 
 ### Second machine and routine controls
 
@@ -111,7 +111,9 @@ Run `agent-archive setup` again on the second machine with the same bucket and p
 
 `pause` persists across restarts. Hooks perform no new registrations while paused; a running collector finishes or safely stops its current operation and starts no further work. The command reports when paused state is reached. Native application logs remain untouched. On resume, registered eligible sessions can catch up, including activity written to their native transcripts during the pause; this behavior must be stated in command help. Pause is not a privacy exclusion or an instruction to erase evidence. New sessions that began while paused are not discovered retroactively.
 
-`sync` respects paused state and does not implicitly resume. `status` shows last scan and successful publication, pending count, authentication health, per-application trust/verification state, and capture gaps without printing conversation contents. No dashboard is needed for onboarding or routine use.
+`sync` respects paused state and does not implicitly resume. Compact `status` reads a bounded version-1 summary produced after ordinary collection, saved agent detections, and live scheduler/lock/process evidence. It never scans session history, launches agent detection, loads credentials or contacts storage. The scheduler has a shared 150 ms observation budget; the command targets under 500 ms on local storage. Missing, incompatible, changed-policy or stale summaries remain unknown, with no scan fallback. A successful check older than five minutes cannot establish current health. Failed or mismatched read-back checks remain visible through deferred retries. Scoped imports update the last successful upload without refreshing global health or clearing errors. The configuration fingerprint covers capture policy and Muse windows independently of writer-protection serialization. Throttled progress names a phase and counts only while its PID and start time match a live collection holder; maintenance locks report another operation without collection progress or overdue warnings. These disposable local files never authorize capture, publication or deletion. Pausing overrides current activity; changes to capture windows invalidate the prior summary.
+
+`status --issues` opens failures, capture gaps, missing-transcript notices and recovery steps, including problems for imported-only apps. App and verbose views retain detailed capture, authentication and verification evidence; `status --json` retains the version-4 contract. Detailed views may scan history. No status view prints conversation contents or makes cloud requests. See the [compact status proposal](../proposals/compact-status.md) and [local state](../../docs/reference/local-state.md).
 
 ### Normal work
 

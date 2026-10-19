@@ -40,6 +40,15 @@ and the cleanup repair do not turn either failed tagged gate into a pass.
 
 ### Latest development changes
 
+- `status` now shows a compact overview from a saved collection summary and
+  bounded live background checks, without scanning session history. Detected
+  coding agents show their observation age and archiving setting. Missing or
+  stale summaries remain unknown until collection updates them. Failed read-back
+  checks remain visible while awaiting retry; successful imports update the last
+  upload without clearing global errors. Maintenance operations show as busy.
+  Use `status --issues` for failures, capture gaps, imported-session problems and
+  missing transcripts; app, verbose and version-4 JSON views retain their details.
+
 - Muse installed versions use a bounded, update-disabled `--version` probe.
   Skill installation shares `.agents/skills` with Codex and Cursor. Muse skill
   evidence follows the existing `none`, `metadata` and `body` settings, with

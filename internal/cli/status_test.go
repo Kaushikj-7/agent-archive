@@ -26,7 +26,7 @@ func TestStatusBeforeSetupIsPlain(t *testing.T) {
 	if code := Run([]string{"status"}, nil, &out, nil, env); code != 0 {
 		t.Fatal(code)
 	}
-	if want := "Agent Archive  ● Not set up\n\n  Run agent-archive setup to get started.\n"; out.String() != want {
+	if want := "Agent Archive  Not set up\n\nagent-archive setup\n"; out.String() != want {
 		t.Fatalf("status:\n%q\nwant\n%q", out.String(), want)
 	}
 	out.Reset()
@@ -110,7 +110,7 @@ func TestStatusShowsQuarantinedFilesAndUnrefreshableSummaries(t *testing.T) {
 	store, _ := state.Open(home)
 	must(t, store.SaveStatus(state.Status{LastScanAt: now, QuarantinedFiles: []string{"registrations/x.json.corrupt"}, UnrefreshableSummaries: 2}))
 	var out bytes.Buffer
-	if code := Run([]string{"status"}, nil, &out, nil, env); code != 0 {
+	if code := Run([]string{"status", "--verbose"}, nil, &out, nil, env); code != 0 {
 		t.Fatal(code)
 	}
 	if !strings.Contains(out.String(), "! 1 local state file couldn't be read and was moved aside") || !strings.Contains(out.String(), "· 2 session summaries can't be refreshed") {

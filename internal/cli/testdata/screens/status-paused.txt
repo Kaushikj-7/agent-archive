@@ -1,21 +1,17 @@
 $ agent-archive status
-Agent Archive  ● Paused
+Agent Archive  Paused
 
-  ! Collection is paused
-    Run agent-archive resume when ready. Registered sessions can catch up after
-    resume.
+   Background   Paused
+   Last check   No saved check yet
+   Uploads      No saved upload yet
+   Queue        Unknown
 
-Capture
-  ✓ Codex   automatic capture; included projects
-    1 session · 1 archived (1 verified)
-  · Identity recovery: complete
+Detected agents
+   Codex   Archiving enabled   detection unavailable
 
-Storage
-  ✓ s3://team-archive/agent-archive/   reachable · uploaded 1 minute ago
-  · Background collector paused        last scan 1 minute ago
-  ! Bucket privacy not verified
-    this storage can't be inspected; see
-    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+Collection is paused.
 
-More: agent-archive status --verbose · agent-archive status codex
+agent-archive resume
+agent-archive status --issues
+agent-archive status --verbose
 [exit 0]

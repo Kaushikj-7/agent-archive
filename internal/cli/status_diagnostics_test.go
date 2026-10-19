@@ -75,7 +75,7 @@ func TestCursorWaitingChatShowsInStatus(t *testing.T) {
 		t.Fatalf("sync: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 	stdout.Reset()
-	if code := runStatusCommand(nil, &stdout, &stderr, env); code != 0 {
+	if code := runStatusCommand([]string{"cursor"}, &stdout, &stderr, env); code != 0 {
 		t.Fatalf("status: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 	if out := stdout.String(); strings.Contains(out, "Last error") || !strings.Contains(out, "hooks not checked   1 session\n") || !strings.Contains(out, "· 1 chat has no transcript yet (a chat with transcripts turned off in Cursor never gets one)\n") || strings.Contains(out, "uploading") {
@@ -95,13 +95,13 @@ func TestExcludedProjectDiagnosticLeavesStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 || !strings.Contains(out.String(), "Cursor skipped a session in /work/widget") {
+	if code := runStatusCommand([]string{"--issues"}, &out, os.Stderr, env); code != 0 || !strings.Contains(out.String(), "Cursor skipped a session in /work/widget") {
 		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
 	// The project is excluded afterwards: its path must stop appearing.
 	setUpTestConfig(t, home, "/work/kept", at.Add(-time.Hour))
 	out.Reset()
-	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 || strings.Contains(out.String(), "/work/widget") {
+	if code := runStatusCommand([]string{"--issues"}, &out, os.Stderr, env); code != 0 || strings.Contains(out.String(), "/work/widget") {
 		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
 	out.Reset()

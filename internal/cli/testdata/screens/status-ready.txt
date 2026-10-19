@@ -1,17 +1,14 @@
 $ agent-archive status
-Agent Archive  ● Ready
+Agent Archive  Working
 
-Capture
-  ✓ Codex   automatic capture; included projects
-    1 session · 1 archived (1 verified)
-  · Identity recovery: complete
+   Background   On · idle between checks
+   Last check   Completed just now
+   Uploads      Last succeeded just now
+   Queue        0 pending at last check
 
-Storage
-  ✓ s3://team-archive/agent-archive/   reachable · uploaded just now
-  ✓ Background collector on            last scan just now
-  ! Bucket privacy not verified
-    this storage can't be inspected; see
-    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+Detected agents
+   Codex   Archiving enabled   detection unavailable
 
-More: agent-archive status --verbose · agent-archive status codex
+agent-archive status --issues
+agent-archive status --verbose
 [exit 0]

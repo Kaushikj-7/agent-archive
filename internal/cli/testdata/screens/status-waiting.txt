@@ -1,23 +1,16 @@
 $ agent-archive status
-Agent Archive  ● Waiting for capture
+Agent Archive  Status unavailable
 
-  ! Waiting for the first Codex session
-    Start a supported new Codex task in ~/src/web-app, then run agent-archive
-    sync. Hook approval is optional for discovery.
+   Background   On · idle between checks
+   Last check   No saved check yet
+   Uploads      No saved upload yet
+   Queue        Unknown
 
-Capture
-  ! Codex   capture status unknown; included projects   no sessions yet
-    ! Discovery health is unknown or a source is unavailable. Restore source
-      access if needed, then run agent-archive sync for a current bounded scan.
-  ! Identity recovery: unknown; run agent-archive sync for current bounded local
-    evidence.
+Detected agents
+   Codex   Archiving enabled   detection unavailable
 
-Storage
-  ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now
-  ✓ Background collector on            no scan yet
-  ! Bucket privacy not verified
-    this storage can't be inspected; see
-    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+No current summary; the next collection records one.
 
-More: agent-archive status --verbose · agent-archive status codex
+agent-archive status --issues
+agent-archive status --verbose
 [exit 0]

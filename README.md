@@ -75,7 +75,7 @@ Setup edits each included app's hook settings, adds one background job (a Launch
 | Command | What it does | Example |
 | --- | --- | --- |
 | `setup` | Configure apps, projects, and storage. | `agent-archive setup` |
-| `status` | Check capture health and see what to do next; `status claude` shows one app in full. | `agent-archive status` |
+| `status` | Check collection and detected agents; `status --issues` opens problems, and `status claude` shows one app in full. | `agent-archive status` |
 | `sync` | Collect and upload pending sessions now. | `agent-archive sync` |
 | `pause`, `resume` | Pause collection, uploads, and cleanup until you resume ([everyday commands](docs/guides/troubleshooting.md#everyday-commands)). | `agent-archive pause` |
 | `list` | Find archived sessions, by filters or by a few words. | `agent-archive list "retention"` |
