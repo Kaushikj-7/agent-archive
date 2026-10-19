@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -19,7 +20,7 @@ import (
 // Short mode keeps the same assertions with a physical multibatch representative.
 func TestDurableCensusCompletesCombinedRoots(t *testing.T) {
 	for _, entries := range []int{2*durableDirectoryBatch + 1, durableEntryLimit + 1} {
-		t.Run(fmt.Sprint(entries), func(t *testing.T) {
+		t.Run(strconv.Itoa(entries), func(t *testing.T) {
 			if testing.Short() && entries == durableEntryLimit+1 {
 				t.Skip("full 65537-entry physical combined census NOT RUN in short mode")
 			}
