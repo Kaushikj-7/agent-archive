@@ -14,17 +14,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-// privateBatchHome returns an archive home with the owner-only mode that the
-// rooted batch control writer requires; t.TempDir follows the umask.
-func privateBatchHome(t *testing.T) string {
-	t.Helper()
-	home := t.TempDir()
-	if err := os.Chmod(home, 0700); err != nil {
-		t.Fatal(err)
-	}
-	return home
-}
-
 func confirmedNativeBatchFixture(t *testing.T) Batch {
 	t.Helper()
 	at := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
@@ -49,7 +38,10 @@ func TestNativeImportBatchOrdinaryWireUnchanged(t *testing.T) {
 	if string(raw) != want {
 		t.Fatalf("ordinary wire changed: %s", raw)
 	}
-	home := privateBatchHome(t)
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := SaveBatch(home, b); err != nil {
 		t.Fatal(err)
 	}
@@ -66,10 +58,12 @@ func TestNativeImportBatchOrdinaryWireUnchanged(t *testing.T) {
 	}
 }
 
-//lint:ignore tparallel the test is parallel, but its subtests share one home and batch file, in order
 func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 	t.Parallel()
-	home := privateBatchHome(t)
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	b := confirmedNativeBatchFixture(t)
 	if err := SaveBatch(home, b); !errors.Is(err, archive.ErrUnsupportedNativeImport) {
 		t.Fatal("generic save minted confirmation", err)
@@ -85,6 +79,7 @@ func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	existing := b
 	for name, change := range map[string]func(*Batch){
 		"drop":        func(b *Batch) { b.NativeImport = nil },
 		"destination": func(b *Batch) { b.DestinationID += "other" },
@@ -101,12 +96,20 @@ func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			next := b
+			t.Parallel()
+			home := t.TempDir()
+			if err := os.Chmod(home, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := local.Write(batchPath(home, existing.ID), existing); err != nil {
+				t.Fatal(err)
+			}
+			next := existing
 			change(&next)
 			if err := SaveBatch(home, next); err == nil {
 				t.Fatal("authority changed")
 			}
-			got, _ := os.ReadFile(batchPath(home, b.ID))
+			got, _ := os.ReadFile(batchPath(home, existing.ID))
 			if !bytes.Equal(got, original) {
 				t.Fatal("refused write changed control")
 			}
@@ -128,10 +131,8 @@ func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 	}
 }
 
-//lint:ignore tparallel the test is parallel, but its subtests share one home and batch file, in order
 func TestNativeImportBatchUnreadableAuthorityPreventsFallback(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
 	b := confirmedNativeBatchFixture(t)
 	raw, err := json.Marshal(b)
 	if err != nil {
@@ -147,6 +148,11 @@ func TestNativeImportBatchUnreadableAuthorityPreventsFallback(t *testing.T) {
 		"null":                      bytes.Replace(raw, []byte(`"native_import":{`), []byte(`"native_import":null,"ignored":{`), 1),
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			if err := os.Chmod(home, 0700); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.MkdirAll(filepath.Join(home, "imports"), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -184,7 +190,10 @@ func TestNativeImportBatchOrdinarySelectorLikeStringsRemainOrdinary(t *testing.T
 	if decoded.NativeImport != nil || decoded.DestinationID != b.DestinationID {
 		t.Fatal("ordinary value changed")
 	}
-	home := privateBatchHome(t)
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := SaveBatch(home, b); err != nil {
 		t.Fatal(err)
 	}

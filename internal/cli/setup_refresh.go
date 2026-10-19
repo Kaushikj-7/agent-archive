@@ -62,6 +62,8 @@ type refreshPlan struct {
 	// configuration recorded, when that changes.
 	executable string
 	previous   string
+	// replayProtection records a compatibility upgrade without a new window.
+	replayProtection bool
 }
 
 // empty reports whether there is nothing to change.
@@ -69,8 +71,8 @@ func (p refreshPlan) empty() bool { return len(p.journal.Changes) == 0 }
 
 // runSetupRefresh is setup --refresh: it brings the hook files, the
 // collector's LaunchAgent plist and the skill files up to date for the
-// saved configuration and the executable now running, and changes nothing
-// else. It asks no question, needs no terminal, never touches storage,
+// saved configuration and the executable now running, including required writer
+// protection. It asks no question, needs no terminal, never touches storage,
 // credentials, projects, retention, or the LaunchAgent's job load state,
 // with one exception: a plist that changes for a job that is loaded is
 // loaded again, so the job runs the new one. It returns the exit code.
@@ -173,7 +175,11 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 	if err != nil {
 		return plan, userHome, err
 	}
-	if err := protectSetupWriter(home, cfg); err != nil {
+	proposed := cfg
+	if proposed.MuseCapture != nil {
+		proposed.NativeReplayProtection = true
+	}
+	if err := protectSetupWriter(home, cfg, proposed); err != nil {
 		return plan, userHome, err
 	}
 	if plan, err = planSetupRefresh(home, userHome, exe, cfg, env); err != nil {
@@ -261,6 +267,10 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 	}
 	next := cfg
 	next.InstalledExecutable = exe
+	if next.MuseCapture != nil {
+		next.NativeReplayProtection = true
+	}
+	plan.replayProtection = next.NativeReplayProtection && !cfg.NativeReplayProtection
 	claudeDir, dataHome := claudeConfigDir(files), in.commandDataHome()
 	skillChanges, _, err := planAgentSkills(userHome, claudeDir, claudeDir, next, exe, dataHome, env.agentRegistry())
 	if err != nil {
@@ -283,7 +293,7 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 		plan.plist = true
 		plan.definition = in.sched().Words().Definition
 	}
-	if cfg.InstalledExecutable != exe {
+	if cfg.InstalledExecutable != exe || plan.replayProtection {
 		data, err := json.MarshalIndent(next, "", "  ")
 		if err != nil {
 			return plan, err
@@ -293,12 +303,14 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 			return plan, err
 		}
 		changes = append(changes, change)
-		plan.executable, plan.previous = exe, cfg.InstalledExecutable
+		if cfg.InstalledExecutable != exe {
+			plan.executable, plan.previous = exe, cfg.InstalledExecutable
+		}
 	}
 	// The job is left as it is: no file change needs launchd, and none asks
 	// it anything. A new plist for a loaded job is the one thing that does,
 	// since launchd runs the definition it loaded, not the file.
-	plan.journal = setupjournal.Journal{NativeAuthorityProtection: cfg.NativeAuthorityProtection, Changes: changes, Plist: definitionPath(definition), Backend: in.sched().Name(), JobRef: string(in.ref()), FilesOnly: true}
+	plan.journal = setupjournal.Journal{NativeAuthorityProtection: next.NativeAuthorityProtection, NativeAdmissionProtection: next.NativeAdmissionProtection, NativeReplayProtection: next.NativeReplayProtection, Changes: changes, Plist: definitionPath(definition), Backend: in.sched().Name(), JobRef: string(in.ref()), FilesOnly: true}
 	if plan.plist {
 		if err := planJobRestart(&plan, in, userHome, env); err != nil {
 			return plan, err
@@ -412,6 +424,9 @@ func (p refreshPlan) summary() string {
 	}
 	if len(p.skills) > 0 {
 		parts = append(parts, countNoun(len(p.skills), "skill file"))
+	}
+	if p.replayProtection {
+		parts = append(parts, "Muse capture compatibility")
 	}
 	if len(parts) == 0 {
 		parts = append(parts, "the recorded path of agent-archive")

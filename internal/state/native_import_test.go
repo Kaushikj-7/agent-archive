@@ -85,14 +85,14 @@ func TestNativeImportGenericWritersPreserveClosedReceiptAndNeedFence(t *testing.
 	for name, change := range map[string]func(*archive.SessionRegistration){
 		"drop": func(r *archive.SessionRegistration) { r.NativeImport = nil },
 		"replace": func(r *archive.SessionRegistration) {
-			receipt := *r.NativeImport
-			receipt.Membership.ReceiptID = strings.Repeat("d", 32)
-			r.NativeImport = &receipt
+			confirmation := *r.NativeImport
+			confirmation.Membership.ReceiptID = strings.Repeat("d", 32)
+			r.NativeImport = &confirmation
 		},
 		"detach": func(r *archive.SessionRegistration) {
-			receipt := *r.NativeImport
-			receipt.Membership.State = archive.NativeImportDetached
-			r.NativeImport = &receipt
+			confirmation := *r.NativeImport
+			confirmation.Membership.State = archive.NativeImportDetached
+			r.NativeImport = &confirmation
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

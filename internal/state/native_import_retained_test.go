@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -21,6 +22,23 @@ type nativeImportReleaseSnapshot struct {
 	pending     []byte
 	publication PendingPublication
 }
+
+type nativeRetainedTestMode string
+
+const (
+	nativeRetainedTestValid           nativeRetainedTestMode = "valid"
+	nativeRetainedTestMissing         nativeRetainedTestMode = "missing"
+	nativeRetainedTestFuture          nativeRetainedTestMode = "future"
+	nativeRetainedTestTampered        nativeRetainedTestMode = "tampered"
+	nativeRetainedTestPredecessor     nativeRetainedTestMode = "predecessor"
+	nativeRetainedTestOwner           nativeRetainedTestMode = "owner"
+	nativeRetainedTestOrdinary        nativeRetainedTestMode = "ordinary"
+	nativeRetainedTestMetadata        nativeRetainedTestMode = "metadata"
+	nativeRetainedTestProgressMissing nativeRetainedTestMode = "progress-missing"
+	nativeRetainedTestProgressFuture  nativeRetainedTestMode = "progress-future"
+	nativeRetainedTestStage           nativeRetainedTestMode = "stage"
+	nativeRetainedTestCheckpoint      nativeRetainedTestMode = "checkpoint"
+)
 
 // This starts with an actual committed live owner and explicitly arranges an
 // already-owned historical receipt. It does not exercise historical admission.
@@ -131,11 +149,11 @@ func releasedNativeImportFixture(t *testing.T, snapshots ...*nativeImportRelease
 		t.Fatal(err)
 	}
 	nextMetadata.Parser.Version = "successor"
-	nextMetadataBytes, err := json.Marshal(nextMetadata)
+	metadataBytes, err := json.Marshal(nextMetadata)
 	if err != nil {
 		t.Fatal(err)
 	}
-	next := PendingPublication{Bundle: bundle, SourceBytes: source.Bytes, SourceSHA256: source.SHA256, SourceKey: p.SourceKey, MetadataKey: p.MetadataKey, MetadataBytes: nextMetadataBytes, ReadyAt: at.Add(time.Hour), Attempted: true, SkillEvidence: p.SkillEvidence, MetadataOnly: true}
+	next := PendingPublication{Bundle: bundle, SourceBytes: source.Bytes, SourceSHA256: source.SHA256, SourceKey: p.SourceKey, MetadataKey: p.MetadataKey, ReadyAt: at.Add(time.Hour), Attempted: true, SkillEvidence: p.SkillEvidence, MetadataOnly: true, MetadataBytes: metadataBytes}
 	admission, err := archive.NativeImportAdmissionContext(reg)
 	if err != nil {
 		t.Fatal(err)
@@ -148,41 +166,24 @@ func releasedNativeImportFixture(t *testing.T, snapshots ...*nativeImportRelease
 	return f.store, reg, next
 }
 
-// nativeImportReleasedFault names one fixture variation.
-type nativeImportReleasedFault string
-
-const (
-	releasedFaultValid           nativeImportReleasedFault = "valid"
-	releasedFaultMissing         nativeImportReleasedFault = "missing"
-	releasedFaultFuture          nativeImportReleasedFault = "future"
-	releasedFaultTampered        nativeImportReleasedFault = "tampered"
-	releasedFaultPredecessor     nativeImportReleasedFault = "predecessor"
-	releasedFaultOwner           nativeImportReleasedFault = "owner"
-	releasedFaultOrdinary        nativeImportReleasedFault = "ordinary"
-	releasedFaultMetadata        nativeImportReleasedFault = "metadata"
-	releasedFaultProgressMissing nativeImportReleasedFault = "progress-missing"
-	releasedFaultProgressFuture  nativeImportReleasedFault = "progress-future"
-	releasedFaultStage           nativeImportReleasedFault = "stage"
-	releasedFaultCheckpoint      nativeImportReleasedFault = "checkpoint"
-)
-
 func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) {
-	for _, mode := range []nativeImportReleasedFault{releasedFaultValid, releasedFaultMissing, releasedFaultFuture, releasedFaultTampered, releasedFaultPredecessor, releasedFaultOwner, releasedFaultOrdinary, releasedFaultMetadata, releasedFaultProgressMissing, releasedFaultProgressFuture, releasedFaultStage, releasedFaultCheckpoint} {
+	for _, mode := range []nativeRetainedTestMode{nativeRetainedTestValid, nativeRetainedTestMissing, nativeRetainedTestFuture, nativeRetainedTestTampered, nativeRetainedTestPredecessor, nativeRetainedTestOwner, nativeRetainedTestOrdinary, nativeRetainedTestMetadata, nativeRetainedTestProgressMissing, nativeRetainedTestProgressFuture, nativeRetainedTestStage, nativeRetainedTestCheckpoint} {
 		t.Run(string(mode), func(t *testing.T) {
 			s, reg, next := releasedNativeImportFixture(t)
 			path := filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseReceiptName))
 			switch mode {
-			case releasedFaultValid:
-			case releasedFaultMissing:
+			case nativeRetainedTestValid:
+				// Keep the valid fixture unchanged.
+			case nativeRetainedTestMissing:
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
 				}
-			case releasedFaultFuture, releasedFaultTampered:
+			case nativeRetainedTestFuture, nativeRetainedTestTampered:
 				raw, err := os.ReadFile(path)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if mode == releasedFaultFuture {
+				if mode == nativeRetainedTestFuture {
 					raw = bytes.Replace(raw, []byte(`"version":3`), []byte(`"version":99`), 1)
 				} else {
 					raw = append(raw[:len(raw)-2], []byte(`,"future":true}`)...)
@@ -190,10 +191,10 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 				if err := os.WriteFile(path, raw, 0600); err != nil {
 					t.Fatal(err)
 				}
-			case releasedFaultPredecessor:
+			case nativeRetainedTestPredecessor:
 				next.Preparation.PredecessorSHA256 = strings.Repeat("a", 64)
-			case releasedFaultOwner, releasedFaultOrdinary:
-				if mode == releasedFaultOrdinary {
+			case nativeRetainedTestOwner, nativeRetainedTestOrdinary:
+				if mode == nativeRetainedTestOrdinary {
 					reg.NativeImport = nil
 				} else {
 					reg.RegisteredAt = reg.RegisteredAt.Add(time.Second)
@@ -201,16 +202,16 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 				if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
 					t.Fatal(err)
 				}
-			case releasedFaultProgressMissing:
+			case nativeRetainedTestProgressMissing:
 				if err := os.Remove(filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseProgressName))); err != nil {
 					t.Fatal(err)
 				}
-			case releasedFaultProgressFuture:
+			case nativeRetainedTestProgressFuture:
 				if err := os.WriteFile(filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseProgressName)), []byte(`{"version":99}`), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case releasedFaultStage, releasedFaultCheckpoint:
-				if mode == releasedFaultStage {
+			case nativeRetainedTestStage, nativeRetainedTestCheckpoint:
+				if mode == nativeRetainedTestStage {
 					reg.StagedImportSHA256 = strings.Repeat("a", 64)
 				} else {
 					reg.NativeBinding.Checkpoint.SHA256 = strings.Repeat("f", 64)
@@ -218,7 +219,7 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 				if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
 					t.Fatal(err)
 				}
-			case releasedFaultMetadata:
+			case nativeRetainedTestMetadata:
 				next.MetadataBytes = append(next.MetadataBytes, ' ')
 			}
 			before, err := os.ReadFile(s.registrationPath(reg.ArchiveSessionID))
@@ -226,7 +227,7 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 				t.Fatal(err)
 			}
 			err = s.SavePending(reg.ArchiveSessionID, next)
-			if mode == releasedFaultValid {
+			if mode == nativeRetainedTestValid {
 				if err != nil {
 					t.Fatal("valid released successor", err)
 				}
@@ -389,6 +390,35 @@ func TestNativeImportInterruptedReleaseRestartsFromActualReceipt(t *testing.T) {
 					if _, e := os.Stat(path); !os.IsNotExist(e) {
 						t.Fatal("released payload remains", path, e)
 					}
+				}
+			})
+		}
+	}
+}
+
+func TestNativeImportStageActivityKeepsEarlyReturns(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		published *Published
+	}{{"nil", nil}, {"without-store", &Published{}}} {
+		for _, staged := range []bool{false, true} {
+			t.Run(test.name+"/"+map[bool]string{false: "absent-stage", true: "ordinary-stage"}[staged], func(t *testing.T) {
+				t.Parallel()
+				stageSHA256 := ""
+				if staged {
+					stageSHA256 = strings.Repeat("a", 64)
+				}
+				reg := archive.SessionRegistration{StagedImportSHA256: stageSHA256}
+				active, err := test.published.NativeImportStageActive(reg)
+				if err != nil || active != staged {
+					t.Fatal("legacy early branch required a store", active, err)
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				active, err = test.published.nativeImportStageActive(ctx, reg)
+				if err != nil || active != staged {
+					t.Fatal("context delegation changed an early branch", active, err)
 				}
 			})
 		}

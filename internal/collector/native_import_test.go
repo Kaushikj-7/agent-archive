@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 type deniedHistoricalSources struct{ t *testing.T }
@@ -51,8 +53,12 @@ func TestNativeImportNeverFallsBackToRawSourceOrGenerationRecovery(t *testing.T)
 	if err != nil || !activity[reg.ArchiveSessionID].Equal(reg.Admitted()) {
 		t.Fatal("historical activity reopened native source", err)
 	}
-	if _, err := ReadLocalBundle(t.Context(), t.TempDir(), reg, time.Now(), "", opts.Sources); err == nil {
-		t.Fatal("missing stage and publication fell back to native bytes")
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadLocalBundle(t.Context(), home, reg, time.Now(), "", opts.Sources); !errors.Is(err, state.ErrDurableStorageRecovery) {
+		t.Fatal("missing stage and publication did not require recovery", err)
 	}
 	reg.NativeImport.Contract = "future"
 	if _, err := LastActivitiesWithError(context.Background(), []archive.SessionRegistration{reg}, "", opts.Sources); !errors.Is(err, archive.ErrUnsupportedNativeImport) {

@@ -13,6 +13,19 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
+type nativeAtomicTestMode string
+
+const (
+	nativeAtomicTestValid       nativeAtomicTestMode = "valid"
+	nativeAtomicTestOwner       nativeAtomicTestMode = "owner"
+	nativeAtomicTestReceipt     nativeAtomicTestMode = "receipt"
+	nativeAtomicTestProgress    nativeAtomicTestMode = "progress"
+	nativeAtomicTestPredecessor nativeAtomicTestMode = "predecessor"
+	nativeAtomicTestConfig      nativeAtomicTestMode = "config"
+	nativeAtomicTestSibling     nativeAtomicTestMode = "sibling"
+	nativeAtomicTestRequest     nativeAtomicTestMode = "request"
+)
+
 func TestNativeImportAtomicInspectionNeverLeaksWitness(t *testing.T) {
 	s, _, _ := releasedNativeImportFixture(t)
 	held, err := local.OpenRootedHome(s.Home())
@@ -73,22 +86,8 @@ func TestNativeImportAtomicInspectionNeverLeaksWitness(t *testing.T) {
 	}
 }
 
-// nativeImportCASRace names one fixture variation.
-type nativeImportCASRace string
-
-const (
-	casRaceValid       nativeImportCASRace = "valid"
-	casRaceOwner       nativeImportCASRace = "owner"
-	casRaceReceipt     nativeImportCASRace = "receipt"
-	casRaceProgress    nativeImportCASRace = "progress"
-	casRacePredecessor nativeImportCASRace = "predecessor"
-	casRaceConfig      nativeImportCASRace = "config"
-	casRaceSibling     nativeImportCASRace = "sibling"
-	casRaceRequest     nativeImportCASRace = "request"
-)
-
 func TestNativeImportAtomicCommitRechecksCurrentAuthority(t *testing.T) {
-	for _, mode := range []nativeImportCASRace{casRaceValid, casRaceOwner, casRaceReceipt, casRaceProgress, casRacePredecessor, casRaceConfig, casRaceSibling, casRaceRequest} {
+	for _, mode := range []nativeAtomicTestMode{nativeAtomicTestValid, nativeAtomicTestOwner, nativeAtomicTestReceipt, nativeAtomicTestProgress, nativeAtomicTestPredecessor, nativeAtomicTestConfig, nativeAtomicTestSibling, nativeAtomicTestRequest} {
 		t.Run(string(mode), func(t *testing.T) {
 			s, reg, next := releasedNativeImportFixture(t)
 			check, err := s.nativeImportPublicationCommit(t.Context(), reg.ArchiveSessionID, nativeImportPendingTarget(next))
@@ -108,9 +107,10 @@ func TestNativeImportAtomicCommitRechecksCurrentAuthority(t *testing.T) {
 			var preservedPath string
 			err = local.RootedAtomicWriteWitnessed(t.Context(), held.Root, "pending/selected.json", func(w io.Writer) error { _, e := w.Write([]byte(`{"selected":true}`)); return e }, make([]byte, 1024), func(witness *local.AtomicWriteWitness, rename func() error) error {
 				switch mode {
-				case casRaceValid:
-				case casRaceOwner, casRaceReceipt:
-					if mode == casRaceOwner {
+				case nativeAtomicTestValid:
+					// Keep the valid fixture unchanged.
+				case nativeAtomicTestOwner, nativeAtomicTestReceipt:
+					if mode == nativeAtomicTestOwner {
 						reg.RegisteredAt = reg.RegisteredAt.Add(time.Second)
 					} else {
 						reg.NativeImport.Membership.ReceiptID = "dddddddddddddddddddddddddddddddd"
@@ -119,12 +119,12 @@ func TestNativeImportAtomicCommitRechecksCurrentAuthority(t *testing.T) {
 					if err := local.Write(preservedPath, reg); err != nil {
 						t.Fatal(err)
 					}
-				case casRaceProgress:
+				case nativeAtomicTestProgress:
 					preservedPath = filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseProgressName))
 					if err := os.WriteFile(preservedPath, []byte(`{"future":true}`), 0600); err != nil {
 						t.Fatal(err)
 					}
-				case casRacePredecessor:
+				case nativeAtomicTestPredecessor:
 					preservedPath = s.publishedPath(reg.ArchiveSessionID)
 					raw, err := os.ReadFile(preservedPath)
 					if err != nil {
@@ -133,7 +133,7 @@ func TestNativeImportAtomicCommitRechecksCurrentAuthority(t *testing.T) {
 					if err := os.WriteFile(preservedPath, append(raw, 'x'), 0600); err != nil {
 						t.Fatal(err)
 					}
-				case casRaceConfig:
+				case nativeAtomicTestConfig:
 					cfg, _, err := config.Load(s.Home())
 					if err != nil {
 						t.Fatal(err)
@@ -148,12 +148,12 @@ func TestNativeImportAtomicCommitRechecksCurrentAuthority(t *testing.T) {
 						t.Fatal(err)
 					}
 					preservedPath = filepath.Join(s.Home(), "config.json")
-				case casRaceSibling:
+				case nativeAtomicTestSibling:
 					preservedPath = filepath.Join(s.Home(), "pending", ".pending-unrelated")
 					if err := os.WriteFile(preservedPath, []byte("unrelated"), 0600); err != nil {
 						t.Fatal(err)
 					}
-				case casRaceRequest:
+				case nativeAtomicTestRequest:
 					if err := s.SaveRequest(reg.ArchiveSessionID, "independent", reg.AdmittedAt.Add(time.Hour)); err != nil {
 						t.Fatal(err)
 					}
@@ -180,11 +180,11 @@ func TestNativeImportAtomicCommitRechecksCurrentAuthority(t *testing.T) {
 				}
 				return err
 			})
-			if mode == casRaceValid || mode == casRaceRequest {
+			if mode == nativeAtomicTestValid || mode == nativeAtomicTestRequest {
 				if err != nil {
 					t.Fatal("unchanged authority refused", err)
 				}
-				if mode == casRaceRequest {
+				if mode == nativeAtomicTestRequest {
 					req, found, e := s.LoadRequest(reg.ArchiveSessionID)
 					if e != nil || !found || req.Token != requestToken {
 						t.Fatal("later independent request lost", e)

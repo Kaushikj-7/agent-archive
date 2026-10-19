@@ -275,6 +275,8 @@ func (s *Store) inspectDurableReadRoots(ctx context.Context) (cfg config.Config,
 }
 
 func (s *Store) inspectHeldDurableReadRoots(ctx context.Context, home *local.RootedHome) (cfg config.Config, found bool, err error) {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	cfg, found, err = s.loadDurableInspectionConfig(home)
 	if err != nil {
 		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)

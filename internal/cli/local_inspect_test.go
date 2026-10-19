@@ -15,13 +15,10 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
-// hostileCheckoutName holds terminal controls that local output must escape.
-const hostileCheckoutName = "checkout\u202e\u009b"
-
 func hostileLocalNative(t *testing.T) (Env, string) {
 	t.Helper()
 	env, data, base, _ := museNativeEnv(t)
-	workspace := filepath.Join(base, hostileCheckoutName)
+	workspace := filepath.Join(base, "checkout"+string([]rune{0x202e, 0x009b}))
 	err := os.Mkdir(workspace, 0o700)
 	if err != nil {
 		t.Fatal(err)

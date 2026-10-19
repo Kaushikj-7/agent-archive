@@ -710,7 +710,7 @@ func (s *Store) resumeStagedOwner(ctx context.Context, id string, remote StagedR
 			return err
 		}
 		if found && reg.NativeImport != nil {
-			return published.ValidateNativeImportAuthority(ctx, reg)
+			return published.validateNativeImportAuthority(ctx, reg)
 		}
 		return nil
 	}

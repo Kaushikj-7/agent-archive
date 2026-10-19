@@ -13,7 +13,7 @@ func TestMuseBindingOffersDormantCapturePorts(t *testing.T) {
 	t.Parallel()
 	r := NewBuiltins()
 	b, ok := r.Lookup(" MUSE-CODE ")
-	if !ok || b.Descriptor.ID != agentmeta.Muse || b.Descriptor.DisplayName != "Muse Code" || !slices.Equal(b.Descriptor.Operations, []agentmeta.Operation{agentmeta.Runtime, agentmeta.Parse, agentmeta.Source, agentmeta.LifecycleHooks, agentmeta.ManagedHooks, agentmeta.Skills, agentmeta.NativeInspection, agentmeta.VersionInspection, agentmeta.HistoricalDiscovery}) {
+	if !ok || b.Descriptor.ID != agentmeta.Muse || b.Descriptor.DisplayName != "Muse Code" || !slices.Equal(b.Descriptor.Operations, []agentmeta.Operation{agentmeta.Launch, agentmeta.Runtime, agentmeta.Parse, agentmeta.Source, agentmeta.LifecycleHooks, agentmeta.ManagedHooks, agentmeta.Skills, agentmeta.NativeInspection, agentmeta.VersionInspection, agentmeta.HistoricalDiscovery}) {
 		t.Fatalf("binding %+v; found %v", b, ok)
 	}
 	if b.Runtime == nil {
@@ -27,7 +27,7 @@ func TestMuseBindingOffersDormantCapturePorts(t *testing.T) {
 		t.Fatal("dormant capture ports missing")
 	}
 	b.Decoder, b.Hooks = nil, nil
-	b.Runtime = nil
+	b.Runtime, b.Launcher = nil, nil
 	b.NativeHeaders, b.Discovery, b.Preview, b.Version, b.Skills = nil, nil, nil, nil, nil
 	b.Descriptor = agentmeta.Descriptor{}
 	if !reflect.DeepEqual(b, Integration{}) {

@@ -222,6 +222,8 @@ func (s *Store) publicationValidationLoan(p publishedState) (func(), error) {
 }
 
 func (s *Store) validateSelectingPublishedBudgeted(ctx context.Context, p publishedState) error {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	release, err := s.publicationValidationLoan(p)
 	if err != nil {
 		return err
