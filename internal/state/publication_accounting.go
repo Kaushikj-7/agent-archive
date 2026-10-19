@@ -313,18 +313,17 @@ func (s *Store) seedPublicationAccounting(a *publicationAccounting, id string) (
 		return errStateBudget
 	}
 	defer a.reservation.Release(enumeration)
-	remaining := durableEntryLimit
+	visited := 0
 	for {
 		if err = s.durableContext().Err(); err != nil {
 			return err
 		}
-		entries, e := dir.ReadDir(128)
+		entries, e := readDurableDirectory(s.durableContext(), dir)
 		if e != nil && !errors.Is(e, io.EOF) {
 			return e
 		}
 		for _, entry := range entries {
-			remaining--
-			if remaining < 0 {
+			if e := countDurableEntry(&visited); e != nil {
 				return ErrDurableStorageRecovery
 			}
 			s.seedPublishedAccountingPeer(a, home, binding, entry.Name(), id)

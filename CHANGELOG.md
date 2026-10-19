@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Durable quota and recovery checks traverse complete supported state inventories
+  beyond 65,536 combined entries. Explicit import recovery, reconciliation and
+  undo acquire session names once per invocation, with fresh stage/control reads
+  in groups of at most 50 directories. The 1 GiB quota and per-write validation
+  remain unchanged; large inventories can still make admission checks slow.
+
 - `sync` and scheduled collection can publish supported protected legacy imports
   from their frozen staged evidence after native deletion. They acquire the real
   collector guard required for exact publication and recovery.

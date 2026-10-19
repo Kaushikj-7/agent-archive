@@ -229,7 +229,7 @@ func TestUnadmittedStagedImportUndoPreventsRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := Environment{Sources: testSources, Home: r.Home, Now: func() time.Time { return fixedNow }}
-	plan, err := PlanUndo(env, r.Store, cfg, batches, batches[0], "")
+	plan, err := planUndoForTesting(t, env, r.Store, cfg, batches, batches[0], "")
 	if err != nil {
 		t.Fatal(err)
 	}

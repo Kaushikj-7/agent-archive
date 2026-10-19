@@ -23,7 +23,7 @@ func TestNativeOwnerUndoStopWarningIncludesResolvedChild(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	plan, err := PlanUndo(Environment{Home: f.home, Now: func() time.Time { return fixedNow }}, f.store, f.cfg, []Batch{batch}, batch, "")
+	plan, err := planUndoForTesting(t, Environment{Home: f.home, Now: func() time.Time { return fixedNow }}, f.store, f.cfg, []Batch{batch}, batch, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -77,55 +76,39 @@ func (p ImportStage) digest(ctx context.Context) (string, error) {
 // ImportStages returns a bounded slice of durable preparation journals. The
 // lexical cursor is progress only, never a proof of absence or permission.
 func (s *Store) ImportStages(ctx context.Context, after string, limit int) (stages []ImportStage, next string, err error) {
-	if err := ctx.Err(); err != nil {
-		return nil, "", err
-	}
-	if limit <= 0 || limit > 50 {
-		limit = 50
-	}
-	home, err := local.OpenRootedHome(s.home)
+	names, err := s.openImportStageNames(ctx)
 	if err != nil {
 		return nil, "", err
 	}
-	defer func() { err = errors.Join(err, home.Close()) }()
-	dir, err := home.Root.Open("sessions")
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, "", nil
+	defer func() { err = errors.Join(err, names.Close()) }()
+	start, end, next := names.page(after, limit)
+	stages, err = s.loadImportStagePage(ctx, names.home, names.names[start:end], names.budget)
+	if err == nil {
+		err = names.current(ctx)
 	}
-	if err != nil {
-		return nil, "", err
+	return stages, next, err
+}
+
+func (s *Store) loadImportStagePage(ctx context.Context, home *local.RootedHome, names []string, traversalBudget *agentapi.NativeReadBudget) (stages []ImportStage, err error) {
+	if s.resourceBudget != nil {
+		reservation := s.readReservation()
+		slots := int64(len(names)) * 4096
+		if !reservation.Reserve(slots) {
+			return nil, errStateBudget
+		}
+		*s.resourceReleases = append(*s.resourceReleases, func() { reservation.Release(slots) })
 	}
-	defer func() { err = errors.Join(err, dir.Close()) }()
-	entries, err := dir.ReadDir(durableEntryLimit + 1)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return nil, "", err
-	}
-	if len(entries) > durableEntryLimit {
-		return nil, "", ErrDurableStorageRecovery
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	visited := 0
-	for _, entry := range entries {
+	stages = make([]ImportStage, 0, len(names))
+	for _, id := range names {
 		if err := ctx.Err(); err != nil {
-			return nil, "", err
+			return nil, err
 		}
-		if !entry.IsDir() || entry.Name() <= after {
-			continue
-		}
-		if !safeFileComponent(entry.Name()) {
-			return nil, "", ErrDurableStorageRecovery
-		}
-		if visited == limit {
-			return stages, next, nil
-		}
-		visited++
-		next = entry.Name()
-		path := importStageRelative(entry.Name())
+		path := importStageRelative(id)
 		info, err := home.Root.Lstat(path)
 		if errors.Is(err, os.ErrNotExist) {
-			stage, found, e := s.importStageAbsentDescriptor(ctx, entry.Name())
+			stage, found, e := s.importStageAbsentDescriptor(ctx, id)
 			if e != nil {
-				return nil, "", e
+				return nil, e
 			}
 			if found {
 				stages = append(stages, stage)
@@ -133,39 +116,39 @@ func (s *Store) ImportStages(ctx context.Context, after string, limit int) (stag
 			continue
 		}
 		if err != nil || !info.Mode().IsRegular() || info.Size() > maxPendingHistoryBytes {
-			return nil, "", errors.Join(ErrDurableStorageRecovery, err)
+			return nil, errors.Join(ErrDurableStorageRecovery, err)
 		}
 		pageBudget := s.resourceBudget
 		if pageBudget == nil {
-			pageBudget = agentapi.NewNativeReadBudget(128 << 20)
+			pageBudget = traversalBudget
 		}
 		scratch, closeScratch := s.WithReadBudget(ctx, pageBudget)
-		stage, found, err := scratch.loadPreparedImportStage(ctx, entry.Name())
+		stage, found, err := scratch.loadPreparedImportStage(ctx, id)
 		if err != nil || !found {
 			closeScratch()
-			return nil, "", errors.Join(ErrDurableStorageRecovery, err)
+			return nil, errors.Join(ErrDurableStorageRecovery, err)
 		}
 		if stage.TypedSelection && s.resourceBudget == nil {
 			closeScratch()
-			return nil, "", ErrReadySelectionFrozen
+			return nil, ErrReadySelectionFrozen
 		}
 		stage.Bundle = archive.SourceBundle{}
 		stage.Preserved = nil
 		if err := s.retainImportDescriptor(ctx, stage); err != nil {
 			closeScratch()
-			return nil, "", err
+			return nil, err
 		}
 		closeScratch()
 
-		stage, err = s.applyImportStageCancellation(entry.Name(), stage)
+		stage, err = s.applyImportStageCancellation(id, stage)
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
 		stage.Bundle = archive.SourceBundle{}
 		stage.Preserved = nil
 		stages = append(stages, stage)
 	}
-	return stages, "", nil
+	return stages, nil
 }
 
 // ResumeImportAdmissions recovers a bounded group after preparation or request
@@ -202,6 +185,14 @@ func (s *Store) ResumeImportAdmissions(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := s.resumeImportStagePage(ctx, stages); err != nil {
+		return err
+	}
+	cursor.After = next
+	return local.Write(filepath.Join(s.home, "import-stage-cursor.json"), cursor)
+}
+
+func (s *Store) resumeImportStagePage(ctx context.Context, stages []ImportStage) error {
 	for _, stage := range stages {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -225,8 +216,7 @@ func (s *Store) ResumeImportAdmissions(ctx context.Context) error {
 			return err
 		}
 	}
-	cursor.After = next
-	return local.Write(filepath.Join(s.home, "import-stage-cursor.json"), cursor)
+	return nil
 }
 
 func (s *Store) resumePreparedImport(ctx context.Context, stage ImportStage) error {
@@ -686,26 +676,42 @@ func (s *Store) ResumeAllImportAdmissions(ctx context.Context) error {
 	if !found || cfg.Paused || !cfg.ImportStagingProtection {
 		return nil
 	}
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := s.ResumeImportAdmissions(ctx); err != nil {
-			return err
-		}
-		var cursor struct {
-			After string `json:"after"`
-		}
-		if err := s.readImportControl("import-stage-cursor.json", &cursor); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return nil
-			}
-			return err
-		}
-		if cursor.After == "" {
-			return nil
-		}
+	if !cfg.Archive.Enabled {
+		return nil
 	}
+	read, closeRead := s.WithImportResultScope(ctx)
+	defer closeRead()
+	var cursor struct {
+		After string `json:"after"`
+	}
+	if err := s.readImportControl("import-stage-cursor.json", &cursor); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	err = read.VisitImportStagePages(ctx, cursor.After, func(stages []ImportStage, next string) error {
+		// Reload pause/authorization at the same per-page boundary as the
+		// scheduled method. Each descriptor is freshly read by this page.
+		cfg, found, err := read.loadConfig()
+		if err != nil {
+			return err
+		}
+		if !found || !cfg.ImportStagingProtection || cfg.Paused || !cfg.Archive.Enabled {
+			return errImportAdmissionsPaused
+		}
+		if err := read.resumeImportStagePage(ctx, stages); err != nil {
+			return err
+		}
+		cursor.After = next
+		return local.Write(filepath.Join(s.home, "import-stage-cursor.json"), cursor)
+	})
+	if errors.Is(err, errImportStageMembershipChanged) {
+		// The lexical cursor cannot skip a new owner added behind it.
+		cursor.After = ""
+		err = errors.Join(err, local.Write(filepath.Join(s.home, "import-stage-cursor.json"), cursor))
+	}
+	if errors.Is(err, errImportAdmissionsPaused) {
+		return nil
+	}
+	return err
 }
 
 // DropUnadmittedImportStage cancels a preparation superseded by an existing
@@ -1030,6 +1036,44 @@ func (s *Store) RetainImportID(ctx context.Context, id string) (string, error) {
 	}
 	copied := strings.Clone(id)
 	*s.resourceReleases = append(*s.resourceReleases, func() { reservation.Release(n) })
+	return copied, nil
+}
+
+// RetainImportRegistration detaches a legacy undo result while its page is
+// live. The receiving scope holds the independent decoded registration and
+// conservative slice/map growth allowance until its result owner closes.
+func (s *Store) RetainImportRegistration(ctx context.Context, reg archive.SessionRegistration) (archive.SessionRegistration, error) {
+	if s.resourceBudget == nil {
+		return archive.SessionRegistration{}, errStateBudget
+	}
+	owner := s.readReservation()
+	const scratch int64 = 32 << 10
+	if !owner.Reserve(scratch) {
+		return archive.SessionRegistration{}, errStateBudget
+	}
+	n, err := agentmeta.JSONWireBound(ctx, reg, MaxImportStageBytes)
+	owner.Release(scratch)
+	if err != nil {
+		return archive.SessionRegistration{}, err
+	}
+	// The encoded buffer and independent decoded result coexist. The fixed
+	// allowance covers registration slots, append's old/new arrays, map rows,
+	// and the reservation closure, in addition to variable proof/string data.
+	retained := 2*n + 4096
+	if !owner.Reserve(n + retained) {
+		return archive.SessionRegistration{}, errStateBudget
+	}
+	defer owner.Release(n)
+	raw, err := json.Marshal(reg)
+	var copied archive.SessionRegistration
+	if err == nil {
+		err = json.Unmarshal(raw, &copied)
+	}
+	if err != nil {
+		owner.Release(retained)
+		return archive.SessionRegistration{}, err
+	}
+	*s.resourceReleases = append(*s.resourceReleases, func() { owner.Release(retained) })
 	return copied, nil
 }
 

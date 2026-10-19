@@ -35,6 +35,9 @@ type durableInspectionCache struct {
 	configLoads int
 	legacyTemps bool
 	entries     int
+	budget      *agentapi.NativeReadBudget
+	release     func()
+	generation  uint64
 }
 
 func sameDurableStamp(a, b os.FileInfo) bool {
@@ -78,24 +81,33 @@ func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]Dura
 		}
 		stamps[i].info = info
 	}
-	if cache.valid && cache.legacy == legacy && os.SameFile(cache.home, homeInfo) && sameDurableStamp(cache.stamps[0].info, stamps[0].info) && sameDurableStamp(cache.stamps[1].info, stamps[1].info) && sameDurableStamp(cache.stamps[2].info, stamps[2].info) {
-		return append([]DurableStorageObligation(nil), cache.obligations...), cache.anonymous, cache.entries, home.Check()
+	if cache.valid && cache.budget == s.resourceBudget && cache.legacy == legacy && os.SameFile(cache.home, homeInfo) && sameDurableStamp(cache.stamps[0].info, stamps[0].info) && sameDurableStamp(cache.stamps[1].info, stamps[1].info) && sameDurableStamp(cache.stamps[2].info, stamps[2].info) {
+		out, err := s.copyDurableObligations(cache.obligations)
+		return out, cache.anonymous, cache.entries, errors.Join(err, home.Check())
 	}
 	cache.valid = false
+	if cache.release != nil {
+		cache.release()
+		cache.release = nil
+	}
+	cache.obligations = nil
 	cache.legacyTemps = false
 	cache.scans++
-	remaining := durableEntryLimit
+	visited := 0
 	var out []DurableStorageObligation
 	anonymous := false
 	for i, name := range roots {
 		if stamps[i].info == nil {
 			continue
 		}
-		entries, unknown, e := s.inspectPendingRoot(home, name, &remaining, legacy)
+		entries, unknown, e := s.inspectPendingRoot(home, name, &visited, legacy)
 		if e != nil {
-			return out, true, durableEntryLimit - remaining, e
+			return out, true, visited, e
 		}
-		out = append(out, entries...)
+		out, e = s.appendDurableObligations(out, entries...)
+		if e != nil {
+			return out, true, visited, e
+		}
 		anonymous = anonymous || unknown
 	}
 	for i, name := range roots {
@@ -105,23 +117,23 @@ func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]Dura
 			e = nil
 		}
 		if e != nil || !sameDurableStamp(stamps[i].info, info) {
-			return out, true, durableEntryLimit - remaining, errors.Join(ErrDurableStorageRecovery, e)
+			return out, true, visited, errors.Join(ErrDurableStorageRecovery, e)
 		}
 	}
 	if err := errors.Join(ctx.Err(), home.Check()); err != nil {
-		return out, true, durableEntryLimit - remaining, err
+		return out, true, visited, err
 	}
-	cache.entries = durableEntryLimit - remaining
+	cache.entries = visited
 	cache.legacy = legacy
 	cache.home = homeInfo
 	cache.stamps = stamps
-	cache.obligations = out
 	cache.anonymous = anonymous
-	cache.valid = !cache.legacyTemps
-	return append([]DurableStorageObligation(nil), out...), anonymous, cache.entries, nil
+	s.cacheDurableObligations(cache, out)
+	result, err := s.copyDurableObligations(out)
+	return result, anonymous, cache.entries, err
 }
 
-func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remaining *int, legacy bool) (out []DurableStorageObligation, unknown bool, err error) {
+func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, visited *int, legacy bool) (out []DurableStorageObligation, unknown bool, err error) {
 	root, err := privateDirectory(home.Root, name, false)
 	if err != nil {
 		return nil, true, err
@@ -140,13 +152,12 @@ func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remainin
 		if err = s.durableContext().Err(); err != nil {
 			return out, true, err
 		}
-		entries, e := d.ReadDir(128)
+		entries, e := readDurableDirectory(s.durableContext(), d)
 		if e != nil && !errors.Is(e, io.EOF) {
 			return out, true, e
 		}
 		for _, entry := range entries {
-			*remaining--
-			if *remaining < 0 {
+			if e := countDurableEntry(visited); e != nil {
 				return out, true, ErrDurableStorageRecovery
 			}
 			info, e := root.Lstat(entry.Name())
@@ -162,7 +173,10 @@ func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remainin
 			id := strings.TrimSuffix(entry.Name(), ".json")
 			if info.Mode().IsRegular() && strings.HasSuffix(entry.Name(), ".json") && safeFileComponent(id) && !strings.HasPrefix(entry.Name(), ".pending-") {
 				if name != "published" {
-					out = append(out, DurableStorageObligation{SessionID: id, Namespace: namespace})
+					out, err = s.appendDurableObligations(out, DurableStorageObligation{SessionID: id, Namespace: namespace})
+					if err != nil {
+						return out, true, err
+					}
 				}
 				continue
 			}
@@ -173,7 +187,10 @@ func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remainin
 		}
 	}
 	if unknown {
-		out = append(out, DurableStorageObligation{Namespace: namespace})
+		out, err = s.appendDurableObligations(out, DurableStorageObligation{Namespace: namespace})
+		if err != nil {
+			return out, true, err
+		}
 	}
 	return out, unknown, nil
 }

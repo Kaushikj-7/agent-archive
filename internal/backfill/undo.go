@@ -85,7 +85,8 @@ type UndoPlan struct {
 	// not deleted.
 	HookCapturedStopping int
 
-	view Plan
+	view         Plan
+	stagedResult *stagedBatchResult
 }
 
 // KeptProject is a project undo leaves included, and why: the other
@@ -134,7 +135,7 @@ type UndoSession struct {
 // It refuses (SharedBatchIDError) when a session carrying b's ID was
 // admitted before b started or after it completed: it belongs to an earlier
 // import that had the same ID.
-func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []Batch, b Batch, project string) (UndoPlan, error) {
+func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []Batch, b Batch, project string) (_ UndoPlan, err error) {
 	// Sessions are selected by the ID they carry (InBatch), so a batch
 	// without a valid one selects nothing it could prove is its own.
 	if !ValidBatchID(b.ID) {
@@ -168,11 +169,18 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 		return p.Project == "" || root == p.Project || env.resolved(root) == p.Project
 	}
 
+	reader, closeResults := store.WithImportResultScope(context.Background())
+	p.stagedResult = &stagedBatchResult{reader: reader, close: closeResults}
+	defer func() {
+		if err != nil {
+			closeResults()
+		}
+	}()
 	regs, err := store.LoadRegistrations()
 	if err != nil {
 		return UndoPlan{}, err
 	}
-	regs, err = importUndoRegistrations(store, regs, b.ID)
+	regs, err = importUndoRegistrations(reader, regs, b.ID)
 	if err != nil {
 		return UndoPlan{}, err
 	}
@@ -236,6 +244,15 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	// left: another import's, or this one's outside --project.
 	p.RemoveApps = undoAppsToRemove(cfg, b, regs, p.Sessions)
 	return p, nil
+}
+
+// CloseStagedResults releases detached staged registrations after all aliases,
+// including WithRetentionKept copies, finish using the plan. It is idempotent.
+// A value receiver captures the exact owner when deferred across reassignment.
+func (p UndoPlan) CloseStagedResults() {
+	if p.stagedResult != nil {
+		p.stagedResult.close()
+	}
 }
 
 // selectUndoRegistrations decides which registrations an undo may remove.
@@ -1134,28 +1151,26 @@ func importUndoRegistrations(store *state.Store, regs []archive.SessionRegistrat
 	for _, reg := range regs {
 		seen[reg.ArchiveSessionID] = true
 	}
-	for after := ""; ; {
-		stages, next, closePage, err := store.ImportStagesOwned(context.Background(), after, 50)
-		if err != nil {
-			return nil, err
-		}
+	err = store.VisitImportStagePages(context.Background(), "", func(stages []state.ImportStage, _ string) error {
 		for _, stage := range stages {
 			if stage.TypedSelection && stage.Registration.InBatch(batchID) {
-				closePage()
-				return nil, state.ErrReadySelectionFrozen
+				return state.ErrReadySelectionFrozen
 			}
 			reg := stage.Registration
 			if reg.InBatch(batchID) && !seen[reg.ArchiveSessionID] {
 				reg.StagedImportSHA256 = stage.SHA256
-				regs = append(regs, reg)
-				seen[reg.ArchiveSessionID] = true
+				copied, err := store.RetainImportRegistration(context.Background(), reg)
+				if err != nil {
+					return err
+				}
+				regs = append(regs, copied)
+				seen[copied.ArchiveSessionID] = true
 			}
 		}
-		closePage()
-		if next == "" {
-			break
-		}
-		after = next
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return regs, nil
 }

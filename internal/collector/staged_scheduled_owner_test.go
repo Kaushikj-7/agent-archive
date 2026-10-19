@@ -108,12 +108,14 @@ func TestStagedRunScheduledReleaseRespectsCapturedPassBudget(t *testing.T) {
 	budget := agentapi.NewNativeReadBudget(128 << 20)
 	pressure := budget.Reservation()
 	pressureApplied := false
+	var pressureBytes int64
 	originalNow := opts.Now
 	// Run invokes Now after initial admission and generation recovery. Apply
 	// independent pressure at that actual boundary to target scheduled release.
 	opts.Now = func() time.Time {
 		if !pressureApplied {
-			if !pressure.Reserve((128 << 20) - 512) {
+			pressureBytes = budget.Available() - 512
+			if !pressure.Reserve(pressureBytes) {
 				t.Fatal("captured scheduled pressure after admission")
 			}
 			pressureApplied = true
@@ -122,7 +124,7 @@ func TestStagedRunScheduledReleaseRespectsCapturedPassBudget(t *testing.T) {
 	}
 	defer func() {
 		if pressureApplied {
-			pressure.Release((128 << 20) - 512)
+			pressure.Release(pressureBytes)
 		}
 	}()
 	opts.CodexRollouts = recoveryBudgetLookup{budget: budget}

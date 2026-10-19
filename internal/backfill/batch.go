@@ -428,7 +428,7 @@ func (b *Batch) reconcileStagedSources(store *state.Store) error {
 	if !found || !cfg.ImportStagingProtection {
 		return nil
 	}
-	if cfg.StagedSelectionProtection && b.stagedResult == nil {
+	if b.stagedResult == nil {
 		reader, closeResults := store.WithImportResultScope(context.Background())
 		b.stagedResult = &stagedBatchResult{reader: reader, close: closeResults}
 	}
@@ -436,33 +436,21 @@ func (b *Batch) reconcileStagedSources(store *state.Store) error {
 	if b.stagedResult != nil {
 		pageStore = b.stagedResult.reader
 	}
-	for after := ""; ; {
-		stages, next, closePage, err := pageStore.ImportStagesOwned(context.Background(), after, 50)
-		if err != nil {
-			return err
-		}
+	return pageStore.VisitImportStagePages(context.Background(), "", func(stages []state.ImportStage, _ string) error {
 		for _, stage := range stages {
 			id := stage.Registration.ArchiveSessionID
 			if !stage.Registration.InBatch(b.ID) || slices.Contains(b.StagedSessions, id) {
 				continue
 			}
-			if stage.TypedSelection {
-				copied, err := b.stagedResult.reader.RetainImportID(context.Background(), id)
-				if err != nil {
-					closePage()
-					return err
-				}
-				id = copied
+			copied, err := b.stagedResult.reader.RetainImportID(context.Background(), id)
+			if err != nil {
+				return err
 			}
+			id = copied
 			b.StagedSessions = append(b.StagedSessions, id)
 		}
-		closePage()
-		if next == "" {
-			break
-		}
-		after = next
-	}
-	return nil
+		return nil
+	})
 }
 
 // Copies of Batch share this result owner. Close only after every alias and

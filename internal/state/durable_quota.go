@@ -18,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/jsonwire"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/stateerrors"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 const durableStorageQuota int64 = 1 << 30
@@ -67,6 +68,7 @@ type durableQuota struct {
 	path   string
 	home   *local.RootedHome
 	unlock func()
+	hold   *trace.Span
 }
 
 func (s *Store) openDurableQuota(g config.DurableStorageGuard) (*durableQuota, error) {
@@ -77,14 +79,20 @@ func (s *Store) openDurableQuota(g config.DurableStorageGuard) (*durableQuota, e
 	if s.onLockWait != nil {
 		s.onLockWait("temporary-quota")
 	}
+	wait := trace.Start("durable quota wait")
 	unlock, err := local.RootedLockWait(home, "temporary-quota", time.Second)
+	wait.End()
 	if err != nil {
 		return nil, err
 	}
-	return &durableQuota{store: s, home: home, unlock: unlock, guard: g, path: s.home}, nil
+	return &durableQuota{store: s, home: home, unlock: unlock, guard: g, path: s.home, hold: trace.Start("durable quota hold")}, nil
 }
 
-func (q *durableQuota) Close() error { q.unlock(); return q.guard.CheckHome(q.path) }
+func (q *durableQuota) Close() error {
+	q.unlock()
+	q.hold.End()
+	return q.guard.CheckHome(q.path)
+}
 
 func privateDirectory(root *os.Root, path string, create bool) (*os.Root, error) {
 	return privateDirectoryWithParentSync(root, path, create, syncDurableParent)
@@ -150,13 +158,13 @@ func privateDirectoryWithParentSync(root *os.Root, path string, create bool, syn
 }
 
 func (q *durableQuota) usageContext(ctx context.Context) (u durableUsage, err error) {
-	remaining := durableEntryLimit
-	if err := q.scanPublished(ctx, &remaining, &u); err != nil {
+	visited := 0
+	if err := q.scanPublished(ctx, &visited, &u); err != nil {
 		return u, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	for _, dir := range []string{"pending", generationRecoveryDir, deletionDirectory, "publication-evidence", "temporary-reservations", "temporary-scratch", "admission-stages"} {
 		recovery := durableRootPath(dir) == admissionDurableRoot || durableRootPath(dir) == reservationDurableRoot || durableRootPath(dir) == scratchDurableRoot
-		e := q.scan(dir, 0, &remaining, &u)
+		e := q.scan(ctx, dir, 0, &visited, &u)
 		if errors.Is(e, os.ErrNotExist) {
 			continue
 		}
@@ -189,13 +197,12 @@ func (q *durableQuota) usageContext(ctx context.Context) (u durableUsage, err er
 	}
 	defer func() { err = errors.Join(err, d.Close()) }()
 	for {
-		entries, e := d.ReadDir(128)
+		entries, e := readDurableDirectory(ctx, d)
 		if e != nil && !errors.Is(e, io.EOF) {
 			return u, e
 		}
 		for _, entry := range entries {
-			remaining--
-			if remaining < 0 {
+			if e := countDurableEntry(&visited); e != nil {
 				return u, ErrDurableStorageRecovery
 			}
 			// sessions also holds native-index JSON files; only directory evidence is scanned.
@@ -212,11 +219,11 @@ func (q *durableQuota) usageContext(ctx context.Context) (u durableUsage, err er
 			if !safeFileComponent(entry.Name()) {
 				return u, ErrDurableStorageRecovery
 			}
-			e = q.scan(filepath.Join("sessions", entry.Name(), "import-stage"), 0, &remaining, &u)
+			e = q.scan(ctx, filepath.Join("sessions", entry.Name(), "import-stage"), 0, &visited, &u)
 			if e != nil && !errors.Is(e, os.ErrNotExist) {
 				return u, e
 			}
-			e = q.scan(filepath.Join("sessions", entry.Name(), "pending-sources"), 0, &remaining, &u)
+			e = q.scan(ctx, filepath.Join("sessions", entry.Name(), "pending-sources"), 0, &visited, &u)
 			if e != nil && !errors.Is(e, os.ErrNotExist) {
 				return u, e
 			}
@@ -235,7 +242,7 @@ func (q *durableQuota) finishUsage(u durableUsage) error {
 	return q.home.Check()
 }
 
-func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUsage) (err error) {
+func (q *durableQuota) scan(ctx context.Context, path string, depth int, visited *int, u *durableUsage) (err error) {
 	if depth > 64 {
 		return ErrDurableStorageRecovery
 	}
@@ -252,7 +259,7 @@ func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUs
 	controlled := path == deletionDirectory || strings.HasPrefix(path, "publication-evidence/") || strings.HasSuffix(path, "/import-stage")
 	first := true
 	for {
-		entries, e := d.ReadDir(128)
+		entries, e := readDurableDirectory(ctx, d)
 		if e != nil && !errors.Is(e, io.EOF) {
 			return e
 		}
@@ -264,8 +271,7 @@ func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUs
 		}
 		first = false
 		for _, entry := range entries {
-			*remaining--
-			if *remaining < 0 {
+			if e := countDurableEntry(visited); e != nil {
 				return ErrDurableStorageRecovery
 			}
 			info, e := root.Lstat(entry.Name())
@@ -279,7 +285,7 @@ func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUs
 				if protectedDurableRoot(path) || strings.HasSuffix(path, "pending-sources") {
 					u.recovery = true
 				}
-				if e = q.scan(filepath.Join(path, entry.Name()), depth+1, remaining, u); e != nil {
+				if e = q.scan(ctx, filepath.Join(path, entry.Name()), depth+1, visited, u); e != nil {
 					return e
 				}
 				continue
@@ -509,8 +515,12 @@ func chargeDurableFile(path, name string, size int64, u *durableUsage) error {
 			return ErrDurableStorageRecovery
 		}
 		before := max(int64(0), u.deletionControls-durableControlBytes)
+		after := max(int64(0), u.deletionControls+size-durableControlBytes)
+		if after-before > durableStorageQuota-u.charged {
+			return ErrDurableStorageCapacity
+		}
 		u.deletionControls += size
-		u.charged += max(int64(0), u.deletionControls-durableControlBytes) - before
+		u.charged += after - before
 		u.physical += size
 		return nil // One aggregate allowance covers control old/new coexistence.
 	}

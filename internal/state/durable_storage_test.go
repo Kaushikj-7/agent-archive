@@ -408,7 +408,7 @@ func TestDurableInspectionCancellationDoesNotBecomeAbsence(t *testing.T) {
 	}
 }
 
-func TestDurableInspectionBoundRefusesPartialRootAndUnsafeEntries(t *testing.T) {
+func TestDurableInspectionCompletesAcrossWindowsAndRefusesUnsafeEntries(t *testing.T) {
 	s := newTestStore(t)
 	for _, id := range []string{"a", "b"} {
 		if err := os.WriteFile(s.pendingPath(id), []byte("{}"), 0600); err != nil {
@@ -424,10 +424,10 @@ func TestDurableInspectionBoundRefusesPartialRootAndUnsafeEntries(t *testing.T) 
 			t.Error(err)
 		}
 	}()
-	remaining := 1
-	_, _, err = s.inspectPendingRoot(held, "pending", &remaining, false)
-	if !errors.Is(err, ErrDurableStorageRecovery) {
-		t.Fatalf("partial inspection accepted: %v", err)
+	visited := durableEntryLimit
+	entries, _, err := s.inspectPendingRoot(held, "pending", &visited, false)
+	if err != nil || visited != durableEntryLimit+2 || len(entries) != 2 {
+		t.Fatalf("inspection stopped at allocation window: count=%d entries=%d err=%v", visited, len(entries), err)
 	}
 	outside := t.TempDir()
 	if err = os.WriteFile(filepath.Join(outside, "original"), []byte("outside"), 0600); err != nil {

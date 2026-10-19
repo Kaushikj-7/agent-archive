@@ -202,7 +202,7 @@ func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 	b := f.batch("2026-09-23-1", fixedNow.Add(-time.Hour))
 	f.register("b-session", code, b.ID, b.StartedAt.Add(time.Minute))
 
-	plan, err := PlanUndo(env, f.store, f.cfg, []Batch{a, b}, a, "")
+	plan, err := planUndoForTesting(t, env, f.store, f.cfg, []Batch{a, b}, a, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 	if _, err := f.store.ForgetIdleSession(id, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "b-session"}, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b}, a, ""); err != nil {
+	if plan, err = planUndoForTesting(t, env, f.store, f.cfg, []Batch{a, b}, a, ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(plan.ExcludeProjects) != 1 || len(plan.RemoveKeptOut) != 1 || plan.RemoveKeptOut[0].ProjectID != secretID {
@@ -241,7 +241,7 @@ func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 	// excluded: including the folder again must keep them out.
 	c := f.batch("2026-09-24-1", fixedNow.Add(-30*time.Minute))
 	f.cfg.Archive.Projects[0].Included = false
-	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b, c}, c, ""); err != nil || len(plan.RemoveKeptOut) != 0 {
+	if plan, err = planUndoForTesting(t, env, f.store, f.cfg, []Batch{a, b, c}, c, ""); err != nil || len(plan.RemoveKeptOut) != 0 {
 		t.Fatalf("undoing another import removed a live import's kept-out entry: %v %v", plan.RemoveKeptOut, err)
 	}
 	undoneAt := fixedNow
@@ -249,7 +249,7 @@ func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 	// Second review of PR #53: an import marked undone that still has a
 	// session registered (a --project undo of another of its projects, or
 	// a removal that failed) is still in place, so its entries stay.
-	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b, c}, c, ""); err != nil || len(plan.RemoveKeptOut) != 0 {
+	if plan, err = planUndoForTesting(t, env, f.store, f.cfg, []Batch{a, b, c}, c, ""); err != nil || len(plan.RemoveKeptOut) != 0 {
 		t.Fatalf("a partly undone import's kept-out entry was removed: %v %v", plan.RemoveKeptOut, err)
 	}
 	aSession, _, err := f.store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "a-session"})
@@ -263,7 +263,7 @@ func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 	if _, err := f.store.ForgetIdleSession(aSession, agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness("claude")), NativeID: "a-session"}, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b, c}, c, ""); err != nil || len(plan.RemoveKeptOut) != 1 {
+	if plan, err = planUndoForTesting(t, env, f.store, f.cfg, []Batch{a, b, c}, c, ""); err != nil || len(plan.RemoveKeptOut) != 1 {
 		t.Fatalf("an undone import's kept-out entry stayed: %v %v", plan.RemoveKeptOut, err)
 	}
 	if len(plan.Sessions) != 0 || len(plan.ExcludeProjects) != 0 || len(plan.RemoveApps) != 0 || plan.RestoreRetention != nil {
@@ -280,14 +280,14 @@ func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 
 	// A kept-out entry setup has since included is the person's.
 	f.cfg.Archive.Projects[1].Included = true
-	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b}, a, ""); err != nil || len(plan.RemoveKeptOut) != 0 {
+	if plan, err = planUndoForTesting(t, env, f.store, f.cfg, []Batch{a, b}, a, ""); err != nil || len(plan.RemoveKeptOut) != 0 {
 		t.Fatalf("included kept-out removed: %v %v", plan.RemoveKeptOut, err)
 	}
 	// So is one with a session registered in it (captured while setup had
 	// it included), even once it is excluded again.
 	f.register("secret-session", code+"/secret", "", fixedNow.Add(-time.Minute))
 	f.cfg.Archive.Projects[0].Included, f.cfg.Archive.Projects[1].Included = false, false
-	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b}, a, ""); err != nil || len(plan.RemoveKeptOut) != 0 {
+	if plan, err = planUndoForTesting(t, env, f.store, f.cfg, []Batch{a, b}, a, ""); err != nil || len(plan.RemoveKeptOut) != 0 {
 		t.Fatalf("kept-out entry with a session removed: %v %v", plan.RemoveKeptOut, err)
 	}
 }
