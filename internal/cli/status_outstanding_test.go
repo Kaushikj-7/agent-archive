@@ -12,6 +12,14 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state/statetest"
 )
 
+// importPending reports whether an imported session is pending under cfg:
+// the one definition state.Outstanding gives, for a caller that has not
+// listed the queued requests.
+func importPending(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (bool, error) {
+	owed, err := importOutstanding(store, cfg, reg)
+	return owed.Pending(), err
+}
+
 // Regression: 2026-09 review M-20. Every command that counts pending
 // sessions (status's pending count and its imports line, setup's
 // destination guard, uninstall's warning, backfill's upload progress) asks

@@ -1,19 +1,21 @@
 # agent-archive
+### Session handoffs and backups for Claude Code, Codex, and Cursor
 
-[![Test](https://github.com/wangjohn/agent-archive/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/wangjohn/agent-archive/actions/workflows/test.yml)
+[![Tests](https://github.com/wangjohn/agent-archive/actions/workflows/extended.yml/badge.svg?branch=main&event=schedule)](https://github.com/wangjohn/agent-archive/actions/workflows/extended.yml?query=branch%3Amain+event%3Aschedule)
 [![Go 1.27](https://img.shields.io/badge/go-1.27.2-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A lightweight CLI that captures Claude Code, Codex, and Cursor sessions and stores them in cloud storage (S3 or R2).
+Continue a Claude Code session in Codex, or vice-versa. You can pick a session and bring its conversation context into another coding agent. Add your own S3 or R2 bucket for automatic backups and access from other machines.
 
-OpenAI and Anthropic are constantly one-upping each other or the best model, but it's a pain to switch between their coding agents. Every time you switch, you lose your history, and then don't have a single source of truth for where all your sessions live. Also, if you run out of limits in the middle of a session, it's very annoying to have to figure out how to hand that session over to the other coding agent.
+OpenAI and Anthropic are constantly one-upping each other for the best model and harness, but it's a pain to switch between their coding agents, especially if you have multiple computers and accounts. You lose your conversation history as you switch and then have to search in multiple places to figure out where you working on something. You also can't introspect your sessions as easily.
 
 `agent-archive` solves these problems, and can perform the following:
 
-- **Archive automatically.** Upload Claude Code, Codex, and Cursor transcripts to your own S3 or R2 bucket.
 - **Continue across agents and computers.** Run `agent-archive handoff` to pick a session and continue with its context. After setup, you can also ask Claude Code or Codex to continue a previous session by name; the agent uses the CLI to find it and load its context. Useful when you hit rate limits or want to switch models ([handoff guide](docs/guides/handoff.md)).
 
   <img src="docs/assets/demos/handoff.gif" alt="Browse sessions, select a Claude Code session, and continue the work in Codex" width="800">
+
+- **Archive automatically.** Upload Claude Code, Codex, and Cursor transcripts to your own S3 or R2 bucket.
 
 - **Browse your session history.** Use `agent-archive list` to browse sessions across coding agents. Filter by topic, project, branch, or PR number, then open a session to revisit the conversation ([browsing guide](docs/guides/list-and-show.md)).
 
@@ -25,25 +27,30 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 
 ## Quickstart
 
-1. **Install on macOS:**
+1. **Install:**
 
    ```sh
    curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 sh
    ```
 
-   The published v0.1.1 binaries are macOS only. For Linux and the newer features shown here, [build from source](docs/getting-started/install.md#build-from-source).
+   Note the published binaries are macOS only.
 
-2. **Run setup** inside your project to configure capture and private S3 or R2 storage:
+2. **Continue a session in another agent**:
+
+   ```sh
+   agent-archive handoff
+   ```
+
+   Pick an existing Claude Code or Codex session, choose the receiving agent, and continue with its conversation context.
+
+3. **Enable automatic archiving (optional)**:
 
    ```sh
    agent-archive setup
    ```
 
-3. **Hand off a session** to another agent:
+  Connect your own S3 or R2 bucket if you want your sessions backed up and available from another computer.
 
-   ```sh
-   agent-archive handoff
-   ```
 
 [Setup guide](docs/getting-started/setup.md) · [Bucket options](docs/getting-started/bucket.md) · [Platforms](docs/getting-started/install.md#platforms) · [Privacy](docs/security/privacy.md) · [Multiple machines](docs/guides/multiple-machines.md)
 

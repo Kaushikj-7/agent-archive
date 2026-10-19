@@ -53,7 +53,7 @@ func (p *pass) openNativeInventory() (func() error, error) {
 	// and mirror the existing discovery catalog's 8192-owner bound.
 	count := len(p.startupCandidates)
 	for _, reg := range p.registrations {
-		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
+		if !p.opts.selectsSession(reg) || p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
 		if _, ok := pendingNativeRoot(reg, p.opts); ok {
@@ -71,7 +71,7 @@ func (p *pass) openNativeInventory() (func() error, error) {
 	}
 	scope := NativeLocatorPass{ReadBudget: budget, Roots: append([]archive.NativeRoot(nil), p.opts.NativeRoots...), Store: p.local, Queries: make([]agentapi.LocatorRequest, 0, count)}
 	for _, reg := range p.registrations {
-		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
+		if !p.opts.selectsSession(reg) || p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
 		if root, ok := pendingNativeRoot(reg, p.opts); ok {

@@ -58,6 +58,12 @@ without changing retained fields, parser interpretation or schemas. The version
 
 ## What a bump does
 
+Trusted Codex native-home alias rebasing changes only private indexed locator
+handling. The same approved home identity, confined source and final native
+selection remain required. It neither rewrites durable bindings nor changes
+source bytes, metadata derivation, private proof formats or uploaded schemas;
+filter, adapter, parser and permanent writer versions are unchanged.
+
 Private recovery review/export reuses mapping-file schema 1 and existing exact
 configured/historical assignment semantics. Its opt-in grouped observations are
 not persisted in ordinary plan output, configuration, registrations or uploaded
@@ -75,6 +81,17 @@ exactly what was retained); a changed one is published as usual. Nothing
 is re-uploaded unless it changed.
 
 ## Rules for contributors
+
+Confirmed backfill continuation and group publication use the existing import
+stage, batch, pending-publication and readback formats. The fresh confirmed-stage
+policy check adds no durable fields or permission. Native selection, privacy
+filtering and metadata derivation are unchanged, so no filter, adapter, parser,
+schema or permanent writer version changes apply. Retrying an ordinary first
+import stage also reuses that validated stage's original capture instant through
+envelope construction, rather than assigning the later collector clock. This
+restores already-selected capture provenance without changing native filtering,
+adapter output, parser algorithms or persisted fields. Already frozen pending
+publication bytes and proofs are retried unchanged.
 
 - **Any change to filtered output** — a key kept or dropped, a redaction
   pattern, a new block type — bumps `FilterVersion` and adds a section to the
@@ -194,7 +211,10 @@ journals have no selecting commit; ready journals bind the complete source set.
 The same held root durably establishes the writer fence before emitting these
 records. Older configuration writers reject the new marker, and older journal
 readers reject the new outer version rather than interpreting its authority as
-legacy state. Unknown and mixed selecting protocols fail closed.
+legacy state. Unknown and mixed selecting protocols fail closed. Settled
+`publication_version: 5` state marks inline payloads `released` instead of
+storing their bytes; the digests it binds are unchanged, it still reads state
+that kept the bytes, and pending journals refuse `released`.
 
 This is a capability layer over existing configuration, preserving every lower
 consent, search, import and selection protection. It does not redefine ordinary

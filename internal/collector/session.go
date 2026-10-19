@@ -366,11 +366,14 @@ func (s *sessionScan) resume(ctx context.Context) (outcome sessionOutcome, handl
 
 // sourceRead is what reading the session's source produced.
 type sourceRead struct {
-	stagedRevisions []archive.SourceBundle
-	filterLease     *int
-	adapter         agentapi.TranscriptFilter
-	filtered        archive.FilteredTranscript
-	observed        sourceState
+	// stagedCapturedAt comes only from the validated retained first selection.
+	// Refiltering its evidence is not new activity and cannot renew its age.
+	stagedCapturedAt time.Time
+	stagedRevisions  []archive.SourceBundle
+	filterLease      *int
+	adapter          agentapi.TranscriptFilter
+	filtered         archive.FilteredTranscript
+	observed         sourceState
 	// outcome is the scan's outcome when the read ended it.
 	outcome sessionOutcome
 }
@@ -674,6 +677,9 @@ func (s *sessionScan) compare(read sourceRead, candidate *archive.SourceBundle) 
 			if linkOnly || refiltered || bundleChangeIsNamingOnly(read.adapter, cached, *candidate) {
 				candidate.Capture.CapturedAt = cached.Capture.CapturedAt
 			}
+		}
+		if !read.stagedCapturedAt.IsZero() {
+			candidate.Capture.CapturedAt = read.stagedCapturedAt
 		}
 		return false, nil
 	case status == state.CacheStatusRateLimited:

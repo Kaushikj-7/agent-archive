@@ -22,6 +22,41 @@ follow [Semantic Versioning](https://semver.org/).
   Metadata preserves distinct installed declaration identities even when skills
   share a name and content hash. Exact runtime identity and public capture remain gated.
 
+- No-bucket handoff discovery reuses unused header-read reservations between
+  batches, so large Codex histories do not stop after reserving bytes they never
+  read. Removed checkouts no longer block selection. Local `--latest` can ignore
+  unresolved histories with verified modification times strictly older than the
+  selected session; incomplete enumeration, exhausted read budgets and potentially
+  newer unresolved histories still require explicit selection.
+
+- Confirmed backfill continues supported native preparation and staging across
+  bounded lookup scopes. Foreground imports publish and verify owned groups
+  before preparing more evidence under the shared 1 GiB quota. Rerunning the
+  same options also publishes a retained interrupted import after its native
+  files disappear. Fresh staging renews repository/source observations and
+  current policy; an existing durable selection keeps its frozen provenance.
+  Linked subagent registration or publication failures remain pending and retry
+  with the same options instead of reporting a completed import. Temporary policy
+  holds preserve their validated retained continuation. Unreadable child
+  ownership reports unfinished publication, including when paused or interrupted.
+  Guarded policy refusal cleans cancellable legacy child payloads; protected
+  selections retain their evidence. A delayed first upload preserves the
+  retained evidence's original capture time. Scoped publication preserves unrelated
+  sessions' retry schedules, deferral clocks and actionable issues.
+
+- Codex backfill missing-task diagnostics distinguish a validated snapshot with
+  no own records from own records without task proof. Unknown tails, missing
+  boundaries and dependencies remain uncertain. Text, JSON and private project
+  review preserve the existing refusal and capture requirements.
+
+- `sync` and scheduled collection can publish supported protected legacy imports
+  from their frozen staged evidence after native deletion. They acquire the real
+  collector guard required for exact publication and recovery.
+
+- Codex backfill accepts indexed rollout paths through a verified alias of an
+  already trusted native home, including macOS temporary-folder aliases. Home
+  identity, source confinement and final native selection remain required.
+
 - `backfill review-projects --output FILE` offers a private terminal review of
   observed missing original cwd groups, repository evidence, compatible exact
   configured assignments and import-only historical destinations. Export requires
@@ -44,8 +79,7 @@ follow [Semantic Versioning](https://semver.org/).
   no-progress results stay specific. Incomplete Codex inventory is reported while
   independently verified Codex sessions remain eligible. Shared native resource
   exhaustion remains a failure. Source safety limits and
-  background work are unchanged; confirmed staging and publication keep their
-  existing bounds.
+  scheduled background work are unchanged.
 
 - Deleted-worktree recovery resolves local Git origin chains consistently before
   and after project configuration. Every origin and traversed dependency must

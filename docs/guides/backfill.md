@@ -66,26 +66,62 @@ completes. Identity conflicts and other archive read errors still stop the plan.
 
 After confirmation, backfill stores the selected privacy-filtered evidence in
 private local staging before admitting each session. Setup's recent import and
-`--background` use the same protection. Once staged, an import can finish even
-if the apps delete their native files. A source that disappears before staging
-finishes is reported for retry; it is not counted as admitted.
+`--background` use the same protection. Once a complete parent and its selected
+children are staged, that group can finish even if the apps delete their native
+files. A child payload written before its parent manifest is complete still needs
+the parent's native input to finish preparation. A source that disappears before
+group staging finishes is reported for retry; it is not counted as admitted.
+
+Explicit imports renew bounded native lookup work during preparation and staging,
+including with `--background`. Before the first durable selection, repository,
+native dependency locations and current policy are checked again, including
+before each fresh child payload. After complete group preparation, retained
+evidence supplies recovery even when native files are gone. A later first upload
+keeps that staged evidence's original capture time, rather than the retry time.
+Run the same options again to finish registration and foreground publication;
+matching mapping files can be renamed or reordered without changing batch identity.
+
+Run `agent-archive sync` to retry an interrupted staged upload, including
+supported protected legacy imports whose native files have already disappeared.
 
 Staging and pending publication share a 1 GiB local quota. Foreground imports
-upload completed groups to free capacity; setup and background imports preserve
-completed work and report a capacity error so you can retry after the collector
-makes room. Each selected revision set and its encoded staging journal has a
-32 MiB upper bound; each child has a separate journal under the same quota.
+upload and verify bounded owned groups before preparing more evidence. Setup and
+background imports preserve completed work and report a capacity error so you
+can retry after the collector makes room. Each selected revision set and its
+encoded staging journal has a 32 MiB upper bound; each child has a separate
+journal under the same quota.
 Encoded expansion and recovery work for large records can lower the practical
 input limit. A source that exceeds these bounds is rejected before admission;
 completed groups stay recoverable. `backfill history` distinguishes staged/admitted sessions from
 remotely verified uploads. Uploaded means the collector has read back the
 selected remote sources and metadata and committed its local completion state.
+Linked subagent transcripts keep their own pending registration and publication
+obligations.
+An import reports completion only after those transcripts finish too; rerunning
+the same options retries their retained evidence after native deletion.
+Temporarily excluding their project or disabling their app preserves that
+continuation until the configuration permits publication again.
+An already recorded remote publication can still be waiting for local release
+of its stage and covered request. Current exclusions keep that first import
+pending until its existing release owner can settle it; they grant no upload
+permission. After settlement, ordinary later updates follow current settings.
+An unrelated owner's pending evidence is never uploaded merely to make room for
+this import. Its retry schedule and existing status issues remain intact while
+the import publishes its own work. Provider failures or unrelated quota occupancy
+retain completed evidence and report a retry action; they do not expand the quota.
 
 Pausing keeps referenced evidence for retry. Updated privacy rules are applied
-again before staged evidence is published. Canceling before admission removes
-unreferenced evidence, with a cleanup journal if interrupted; canceling after
-admission keeps evidence for recovery. Undo removes that import's owned staging
-along with its sessions. Dry-run writes no staging or admission state.
+again before staged evidence is published. For cancellable legacy preparations,
+canceling before admission removes unreferenced evidence, with a cleanup journal
+if interrupted. Canceling after admission keeps evidence for recovery. Undo
+includes cancellable legacy staging along with its sessions; protected typed
+staging retains its existing cancellation and undo refusal. Dry-run writes no
+staging or admission state.
+If policy changes while children are being prepared, cancellable legacy child
+payloads are cleaned up; earlier complete groups remain recoverable. Protected
+typed selections retain their evidence. Restore the policy and retry with native
+input present to finish an incomplete group. An I/O interruption
+before the parent manifest can leave a child payload for retry with native input.
 
 ## What gets imported
 
@@ -267,6 +303,13 @@ source byte, record, graph and shared resource limits still apply. A dry-run
 plan does not establish confirmed staging, admission or publication completion.
 Those later phases retain their existing work allowances.
 
+Codex's thread index may spell an already trusted native home through a symbolic
+link or a macOS directory alias. Backfill verifies that the original spelling
+still names the same physical home and substitutes only that home prefix.
+The rollout remains confined to its approved store; an alias cannot authorize
+another home or a source outside it. A removed, retargeted or replaced home
+invalidates the lookup, including a cached selection.
+
 Local Git origins use bounded, read-only chain resolution for both proposed and
 configured projects. Absolute/relative paths and local `file://` URLs (empty or
 ASCII `localhost` host, case-insensitive) can lead to a portable repository
@@ -308,6 +351,16 @@ single current rollout, missing dependencies or ownership boundaries, missing or
 limits. Text plans show the same counted breakdown. Unknown source reasons
 use a generic unavailable or resource-limit diagnostic; raw errors are never
 printed. These details explain the existing skip and do not change eligibility.
+
+For `own_task_missing`, an optional `residual` distinguishes
+`no_own_records_in_snapshot` from `own_records_without_task`. The first requires
+an explicit native own boundary, fully validated spans and no uncommitted tail;
+it describes that captured snapshot, which may later grow. The second establishes
+record presence only: control and unknown records do not prove independent
+conversation. Missing boundaries, clipped tails and unavailable dependencies stay
+uncertain. The primary skip/action and native task requirements still apply;
+project mappings cannot supply missing task evidence. Private project review
+shows the same residual when native qualification actually ran.
 
 `lookup_allowance_spent` with action `retry` means this run used its time or
 header-read allowance for finding Codex rollouts. Affected sessions remain

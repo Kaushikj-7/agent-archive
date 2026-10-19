@@ -41,6 +41,8 @@ type RecoveryReviewGroup struct {
 	PrimaryReasons          map[SkipReason]int
 	OtherReasons            map[SkipReason]int
 	DiagnosticDetails       map[DiagnosticDetail]int
+	// NativeResiduals refines checked missing-task decisions with finite snapshot facts.
+	NativeResiduals map[DiagnosticDetail]int
 	// NativeEvidenceUnresolved includes related histories not yet qualified;
 	// project failure may have prevented their full source inspection.
 	NativeEvidenceUnresolved int
@@ -126,7 +128,7 @@ func reviewProjectGroups(ctx context.Context, r *resolver, review *RecoveryRevie
 					review.OmittedCandidates += groups[last].Candidates
 					delete(groups, last)
 				}
-				g = &RecoveryReviewGroup{OriginalCwd: cwd, AssignmentCwd: key.cwd, RecordedRepoKey: key.key, PrimaryReasons: map[SkipReason]int{}, OtherReasons: map[SkipReason]int{}, DiagnosticDetails: map[DiagnosticDetail]int{}}
+				g = &RecoveryReviewGroup{OriginalCwd: cwd, AssignmentCwd: key.cwd, RecordedRepoKey: key.key, PrimaryReasons: map[SkipReason]int{}, OtherReasons: map[SkipReason]int{}, DiagnosticDetails: map[DiagnosticDetail]int{}, NativeResiduals: map[DiagnosticDetail]int{}}
 				groups[key] = g
 			}
 			observeRecoveryGroup(r, g, w)
@@ -177,6 +179,9 @@ func observeRecoveryGroup(r *resolver, g *RecoveryReviewGroup, w *work) {
 	g.PrimaryReasons[w.c.Skip]++
 	if w.c.Diagnostic != nil {
 		g.DiagnosticDetails[w.c.Diagnostic.Detail]++
+		if residual := diagnosticResidual(*w.c.Diagnostic); residual != "" {
+			g.NativeResiduals[residual]++
+		}
 	}
 	other := *w
 	other.res.skip = ""

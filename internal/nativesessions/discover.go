@@ -61,6 +61,14 @@ type Coverage struct {
 	Reason           string
 	ReservedBytes    int64
 	ReadBytes        int64
+	timeBounded      bool
+	unverifiedNewest time.Time
+}
+
+// LatestComplete reports whether no unresolved history can be as recent as at.
+// Missing enumeration or an unverified file timestamp always prevents this proof.
+func (c *Coverage) LatestComplete(at time.Time) bool {
+	return c.IdentityComplete || c.timeBounded && at.After(c.unverifiedNewest)
 }
 
 // Result retains the bounded candidate catalog for explicit older batches.
@@ -105,20 +113,29 @@ func Discover(ctx context.Context, ports agentapi.NativeDiscoveryLookup, files F
 		return out, err
 	}
 	out.Coverage = coverage
-	jobs, err := reserveNativeHeaders(ctx, files, refs, limits, &out.Coverage)
-	if err != nil {
-		return out, err
+	out.Coverage.timeBounded = coverage.IdentityComplete
+	var answers []headerAnswer
+	for len(refs) > 0 {
+		jobs, consumed, err := reserveNativeHeaders(ctx, files, refs, limits, &out.Coverage)
+		if err != nil {
+			return out, err
+		}
+		if len(jobs) == 0 {
+			break
+		}
+		batch, err := inspectNativeHeaders(ctx, ports, files, jobs, limits)
+		if err != nil {
+			return out, err
+		}
+		// Release reservations only after the entire deterministic batch finishes.
+		// Later headers can use the unused bytes without exceeding the shared cap.
+		for _, a := range batch {
+			out.Coverage.ReadBytes += a.bytes
+		}
+		out.Coverage.ReservedBytes = out.Coverage.ReadBytes
+		answers = append(answers, batch...)
+		refs = refs[consumed:]
 	}
-	answers, err := inspectNativeHeaders(ctx, ports, files, jobs, limits)
-	if err != nil {
-		return out, err
-	}
-	// All header jobs have finished, so unused worst-case reservations can be
-	// released without making scheduling depend on worker completion order.
-	for _, a := range answers {
-		out.Coverage.ReadBytes += a.bytes
-	}
-	out.Coverage.ReservedBytes = out.Coverage.ReadBytes
 	out.Candidates, err = scopeNativeCandidates(ctx, files, scope, answers, &out.Coverage)
 	out.Coverage.InScope = len(out.Candidates)
 	if !out.Coverage.IdentityComplete && out.Coverage.Reason == "" {
@@ -212,33 +229,38 @@ type headerJob struct {
 }
 
 type headerAnswer struct {
-	c     Candidate
-	bytes int64
-	err   error
+	c           Candidate
+	bytes       int64
+	timeBounded bool
+	err         error
 }
 
-func reserveNativeHeaders(ctx context.Context, files FileSystem, refs []Ref, limits Limits, c *Coverage) ([]headerJob, error) {
+func reserveNativeHeaders(ctx context.Context, files FileSystem, refs []Ref, limits Limits, c *Coverage) ([]headerJob, int, error) {
 	var jobs []headerJob
 	for i, ref := range refs {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		info, err := files.Lstat(ref.Path)
 		if err != nil {
 			c.Skipped++
 			c.IdentityComplete = false
+			c.timeBounded = false
 			continue
 		}
 		cost := min(max(0, info.Size()), limits.HeaderBytes)
 		if cost > limits.TotalBytes-c.ReservedBytes {
-			c.IdentityComplete = false
-			c.Reason = "read budget"
-			break
+			if len(jobs) == 0 {
+				c.IdentityComplete = false
+				c.timeBounded = false
+				c.Reason = "read budget"
+			}
+			return jobs, i, nil
 		}
 		c.ReservedBytes += cost
 		jobs = append(jobs, headerJob{index: i, ref: ref, window: cost})
 	}
-	return jobs, nil
+	return jobs, len(refs), nil
 }
 
 func inspectNativeHeader(ctx context.Context, ports agentapi.NativeHeadersLookup, files FileSystem, j headerJob, limits Limits) headerAnswer {
@@ -248,15 +270,13 @@ func inspectNativeHeader(ctx context.Context, ports agentapi.NativeHeadersLookup
 	}
 	defer func() { _ = s.Close() }()
 	h, w, err := InspectNative(ctx, ports, s, j.ref, j.window, limits.RecordBytes)
+	timeBounded := err == nil
 	if err == nil && (h.IdentityMismatch || !validNativeID(h.NativeID) || !filepath.IsAbs(h.Directory)) {
 		err = errors.New("native identity or checkout unavailable")
 	}
-	var c Candidate
-	if err == nil {
-		stamp := s.Stamp()
-		c = Candidate{Ref: j.ref, NativeID: h.NativeID, Directory: h.Directory, StartedAt: h.StartedAt, ModifiedAt: stamp.ModifiedAt, Stamp: stamp}
-	}
-	return headerAnswer{c: c, bytes: w.Bytes, err: err}
+	stamp := s.Stamp()
+	c := Candidate{Ref: j.ref, NativeID: h.NativeID, Directory: h.Directory, StartedAt: h.StartedAt, ModifiedAt: stamp.ModifiedAt, Stamp: stamp}
+	return headerAnswer{c: c, bytes: w.Bytes, timeBounded: timeBounded, err: err}
 
 }
 
@@ -320,6 +340,7 @@ func inspectNativeHeaders(ctx context.Context, ports agentapi.NativeHeadersLooku
 
 func scopeNativeCandidates(ctx context.Context, files FileSystem, scope Scope, answers []headerAnswer, c *Coverage) ([]Candidate, error) {
 	cache := map[string]string{}
+	missing := map[string]bool{}
 	canonical := func(dir string) (string, error) {
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -332,6 +353,7 @@ func scopeNativeCandidates(ctx context.Context, files FileSystem, scope Scope, a
 			return "", canceled
 		}
 		if err != nil {
+			missing[dir] = errors.Is(err, fs.ErrNotExist)
 			d = ""
 		}
 		cache[dir] = d
@@ -359,18 +381,21 @@ func scopeNativeCandidates(ctx context.Context, files FileSystem, scope Scope, a
 		if a.err != nil {
 			c.Skipped++
 			if !errors.Is(a.err, errNativeHistory) {
-				c.IdentityComplete = false
+				c.recordUnverified(a)
 			}
 			continue
 		}
 		var err error
-		a.c.Directory, err = canonical(a.c.Directory)
+		directory := a.c.Directory
+		a.c.Directory, err = canonical(directory)
 		if err != nil {
 			return nil, err
 		}
 		if a.c.Directory == "" {
 			c.Skipped++
-			c.IdentityComplete = false
+			if !missing[directory] {
+				c.recordUnverified(a)
+			}
 			continue
 		}
 		if directoryInScope(a.c.Directory, dirs, scope.All) {
@@ -378,6 +403,16 @@ func scopeNativeCandidates(ctx context.Context, files FileSystem, scope Scope, a
 		}
 	}
 	return candidates, nil
+}
+
+func (c *Coverage) recordUnverified(a headerAnswer) {
+	c.IdentityComplete = false
+	if !a.timeBounded {
+		c.timeBounded = false
+	}
+	if a.c.ModifiedAt.After(c.unverifiedNewest) {
+		c.unverifiedNewest = a.c.ModifiedAt
+	}
 }
 
 func directoryInScope(candidate string, dirs []string, all bool) bool {

@@ -310,6 +310,12 @@ func scanStopped(ctx context.Context, o Options) bool {
 }
 
 func approvedRoots(homes []string) []string {
+	return observeApprovedRoots(homes, nil)
+}
+
+// observeApprovedRoots shares approval's exact resolution with consumers that
+// must retain which original spelling supplied each physical root.
+func observeApprovedRoots(homes []string, observe func(home, root string)) []string {
 	var roots []string
 	for _, home := range homes {
 		if !filepath.IsAbs(home) {
@@ -318,6 +324,9 @@ func approvedRoots(homes []string) []string {
 		root, err := filepath.EvalSymlinks(home)
 		if err != nil {
 			root = filepath.Clean(home)
+		}
+		if observe != nil {
+			observe(home, root)
 		}
 		roots = appendUnique(roots, root)
 	}
