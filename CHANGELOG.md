@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Confirmed backfill registers bounded active groups through one ordered batch,
+  sharing native/state memory charges and retaining unfinished parents across
+  short hook holds. Registration totals no longer retain a second full ID list.
+  Full planning/native acquisition and compatible batch arrays still have their
+  existing memory and evidence limits.
+
 - Confirmed backfill continues supported native preparation and staging across
   bounded lookup scopes. Foreground imports publish and verify owned groups
   before preparing more evidence under the shared 1 GiB quota. Rerunning the
