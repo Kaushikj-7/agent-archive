@@ -247,7 +247,11 @@ Default non-short tests remain exhaustive, and the Python purge runner defaults
 to `--tier full`. Weekly and exact-commit candidate runs restore full scale and
 matrices. Daily runs additionally restore the full catalog list50 /128+/512,
 same-root warm SQL /128+/512, actual CLI1100/1050 pagination and physical
-million-record related-history limit. The small cached-prefix history test pins
+million-record related-history limit. Confirmed backfill runs its actual mixed
+3/17-session import, publication and readback cases in short mode; daily,
+weekly and exact-commit candidate runs also restore the unchanged 513-session
+case. A short pass records the full 513-session body as NOT RUN.
+The small cached-prefix history test pins
 aggregate refusal/release/retry; it does not prove million-record physical
 streaming. Metadata 16384, retained warm sources 2000 and physical/indexed
 five-sweep 1100*2 bodies restore weekly. The picker catalog first-page bounds use 128/512 records on PRs and restore
@@ -341,7 +345,7 @@ architecture, or signed-installer acceptance; see [releasing](../maintainers/rel
 The [Extended workflow](../../.github/workflows/extended.yml) uses separate
 daily `17 8 * * 1-6` and weekly `17 8 * * 0` cron events, avoiding a duplicate
 daily campaign on Sunday. Daily runs all Linux representative race bodies plus
-the four named full restorations, native Darwin platform smoke, expanded native
+the five named full restorations, native Darwin platform smoke, expanded native
 config/catalog/capture/source-I/O integration and the pinned
 published writer, actual systemd scheduler/setup/timer/uninstall, five seconds
 of mutations on every discovered fuzz target and expanded purge cases. Weekly

@@ -149,6 +149,16 @@ func materializeSubagentCandidates(ctx context.Context, local *state.Store, opts
 		outcome.errors[id] = candidateFailure(issue)
 	}
 	for _, candidate := range candidates {
+		if opts.SelectSession != nil {
+			parent, found, err := local.LoadRegistration(candidate.ParentArchiveSessionID)
+			if err != nil {
+				outcome.errors[candidate.ArchiveSessionID] = candidateFailure(err)
+				continue
+			}
+			if !found || !opts.selectsSession(parent) {
+				continue
+			}
+		}
 		err := materializeSubagentCandidate(ctx, local, candidate, opts, now)
 		var rejected subagentRejectedError
 		switch {
@@ -204,6 +214,11 @@ func materializeSubagentCandidate(ctx context.Context, local *state.Store, candi
 		if reg.ParentSessionID != parent.ArchiveSessionID || reg.ParentNativeSessionID != parent.NativeSessionID {
 			return state.ErrDurableStorageRecovery
 		}
+		// Current policy can hold an exact retained import without discarding
+		// its continuation. Only the validated stage above supplies that fact.
+		if opts.AcceptSession != nil && !opts.AcceptSession(parent) {
+			return errors.Join(state.ErrReadySelectionFrozen, errors.New("current policy holds staged imported child; review the configuration, then run agent-archive backfill again with the same options"))
+		}
 	} else {
 		reg, err = validateCandidateTranscript(ctx, local, candidate, parent, reg, opts, now)
 	}
@@ -221,7 +236,13 @@ func admittedSubagentParent(local *state.Store, candidate state.SubagentCandidat
 	if err != nil {
 		return archive.SessionRegistration{}, err
 	}
-	if !found || parent.NativeSessionID != candidate.ParentNativeSessionID || parent.ProjectID != candidate.ProjectID || parent.ProjectRoot != candidate.ProjectRoot || !parent.HistoricalProject.Equal(candidate.HistoricalProject) || archive.CanonicalHarness(parent.Harness.Name) != archive.CanonicalHarness(candidate.Harness.Name) || (opts.AcceptSession != nil && !opts.AcceptSession(parent)) {
+	if !found || parent.NativeSessionID != candidate.ParentNativeSessionID || parent.ProjectID != candidate.ProjectID || parent.ProjectRoot != candidate.ProjectRoot || !parent.HistoricalProject.Equal(candidate.HistoricalProject) || archive.CanonicalHarness(parent.Harness.Name) != archive.CanonicalHarness(candidate.Harness.Name) {
+		return archive.SessionRegistration{}, rejectSubagentCandidate(local, candidate, "subagent_parent_ownership_unavailable")
+	}
+	// A staged import still has to validate its exact retained owner before a
+	// policy refusal can be treated as a reversible hold. Other candidates
+	// keep the existing permanent refusal before any transcript read.
+	if opts.AcceptSession != nil && !opts.AcceptSession(parent) && (candidate.Origin != archive.SessionOriginImport || candidate.StagedImportSHA256 == "") {
 		return archive.SessionRegistration{}, rejectSubagentCandidate(local, candidate, "subagent_parent_ownership_unavailable")
 	}
 	return parent, nil
