@@ -106,7 +106,7 @@ func TestRecoverCrashWindowsQueueHooksUntilReceiptCompletes(t *testing.T) {
 					break
 				}
 			}
-			must(t, capture.ReplayAdmissionIntents(home, hookAt.Add(time.Second), productionAgents))
+			must(t, capture.ReplayAdmissionIntentsWithin(t.Context(), home, hookAt.Add(time.Second), productionAgents))
 			active, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "native"})
 			if err != nil || !found || active != next {
 				t.Fatalf("route: %s %v %v", active, found, err)
@@ -138,7 +138,7 @@ func TestRecoverCrashWindowsQueueHooksUntilReceiptCompletes(t *testing.T) {
 					t.Fatalf("journal replay lost feedback: %d", feedback)
 				}
 			}
-			must(t, capture.ReplayAdmissionIntents(home, hookAt.Add(2*time.Second), productionAgents))
+			must(t, capture.ReplayAdmissionIntentsWithin(t.Context(), home, hookAt.Add(2*time.Second), productionAgents))
 			regs, err := store.LoadRegistrations()
 			want := 2
 			if seam == "generation-active" {

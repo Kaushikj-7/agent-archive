@@ -130,7 +130,7 @@ func fullRootCatalogMetadata(ctx context.Context, snapshot *catalog.Snapshot, ro
 // Reuse is limited to an existing complete SQL universe for this captured root.
 // Cold stats requests do not create a catalog or resolve unselected overflow.
 func reusableRootCatalog(ctx context.Context, snapshot *catalog.Snapshot, store storage.ObjectStore, prefix string, q MetadataQuery, opts ListOptions) (RecentResult, bool, error) {
-	if opts.Cache == nil || canonicalCatalogPrefix(prefix) != "sessions/" || opts.ScopeMatch != nil {
+	if opts.Cache == nil || canonicalCatalogPrefix(prefix) != "sessions/" || opts.ScopeMatch != nil || q.Filter.Model != "" {
 		return RecentResult{}, false, nil
 	}
 	path := filepath.Join(filepath.Dir(opts.Cache.dir), "catalog", "sessions.sqlite")

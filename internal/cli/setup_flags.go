@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -42,6 +43,7 @@ const (
 
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
+	museHome string
 	// pairingInput preserves answers buffered by first-run onboarding. The original
 	// stdin remains the terminal identity used for private code entry.
 	pairingInput             io.Reader
@@ -177,6 +179,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 		opts.codexCaptureScope = value
 		return nil
 	})
+	fs.StringVar(&opts.museHome, "muse-home", "", "explicit Muse data home for root capture")
 	fs.StringVar(&opts.apps, "apps", "", "apps to capture, comma-separated")
 	fs.StringVar(&opts.skillEvidence, "skill-evidence", "", "none, metadata, or body")
 	fs.BoolVar(&opts.noSkills, "no-skills", false, "install no agent skills, and remove those setup wrote")
@@ -449,6 +452,10 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	}
 	cfg.Archive.Projects = slices.Clone(existing.Archive.Projects)
 	problems := setupApps(env.setupNames(), &cfg, opts.apps, env.detectHarnesses(userHome), installed)
+	if err := configureMuseHome(&cfg, opts.museHome); err != nil {
+		problems = append(problems, err)
+	}
+
 	if err := configureCodexCaptureScope(&cfg, opts.codexCaptureScope); err != nil {
 		problems = append(problems, err)
 	}
@@ -809,6 +816,43 @@ func stageScriptR2Credential(home string, cfg *config.Config, draft *setupDraft,
 	}
 	if cfg.Storage.Provider == credentials.ProviderR2 && !storedCredentialReadable(env, cfg.Storage.R2CredentialRef) {
 		return fmt.Errorf("the stored R2 key can't be read from the %s; pass --r2-access-key-id and the secret (see agent-archive setup --help)", credentials.StoreName(credentialOS))
+	}
+	return nil
+}
+
+func configureMuseHome(cfg *config.Config, home string) error {
+	if home != "" {
+		if !filepath.IsAbs(home) {
+			return errors.New("--muse-home requires an absolute Muse data home")
+		}
+		canonical, err := filepath.EvalSymlinks(filepath.Join(home, "sessions"))
+		if err != nil {
+			return errors.New("--muse-home must contain an existing sessions directory")
+		}
+		revision, err := local.ID()
+		if err != nil {
+			return err
+		}
+		root := archive.NativeRoot{Agent: "muse", Configured: filepath.Clean(home), Canonical: canonical, Revision: revision}
+		roots := slices.Clone(cfg.NativeRoots)
+		replaced := false
+		for i, old := range roots {
+			if old.Agent != "muse" {
+				continue
+			}
+			if old.Configured == root.Configured && old.Canonical == root.Canonical {
+				root.Revision = old.Revision
+			}
+			roots[i] = root
+			replaced = true
+		}
+		if !replaced {
+			roots = append(roots, root)
+		}
+		cfg.NativeRoots = roots
+	}
+	if slices.Contains(cfg.Harnesses, "muse") && !slices.ContainsFunc(cfg.NativeRoots, func(root archive.NativeRoot) bool { return root.Agent == "muse" }) {
+		return errors.New("muse capture requires --muse-home with one explicit data home")
 	}
 	return nil
 }

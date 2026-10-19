@@ -41,34 +41,7 @@ func (o *IdentityObserver) Lookup(ctx context.Context, root string) sourcefacts.
 		return sourcefacts.RepositoryIdentity{BudgetExhausted: true}
 	}
 	if top != "" {
-		key, known, nonportable := projectKey(ctx, root, o.shortRunner())
-		if !known {
-			if !nonportable || o.budget {
-				// A failed origin read may hide any key; it is not a keyless checkout.
-				return sourcefacts.RepositoryIdentity{BudgetExhausted: o.budget}
-			}
-			// Git printed an origin no repository key can name: a keyless checkout.
-			return sourcefacts.RepositoryIdentity{Root: top, ObservationScope: scope}
-		}
-		dependencies, semantic, ok := o.projectDependencies(ctx, root, top)
-		if !ok {
-			return sourcefacts.RepositoryIdentity{BudgetExhausted: o.budget}
-		}
-		var validation string
-		if semantic {
-			validation = "semantic"
-		}
-		id := sourcefacts.RepositoryIdentity{
-			Root: top, Key: key, Known: known, ObservationScope: scope,
-			Dependencies: dependencies, ObservedRoot: root, Validation: validation,
-		}
-		// The final reads must agree with the earlier identity under unchanged metadata.
-		verifiedRoot := ProjectRoot(ctx, root, o.shortRunner())
-		verifiedKey, verifiedKnown := ProjectKey(ctx, root, o.shortRunner())
-		if !verifiedKnown || verifiedRoot != top || verifiedKey != key || !ProjectIdentityCurrent(id) {
-			return sourcefacts.RepositoryIdentity{BudgetExhausted: o.budget}
-		}
-		return id
+		return o.checkoutIdentity(ctx, root, top, scope)
 	}
 	if ctx.Err() != nil {
 		return sourcefacts.RepositoryIdentity{}
@@ -135,7 +108,7 @@ func identityObservationScope() (string, bool) {
 	if !ok {
 		return "", false
 	}
-	digest := sha256.Sum256([]byte(stamp + "\x00" + executable + "\x00" + strings.Join(environment(os.Environ()), "\x00")))
+	digest := sha256.Sum256([]byte("local-origin-chain-v1\x00" + stamp + "\x00" + executable + "\x00" + strings.Join(environment(os.Environ()), "\x00")))
 	return hex.EncodeToString(digest[:]), true
 }
 
@@ -161,20 +134,20 @@ func repositoryStamp(path string) (string, bool) {
 	return hex.EncodeToString(digest[:]), true
 }
 
-func (o *IdentityObserver) projectDependencies(ctx context.Context, root, top string) ([]sourcefacts.RepositoryDependency, bool, bool) {
+func (o *IdentityObserver) projectDependencies(ctx context.Context, root, top string) ([]sourcefacts.RepositoryDependency, bool, sourcefacts.RecoveryOutcome) {
 	bounded, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 	raw, err := o.configRunner()(bounded, root, "-C", root, "config", "--show-origin", "--name-only", "-z", "--list")
 	if err != nil || bounded.Err() != nil {
-		return nil, false, false
+		return nil, false, sourcefacts.RecoveryOriginUnreadable
 	}
 	parts := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
 	if len(parts)%2 != 0 {
-		return nil, false, false
+		return nil, false, sourcefacts.RecoveryOriginUnreadable
 	}
 	paths := map[string]bool{root: true, filepath.Join(root, ".git"): true}
-	if !o.checkoutAncestorDependencies(root, top, paths) {
-		return nil, false, false
+	if top != "" && !o.checkoutAncestorDependencies(root, top, paths) {
+		return nil, false, sourcefacts.RecoveryOriginUnreadable
 	}
 	if !o.probed {
 		var unsupported bool
@@ -186,48 +159,47 @@ func (o *IdentityObserver) projectDependencies(ctx context.Context, root, top st
 		}
 		if !topLevelConfigDependencies(bounded, root, paths, run) {
 			if !unsupported || bounded.Err() != nil {
-				return nil, false, false
+				return nil, false, sourcefacts.RecoveryOriginUnreadable
 			}
 			o.legacy = true
 		}
 		o.probed = true
 	} else if !o.legacy && !topLevelConfigDependencies(bounded, root, paths, o.shortRunner()) {
-		return nil, false, false
+		return nil, false, sourcefacts.RecoveryOriginUnreadable
 	}
 	if !o.legacy {
 		// HEAD controls onbranch includes; the worktree/common metadata controls
 		// which config Git reads. Ask Git for paths rather than interpreting it.
 		metadata, err := o.shortRunner()(bounded, root, "-C", root, "rev-parse", "--path-format=absolute", "--git-path", "HEAD", "--git-path", "config", "--git-path", "config.worktree", "--git-path", "commondir")
 		if err != nil || bounded.Err() != nil {
-			return nil, false, false
+			return nil, false, sourcefacts.RecoveryOriginUnreadable
 		}
 		names := strings.Split(strings.TrimSuffix(string(metadata), "\n"), "\n")
 		if len(names) != 4 {
-			return nil, false, false
+			return nil, false, sourcefacts.RecoveryOriginUnreadable
 		}
 		for _, path := range names {
 			if !filepath.IsAbs(path) || strings.ContainsAny(path, "\x00\r\n") {
-				return nil, false, false
+				return nil, false, sourcefacts.RecoveryOriginUnreadable
 			}
-			paths[filepath.Clean(path)] = true
+			paths[path] = true
 		}
 	}
 	if !includeDependencies(bounded, root, paths, o.configRunner()) {
-		return nil, false, false
+		return nil, false, sourcefacts.RecoveryOriginUnreadable
 	}
 	for i := 0; i < len(parts); i += 2 {
 		path, ok := strings.CutPrefix(parts[i], "file:")
 		if !ok {
-			return nil, false, false
+			return nil, false, sourcefacts.RecoveryOriginUnreadable
 		}
 		if !filepath.IsAbs(path) {
-			path = filepath.Join(root, path)
+			path = joinRepositoryPath(root, path)
 		}
-		paths[filepath.Clean(path)] = true
+		paths[path] = true
 	}
-	if len(paths) > 128 {
-		o.budget = true
-		return nil, false, false
+	if len(paths) > maxIdentityDependencies {
+		return nil, false, sourcefacts.RecoveryOriginLimit
 	}
 	ordered := make([]string, 0, len(paths))
 	for path := range paths {
@@ -238,11 +210,11 @@ func (o *IdentityObserver) projectDependencies(ctx context.Context, root, top st
 	for _, path := range ordered {
 		stamp, ok := repositoryStamp(path)
 		if !ok {
-			return nil, false, false
+			return nil, false, sourcefacts.RecoveryOriginUnreadable
 		}
 		dependencies = append(dependencies, sourcefacts.RepositoryDependency{Path: path, Stamp: stamp})
 	}
-	return dependencies, o.legacy, true
+	return dependencies, o.legacy, ""
 }
 
 func includeDependencies(ctx context.Context, root string, paths map[string]bool, run Runner) bool {
@@ -267,12 +239,15 @@ func includeDependencies(ctx context.Context, root string, paths map[string]bool
 				return false
 			}
 			if !filepath.IsAbs(origin) {
-				origin = filepath.Join(root, origin)
+				origin = joinRepositoryPath(root, origin)
 			}
 			if !filepath.IsAbs(path) {
-				path = filepath.Join(filepath.Dir(origin), path)
+				// filepath.Dir cleans too; preserve a symlink/.. spelling in
+				// the containing configuration directory before joining.
+				directory := origin[:strings.LastIndexByte(origin, filepath.Separator)+1]
+				path = joinRepositoryPath(directory, path)
 			}
-			paths[filepath.Clean(path)] = true
+			paths[path] = true
 		}
 	}
 	return true
@@ -299,7 +274,7 @@ func topLevelConfigDependencies(ctx context.Context, root string, paths map[stri
 			if !filepath.IsAbs(path) || strings.ContainsAny(path, "\x00\r\n") {
 				return false
 			}
-			paths[filepath.Clean(path)] = true
+			paths[path] = true
 		}
 	}
 	return true

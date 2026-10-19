@@ -695,6 +695,15 @@ SQLite companions and search logs while holding the search lifecycle fence.
 
 ### Explicit Muse local handoff
 
+The qualified startup may place exactly one route-facts record between metadata
+and the original session opening. All three require no causation, and the route
+workspace must match. The same ownership, permission-frame and complete-file
+checks apply; the accepted sequence adds no retained fields.
+
+Startup model availability uses the complete validated startup prefix, including
+the resolved model in a qualified second metadata record. Missing or empty model
+labels remain explicitly unavailable; no provider default or billing is inferred.
+
 `handoff --file PATH --harness muse` reads a complete supported ordinary exec/MSP
 root without setup or registration. It validates the initial permission frame
 and startup locally, retains only minimal safe authority and linked own visible
@@ -756,3 +765,10 @@ remain unlisted in narrative transcript/handoff, preserving omitted-detail gaps.
 No normalized result objects, result/error counts, tool names, MCP, file or Git
 facts are inferred. Complete lifecycle, result status/body and billing remain
 unqualified; this does not enable capture or establish full tool parity.
+
+Muse can validate approval-free file-read effects through an earlier own committed
+call. It retains only the fixed `committed_file_read_v1` classification on the
+start row, alongside existing IDs. Private tool names, arguments, file subjects,
+profiles and outcomes remain omitted. This adds no file list, tool success/error,
+MCP, Git or parallelism facts. Marked sources require an upgraded reader; older
+approved rows remain readable. Capture and execution permission are unchanged.

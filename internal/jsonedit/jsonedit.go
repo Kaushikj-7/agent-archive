@@ -118,6 +118,11 @@ func EncodeValue(buf *bytes.Buffer, value any) error {
 		} else {
 			buf.WriteString("false")
 		}
+	case json.RawMessage:
+		if !json.Valid(v) {
+			return errors.New("invalid preserved JSON value")
+		}
+		buf.Write(v)
 	case json.Number:
 		buf.WriteString(v.String())
 	case string:
@@ -406,7 +411,7 @@ func (d *Document) render(value any) (string, error) {
 	if err := EncodeValue(&compact, value); err != nil {
 		return "", err
 	}
-	if d.indent == "" {
+	if d.indent == "" || containsPreservedJSON(value) {
 		return compact.String(), nil
 	}
 	var out bytes.Buffer
@@ -550,4 +555,22 @@ func Problem(err error) (line, column int, reason string) {
 		return e.line, e.column, e.reason
 	}
 	return 0, 0, ""
+}
+
+// Preserved native settings nodes keep their original internal whitespace.
+// Indenting the containing value would rewrite those bytes.
+func containsPreservedJSON(value any) bool {
+	switch v := value.(type) {
+	case json.RawMessage:
+		return true
+	case []any:
+		return slices.ContainsFunc(v, containsPreservedJSON)
+	case *Object:
+		for _, member := range v.Members {
+			if containsPreservedJSON(member.Value) {
+				return true
+			}
+		}
+	}
+	return false
 }

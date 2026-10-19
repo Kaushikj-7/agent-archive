@@ -48,6 +48,8 @@ func nativeValidationOwnerMatches(current, expected archive.SessionRegistration)
 // verify must retain its snapshot until this method returns; it must independently
 // verify both the expected old raw prefix and the new complete captured boundary.
 func (s *Store) CommitNativeValidation(ctx context.Context, owner archive.SessionRegistration, root archive.NativeRoot, next *archive.NativeSourceBinding, verify func(context.Context) error) (updated archive.SessionRegistration, err error) {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	if owner.CaptureFrozen || owner.NativeChild || owner.Imported() || owner.HistoricalProject != nil || s.hook || verify == nil || !safeFileComponent(owner.ArchiveSessionID) || root.Validate() != nil || next == nil || !next.AdvancesCheckpoint(owner.NativeBinding) || root.Agent != next.Agent || root.Revision != next.RootRevision || !local.PathWithin(next.Path, root.Canonical) {
 		return updated, errors.New("native validation requires prepared source authority")
 	}

@@ -30,7 +30,7 @@ Subagents  77% of tokens (7.7B) in 497 runs
 \e[1mHIGHLIGHTS\e[0m
 \e[2mStreak        \e[0m  none now (best 1 day)
 \e[2mBusiest day   \e[0m  Sep 27 (70 sessions)
-\e[2mFavorite model\e[0m  opus
+\e[2mFavorite model\e[0m  opus-5
 \e[2mThis month    \e[0m  the heaviest of the last 6 months, by tokens
                 so far
 \e[2mTool errors   \e[0m  5.0% of 4,200 tool results flagged as

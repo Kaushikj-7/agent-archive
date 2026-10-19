@@ -469,8 +469,8 @@ func statsEmptyMessageWith(s stats.Stats, filters statsFilters, sawSessions bool
 	}
 	switch {
 	case filters.Model != "":
-		// The screen names models by family ("opus"); the filter is exact.
-		return "No archived sessions match these filters " + span + ". --model takes a full model id (for example claude-opus-5), not a family name like opus." + advice
+		// The screen names models by short label ("opus-5"); the filter is exact.
+		return "No archived sessions match these filters " + span + ". --model takes a full model id (for example claude-opus-5), not the short name the screen shows, like opus-5." + advice
 	case filters != statsFilters{}:
 		return "No archived sessions match these filters " + span + "." + advice
 	case sawSessions:

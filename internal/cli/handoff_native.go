@@ -377,8 +377,9 @@ func resolveNativeHandoff(opts handoffOptions, interactive bool, input *typedInp
 		return fail(errors.New("no verified local sessions in the selected checkout; use --all-projects to search other projects, or --file PATH --harness NAME"))
 	}
 	var selected *nativesessions.Candidate
-	if opts.latest && !result.Coverage.IdentityComplete {
-		terminal.Println(stderr, "handoff: --latest requires complete local identity and checkout discovery; select a known native ID explicitly")
+	_, latestComplete := latestKnownNative(result, env)
+	if opts.latest && !latestComplete {
+		terminal.Println(stderr, "handoff: --latest requires complete local discovery for sessions that could be as recent; select a known native ID explicitly")
 		if !interactive {
 			for i, c := range candidates {
 				if i >= handoffCandidateLimit {
@@ -416,7 +417,7 @@ func resolveNativeHandoff(opts handoffOptions, interactive bool, input *typedInp
 	if err != nil {
 		return fail(err)
 	}
-	if opts.latest && result.Coverage.IdentityComplete {
+	if opts.latest && latestComplete {
 		target.describe = fmt.Sprintf("local %s (%s), newest local transcript modification time %s", selected.NativeID, selected.Ref.Harness, selected.ModifiedAt.Format("2006-01-02 15:04:05 MST"))
 	}
 	return target, true, 0
@@ -514,16 +515,14 @@ func recheckNativeSource(ctx context.Context, pass agentapi.SourcePass, ref nati
 func selectKnownNative(opts handoffOptions, result nativesessions.Result, interactive bool, env currentSessionDependencies) (*nativesessions.Candidate, error) {
 	candidates := result.Candidates
 	if opts.latest {
-		if !result.Coverage.IdentityComplete {
-			return nil, errors.New("--latest requires complete local identity and checkout discovery; select a known native ID explicitly")
+		newest, complete := latestKnownNative(result, env)
+		if newest == nil {
+			return nil, errors.New("no other local session in the selected checkout")
 		}
-		observations := runtimeObservations(env)
-		for _, c := range candidates {
-			if !isCurrentNative(c, observations) {
-				return &c, nil
-			}
+		if !complete {
+			return nil, errors.New("--latest requires complete local discovery for sessions that could be as recent; select a known native ID explicitly")
 		}
-		return nil, errors.New("no other local session in the selected checkout")
+		return newest, nil
 	}
 	if opts.sessionID != "" {
 		return nativeIdentity(candidates, opts.sessionID, opts.harness)
@@ -539,6 +538,16 @@ func selectKnownNative(opts handoffOptions, result nativesessions.Result, intera
 		return selected, nil
 	}
 	return nil, nil
+}
+
+func latestKnownNative(result nativesessions.Result, env currentSessionDependencies) (*nativesessions.Candidate, bool) {
+	observations := runtimeObservations(env)
+	for _, c := range result.Candidates {
+		if !isCurrentNative(c, observations) {
+			return &c, result.Coverage.LatestComplete(c.ModifiedAt)
+		}
+	}
+	return nil, result.Coverage.IdentityComplete
 }
 
 func isCurrentNative(c nativesessions.Candidate, observations []agentapi.AgentRuntime) bool {

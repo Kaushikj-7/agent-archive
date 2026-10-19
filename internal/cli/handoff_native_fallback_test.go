@@ -42,10 +42,10 @@ func TestUnusedHeaderReservationsPermitInitialPreviews(t *testing.T) {
 	var out, stderr bytes.Buffer
 	code := Run([]string{"handoff", "--no-preamble"}, strings.NewReader("q\n"), &out, &stderr, f.env)
 	t.Logf("interactive exit=%d output=%q stderr=%q", code, out.String(), stderr.String())
-	if err != nil || len(r.Candidates) != 256 || len(catalog.rows) != 50 || catalog.next != 50 || !more || r.Coverage.ReservedBytes != r.Coverage.ReadBytes || read > nativeReadBudget {
+	if err != nil || !r.Coverage.IdentityComplete || len(r.Candidates) != 257 || len(catalog.rows) != 50 || catalog.next != 50 || !more || r.Coverage.ReservedBytes != r.Coverage.ReadBytes || read > nativeReadBudget {
 		t.Fatalf("unused headers prevented bounded previews: coverage=%+v rows=%d next=%d more=%v read=%d err=%v", r.Coverage, len(catalog.rows), catalog.next, more, read, err)
 	}
-	if code != 0 || !strings.Contains(stderr.String(), "labels inspected for 50 of 256") {
+	if code != 0 || !strings.Contains(stderr.String(), "labels inspected for 50 of 257") {
 		t.Fatalf("picker did not expose initial previews: code=%d stderr=%s", code, stderr.String())
 	}
 }

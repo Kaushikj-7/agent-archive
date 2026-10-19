@@ -38,7 +38,8 @@ func twoInstallations(t *testing.T) (primary, secondary Env, userHome string) {
 func hookFileSnapshot(t *testing.T, userHome string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
-	for app, path := range legacyHookFiles(userHome) {
+	for _, app := range allHarnesses {
+		path := legacyHookFiles(userHome)[app]
 		data, err := os.ReadFile(path)
 		if err != nil && !os.IsNotExist(err) {
 			t.Fatal(err)
@@ -123,7 +124,8 @@ func TestSecondInstallationNeverTouchesTheFirstsHooks(t *testing.T) {
 			if !strings.Contains(out.String(), "Kept: ") {
 				t.Fatalf("uninstall does not say what it kept:\n%s", &out)
 			}
-			for app, path := range legacyHookFiles(userHome) {
+			for _, app := range allHarnesses {
+				path := legacyHookFiles(userHome)[app]
 				owner := second.installation(secondHome, userHome).hook(executable)
 				if ok, err := hooks.Installed(legacyHookFiles(userHome), owner, app); !ok || err != nil {
 					data, _ := os.ReadFile(path)

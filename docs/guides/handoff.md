@@ -54,26 +54,33 @@ Redrawing, filtering, and scrolling within the loaded rows inspect no
 additional transcripts. Word queries search only loaded previews and report their bounded
 coverage. A partial label falls back to the first filtered prompt or native ID.
 Discovery inspects at most 10,000 files, with a cumulative 64 MiB discovery and
-preview read budget per invocation. After header inspection finishes, unused
-header reservations become available for previews. If the budget is exhausted,
-the picker keeps remaining verified native IDs selectable, marks their labels
+preview read budget per invocation. Header inspection proceeds in deterministic
+batches; each completed batch releases unused reservations for remaining headers
+and then previews. If the budget is exhausted, the picker keeps remaining
+verified native IDs selectable, marks their labels
 uninspected, and disables older preview loading. Searching these rows can match
 IDs and checkout facts, but cannot match uninspected conversation text.
 
 Local `--latest` uses transcript file modification time. Copying or restoring
-files can change that ordering. It requires complete identity/checkout discovery
-and skips the exactly identified calling session. When discovery is incomplete,
-it refuses automatic selection and offers the terminal picker for an explicit
-choice. Scripts receive up to 20 known candidates with copyable, harness-qualified
+files can change that ordering. It skips the exactly identified calling session
+and checkouts confirmed to no longer exist. Enumeration must finish; unresolved
+histories can be ignored only when their verified modification times are strictly
+older than the selected session. Unknown timestamps, incomplete enumeration or
+read budgets, and unresolved sessions with equal or newer times still prevent
+automatic selection and offer the terminal picker for an explicit choice.
+Scripts receive up to 20 known candidates with copyable, harness-qualified
 local handoff commands. These candidates are not a claim about the newest
 session; even `--latest --to` requires an explicit choice after refusal.
 `--to` without a selector
 uses an exact available native identity, offers the terminal picker when one
 cannot be identified, or requires explicit selection inside an agent; it never
 substitutes latest. Automatic current identity depends on the app exposing a
-matching session variable. Disposable live Claude/Codex checks on both supported
-platforms remain unverified; synthetic home/launcher tests cover the command
-flow. Setup installs agent skills only when explicitly requested later.
+matching session variable. Disposable live macOS checks cover native IDs and
+`--latest --to` in both Claude/Codex directions, using existing native history
+and a separate unconfigured archive home. Linux, the interactive picker,
+new-window launching, and automatic current identity remain unverified live;
+synthetic home/launcher tests cover those command paths. Setup installs agent
+skills only when explicitly requested later.
 
 Rendering creates no archive. Launch files are private (directory 0700, file
 0600) under `agent-archive-local-handoffs-<uid>` in the temporary directory and survive
@@ -138,23 +145,35 @@ agent-archive handoff
 ```
 
 Pick a session in [the picker](#the-picker) (a number, or `/` and a few
-words to find one), and `handoff` asks where to continue:
+words to find one), and `handoff` names the session and asks where to
+continue:
 
 ```text
+  Fix the flaky widget test
+  Claude Code · 2 hours ago · 14 KB
+
 ? Continue in
 
   1) Codex (default)
   2) Claude Code
 
-  [p] print
-  [c] copy to the clipboard
-  [w] write to a file
-  [q] quit
+  [p] print  [c] copy  [w] write  [q] quit
 
 › Choose [1]:
 ```
 
-Only agents whose CLI is on `PATH` are numbered. Enter takes the default:
+Only agents whose CLI is on `PATH` are numbered. When only one is installed,
+the question is yes or no instead: Enter or `y` starts that agent, and `n` or
+`q` quits.
+
+```text
+? Continue in Claude Code? [Y/n]
+  or [p] print  [c] copy  [w] write
+
+›
+```
+
+Enter takes the default:
 `handoff.default_to` for the session's harness in `config.json` (see
 [configuration](../reference/configuration.md)) when that agent is installed,
 else Codex for a Claude Code session and Claude Code for a Codex or Cursor
@@ -798,6 +817,11 @@ in the [handoff design](../../dev/proposals/implemented/handoff.md).
 
 ### Muse local sessions
 
+The model-unavailable warning reflects the complete validated startup prefix.
+A model resolved in the qualified second metadata record is available; missing
+or empty model labels remain unavailable. This does not establish complete usage
+or cost.
+
 Use `agent-archive handoff --file /path/to/session.jsonl --harness muse` to read
 a complete supported ordinary exec/MSP root without setup. Add `--format json`,
 `--output FILE`, or `--to codex` (also Claude/Cursor) as usual. The handoff keeps
@@ -811,7 +835,7 @@ XDG value is trimmed; a relative value resolves against this command's working
 directory. An unset or whitespace-only value uses the qualified HOME's
 `.local/share/muse`. It does not combine stores or infer locations from hooks.
 For example, `agent-archive handoff --latest --harness muse --source local`
-selects only after complete bounded identity discovery. Folder dates and UUID
+selects only when bounded discovery proves that no unresolved history can be as recent. Folder dates and UUID
 ages are locator hints; validated permission records supply the creation time.
 
 Muse previews show safe recorded automatic names and activity, falling back to

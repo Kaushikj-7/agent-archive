@@ -170,6 +170,10 @@ func startupPrefix(rows []retained) bool {
 		if rows[3].Type == payloadRuntimeSessionMetadata {
 			return twoMetadataPrefix(rows)
 		}
+		// The qualified route-facts lane has exactly one interposed row.
+		if rows[3].Type == payloadRuntimeSessionRouteFacts {
+			return len(rows) >= 5 && rows[4].Type == payloadSessionOpenedObserved && rows[4].Fields["resume"] == false && rows[2].Causation == nil && rows[3].Causation == nil && rows[4].Causation == nil
+		}
 		return rows[3].Type == payloadSessionOpenedObserved && rows[3].Fields["resume"] == false && rows[2].Causation == nil && rows[3].Causation == nil
 	}
 	return len(rows) >= 8 && rows[2].Type == payloadRuntimeSessionCaptureSelection && rows[3].Type == payloadRuntimeCommandIntakeReceived && str(rows[3].Fields["command_kind"]) == "session_start" && rows[6].Type == payloadRuntimeSessionMetadata && rows[7].Type == payloadSessionOpenedObserved && rows[7].Fields["resume"] == false && rows[6].Causation == nil && rows[7].Causation == nil

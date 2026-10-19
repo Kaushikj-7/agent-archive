@@ -1,0 +1,2452 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/muse-retained-v1.schema.json",
+  "title": "Muse retained logical record v1",
+  "description": "Archive-native privacy projection, not native framing or producer certification. Cross-record root, sequence, position, causal and privacy validation is also required.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "pos",
+    "id",
+    "stream",
+    "seq",
+    "ts_us",
+    "schema",
+    "type",
+    "payload_schema",
+    "record_type",
+    "durability",
+    "causation_id",
+    "fields"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "pos": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "line",
+        "child"
+      ],
+      "properties": {
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "child": {
+          "enum": [
+            null,
+            0,
+            1
+          ]
+        }
+      }
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "const": "session"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        }
+      }
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "ts_us": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "schema": {
+      "const": 1
+    },
+    "type": {
+      "type": "string",
+      "maxLength": 1048576
+    },
+    "payload_schema": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "record_type": {
+      "const": "event"
+    },
+    "durability": {
+      "const": "durable"
+    },
+    "causation_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fields": {
+      "type": "object"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session.permission_format_declared"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "format"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "format": {
+              "const": "profile_v1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session.permission_profile_committed"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "permission_epoch",
+            "cause"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "permission_epoch": {
+              "const": 1
+            },
+            "cause": {
+              "const": "new_session_default"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session.metadata"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "workspace_root",
+            "provider_id",
+            "tool_surface_version"
+          ],
+          "properties": {
+            "kind": {
+              "const": "metadata"
+            },
+            "workspace_root": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "provider_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "model_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "tool_surface_version": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "session.opened.observed"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "session_id",
+            "resume"
+          ],
+          "properties": {
+            "kind": {
+              "const": "session_opened"
+            },
+            "session_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "resume": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session.capture_selection"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "selection",
+            "publication_id"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "selection": {
+              "type": "string",
+              "maxLength": 1048576,
+              "enum": [
+                "armed",
+                "unarmed"
+              ]
+            },
+            "publication_id": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.command_intake.received"
+        },
+        "payload_schema": {
+          "const": 2
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "command_id",
+            "command_kind",
+            "workspace_root",
+            "provider_id",
+            "model_id",
+            "tool_surface_version"
+          ],
+          "properties": {
+            "kind": {
+              "const": "command_intake"
+            },
+            "command_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "command_kind": {
+              "const": "session_start"
+            },
+            "workspace_root": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "provider_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "model_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "tool_surface_version": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.command_intake.received"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "command_id",
+            "command_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "command_intake"
+            },
+            "command_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "command_kind": {
+              "const": "turn_queue_submit"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session_start.intake_v3"
+        },
+        "payload_schema": {
+          "const": 3
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "command_id",
+            "activation_source",
+            "workspace_root",
+            "provider_id",
+            "model_id",
+            "tool_surface_version"
+          ],
+          "properties": {
+            "kind": {
+              "const": "session_start_intake_v3"
+            },
+            "command_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "activation_source": {
+              "type": "string",
+              "maxLength": 1048576,
+              "enum": [
+                "startup",
+                "resume"
+              ]
+            },
+            "workspace_root": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "provider_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "model_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "tool_surface_version": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "session.started"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "command_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "session_started"
+            },
+            "command_id": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "session.resumed"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "session_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "session_resumed"
+            },
+            "session_id": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "session.end"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "session_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "session_end"
+            },
+            "session_id": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session.route_facts"
+        },
+        "payload_schema": {
+          "const": 2
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "cwd"
+          ],
+          "properties": {
+            "kind": {
+              "const": "route_facts"
+            },
+            "cwd": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.user_intent.accepted"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "intent_id",
+            "source_session_id",
+            "surface",
+            "semantic_kind"
+          ],
+          "properties": {
+            "intent_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "source_session_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "surface": {
+              "const": "main"
+            },
+            "semantic_kind": {
+              "const": "chat"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.user_intent.materialized"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "intent_id",
+            "envelope_record_id",
+            "envelope_sequence",
+            "source_session_id",
+            "run_id",
+            "run_started_session_record_id",
+            "run_started_source_record_id",
+            "outcome_kind"
+          ],
+          "properties": {
+            "intent_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "envelope_record_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "envelope_sequence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "source_session_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "run_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "run_started_session_record_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "run_started_source_record_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "outcome_kind": {
+              "const": "top_level_turn_started"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "session.name.changed"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "session_id",
+            "new_name",
+            "previous_name",
+            "source",
+            "operation_id"
+          ],
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "new_name": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "previous_name": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 1048576
+            },
+            "source": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "operation_id": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "run.model.configured"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "command_id",
+            "run_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run_model"
+            },
+            "command_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "run_id": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 2
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "root_agent_id",
+            "root_session_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "agent_tree_initialized"
+            },
+            "root_agent_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "root_session_id": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "source_run_record_id",
+            "source_run_record_sequence",
+            "prompt"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "started"
+            },
+            "run_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "source_run_record_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "source_run_record_sequence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "prompt": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "source_run_record_id",
+            "source_run_record_sequence",
+            "message_id",
+            "response_id",
+            "text"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "assistant_message_committed"
+            },
+            "run_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "source_run_record_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "source_run_record_sequence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "message_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "response_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "hook_run_started"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "hook_run_terminal"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "context_block_diagnostic"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "model_request_configured"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "context_block_updated"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "provider_request_options_configured"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "model_input_trace_recorded"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "task_stream_linked"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "model_response_created"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "goal_usage_attribution"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "model_completed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "resource_usage_sampled"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "terminal"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "assistant_tool_calls_committed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "tool_result_batch_committed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "side_effect_intent"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "completed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "failed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "event_kind": {
+              "const": "proposed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "event_kind": {
+              "const": "accepted"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "event_kind": {
+              "const": "scheduled"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "event_kind": {
+              "const": "side_effect_intent"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "event_kind": {
+              "const": "started"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "event_kind": {
+              "const": "status"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "event_kind": {
+              "const": "completed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "event_kind": {
+              "const": "failed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "event_kind": {
+              "const": "cancelled"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session.task"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "event_kind"
+          ],
+          "properties": {
+            "event_kind": {
+              "const": "proposed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session.task"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "event_kind"
+          ],
+          "properties": {
+            "event_kind": {
+              "const": "accepted"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session.task"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "event_kind"
+          ],
+          "properties": {
+            "event_kind": {
+              "const": "scheduled"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session.task"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "event_kind"
+          ],
+          "properties": {
+            "event_kind": {
+              "const": "side_effect_intent"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session.task"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "event_kind"
+          ],
+          "properties": {
+            "event_kind": {
+              "const": "started"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session.task"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "event_kind"
+          ],
+          "properties": {
+            "event_kind": {
+              "const": "status"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session.task"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "event_kind"
+          ],
+          "properties": {
+            "event_kind": {
+              "const": "completed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session.task"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "event_kind"
+          ],
+          "properties": {
+            "event_kind": {
+              "const": "failed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session.task"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "event_kind"
+          ],
+          "properties": {
+            "event_kind": {
+              "const": "cancelled"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.retained_fact"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "retained_runtime_fact"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.command_intake.session_name.received"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "command_intake"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.command_intake.settled"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "command_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "command_intake"
+            },
+            "command_id": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "source_run_record_id",
+            "source_run_record_sequence"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "reasoning_committed"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "source_run_record_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "source_run_record_sequence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "task_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "event_kind": {
+              "const": "output"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "task_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 3
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "pending_action_id",
+            "task_id",
+            "tool_call_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "approval"
+            },
+            "event_kind": {
+              "const": "requested"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "pending_action_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "task_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "tool_call_id": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 3
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "pending_action_id",
+            "review_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "approval"
+            },
+            "event_kind": {
+              "const": "automated_review_started"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "pending_action_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "review_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 3
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "pending_action_id",
+            "review_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "approval"
+            },
+            "event_kind": {
+              "const": "automated_review_completed"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "pending_action_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "review_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 3
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "pending_action_id",
+            "review_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "approval"
+            },
+            "event_kind": {
+              "const": "decision_applied"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "pending_action_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "review_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "approval_wait.effect.started"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "pending_action_id",
+            "task_id",
+            "tool_call_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "approval_wait_effect"
+            },
+            "event_kind": {
+              "const": "started"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "pending_action_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "task_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "tool_call_id": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "approval_wait.effect.terminal"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "pending_action_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "approval_wait_effect"
+            },
+            "event_kind": {
+              "const": "terminal"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "pending_action_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "tool_batch.effect.started"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "effect_id",
+            "task_id",
+            "tool_call_id",
+            "model_call_index"
+          ],
+          "properties": {
+            "kind": {
+              "const": "tool_batch_effect"
+            },
+            "event_kind": {
+              "const": "started"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "effect_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "task_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "tool_call_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "model_call_index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "tool_batch.effect.terminal"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "effect_id",
+            "task_id",
+            "tool_call_id",
+            "model_call_index"
+          ],
+          "properties": {
+            "kind": {
+              "const": "tool_batch_effect"
+            },
+            "event_kind": {
+              "const": "terminal"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "effect_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "task_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "tool_call_id": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "model_call_index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "source_run_record_id",
+            "source_run_record_sequence",
+            "model",
+            "input_tokens",
+            "output_tokens"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "model_completed"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "source_run_record_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "source_run_record_sequence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "input_tokens": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "output_tokens": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "causation_id": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "source_run_record_id",
+            "source_run_record_sequence",
+            "message_id",
+            "tool_calls"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "assistant_tool_calls_committed"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "source_run_record_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "source_run_record_sequence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "message_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            },
+            "tool_calls": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 200000,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "call_id"
+                ],
+                "properties": {
+                  "call_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "causation_id": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "source_run_record_id",
+            "source_run_record_sequence",
+            "batch_id",
+            "results"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "tool_result_batch_committed"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "source_run_record_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "source_run_record_sequence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "batch_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+            },
+            "results": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 200000,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "tool_call_index",
+                  "tool_call_id"
+                ],
+                "properties": {
+                  "tool_call_index": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "tool_call_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "causation_id": {
+          "type": "null"
+        }
+      }
+    }
+  ]
+}

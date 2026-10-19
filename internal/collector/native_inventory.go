@@ -51,9 +51,9 @@ func (p *pass) openNativeInventory() (func() error, error) {
 	}
 	// Query snapshots share the existing ledger too. Count before allocation,
 	// and mirror the existing discovery catalog's 8192-owner bound.
-	count := 0
+	count := len(p.startupCandidates)
 	for _, reg := range p.registrations {
-		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
+		if !p.opts.selectsSession(reg) || p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
 		if _, ok := pendingNativeRoot(reg, p.opts); ok {
@@ -71,12 +71,15 @@ func (p *pass) openNativeInventory() (func() error, error) {
 	}
 	scope := NativeLocatorPass{ReadBudget: budget, Roots: append([]archive.NativeRoot(nil), p.opts.NativeRoots...), Store: p.local, Queries: make([]agentapi.LocatorRequest, 0, count)}
 	for _, reg := range p.registrations {
-		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
+		if !p.opts.selectsSession(reg) || p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
 		if root, ok := pendingNativeRoot(reg, p.opts); ok {
 			scope.Queries = append(scope.Queries, agentapi.LocatorRequest{NativeID: reg.NativeSessionID, Root: root})
 		}
+	}
+	for _, candidate := range p.startupCandidates {
+		scope.Queries = append(scope.Queries, agentapi.LocatorRequest{Purpose: agentapi.LocatorStartupCandidate, NativeID: candidate.intent.NativeSessionID, Root: candidate.root, Observed: candidate.intent.ObservedAt})
 	}
 	sort.Slice(scope.Queries, func(i, j int) bool { return scope.Queries[i].NativeID < scope.Queries[j].NativeID })
 	lookup, closeLookup, err := factory(p.ctx, scope)

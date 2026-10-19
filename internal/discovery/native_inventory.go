@@ -111,6 +111,7 @@ type NativeInventory struct {
 	expected  []byte
 	progress  nativeProgress
 	eligible  []string
+	purposes  []uint8
 	counts    NativeInventoryCounts
 	remaining time.Duration
 	deadline  time.Time
@@ -136,24 +137,21 @@ func NewNativeInventory(ctx context.Context, home string, roots []archive.Native
 		return nil, err
 	}
 	constructorStart := time.Now()
-	l := &NativeInventory{ctx: ctx, path: filepath.Join(home, "discovery-catalog.json"), budget: budget, validate: validate, remaining: Budget, tokens: map[string]nativeSelection{}}
 	if budget == nil || validate == nil {
 		return nil, agentapi.ErrInvalidSourceBinding
 	}
-	for _, root := range roots {
-		if root.Agent == "muse" {
-			if l.root.Agent != "" || root.Validate() != nil {
-				return nil, agentapi.ErrInvalidSourceBinding
-			}
-			l.root = root
-		}
+	root, rootErr := nativeInventoryRoot(roots)
+	if rootErr != nil {
+		return nil, rootErr
 	}
+
+	l := &NativeInventory{ctx: ctx, root: root, path: filepath.Join(home, "discovery-catalog.json"), budget: budget, validate: validate, remaining: Budget, tokens: map[string]nativeSelection{}}
 	if len(queries) > maxCatalog {
 		return nil, errCatalogTooLarge
 	}
 	valid := 0
 	for _, q := range queries {
-		if q.Root != l.root || q.Parent != nil {
+		if !nativeInventoryQueryMatches(q, l.root) {
 			return nil, agentapi.ErrInvalidSourceBinding
 		}
 		if nativeOwner(q.NativeID) {
@@ -207,6 +205,17 @@ func NewNativeInventory(ctx context.Context, home string, roots []archive.Native
 	query := hex.EncodeToString(sum[:])
 	restored, ok := decodeNativeProgress(l.expected)
 	l.eligible = owners
+	l.purposes = make([]uint8, len(owners))
+	for _, q := range queries {
+		n := sort.SearchStrings(owners, q.NativeID)
+		if n < len(owners) && owners[n] == q.NativeID {
+			if q.Purpose == agentapi.LocatorStartupCandidate {
+				l.purposes[n] |= 2
+			} else {
+				l.purposes[n] |= 1
+			}
+		}
+	}
 	if ok && string(object["version"]) == "6" && restored.Root == l.root {
 		l.progress = restored
 		l.skipInactive()
@@ -488,12 +497,18 @@ func (l *NativeInventory) directory(path string) (f *os.File, g nativeGeneration
 	l.counts.Stats++
 	// #nosec G703 -- validated committed root; independently compare named and rooted descriptor identity below.
 	named, err := os.Lstat(l.root.Canonical)
-	if err != nil || !named.IsDir() || named.Mode()&os.ModeSymlink != 0 {
+	if err != nil {
+		return nil, g, err
+	}
+	if !named.IsDir() || named.Mode()&os.ModeSymlink != 0 {
 		return nil, g, agentapi.ErrInvalidSourceBinding
 	}
 	l.counts.Stats++
 	rootInfo, rootErr := root.Lstat(".")
-	if rootErr != nil || !os.SameFile(named, rootInfo) {
+	if rootErr != nil {
+		return nil, g, rootErr
+	}
+	if !os.SameFile(named, rootInfo) {
 		return nil, g, transcriptio.ErrChanged
 	}
 	current := "."
@@ -548,7 +563,9 @@ func (l *NativeInventory) directory(path string) (f *os.File, g nativeGeneration
 	l.counts.Stats++
 	// #nosec G703 -- rechecking the same validated committed root detects pathname replacement.
 	rootAfter, rootErr := os.Lstat(l.root.Canonical)
-	if rootErr != nil || !os.SameFile(rootInfo, rootAfter) || rootAfter.Mode()&os.ModeSymlink != 0 {
+	if rootErr != nil {
+		e = errors.Join(e, rootErr)
+	} else if !os.SameFile(rootInfo, rootAfter) || rootAfter.Mode()&os.ModeSymlink != 0 {
 		e = errors.Join(e, transcriptio.ErrChanged)
 	}
 	current = "."
@@ -558,7 +575,9 @@ func (l *NativeInventory) directory(path string) (f *os.File, g nativeGeneration
 		}
 		l.counts.Stats++
 		ancestor, aerr := root.Lstat(current)
-		if aerr != nil || !ancestor.IsDir() || ancestor.Mode()&os.ModeSymlink != 0 {
+		if aerr != nil {
+			e = errors.Join(e, aerr)
+		} else if !ancestor.IsDir() || ancestor.Mode()&os.ModeSymlink != 0 {
 			e = errors.Join(e, transcriptio.ErrChanged)
 		}
 	}
@@ -568,7 +587,12 @@ func (l *NativeInventory) directory(path string) (f *os.File, g nativeGeneration
 	return f, g, nil
 }
 
-func (l *NativeInventory) acquire(ctx context.Context) error {
+// Failed access alone is not evidence that a queued subtree disappeared.
+func nativeDirectoryInvalidatesCoverage(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, agentapi.ErrInvalidSourceBinding) || errors.Is(err, transcriptio.ErrChanged)
+}
+
+func (l *NativeInventory) acquire(ctx context.Context, directory func(string) (*os.File, nativeGeneration, error)) error {
 	defer l.accountNativeOperations(&l.counts.AcquireStats, &l.counts.AcquireOpens, l.counts.Stats, l.counts.Opens)
 	for index := 0; index < len(l.progress.Directories); index++ {
 		if err := l.allowed(ctx); err != nil {
@@ -581,8 +605,16 @@ func (l *NativeInventory) acquire(ctx context.Context) error {
 		if l.counts.Names+256 > 2048 {
 			return nil
 		}
-		f, g, err := l.directory(d.Path)
+		f, g, err := directory(d.Path)
 		if err != nil {
+			// A queued path can disappear before EOF, while its completed
+			// ancestors are skipped above. Discard that historical namespace
+			// rather than restoring the same unreachable queue forever. Keep
+			// transient failures pending without treating them as absence.
+			if nativeDirectoryInvalidatesCoverage(err) {
+				l.resetCoverage()
+				return nil
+			}
 			continue
 		}
 		if len(d.Pages) > 0 && g != d.Generation {
@@ -613,7 +645,7 @@ func (l *NativeInventory) acquire(ctx context.Context) error {
 			afterGeneration, e2 = generation(after)
 		}
 		closeErr := f.Close()
-		check, finalGeneration, checkErr := l.directory(d.Path)
+		check, finalGeneration, checkErr := directory(d.Path)
 		observedMismatch := nativeGenerationChanged(g, afterGeneration, e2) || nativeGenerationChanged(g, finalGeneration, checkErr) || n > 0 && next == offset
 		if check != nil {
 			checkErr = errors.Join(checkErr, check.Close())
@@ -634,8 +666,7 @@ func (l *NativeInventory) acquire(ctx context.Context) error {
 			return nil
 		}
 		prior := *d
-		priorPages, priorChildren, priorMatches := len(d.Pages), len(d.Children), len(d.Matches)
-		priorDirectories := len(l.progress.Directories)
+		priorPages, priorChildren, priorMatches, priorDirectories := len(d.Pages), len(d.Children), len(d.Matches), len(l.progress.Directories)
 		d.Generation = g
 		kind := nativeCompletePage
 		if n == 0 {
@@ -806,7 +837,14 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 	if err := l.allowed(ctx); err != nil {
 		return pending, err
 	}
-	if request.Root != l.root || request.Parent != nil || !slices.Contains(l.eligible, request.NativeID) {
+	n := sort.SearchStrings(l.eligible, request.NativeID)
+	mask := uint8(1)
+	if request.Purpose == agentapi.LocatorStartupCandidate {
+		mask = 2
+	} else if request.Purpose != agentapi.LocatorAdmittedOwner {
+		return agentapi.LocatorResult{Status: agentapi.LocatorRefused}, nil
+	}
+	if request.Root != l.root || request.Parent != nil || n == len(l.eligible) || l.eligible[n] != request.NativeID || l.purposes[n]&mask == 0 {
 		return agentapi.LocatorResult{Status: agentapi.LocatorRefused}, nil
 	}
 	if !slices.Contains(l.progress.Owners, request.NativeID) || l.stopped || l.progress.Next == len(l.progress.Owners) || request.NativeID != l.progress.Owners[l.progress.Next] {
@@ -819,7 +857,7 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 	defer cancel()
 	ctx = workCtx
 	l.counts.Selections++
-	if err := l.acquire(ctx); err != nil {
+	if err := l.acquire(ctx, l.directory); err != nil {
 		return pending, err
 	}
 	for _, d := range l.progress.Directories {
@@ -1073,4 +1111,21 @@ func (l *NativeInventory) skipInactive() {
 	for l.progress.Next < len(l.progress.Owners) && !slices.Contains(l.eligible, l.progress.Owners[l.progress.Next]) {
 		l.progress.Next++
 	}
+}
+
+func nativeInventoryQueryMatches(q agentapi.LocatorRequest, root archive.NativeRoot) bool {
+	return q.Root == root && q.Parent == nil && (q.Purpose == agentapi.LocatorAdmittedOwner || q.Purpose == agentapi.LocatorStartupCandidate)
+}
+
+func nativeInventoryRoot(roots []archive.NativeRoot) (selected archive.NativeRoot, err error) {
+	for _, root := range roots {
+		if root.Agent != "muse" {
+			continue
+		}
+		if selected.Agent != "" || root.Validate() != nil {
+			return selected, agentapi.ErrInvalidSourceBinding
+		}
+		selected = root
+	}
+	return selected, nil
 }

@@ -175,12 +175,13 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if *rebuildIndex && !rebuildListingIndex(env, store, stderr) {
 		return 1
 	}
+	ctx, browsing, stopReads := listReadContext(env, store, opts, stdin, stdout)
+	defer stopReads()
 	scope, err := scopeFor(env, *project, *allProjects)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
 	}
-	browsing := !opts.jsonOut && browseInteractive(env, stdin, stdout)
 	// Revision summaries support the implicit repository scope before limit.
 	// Explicit project names, searches and interactive scope switching still
 	// need exhaustive metadata. Text activity and child counts use summaries.
@@ -192,8 +193,6 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if full {
 		listLimit = 0
 	}
-	ctx, stopReads := readCommandContext(env)
-	defer stopReads()
 	ctx = withListProgress(ctx, progress)
 	if browsing && q.empty() {
 		if used, code := runBoundedListBrowser(catalog.WithReadView(ctx), env, store, cfg, opts, scope, stdin, stdout, stderr, stopList); used {
@@ -237,6 +236,18 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return code
 	}
 	return printListWithPager(ctx, env, stdout, stderr, opts.noPager, choices)
+}
+
+// listReadContext starts discovery before scope preparation and owns both
+// discovery and signal cleanup in the same order as the command's reads.
+func listReadContext(env listCommandDependencies, store storage.ObjectStore, opts listOptions, stdin io.Reader, stdout io.Writer) (context.Context, bool, func()) {
+	ctx, stopReads := readCommandContext(env)
+	browsing := !opts.jsonOut && browseInteractive(env, stdin, stdout)
+	if !browsing {
+		return ctx, browsing, stopReads
+	}
+	ctx, stopDiscovery := startReadDiscovery(ctx, env, store, opts.noCache)
+	return ctx, browsing, func() { stopDiscovery(); stopReads() }
 }
 
 // listChoices is what list shows of the archive: for a browser, every

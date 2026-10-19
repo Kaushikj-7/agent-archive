@@ -11,7 +11,8 @@ from unittest import mock
 import ci_performance_gate as gate
 import admit_ci_performance_baseline as admission
 import collect_ci_timing
-from test_collect_ci_timing import FakeAPI
+from test_collect_ci_timing import FakeAPI, TestedMergeAPI
+from test_ci_timing_history import archive, IdentityAPI
 import normalize_ci_timing as norm
 from test_ci_worker_topology import receipt
 
@@ -115,6 +116,89 @@ class PhysicalRetryAPI(FakeAPI):
 
 
 class GateTests(unittest.TestCase):
+    def test_current_workers_after_merge_require_authenticated_current_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, metadata, commit = archive(Path(directory))
+            identity = IdentityAPI(metadata, commit)
+            api = PhysicalRetryAPI()
+            api.runs[1]['pull_requests'] = []
+            original_get = api.get
+            def get(path):
+                if '/artifacts/' in path or '/git/commits/' in path:
+                    return identity.get(path)
+                return original_get(path)
+            api.get = get
+            with self.assertRaisesRegex(ValueError, 'missing authenticated'):
+                gate.current_worker_attempts(api, receipt(), 1, 1)
+            actual = gate.current_worker_attempts(api, receipt(), 1, 1, archives=[(99, path)])
+            self.assertEqual(actual, {index: 1 for index in range(8)})
+            with self.assertRaisesRegex(ValueError, 'exact run and attempt'):
+                gate.current_worker_attempts(api, receipt(), 1, 2, archives=[(99, path)])
+            api.runs[1]['pull_requests'] = FakeAPI().runs[1]['pull_requests']
+            api.runs[1]['pull_requests'][0]['number'] = 13
+            with self.assertRaisesRegex(ValueError, 'exact PR/workflow/revision'):
+                gate.current_worker_attempts(api, receipt(), 1, 1, archives=[(99, path)])
+            api.runs[1]['pull_requests'] = []
+            metadata['digest'] = 'sha256:' + '0'*64
+            with self.assertRaisesRegex(ValueError, 'digest mismatch'):
+                gate.current_worker_attempts(api, receipt(), 1, 1, archives=[(99, path)])
+
+    def test_current_workers_accept_independently_proven_exact_tested_base(self):
+        api = TestedMergeAPI()
+        for job in api.jobs[1]:
+            job['created_at'] = '2026-10-15T00:00:01Z'
+            job['steps'][0]['number'] = 1
+        actual = gate.current_worker_attempts(api, api.topology, 1, 1)
+        self.assertEqual(actual, {index: 1 for index in range(8)})
+        api.compare['merge_base_commit']['sha'] = 'f'*40
+        with self.assertRaisesRegex(ValueError, 'ancestry'):
+            gate.current_worker_attempts(api, api.topology, 1, 1)
+
+    def test_tested_base_ten_attempts_fit_actual_bounded_api(self):
+        api = PhysicalRetryAPI()
+        for number in range(3, 11):
+            rows = copy.deepcopy(api.attempt_jobs[number-1])
+            for job in rows:
+                job.update(id=job['id']+1000, run_attempt=number,
+                           created_at=f'2026-10-15T{number:02d}:00:01Z')
+            api.attempt_jobs[number] = rows
+        graph = TestedMergeAPI()
+        api.runs[1]['pull_requests'] = graph.runs[1]['pull_requests']
+        requests = []
+        def opener(request, timeout):
+            from test_collect_ci_timing import Response
+            path = request.full_url.removeprefix(collect_ci_timing.ORIGIN)
+            requests.append(path)
+            if '/git/commits/' in path or '/compare/' in path:
+                result = graph.get(path)
+            elif '/jobs?' in path:
+                result = api.pages(path, 'jobs')
+            else:
+                result = api.get(path)
+            return Response(result, request.full_url)
+        bounded = collect_ci_timing.API('synthetic', request_limit=gate.REQUEST_LIMIT, opener=opener)
+        self.assertEqual(gate.current_worker_attempts(bounded, graph.topology, 1, 10),
+                         {index: 2 if index == 5 else 1 for index in range(8)})
+        self.assertEqual(len(requests), 13)
+        self.assertEqual(bounded.remaining, 1)
+        bounded.get('/repos/' + collect_ci_timing.REPOSITORY + '/actions/runs/1')
+        with self.assertRaisesRegex(ValueError, 'budget exhausted'):
+            bounded.get('/repos/' + collect_ci_timing.REPOSITORY + '/actions/runs/1')
+
+        # A post-merge receipt needs one extra metadata read, still within the
+        # same budget even when all ten physical attempt inventories are read.
+        with tempfile.TemporaryDirectory() as directory:
+            path, metadata, commit = archive(Path(directory), graph.topology, attempt=10)
+            identity = IdentityAPI(metadata, commit, graph.compare)
+            original_get = api.get
+            api.get = lambda path: identity.get(path) if '/artifacts/' in path else original_get(path)
+            api.runs[1]['pull_requests'] = []
+            bounded = collect_ci_timing.API('synthetic', request_limit=gate.REQUEST_LIMIT, opener=opener)
+            self.assertEqual(gate.current_worker_attempts(bounded, graph.topology, 1, 10,
+                                                        archives=[(99, path)]),
+                             {index: 2 if index == 5 else 1 for index in range(8)})
+            self.assertEqual(bounded.remaining, 0)
+
     def test_inherited_job_ids_do_not_change_physical_receipt_attempts(self):
         api = PhysicalRetryAPI()
         actual = gate.current_worker_attempts(api, receipt(), '1', '2')
@@ -606,6 +690,20 @@ class GateTests(unittest.TestCase):
         self.assertTrue(self.run_gate(bounded)['passed'])
         self.assertEqual(bounded.remaining, 0)
         self.assertEqual(len(api.paths), 12)
+        graph = TestedMergeAPI()
+        bounded = collect_ci_timing.API('synthetic', request_limit=gate.REQUEST_LIMIT, opener=opener)
+        bounded.get('/repos/' + collect_ci_timing.REPOSITORY + '/actions/runs/12')
+        bounded.get('/repos/' + collect_ci_timing.REPOSITORY + '/actions/runs/12/attempts/1/jobs')
+        # Two additional identity reads are charged by the same real API object.
+        original_opener = bounded.opener
+        def graph_opener(request, timeout):
+            from test_collect_ci_timing import Response
+            return Response(graph.get(request.full_url.removeprefix(collect_ci_timing.ORIGIN)), request.full_url)
+        bounded.opener = graph_opener
+        collect_ci_timing.validate_run(graph.runs[1], 'Test', graph.topology, api=bounded)
+        bounded.opener = original_opener
+        self.assertTrue(self.run_gate(bounded)['passed'])
+        self.assertEqual(bounded.remaining, 0)
         for field, rows in (('reviews', reviews), ('comments', comments)):
             for invalid in (rows + [dict(rows[-1], id=400)], rows[:100] + rows[:1]):
                 changes = {field: invalid}
@@ -933,14 +1031,16 @@ class GateTests(unittest.TestCase):
                         [event for event in events if event.get('Test', '').split('/')[0] != missing]))
                 manifests[0].write_text(json.dumps(manifest))
                 with self.subTest(damage=damage), mock.patch('sys.argv', argv), \
-                        mock.patch.dict(os.environ, {'GITHUB_RUN_ID': '12', 'GITHUB_RUN_ATTEMPT': '1'}), \
+                        mock.patch.dict(os.environ, {'GITHUB_RUN_ID': '12', 'GITHUB_RUN_ATTEMPT': '1',
+                            'CI_PERFORMANCE_IDENTITY_ARCHIVE': '99:' + str(root/'identity.zip')}), \
                         mock.patch.object(gate.collect_ci_timing, 'API'), \
-                        mock.patch.object(gate, 'current_worker_attempts', return_value={i: 1 for i in range(8)}), \
+                        mock.patch.object(gate, 'current_worker_attempts', return_value={i: 1 for i in range(8)}) as attempts, \
                         mock.patch.object(gate.normalize_ci_timing, 'worker', wraps=gate.normalize_ci_timing.worker) as normalize:
                     if damage is None:
                         gate.main()
                         self.assertTrue(json.loads((root/'result.json').read_text())['passed'])
                         self.assertEqual(normalize.call_count, 8)
+                        self.assertEqual(attempts.call_args.kwargs['archives'], [(99, root/'identity.zip')])
                     else:
                         with self.assertRaises(SystemExit) as failure:
                             gate.main()

@@ -42,16 +42,17 @@ type appStatus struct {
 	// PreSetupSessions are sessions from the 7 days before discovery's
 	// start floor that discovery refused and that are not archived. Absent
 	// when there are none.
-	PreSetupSessions  *preSetupSessions `json:"pre_setup_sessions,omitempty"`
-	PublishedSessions int               `json:"published_sessions"`
-	VerifiedSessions  int               `json:"verified_sessions"`
-	Configured        bool              `json:"configured"`
-	HookObserved      bool              `json:"hook_observed"`
-	CapturedLocally   bool              `json:"captured_locally"`
-	Published         bool              `json:"published"`
-	ReadBackVerified  bool              `json:"read_back_verified"`
-	VerifiedAt        time.Time         `json:"verified_at,omitzero"`
-	VerificationState string            `json:"verification_state"`
+	PreSetupSessions  *preSetupSessions                 `json:"pre_setup_sessions,omitempty"`
+	PublishedSessions int                               `json:"published_sessions"`
+	VerifiedSessions  int                               `json:"verified_sessions"`
+	Configured        bool                              `json:"configured"`
+	HookObserved      bool                              `json:"hook_observed"`
+	NativeStartup     *capture.NativeStartupObservation `json:"native_startup,omitempty"`
+	CapturedLocally   bool                              `json:"captured_locally"`
+	Published         bool                              `json:"published"`
+	ReadBackVerified  bool                              `json:"read_back_verified"`
+	VerifiedAt        time.Time                         `json:"verified_at,omitzero"`
+	VerificationState string                            `json:"verification_state"`
 	// VerificationDetail explains a read-back that has not succeeded yet for
 	// the current publication: the last error, attempts so far, and when the
 	// collector will retry. Empty once every publication is verified.
@@ -390,6 +391,12 @@ func formatBytes(n int64) string {
 	return fmt.Sprintf("%.1f MB", float64(n)/1e6)
 }
 
+// formatKilobytes words a byte count in whole KB, rounded up, in the same
+// decimal units as formatBytes.
+func formatKilobytes(n int64) string {
+	return fmt.Sprintf("%d KB", (n+999)/1000)
+}
+
 // sizeLimitedSession is one session status APP lists as stopped at a size
 // limit.
 type sizeLimitedSession struct {
@@ -464,6 +471,7 @@ func readStatus(env Env) (view statusView, err error) {
 	for _, name := range cfg.Harnesses {
 		view.Apps = append(view.Apps, sessions.appStatus(name, cfg, home, view.Collector.SessionIssues))
 	}
+	readNativeStartupStatus(&view, cfg, home, sessions.regs, env.now())
 	readPreSetupSessions(&view, cfg, home, store, sessions.regs, env.now())
 	for _, name := range cfg.ImportedHarnesses {
 		if len(cfg.Harnesses) == 0 || slices.Contains(cfg.Harnesses, name) {
@@ -1324,6 +1332,12 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 // capture is not yet read-back verified, if any.
 func chooseCaptureStep(view *statusView) {
 	for _, app := range view.Apps {
+		if app.NativeStartup != nil && app.NativeStartup.Pending > 0 {
+			view.State = "Waiting for capture"
+			view.problem = "Muse startup observed; native source proof pending"
+			view.Next = "Run agent-archive sync to check the queued Muse startup against its original capture window."
+			break
+		}
 		if app.Name == "codex" && app.CodexCaptureScope == string(config.CodexAllProjects) && app.Sessions == 0 {
 			view.State = "Waiting for capture"
 			view.problem = "Waiting for the first Codex task"
@@ -1441,25 +1455,25 @@ func importedSessionCounts(cfg config.Config, regs []archive.SessionRegistration
 	return imported, pending, withIssues
 }
 
-// importPending reports whether an imported session is pending under cfg:
-// the one definition state.Outstanding gives, for a caller that has not
-// listed the queued requests.
-func importPending(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (bool, error) {
-	owed, err := importOutstanding(store, cfg, reg)
-	return owed.Pending(), err
-}
-
 // importOutstanding is what an imported session still owes under cfg (see
-// state.Outstanding), or nothing for a session cfg does not publish.
+// state.Outstanding). A first import's unsettled retained stage remains owed
+// when policy holds publication; settled ongoing sessions still follow cfg.
 func importOutstanding(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (state.Outstanding, error) {
-	if !cfg.AcceptSession(reg) {
+	if !cfg.AcceptSession(reg) && reg.StagedImportSHA256 == "" {
 		return state.Outstanding{}, nil
 	}
 	_, requested, err := store.LoadRequest(reg.ArchiveSessionID)
 	if err != nil {
 		return state.Outstanding{}, err
 	}
-	return store.Outstanding(reg, requested)
+	owed, err := store.Outstanding(reg, requested)
+	if err != nil {
+		return owed, err
+	}
+	if !cfg.AcceptSession(reg) && !owed.StagedImport {
+		return state.Outstanding{}, nil
+	}
+	return owed, nil
 }
 
 const (
@@ -1820,6 +1834,14 @@ func (sc statusScreen) appRow(app appStatus, limit int) statusRow {
 	}
 	if freshStart {
 		row.notes = append(row.notes, statusNote{s.warnMark(), "New sessions can't be captured yet: " + app.Capabilities.FreshStart.NextAction})
+	}
+	if app.NativeStartup != nil {
+		if app.NativeStartup.Pending > 0 {
+			row.notes = append(row.notes, statusNote{sc.info(), "Startup observed; waiting for native source proof."})
+		}
+		if !app.NativeStartup.Complete {
+			row.notes = append(row.notes, statusNote{s.warnMark(), "Queued startup observation is incomplete; the pending count is a lower bound."})
+		}
 	}
 	sc.addCodexDiscoveryRow(&row, app)
 	if discoveryEnabled(app) && app.Hooks != "installed" && !optionalCodexHooks(app) {
@@ -3048,6 +3070,10 @@ func (sc statusScreen) addCodexDiscoveryRow(row *statusRow, app appStatus) {
 		}
 		if app.Discovery.Outcomes[string(sourcefacts.RecoveryInventoryUnavailable)] > 0 || app.Discovery.Outcomes[string(sourcefacts.RecoveryBudgetExhausted)] > 0 {
 			row.notes = append(row.notes, statusNote{sc.info(), "Project repository inventory pending. Restore configured checkout access if needed and ensure local Git supports config path queries, then run sync to advance bounded recovery."})
+		}
+		if projectOriginEvidencePending(app.Discovery.Outcomes) {
+			row.mark = s.warnMark()
+			row.notes = append(row.notes, statusNote{s.warnMark(), "Project Git origin evidence pending. Local origin chains must resolve completely before recovery; run backfill --dry-run for the specific reason, then restore origin access or review an exact --map-project assignment."})
 		}
 	}
 	if discoveryEnabled(app) && (len(app.Discovery.Errors) > 0 || app.Discovery.Outcomes["source_unavailable"] > 0) {

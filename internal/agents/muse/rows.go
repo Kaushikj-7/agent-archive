@@ -160,7 +160,7 @@ func validateLogical(rows []logicalRow) error {
 	if _, e := conversation(slots); e != nil {
 		return e
 	}
-	return validateNewFamilies(slots)
+	return nil
 }
 
 func privacyLogical(r logicalRow, n int, add func(string, int, string)) (logicalRow, error) {
@@ -214,6 +214,10 @@ func decodeNativeRows(raw []byte, line int64, joins *nativeBodyJoins) ([]logical
 		return nil, 0, e
 	}
 	charge := int64(0)
+	if enrichedTools(r.Fields) && str(r.Fields["event_kind"]) == string(eventAssistantToolCallsCommitted) {
+		// Bounded private IDs, map entries, refs and batch slots outlive physical decoding.
+		charge = 1024 + int64(len(r.Fields["tool_calls"].([]any)))*1024
+	}
 	if nativeNewFamily(r, p) || r.Sequence == 3 && r.Type == payloadRuntimeSessionMetadata {
 		charge = int64(len(raw)) * 128
 	}

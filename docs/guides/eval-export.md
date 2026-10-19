@@ -84,9 +84,13 @@ means and how it may change. In short:
 Unavailable tool, file and Git counts are omitted rather than reported as
 measured zeros. Full detail omits `files_edited` when edited-file evidence is
 unavailable; an observable session with no edits carries an empty list.
-Muse retains its qualified prompt/message counts while tools, files and Git
-remain unavailable. Cursor calls without recorded results keep their invocation
-count, with the result count omitted.
+Muse retains qualified prompt/message counts. Nonempty enriched Muse sources
+with qualified committed invocation evidence can also expose observed tool-call
+counts. Zero-call or legacy-erased tool evidence remains unavailable, rather
+than measured zero. Tool names, results/errors, files, Git and MCP attribution
+remain unavailable; these finite counts do not establish approval-free read
+session support or native capture. Cursor calls without recorded results keep
+their invocation count, with the result count omitted.
 
 ## Size and errors
 

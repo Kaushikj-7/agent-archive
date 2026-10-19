@@ -424,6 +424,10 @@ func (s *S3Store) ListRange(ctx context.Context, relativePrefix, after, through 
 				ETag:         strings.Trim(aws.ToString(item.ETag), "\""),
 				LastModified: aws.ToTime(item.LastModified),
 			})
+			if through != "" && key == through {
+				ObserveListPage(ctx, objects[start:])
+				return objects, nil
+			}
 		}
 		ObserveListPage(ctx, objects[start:])
 		if !aws.ToBool(page.IsTruncated) {

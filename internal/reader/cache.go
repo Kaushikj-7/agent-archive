@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // MetadataCache is a disposable local copy of metadata sidecars, keyed by
@@ -20,12 +21,14 @@ import (
 // every time, so the cache never decides what exists: it only saves the
 // download of a sidecar whose ETag has not changed, and it forgets any sidecar
 // the listing no longer returns, which keeps it inside the archive's retention
-// policy. It holds metadata sidecars only — put refuses any other key — and is
-// never authoritative: every failure to read or write it is a miss.
+// policy. It holds metadata sidecars and private key-range hints only; put
+// refuses other bodies. Neither cached bodies nor range hints are authoritative:
+// every failure to read or write the cache is a miss.
 //
 // Layout: AGENT_ARCHIVE_HOME/cache/metadata/<hex(object key)>/<SHA256(ETag)>.json, with both
 // directories 0700 and every file 0600. Files are written atomically (temp
-// file, then rename) but without fsync: the cache is rebuilt from the store
+// file, then rename). Private .ranges-* files store per-prefix range hints.
+// Writes omit fsync: the cache is rebuilt from the store
 // on any miss, so a copy lost to a crash costs one download, and each entry
 // carries a SHA-256 of its bytes so a torn or damaged file is a miss rather
 // than a wrong answer.
@@ -188,7 +191,8 @@ func (c *MetadataCache) putVerified(key, etag string, data []byte) {
 	if !ok || etag == "" || !json.Valid(data) {
 		return
 	}
-	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+	mkdirErr := os.Mkdir(dir, 0o700)
+	if mkdirErr != nil && !errors.Is(mkdirErr, os.ErrExist) {
 		return
 	}
 	path, ok := c.path(key, etag)
@@ -199,7 +203,10 @@ func (c *MetadataCache) putVerified(key, etag string, data []byte) {
 	if err != nil {
 		return
 	}
-	if writeCacheFile(path, encoded) == nil {
+	// Only this writer's newly created directory is known to have no old
+	// validators. Existing directories still need pruning; maintenance remains
+	// the backstop for versions left behind by concurrent writers.
+	if writeCacheFile(path, encoded) == nil && mkdirErr != nil {
 		c.pruneVersions(dir, filepath.Base(path))
 	}
 }
@@ -234,6 +241,8 @@ func (c *MetadataCache) evictUnlisted(known []string, listed []storage.Object) {
 	if c == nil {
 		return
 	}
+	span := trace.Start("cache key eviction")
+	defer span.End()
 	present := make(map[string]struct{}, len(listed))
 	for _, object := range listed {
 		present[object.Key] = struct{}{}
@@ -248,7 +257,9 @@ func (c *MetadataCache) evictUnlisted(known []string, listed []storage.Object) {
 		}
 		info, err := os.Lstat(dir)
 		if err == nil && info.IsDir() && info.Mode().Perm() == 0o700 {
-			_ = os.RemoveAll(dir)
+			if os.RemoveAll(dir) == nil {
+				span.Count("key-dirs-evicted", 1)
+			}
 		}
 	}
 }
@@ -259,7 +270,10 @@ func (c *MetadataCache) keys(listPrefix string) []string {
 	if c == nil {
 		return nil
 	}
+	span := trace.Start("cache key inventory")
+	defer span.End()
 	entries, err := os.ReadDir(c.dir)
+	span.Count("entries-visited", len(entries))
 	if err != nil {
 		return nil
 	}

@@ -336,6 +336,13 @@ func (s *Store) removeExactStagedPending(ctx context.Context, g config.DurableSt
 // The returned close ends detached diagnostic ownership after ALL map use; nil
 // means no staged result owner. It never grants cleanup or release authority.
 func (s *Store) ResumeStagedReleases(ctx context.Context, remote StagedReadback, guard *local.CollectorGuard) (map[string]error, func(), error) {
+	return s.ResumeSelectedStagedReleases(ctx, remote, guard, nil)
+}
+
+// ResumeSelectedStagedReleases uses the existing release recovery for selected
+// owners only. A nil selector preserves ordinary scheduled recovery. Selection
+// grants no release authority; each selected owner retains every proof check.
+func (s *Store) ResumeSelectedStagedReleases(ctx context.Context, remote StagedReadback, guard *local.CollectorGuard, selected func(archive.SessionRegistration) bool) (map[string]error, func(), error) {
 	holds := make(map[string]error)
 	cfg, present, err := config.Load(s.home)
 	if err != nil {
@@ -348,13 +355,13 @@ func (s *Store) ResumeStagedReleases(ctx context.Context, remote StagedReadback,
 		return holds, nil, ErrReadySelectionFrozen
 	}
 	receiver, closeDiagnostics := s.WithImportResultScope(ctx)
-	holds, err = receiver.resumeStagedReleases(ctx, remote, guard)
+	holds, err = receiver.resumeStagedReleases(ctx, remote, guard, selected)
 	return holds, closeDiagnostics, err
 }
 
 // The receiver outlives every detached returned diagnostic ID. Page views and
 // per-owner publication/readback views end here; only bounded ID copies remain.
-func (s *Store) resumeStagedReleases(ctx context.Context, remote StagedReadback, guard *local.CollectorGuard) (map[string]error, error) {
+func (s *Store) resumeStagedReleases(ctx context.Context, remote StagedReadback, guard *local.CollectorGuard, selected func(archive.SessionRegistration) bool) (map[string]error, error) {
 	holds := make(map[string]error)
 	var cursor struct {
 		After string `json:"after"`
@@ -366,6 +373,15 @@ func (s *Store) resumeStagedReleases(ctx context.Context, remote StagedReadback,
 	defer closePage()
 	if err != nil {
 		return holds, err
+	}
+	if selected != nil {
+		eligible := stages[:0]
+		for _, stage := range stages {
+			if selected(stage.Registration) {
+				eligible = append(eligible, stage)
+			}
+		}
+		stages = eligible
 	}
 	// Reserve/detach every candidate ID before any release attempt. Pressure
 	// cannot erase an already-produced per-owner hold after remote readback.

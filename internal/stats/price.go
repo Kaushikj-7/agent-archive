@@ -50,8 +50,10 @@ type ModelPrice struct {
 	// ID is the model id as the archive records it, in lower case and
 	// without a date suffix ("claude-opus-5-5"); see NormalizeModel.
 	ID string `json:"id"`
-	// Family is the short label cost-by-model groups the model under
-	// ("opus", "gpt-5"). It defaults to ID.
+	// Family is the short label cost by model shows the model under: its
+	// exact version ("opus-5.5", "gpt-6.1-sol"), so two versions are never
+	// one row. Two ids of one model (an alias and the model it routes to)
+	// share it. It defaults to ID; the JSON name is kept for price files.
 	Family            string  `json:"family,omitempty"`
 	InputPerMTok      float64 `json:"input_per_mtok"`
 	OutputPerMTok     float64 `json:"output_per_mtok"`
@@ -338,8 +340,8 @@ func (index priceIndex) family(model string) (string, bool) {
 	return index.label(id), true
 }
 
-// label is the short name a model is grouped under in cost by model: its
-// price entry's family, or the normalized id when it is unpriced.
+// label is the short name a model is shown under in cost by model: its
+// price entry's label, or the normalized id when it is unpriced.
 func (p priceIndex) label(model string) string {
 	if entry, ok := p[model]; ok {
 		if entry.Family != "" {

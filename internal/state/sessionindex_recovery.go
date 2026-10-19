@@ -134,6 +134,9 @@ func (s *Store) RequestSessionIndexRecovery(key agentmeta.SessionKey) error {
 	if err := key.Validate(); err != nil {
 		return err
 	}
+	if err := s.guardNativeReservationRequest(key); err != nil {
+		return err
+	}
 	// The same retained request is already covered by the incomplete census,
 	// including an absence applied before its final certificate. Retaining that
 	// request does not authorize the miss: readers still require Complete.
@@ -166,6 +169,9 @@ func (s *Store) RequestSessionIndexRecovery(key agentmeta.SessionKey) error {
 		return err
 	}
 	entry, found, err := s.readQualifiedIndex(key)
+	if refusal := nativeReservationRepairError(entry, err); refusal != nil {
+		return refusal
+	}
 	if err == nil && found && !entry.Absent {
 		valid, err := s.matchingRegistration(key, entry.ArchiveSessionID)
 		if err == nil && valid {
@@ -337,6 +343,10 @@ func readRecoveryRegistration(path string, data *bytes.Buffer, reg *archive.Sess
 }
 
 func (s *Store) recoverRegistrationOwners(key agentmeta.SessionKey, owners []string) error {
+	var existing qualifiedSessionIndexEntry
+	if err := s.readIndexControlJSON(qualifiedSessionIndexPath(s.home, key), &existing); errors.Is(err, errUnsupportedNativeReservation) {
+		return err
+	}
 	if protected, err := s.recoverGenerationOwners(key, owners); protected || err != nil {
 		return err
 	}
@@ -415,6 +425,9 @@ func (s *Store) recoverCandidateIndex(ctx context.Context, candidate SubagentCan
 		return ErrSessionIndexRecoveryRequired
 	}
 	entry, found, err := s.readQualifiedIndex(key)
+	if errors.Is(err, errUnsupportedNativeReservation) {
+		return err
+	}
 	if err != nil && !errors.Is(err, ErrSessionIndexRecoveryRequired) {
 		return err
 	}

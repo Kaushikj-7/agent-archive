@@ -2,12 +2,14 @@ package cli
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -15,6 +17,20 @@ import (
 
 // Helpers only tests use, kept out of the production files so deadcode
 // (golang.org/x/tools/cmd/deadcode) reports only code that is really dead.
+
+type browseReadDependencies interface {
+	metadataCacheDependencies
+	interrupts() (<-chan os.Signal, func())
+}
+
+// loadSessionsForBrowse lists metadata with the same filters list uses, for
+// interactive show and handoff. It reads every match, newest activity first,
+// for the caller to scope and limit.
+func loadSessionsForBrowse(env browseReadDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, error) {
+	ctx, stopReads := readCommandContext(env)
+	defer stopReads()
+	return loadSessionsForBrowseContext(catalog.WithReadView(ctx), env, store, opts, stderr, command)
+}
 
 func installedVersionSupport(discovery applicationDiscovery, verifiedVersions []string) string {
 	state, _ := installedVersionSupportDetail(discovery, verifiedVersions)

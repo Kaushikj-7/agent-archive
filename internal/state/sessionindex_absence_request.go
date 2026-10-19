@@ -76,6 +76,14 @@ func (s *Store) RequestSessionIndexAbsence(key agentmeta.SessionKey) error {
 // census is complete and the token makes the next slice enumerate again, or
 // misses have been refused since the pending census began.
 func (s *Store) retainAbsenceRequest(key agentmeta.SessionKey) error {
+	if err := s.guardNativeReservationRequest(key); err != nil {
+		return err
+	}
+	var prior qualifiedSessionIndexEntry
+	readErr := local.Read(qualifiedSessionIndexPath(s.home, key), &prior)
+	if errors.Is(readErr, errUnsupportedNativeReservation) || prior.NativeReservation != "" {
+		return errors.Join(errUnsupportedNativeReservation, readErr)
+	}
 	// Damaged scheduling evidence is replaced: the fresh token is uncertified,
 	// so the next slice still enumerates every retained request.
 	request, _, err := s.readAbsenceRequest()

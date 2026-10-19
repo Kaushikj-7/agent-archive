@@ -1,6 +1,7 @@
 package hookconfig
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"slices"
@@ -16,6 +17,12 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 		return false, err
 	}
 	app := spec
+	if app.SchemaVersionKey != "" {
+		value, _ := doc.Root.Get(app.SchemaVersionKey)
+		if !isOne(value) {
+			return false, nil
+		}
+	}
 	if app.Version {
 		if v, _ := doc.Root.Get("version"); !isOne(v) {
 			return false, nil
@@ -47,7 +54,9 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 			}
 			got, _ := handler.Get("command")
 			kind, _ := handler.Get("type")
-			if got != command || (!app.Flat && kind != "command") {
+			timeout, timeoutOK := handler.Get("timeout")
+			timeoutNumber, numberOK := timeout.(json.Number)
+			if got != command || (!app.Flat && kind != "command") || app.CommandMarkerOwnership && (!timeoutOK || !numberOK || timeoutNumber != "2") {
 				return false, nil
 			}
 			ours++

@@ -16,7 +16,7 @@ import collect_ci_timing
 import normalize_ci_timing
 import run_shared_verify
 from test_ci_worker_topology import environment, event, receipt
-from test_collect_ci_timing import FakeAPI, run
+from test_collect_ci_timing import FakeAPI, TestedMergeAPI, run
 
 
 class IdentityAPI:
@@ -47,6 +47,20 @@ def archive(root, topology=None, *, workflow='Test', attempt=1, ident=1, member=
 
 
 class TimingContracts(unittest.TestCase):
+    def test_tested_base_pipeline_retains_offline_qualification_only_with_exact_proof(self):
+        api = TestedMergeAPI()
+        pipeline = collect_ci_timing.collect(api, api.topology, 1, 2)
+        sample = pipeline['input']['samples'][0]
+        row = pipeline['report']['samples'][0]
+        self.assertEqual(len(ci_timing_history.production_jobs(pipeline, sample, row)), 24)
+        for change in (lambda p: p.pop('verified_tested_base_associations'),
+                       lambda p: p['verified_tested_base_associations'][0]['compare'].update(status='behind'),
+                       lambda p: p['verified_tested_base_associations'][1].update(run_attempt=2)):
+            altered = copy.deepcopy(pipeline)
+            change(altered)
+            with self.subTest(change=change):
+                self.assertEqual(ci_timing_history.production_jobs(altered, sample, row), [])
+
     def test_postmerge_empty_association_requires_authenticated_exact_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
             path, metadata, commit = archive(Path(temporary))

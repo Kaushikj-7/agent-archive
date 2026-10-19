@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 // CacheMaintenance records progress through disposable cache directories.
@@ -22,10 +24,17 @@ const maintenanceFile = ".maintenance"
 const cacheMaintenanceDirectoryBudget = 64
 
 func (c *MetadataCache) directoryEntries(dir string) ([]os.DirEntry, error) {
+	span := trace.Start("cache directory inventory")
+	defer span.End()
+	var entries []os.DirEntry
+	var err error
 	if c.readDir != nil {
-		return c.readDir(dir)
+		entries, err = c.readDir(dir)
+	} else {
+		entries, err = os.ReadDir(dir)
 	}
-	return os.ReadDir(dir)
+	span.Count("entries-visited", len(entries))
+	return entries, err
 }
 
 // maintain visits at most 64 key directories once per opened command cache.
@@ -96,6 +105,8 @@ func (c *MetadataCache) maintenanceState() CacheMaintenance {
 }
 
 func (c *MetadataCache) maintainDirectory(dir string) {
+	span := trace.Start("cache eviction")
+	defer span.End()
 	info, err := os.Lstat(dir)
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
 		return
@@ -120,7 +131,9 @@ func (c *MetadataCache) maintainDirectory(dir string) {
 	}
 	for _, entry := range entries {
 		if cacheValidatorFile(entry) && entry.Name() != latest {
-			_ = os.Remove(filepath.Join(dir, entry.Name()))
+			if os.Remove(filepath.Join(dir, entry.Name())) == nil {
+				span.Count("evictions", 1)
+			}
 		}
 	}
 }
@@ -133,21 +146,29 @@ func removeStaleCacheTemp(dir string, entry os.DirEntry) {
 	if !entry.Type().IsRegular() || !strings.HasPrefix(entry.Name(), ".pending-") {
 		return
 	}
+	span := trace.Start("cache eviction")
+	defer span.End()
 	info, err := entry.Info()
 	if err == nil && info.ModTime().Before(time.Now().Add(-staleCacheTempAge)) {
-		_ = os.Remove(filepath.Join(dir, entry.Name()))
+		if os.Remove(filepath.Join(dir, entry.Name())) == nil {
+			span.Count("evictions", 1)
+		}
 	}
 }
 
 // pruneVersions only visits a key when new validated bytes have been written.
 func (c *MetadataCache) pruneVersions(dir, current string) {
+	span := trace.Start("cache eviction")
+	defer span.End()
 	entries, err := c.directoryEntries(dir)
 	if err != nil {
 		return
 	}
 	for _, entry := range entries {
 		if entry.Name() != current && cacheValidatorFile(entry) {
-			_ = os.Remove(filepath.Join(dir, entry.Name()))
+			if os.Remove(filepath.Join(dir, entry.Name())) == nil {
+				span.Count("evictions", 1)
+			}
 		}
 	}
 }

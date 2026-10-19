@@ -317,7 +317,7 @@ func cacheFiles(t *testing.T, home string) []string {
 		if err != nil {
 			return err
 		}
-		if !entry.IsDir() && entry.Name() != maintenanceFile {
+		if !entry.IsDir() && entry.Name() != maintenanceFile && !strings.HasPrefix(entry.Name(), ".ranges-") {
 			name, err := filepath.Rel(root, path)
 			if err != nil {
 				return err

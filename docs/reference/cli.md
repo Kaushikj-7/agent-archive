@@ -102,6 +102,7 @@ Usage: agent-archive setup [--abandon-recovery] [--verbose]
                [--no-skills | --skills] [--allow-network-home]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
                [--codex-discovery on|off] [--search-indexing on|off]
+               [--muse-home DIR]
                [--codex-capture-scope included-projects|all-projects]
                [--prefix PREFIX] [--retention-days DAYS | --keep-forever]
                [--require-skill-use | --no-require-skill-use]
@@ -185,6 +186,8 @@ An interrupted setup is recovered on the next run.
                         share one identity, cannot rely on file locks, and
                         each run the background job. Only for a home that one
                         machine ever mounts; recorded while it is needed
+  --muse-home DIR       Explicit Muse data home; root capture is not publicly
+                        enabled yet
   --codex-discovery MODE on or off; fresh scripted Codex setup must choose.
                         Reconfiguration keeps an omitted choice. Discovery
                         finds supported sources; recent native copies may count
@@ -216,6 +219,7 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--codex-capture-scope` | a value | — |
 | `--codex-discovery` | a value | — |
 | `--keep-forever` | no value | — |
+| `--muse-home` | a value | — |
 | `--no-require-skill-use` | no value | — |
 | `--no-skills` | no value | — |
 | `--pair` | no value | — |
@@ -525,8 +529,9 @@ repository and all projects.
 On a terminal each session is one line, cut to the window: its number, agent,
 title (the Claude Code or Cursor session name when available, else a preview
 of its first filtered prompt, in a readable form; Codex uses the prompt
-preview), project, PR (the last pull request the session linked or created,
-when any row has one), and when it was last active (2m, Mon, Oct 9). Piped,
+preview, and a Codex subagent its task name), project, PR (the last pull
+request the session linked or created, when any row has one), and when it
+was last active (2m, Mon, Oct 9). Piped,
 the plain table is WHEN, AGENT, PROJECT, PR, short SESSION_ID, and TITLE, one
 line a session with the whole title last; scripts read --json. An agent or
 project every row shares is left out of the table and named in the heading.
@@ -878,6 +883,7 @@ Guide: [Import existing sessions](../guides/backfill.md).
 Usage: agent-archive backfill [options]
        agent-archive backfill history
        agent-archive backfill projects list|rename|enable|disable
+       agent-archive backfill review-projects --output FILE
        agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
 
@@ -885,7 +891,9 @@ Import the Claude Code, Codex, and Cursor sessions already on this machine that
 the archive has not captured. First shows each project with its session count
 per app, and why any session is not imported; archive and configuration changes
 require confirmation. Planning may update a disposable local inspection cache.
-Live repositories can be proposed for matching deleted worktrees.
+Live repositories can be proposed for matching deleted worktrees. Local Git
+origin chains require complete, renewed identity evidence; ambiguous clones
+remain pending for an exact --map-project or --mapping-file assignment.
 Projects the import needs are added to capture. Prints project
 folders, counts, and recovery reasons, never conversation content.
 After confirmation, filtered evidence is staged before admission; uploads can
@@ -908,8 +916,16 @@ publication. History reports admitted and remotely verified uploads separately.
   --yes                 Skip the confirmation (required without a terminal)
   --background          Stage and register sessions, then exit; the background
                         collector verifies and uploads them
+Planning and staging renew bounded lookup work; source safety limits apply.
+Foreground imports verify owned groups before staging more within the quota.
+Codex index paths may use a verified alias of an already trusted native home.
+Incomplete native inventory is reported; verified sessions remain eligible.
+Codex own-task refusals distinguish no own records in a validated snapshot from
+own records whose independent activity remains unqualified.
+A dry-run plan does not establish completed staging or publication.
 See agent-archive help backfill history, agent-archive help backfill projects,
-and agent-archive help backfill undo.
+agent-archive help backfill review-projects, and
+agent-archive help backfill undo.
 Example: agent-archive backfill --dry-run --since 30d
 ```
 
@@ -964,6 +980,44 @@ import.
 ```
 
 No flags.
+
+## agent-archive backfill review-projects
+
+Guide: [Private project recovery review](../guides/backfill.md#private-project-recovery-review).
+
+```text
+Usage: agent-archive backfill review-projects --output FILE [options]
+
+Privately review observed missing original cwd groups and export exact project
+assignments in mapping-file schema 1. Terminal input and output are required;
+JSON and piped review are unavailable. Nothing is automatically selected.
+
+Coverage is bounded and incomplete (at most 128 groups); this is not a complete
+inventory or proof of uniqueness. Counts describe project-recovery candidates,
+not promises of importability. Native evidence and source limits still apply.
+
+  --output FILE               New private local assignment file; never overwrite
+  --harness APP               Review one app; repeatable (claude, codex, cursor)
+  --include-temp              Review temporary-directory candidates
+
+Configured choices use existing exact mapping policy; exclusions and conflicting
+usable keys still refuse. Historical destinations are import only. Review and
+export do not change configuration, capture policy, stages or archive.
+Cancellation, EOF or rejected confirmation writes no file. Export mode is 0600.
+
+One decision covers all observed keys at an exact cwd, including unlisted
+identities. Skip skips the whole cwd. The later import still checks each
+source's restrictions, configured-key compatibility and native proof.
+
+Then run agent-archive backfill --dry-run --mapping-file FILE before a
+separately confirmed import. Keep the file for exact semantic resume and undo.
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--harness` | a value; repeatable | — |
+| `--include-temp` | no value | — |
+| `--output` | a value | — |
 
 ## agent-archive backfill undo
 
@@ -1041,8 +1095,9 @@ prefixes select beyond the first 50 filtered previews. Scrolling past the last
 row (o when reading lines) loads another 50; / filters loaded rows only. Word
 queries report their bounded preview window.
 --project requires a directory; --all-projects explicitly broadens the scope.
-Local --latest ranks file modification time and requires complete identity
-coverage. Direct --to uses an exact current identity or asks for selection;
+Local --latest ranks file modification time. Enumeration must finish, and no
+unresolved history may be as recent as the selected session. Missing checkouts
+are skipped. Direct --to uses an exact current identity or asks for selection;
 it never guesses newest. --source archive requires setup. No capture hooks,
 credentials, configuration, registrations or scheduler are created. Private
 temporary launch files survive launch; later local handoffs clean owned files

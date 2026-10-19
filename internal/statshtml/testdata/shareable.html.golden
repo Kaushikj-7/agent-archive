@@ -414,8 +414,8 @@ ul.alerts li::before {
 <table class="rows">
 <thead><tr><th scope="col">Model</th><th scope="col" class="barcol"><span class="sr">Bar</span></th><th scope="col" class="num">Spend</th><th scope="col" class="num">Share</th></tr></thead>
 <tbody>
-<tr><th scope="row">opus</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-opus" width="100%" height="10" rx="4" /></svg></td><td class="num">$136</td><td class="num">83%</td></tr>
-<tr><th scope="row">sonnet</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-sonnet" width="16.15%" height="10" rx="4" /></svg></td><td class="num">$22</td><td class="num">13%</td></tr>
+<tr><th scope="row">opus-5</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-opus" width="100%" height="10" rx="4" /></svg></td><td class="num">$136</td><td class="num">83%</td></tr>
+<tr><th scope="row">sonnet-5</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-sonnet" width="16.15%" height="10" rx="4" /></svg></td><td class="num">$22</td><td class="num">13%</td></tr>
 <tr><th scope="row">gpt-5</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-gpt" width="4.19%" height="10" rx="4" /></svg></td><td class="num">$5.69</td><td class="num">3%</td></tr>
 <tr><th scope="row">model A</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-other" width="0%" height="10" rx="4" /></svg></td><td class="num">unpriced</td><td class="num">110K tokens</td></tr>
 </tbody>
@@ -501,7 +501,7 @@ ul.alerts li::before {
 <dl class="facts">
 <div><dt>Days active</dt><dd>18 of 30 days · no current streak (best 7)</dd></div>
 <div><dt>Busiest day</dt><dd>Sep 17 (2 sessions)</dd></div>
-<div><dt>Favorite model</dt><dd>opus</dd></div>
+<div><dt>Favorite model</dt><dd>opus-5</dd></div>
 <div><dt>Costliest session</dt><dd>$65.10 · project A (long context, 2 subagents)</dd></div>
 <div><dt>Tool errors</dt><dd>5.5% of 1,700 tool results flagged as errors, 13 sessions measured (9 do not record them)</dd></div>
 <div><dt>Month rank</dt><dd>This month so far is your heaviest of the last 6 months</dd></div>

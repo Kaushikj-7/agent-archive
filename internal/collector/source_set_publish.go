@@ -14,6 +14,9 @@ import (
 )
 
 func (s *sessionScan) sourceSetPublishPending(pending state.PendingPublication) (sessionOutcome, error) {
+	if err := s.local.ValidateRetentionRestoration(s.reg, pending); err != nil {
+		return outcomeSkipped, err
+	}
 	endAttempt, attemptErr := s.beginPublicationAttempt()
 	if attemptErr != nil {
 		return outcomeSkipped, attemptErr
@@ -39,6 +42,7 @@ func (s *sessionScan) sourceSetPublishPending(pending state.PendingPublication) 
 		if (len(pending.SourceBytes) == 0 && !staged) || (len(pending.SourceBytes) > 0 && !storage.VerifySHA256(pending.SourceBytes, pending.SourceSHA256)) {
 			return outcomeSkipped, errors.New("pending source checksum does not match its persisted bytes")
 		}
+
 	}
 	// Marking it attempted rewrites the whole file, source bytes and bundle
 	// included, so it is done once: a retry of an attempted publication, or
@@ -91,6 +95,9 @@ func (s *sessionScan) sourceSetPublishPending(pending state.PendingPublication) 
 }
 
 func (s *sessionScan) sourceSetAcknowledgePublication(pending state.PendingPublication, keepPending bool) (sessionOutcome, error) {
+	if err := s.local.ValidateRetentionRestoration(s.reg, pending); err != nil {
+		return outcomeSkipped, err
+	}
 	endAttempt, attemptErr := s.beginPublicationAttempt()
 	if attemptErr != nil {
 		return outcomeSkipped, attemptErr
@@ -144,6 +151,9 @@ func (s *sessionScan) verifyAcknowledgedSourceSet(pending state.PendingPublicati
 }
 
 func (s *sessionScan) sourceSetAcknowledgeReadback(pending state.PendingPublication, keepPending bool, body []byte, etag string) (sessionOutcome, error) {
+	if err := s.local.ValidateRetentionRestoration(s.reg, pending); err != nil {
+		return outcomeSkipped, err
+	}
 	endAttempt, attemptErr := s.beginPublicationAttempt()
 	if attemptErr != nil {
 		return outcomeSkipped, attemptErr
@@ -199,6 +209,9 @@ func (s *sessionScan) sourceSetAcknowledgeReadback(pending state.PendingPublicat
 	if err := s.published.SaveCommittedPublication(pending, s.now); err != nil {
 		return outcomeSkipped, fmt.Errorf("update published cache: %w", err)
 	}
+	if err := s.local.CompleteRetentionRestoration(s.reg, pending, s.published); err != nil {
+		return outcomeSkipped, err
+	}
 	// C may have indexed the exact response before a competing writer changes
 	// metadata. Keep its repair obligation until D and the full local save have
 	// both succeeded; neither a closing conflict nor a failed save settles it.
@@ -232,12 +245,14 @@ func (s *sessionScan) sourceSetAcknowledgeReadback(pending state.PendingPublicat
 		if err := s.finishSourceSetAcknowledgment(pending); err != nil {
 			return outcomeSkipped, err
 		}
+
 	}
 	return outcomePublished, nil
 }
 
 // finishSourceSetAcknowledgment runs only after closing proof, local commit and
-// covered request completion; pending removal remains the final operation.
+// covered request completion; retained deletion inputs are released only after
+// exact pending removal.
 func (s *sessionScan) finishSourceSetAcknowledgment(pending state.PendingPublication) error {
 	if pending.History == nil && pending.Commit.Purpose == state.PublicationPrivacyRewrite {
 		if err := s.local.SettleOrdinaryPublicationPrivacy(s.id(), pending); err != nil {
@@ -271,10 +286,16 @@ func (s *sessionScan) finishSourceSetAcknowledgment(pending state.PendingPublica
 	if err := s.removeCompletedCatalogJournal(pending); err != nil {
 		return fmt.Errorf("remove completed source-set journal: %w", err)
 	}
+	if pending.Preparation != nil && pending.Preparation.Retention != nil {
+		return s.local.RemoveRestoredDeletionStages(s.id())
+	}
 	return nil
 }
 
 func (s *sessionScan) sourceSetUpload(pending state.PendingPublication) (*storage.ValidatedPublicationReadback, error) {
+	if err := s.local.ValidateRetentionRestoration(s.reg, pending); err != nil {
+		return nil, err
+	}
 	if err := s.local.SaveListingRepair(s.id(), state.ListingRepair{MetadataKey: pending.MetadataKey, DestinationID: s.reg.DestinationID}); err != nil {
 		return nil, fmt.Errorf("journal listing repair: %w", err)
 	}
@@ -315,6 +336,12 @@ func (s *sessionScan) sourceSetUpload(pending state.PendingPublication) (*storag
 		case state.PublicationAdmissionStage:
 			return nil, nil, state.ErrDurableStorageRecovery
 		case state.PublicationHistoryStage:
+			if source.Payload.Stage != nil && source.Payload.Stage.Namespace == state.DeletionSourceNamespace {
+				scoped, closeScope := s.local.WithReadBudget(ctx, s.readBudget())
+				s.retainedReleases = append(s.retainedReleases, closeScope)
+				data, err = scoped.ReadDeletionSource(s.id(), source.Reference)
+				break
+			}
 			stage := state.PendingSource{Reference: source.Reference, Name: source.Reference.SHA256 + ".gz"}
 			data, err = s.historyStage(stage)
 			if errors.Is(err, os.ErrNotExist) {

@@ -55,9 +55,10 @@ func protectedDurableRoot(path string) bool {
 }
 
 type durableUsage struct {
-	physical int64
-	charged  int64
-	recovery bool
+	deletionControls int64
+	physical         int64
+	charged          int64
+	recovery         bool
 }
 
 type durableQuota struct {
@@ -153,7 +154,7 @@ func (q *durableQuota) usageContext(ctx context.Context) (u durableUsage, err er
 	if err := q.scanPublished(ctx, &remaining, &u); err != nil {
 		return u, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	for _, dir := range []string{"pending", generationRecoveryDir, "publication-evidence", "temporary-reservations", "temporary-scratch", "admission-stages"} {
+	for _, dir := range []string{"pending", generationRecoveryDir, deletionDirectory, "publication-evidence", "temporary-reservations", "temporary-scratch", "admission-stages"} {
 		recovery := durableRootPath(dir) == admissionDurableRoot || durableRootPath(dir) == reservationDurableRoot || durableRootPath(dir) == scratchDurableRoot
 		e := q.scan(dir, 0, &remaining, &u)
 		if errors.Is(e, os.ErrNotExist) {
@@ -248,7 +249,7 @@ func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUs
 		return err
 	}
 	defer func() { err = errors.Join(err, d.Close()) }()
-	controlled := strings.HasPrefix(path, "publication-evidence/") || strings.HasSuffix(path, "/import-stage")
+	controlled := path == deletionDirectory || strings.HasPrefix(path, "publication-evidence/") || strings.HasSuffix(path, "/import-stage")
 	first := true
 	for {
 		entries, e := d.ReadDir(128)
@@ -286,6 +287,7 @@ func (q *durableQuota) scan(path string, depth int, remaining *int, u *durableUs
 			if !info.Mode().IsRegular() || info.Size() < 0 {
 				return ErrDurableStorageRecovery
 			}
+
 			if err := chargeDurableFile(path, entry.Name(), info.Size(), u); err != nil {
 				return err
 			}
@@ -337,6 +339,13 @@ func (q *durableQuota) writeWithHeadroomContext(ctx context.Context, path string
 			return err
 		}
 	}
+	if strings.HasPrefix(path, deletionDirectory+"/") {
+		additional, err = q.deletionAdditional(path, n, additional, u)
+		if err != nil {
+			return err
+		}
+	}
+
 	if strings.HasPrefix(path, "publication-evidence/") {
 		populated, e := rootHasEntries(q.home.Root, filepath.Dir(path))
 		if e != nil && !errors.Is(e, os.ErrNotExist) {
@@ -495,6 +504,17 @@ func (s *Store) stagePendingSourceGuard(g config.DurableStorageGuard, id string,
 }
 
 func chargeDurableFile(path, name string, size int64, u *durableUsage) error {
+	if deletionControlDirectory(path) && (name == "intent.json" || stagedTempName.MatchString(name)) {
+		if size > durableControlBytes/2 {
+			return ErrDurableStorageRecovery
+		}
+		before := max(int64(0), u.deletionControls-durableControlBytes)
+		u.deletionControls += size
+		u.charged += max(int64(0), u.deletionControls-durableControlBytes) - before
+		u.physical += size
+		return nil // One aggregate allowance covers control old/new coexistence.
+	}
+
 	if strings.HasSuffix(path, "/import-stage") && name == "cancel.json" {
 		if size > durableControlBytes/2 {
 			return ErrDurableStorageRecovery
@@ -579,4 +599,31 @@ func (w *publicationEmittedWriter) Write(p []byte) (int, error) {
 	n, err := w.writer.Write(p)
 	w.written += int64(n)
 	return n, err
+}
+
+func deletionControlDirectory(path string) bool {
+	return strings.HasPrefix(filepath.ToSlash(path), deletionDirectory+"/") && strings.Count(filepath.ToSlash(path), "/") == 1
+}
+
+func (q *durableQuota) deletionAdditional(path string, n, additional int64, u durableUsage) (int64, error) {
+
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	if len(parts) < 3 {
+		return 0, ErrDurableStorageRecovery
+	}
+	populated, e := rootHasEntries(q.home.Root, deletionDirectory)
+	if e != nil && !errors.Is(e, os.ErrNotExist) {
+		return 0, e
+	}
+	if deletionControlDirectory(filepath.Dir(path)) {
+		if n > durableControlBytes/2 {
+			return 0, ErrDurableStorageCapacity
+		}
+		additional = max(int64(0), u.deletionControls+n-durableControlBytes) - max(int64(0), u.deletionControls-durableControlBytes)
+	}
+	if !populated {
+		additional += durableControlBytes
+	}
+
+	return additional, nil
 }

@@ -14,9 +14,9 @@ Aug 31                                                                          
 
 WHERE IT WENT
 By project                                                    By model
-agent-archive  ██████████████████████████████  $1,862         opus    ██████████████████████████████  $3,270
-levenshtein    ████████████                      $751         fable   ████                              $386
-styleprofile   █████████                         $586         sonnet  ███                               $320
+agent-archive  ██████████████████████████████  $1,862         opus-5    ██████████████████████████████  $3,270
+levenshtein    ████████████                      $751         fable-5   ████                              $386
+styleprofile   █████████                         $586         sonnet-5  ███                               $320
 family_books   ███████                           $427         + 2 more
 + 6 more
 

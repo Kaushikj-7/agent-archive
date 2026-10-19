@@ -43,7 +43,8 @@ def production_jobs(pipeline, sample, row):
             checked = dict(run, pull_requests=[{'number': topology['pr_number'],
                            'head': {'sha': topology['head']}, 'base': {'sha': topology['event_base']}}])
         try:
-            collect_ci_timing.validate_run(checked, name, topology)
+            collect_ci_timing.validate_run(checked, name, topology,
+                tested_base_proofs=pipeline.get('verified_tested_base_associations', []))
         except (ValueError, KeyError, TypeError, AttributeError):
             return []
         raw = snapshot['jobs']

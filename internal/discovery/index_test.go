@@ -219,7 +219,8 @@ func TestSettledIndexCancellationFallsBack(t *testing.T) {
 }
 
 func TestSettledIndexHintsLeaveDatabaseAndDirectoryUnchanged(t *testing.T) {
-	t.Parallel()
+	// The optional production reader has a 100 ms deadline. Isolate this
+	// success/no-write assertion from parallel fixture work without relaxing it.
 	root := t.TempDir()
 	db := hintDatabase(t, root, false)
 	addHint(t, db, "one", filepath.Join(root, "sessions", "rollout-00000000-0000-0000-0000-000000000001.jsonl"), time.Now())

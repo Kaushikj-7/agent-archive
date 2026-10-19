@@ -246,6 +246,9 @@ func (s *Store) inspectHeldDurableReadRoots(home *local.RootedHome) (cfg config.
 	if err != nil {
 		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
 	}
+	if present, e := rootHasEntries(home.Root, deletionDirectory); e != nil || present && (!found || !cfg.DeletionProtection) {
+		return cfg, found, errors.Join(ErrDurableStorageRecovery, e)
+	}
 	_, anonymous, entries, err := s.inspectPendingRoots(home, found && !cfg.DurableStorageProtection)
 	if anonymous || err != nil || !found && entries > 0 {
 		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)

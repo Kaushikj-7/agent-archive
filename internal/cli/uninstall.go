@@ -841,6 +841,12 @@ func disableCaptureForUninstall(home string, cfg *config.Config, found bool) err
 	if !found {
 		return nil
 	}
+	previous := *cfg
 	cfg.Archive.Enabled = false
+	next, err := config.ReconcileMuseCapture(*cfg, previous, time.Time{})
+	if err != nil {
+		return err
+	}
+	*cfg = next
 	return config.Save(home, *cfg)
 }
