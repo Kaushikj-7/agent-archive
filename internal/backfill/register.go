@@ -171,7 +171,7 @@ func (r Registration) validateGroupProof(ctx context.Context, works []*parentWor
 // of the hold. The answer can be a hold old by the time it is used; it only
 // ever was a check against the plan, and the collector handles a chat
 // deleted later.
-func (r Registration) checkChats(works []*parentWork) error {
+func (r Registration) checkChats(ctx context.Context, works []*parentWork) error {
 	limit := maxHoldSteps
 	if r.MaxHoldSteps > 0 {
 		limit = r.MaxHoldSteps
@@ -179,7 +179,7 @@ func (r Registration) checkChats(works []*parentWork) error {
 	// A hold finishes at most one session per step.
 	for _, w := range works[:min(limit, len(works))] {
 		if w.c.SourceKind == archive.SourceKindCursorSQLite && !w.chatChecked {
-			gone, err := r.chatGone(w.c)
+			gone, err := r.chatGone(ctx, w.c)
 			if err != nil {
 				return err
 			}
@@ -200,7 +200,10 @@ func (r Registration) resolveRepoKeys(works []*parentWork, repoKeys *registratio
 		return nil
 	}
 	cfg, found, err := config.Load(r.Home)
-	if err != nil || !found {
+	if err != nil {
+		return fmt.Errorf("reload registration configuration: %w", err)
+	}
+	if !found {
 		// The hold reports it; nothing is asked about meanwhile.
 		return nil
 	}
@@ -467,11 +470,11 @@ func (r Registration) registration(c Candidate, archiveID, repoKey string) archi
 // longer there. It reads a few indexed rows in place, never a copy. A
 // database that can't be read now (Cursor holds a lock) is not "gone": the
 // chat is registered, and the collector reads it when it can.
-func (r Registration) chatGone(c Candidate) (bool, error) {
+func (r Registration) chatGone(ctx context.Context, c Candidate) (bool, error) {
 	if r.CursorDatabase == "" {
 		return false, nil
 	}
-	_, err := observeSource(context.Background(), r.Sources, agentapi.SourceEnvironment{Database: r.CursorDatabase}, c.Harness, agentapi.SourceRef{Kind: c.SourceKind, Path: c.TranscriptPath, Key: c.SourceKey})
+	_, err := observeSource(ctx, r.Sources, agentapi.SourceEnvironment{Database: r.CursorDatabase}, c.Harness, agentapi.SourceRef{Kind: c.SourceKind, Path: c.TranscriptPath, Key: c.SourceKey})
 	if fatalSourceFailure(err) {
 		return false, err
 	}
@@ -694,8 +697,8 @@ func (r Registration) stageSelectedChild(ctx context.Context, parent archive.Ses
 	return digest, !errors.Is(err, state.ErrImportPolicyChanged), err
 }
 
-func (r Registration) cancelPrepared(works []*parentWork) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (r Registration) cancelPrepared(ctx context.Context, works []*parentWork) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	for _, w := range works {
 		if err := r.forWork(w).cancelParent(ctx, w); err != nil {

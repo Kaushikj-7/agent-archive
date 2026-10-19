@@ -3,7 +3,6 @@ package backfill
 import (
 	"context"
 	"errors"
-	"io"
 	"sync"
 	"time"
 	"unsafe"
@@ -12,12 +11,13 @@ import (
 )
 
 // CandidateSequence lends at most limit ordered candidates until Advance or Close.
-// Next returns io.EOF only after all candidates have been acknowledged. It must
-// not return an empty successful page. Advance acknowledges a completed prefix;
+// Next returns done only with an empty page after all candidates have been
+// acknowledged. An empty page without done, or a nonempty page with done, is
+// invalid. Every nonnil error is a failure. Advance acknowledges a completed prefix;
 // fetching rows alone never acknowledges them. Close releases all remaining
 // borrowed rows without acknowledging them. Neither operation grants authority.
 type CandidateSequence interface {
-	Next(context.Context, int) ([]Candidate, error)
+	Next(context.Context, int) ([]Candidate, bool, error)
 	Advance(int) error
 	Close() error
 }
@@ -35,18 +35,18 @@ type sliceCandidates struct {
 	closed     bool
 }
 
-func (s *sliceCandidates) Next(ctx context.Context, limit int) ([]Candidate, error) {
+func (s *sliceCandidates) Next(ctx context.Context, limit int) ([]Candidate, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if s.closed || s.borrowed != 0 || limit <= 0 {
-		return nil, errors.New("candidate sequence is closed or has unfinished work")
+		return nil, false, errors.New("candidate sequence is closed or has unfinished work")
 	}
 	if len(s.candidates) == 0 {
-		return nil, io.EOF
+		return nil, true, nil
 	}
 	s.borrowed = min(limit, len(s.candidates))
-	return s.candidates[:s.borrowed], nil
+	return s.candidates[:s.borrowed], false, nil
 }
 
 func (s *sliceCandidates) Advance(n int) error {
@@ -75,7 +75,7 @@ type RegistrationResult struct {
 }
 
 // Close releases this result's charge once, including through copied results.
-func (r RegistrationResult) Close() {
+func (r *RegistrationResult) Close() {
 	if r.owner != nil {
 		r.owner.close()
 	}
@@ -164,19 +164,9 @@ func (r *registrationIDs) prepare(dst *[]string, values []string) error {
 	return nil
 }
 
-// Run registers every slice candidate through the sequence engine, retaining IDs.
-// When ReadBudget is supplied the caller must Close the returned result, even
-// after an error. The input slice remains owned and charged by its caller.
-func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
-	result := RegistrationResult{owner: &registrationIDs{reservation: r.ReadBudget.Reservation()}}
-	summary, err := r.runSequence(SliceCandidates(candidates), &result)
-	result.RegistrationSummary = summary
-	return result, err
-}
-
 // RunSequence consumes bounded ordered work and returns scalar totals. AfterHold
 // borrows only this hold's ID deltas; a callback retaining them owns its copies.
-// The sequence is closed on success, cancellation, producer error and EOF.
+// The sequence is closed on completion, cancellation and producer error.
 func (r Registration) RunSequence(sequence CandidateSequence) (RegistrationSummary, error) {
 	return r.runSequence(sequence, nil)
 }
@@ -202,15 +192,15 @@ func (r Registration) runSequence(sequence CandidateSequence, retained *Registra
 		if r.stopped(ctx) {
 			return summary, ErrStopped
 		}
-		candidates, err := sequence.Next(ctx, limit)
-		if err == io.EOF && len(candidates) == 0 {
-			return summary, nil
-		}
+		candidates, done, err := sequence.Next(ctx, limit)
 		if err != nil {
 			return summary, err
 		}
-		if len(candidates) == 0 || len(candidates) > limit {
-			return summary, errors.New("candidate sequence returned an empty or oversized page; rebuild the plan")
+		if done && len(candidates) == 0 {
+			return summary, nil
+		}
+		if done || len(candidates) == 0 || len(candidates) > limit {
+			return summary, errors.New("candidate sequence returned an invalid page or completion; rebuild the plan")
 		}
 		if err := r.runPage(ctx, sequence, candidates, repoKeys, retained, &summary); err != nil {
 			return summary, err
@@ -250,10 +240,10 @@ func (r Registration) runPage(ctx context.Context, sequence CandidateSequence, c
 	defer closeRegistrationWork(works)
 	for i := 0; i < len(works); {
 		if r.stopped(ctx) {
-			return errors.Join(ErrStopped, r.cancelPrepared(works[i:]))
+			return errors.Join(ErrStopped, r.cancelPrepared(ctx, works[i:]))
 		}
 		active := works[i:]
-		if err := r.checkChats(active); err != nil {
+		if err := r.checkChats(ctx, active); err != nil {
 			return err
 		}
 		if err := r.resolveRepoKeys(active, repoKeys); err != nil {
@@ -262,12 +252,12 @@ func (r Registration) runPage(ctx context.Context, sequence CandidateSequence, c
 		r.validateGroupProof(ctx, active)
 		if err := r.stageGroup(ctx, active); err != nil {
 			if r.stopped(ctx) {
-				return errors.Join(ErrStopped, err, r.cancelPrepared(active))
+				return errors.Join(ErrStopped, err, r.cancelPrepared(ctx, active))
 			}
 			return err
 		}
 		if r.stopped(ctx) {
-			return errors.Join(ErrStopped, r.cancelPrepared(active))
+			return errors.Join(ErrStopped, r.cancelPrepared(ctx, active))
 		}
 		delta := RegistrationResult{owner: &registrationIDs{reservation: r.ReadBudget.Reservation()}, retained: retained}
 		before := i
@@ -282,7 +272,7 @@ func (r Registration) runPage(ctx context.Context, sequence CandidateSequence, c
 		err = errors.Join(err, cleanupErr)
 		if err != nil {
 			if errors.Is(err, ErrStopped) {
-				return errors.Join(err, r.cancelPrepared(works[i:]))
+				return errors.Join(err, r.cancelPrepared(ctx, works[i:]))
 			}
 			return err
 		}

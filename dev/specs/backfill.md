@@ -1221,7 +1221,10 @@ only a few milliseconds at a time.
    `hooks.lock`. Carry an unfinished parent's reservation, selected children,
    digest and cleanup across holds; acknowledge only a prefix whose durable
    disposition, obsolete-stage cleanup and after-hold batch callback succeeded.
-   Close unacknowledged borrowed work on cancellation, error and EOF. Rebuilding
+   Completion is explicit and valid only with an empty page after all borrowed
+   rows are acknowledged. Every producer error, including EOF, is a failure;
+   empty nonterminal pages and nonempty terminal pages are invalid. Close
+   unacknowledged borrowed work on cancellation, error and completion. Rebuilding
    this disposable sequence after restart does not grant admission authority.
    - Take `hooks.lock` and reload the configuration. Skip anything no longer
      admitted. A session whose start is after `AdmittedAt` is skipped as
@@ -1235,13 +1238,15 @@ only a few milliseconds at a time.
      page boundaries. The production constructor shares the native lookup's
      `NativeReadBudget` with active work, state reads and settled Cursor capture.
      Each parent's decoded-state charge survives its partial holds and closes
-     after its disposition and callback, even while later rows of the page remain. Cancellation cleanup uses its independent context.
+     after its disposition and callback, even while later rows of the page
+     remain. Cancellation cleanup preserves context values with an independent
+     timeout.
    - Subagent candidates are written just before their parent is
      registered. A crash in between leaves a candidate with no parent, which
      the collector discards, and a rerun writes it again with the same
      archive ID.
-   The legacy slice adapter uses the same engine and may retain ID arrays. Their
-   result owns a charge through explicit `Close`, including overlapping old/new
+   The test-only legacy slice entry point uses the same engine and may retain ID
+   arrays. The result owns a charge through explicit `Close`, including overlapping old/new
    backing arrays during growth. The production sequence returns no such arrays.
    Planning still materializes candidates, native catalogs, recovery witnesses
    and the globally sorted selected slice; compatible batch arrays also remain.

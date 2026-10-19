@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -69,7 +70,7 @@ func (s *observedCandidateSequence) outsideHold() {
 	unlock()
 }
 
-func (s *observedCandidateSequence) Next(ctx context.Context, limit int) ([]Candidate, error) {
+func (s *observedCandidateSequence) Next(ctx context.Context, limit int) ([]Candidate, bool, error) {
 	s.outsideHold()
 	s.nextCalls++
 	if limit > maxHoldSteps || limit <= 0 {
@@ -79,11 +80,11 @@ func (s *observedCandidateSequence) Next(ctx context.Context, limit int) ([]Cand
 		s.t.Fatal("new page fetched before durable disposition", s.produced, s.acknowledged)
 	}
 	if s.nextCalls > 1 && s.nextError != nil {
-		return nil, s.nextError
+		return nil, false, s.nextError
 	}
-	page, err := s.CandidateSequence.Next(ctx, min(limit, s.page))
+	page, done, err := s.CandidateSequence.Next(ctx, min(limit, s.page))
 	s.produced += len(page)
-	return page, err
+	return page, done, err
 }
 
 func (s *observedCandidateSequence) Advance(n int) error {
@@ -107,7 +108,7 @@ func (s *observedCandidateSequence) Close() error {
 func TestRegistrationSequencePagesPreserveParentChildren(t *testing.T) {
 	t.Parallel()
 	for _, page := range []int{1, 7, 8, 9, 49, 50} {
-		t.Run(fmt.Sprint(page), func(t *testing.T) {
+		t.Run(strconv.Itoa(page), func(t *testing.T) {
 			t.Parallel()
 			r, candidates := registrationSequenceFixture(t, page+2, maxHoldSteps+3)
 			sequence := &observedCandidateSequence{CandidateSequence: SliceCandidates(candidates), t: t, r: r, page: page}
@@ -178,32 +179,79 @@ func TestRegistrationSequenceStopsWithoutAcknowledgingPartialParent(t *testing.T
 	// Rebuild the disposable sequence and reconcile existing reservations/IDs.
 	r.Context, r.Stop = t.Context(), nil
 	result, err := r.Run(candidates)
+	if err != nil {
+		result.Close()
+		t.Fatal(err)
+	}
 	defer result.Close()
-	if err != nil || len(result.Sessions) != 2 || len(result.Subagents) != 3 {
+	if len(result.Sessions) != 2 || len(result.Subagents) != 3 {
 		t.Fatal("restart lost partial parent/child ownership", result, err)
+	}
+}
+
+func TestRegistrationSequenceCancellationReleasesPreparedEvidence(t *testing.T) {
+	t.Parallel()
+	r, candidate, _ := stagingFixture(t)
+	r.ReadBudget = agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
+	external := r.ReadBudget.Reservation()
+	if !external.Reserve(37) {
+		t.Fatal("external charge refused")
+	}
+	defer external.Release(37)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	r.Context = ctx
+	staged := false
+	r.AfterStage = func(string) error { staged = true; cancel(); return nil }
+	sequence := &observedCandidateSequence{CandidateSequence: SliceCandidates([]Candidate{candidate}), t: t, r: r, page: 1}
+	summary, err := r.RunSequence(sequence)
+	if !staged || !errors.Is(err, ErrStopped) || summary.RegisteredSessions != 0 || sequence.acknowledged != 0 || sequence.closed != 1 {
+		t.Fatal("canceled preparation was acknowledged", staged, summary, sequence, err)
+	}
+	stages, _, err := r.Store.ImportStages(t.Context(), "", 50)
+	if err != nil || len(stages) != 0 {
+		t.Fatal("canceled context prevented independent cleanup", stages, err)
+	}
+	if err := r.Store.ResumeAllImportAdmissions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	registrations, err := r.Store.LoadRegistrations()
+	if err != nil || len(registrations) != 0 {
+		t.Fatal("canceled preparation recovered as admission", registrations, err)
+	}
+	requests, err := r.Store.LoadRequests()
+	if err != nil || len(requests) != 0 {
+		t.Fatal("canceled preparation queued a request", requests, err)
+	}
+	if used, _ := r.ReadBudget.Charged(); used != 37 {
+		t.Fatal("cancellation changed another owner's charge", used)
 	}
 }
 
 func TestRegistrationSequenceProducerAndCallbackErrorsKeepProgress(t *testing.T) {
 	t.Parallel()
-	for _, phase := range []string{"producer", "callback", "joined_eof"} {
-		t.Run(phase, func(t *testing.T) {
+	failure, cleanup := errors.New("synthetic sequence failure"), errors.New("synthetic sequence close")
+	for _, tc := range []struct {
+		name             string
+		nextError        error
+		callbackError    error
+		wantError        error
+		wantAcknowledged int
+	}{
+		{"producer", failure, nil, failure, 1},
+		{"callback", nil, failure, failure, 0},
+		{"joined_eof", errors.Join(io.EOF, failure), nil, failure, 1},
+		{"direct_eof", io.EOF, nil, io.EOF, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r, candidates := registrationSequenceFixture(t, 2, 0)
-			failure, cleanup := errors.New("synthetic sequence failure"), errors.New("synthetic sequence close")
-			sequence := &observedCandidateSequence{CandidateSequence: SliceCandidates(candidates), t: t, r: r, page: 1, closeError: cleanup}
-			wantAcknowledged := 1
-			switch phase {
-			case "producer":
-				sequence.nextError = failure
-			case "callback":
-				wantAcknowledged = 0
-				r.AfterHold = func([]string, []string) error { return failure }
-			case "joined_eof":
-				sequence.nextError = errors.Join(io.EOF, failure)
+			sequence := &observedCandidateSequence{CandidateSequence: SliceCandidates(candidates), t: t, r: r, page: 1, nextError: tc.nextError, closeError: cleanup}
+			if tc.callbackError != nil {
+				r.AfterHold = func([]string, []string) error { return tc.callbackError }
 			}
 			summary, err := r.RunSequence(sequence)
-			if !errors.Is(err, failure) || !errors.Is(err, cleanup) || summary.RegisteredSessions != 1 || sequence.acknowledged != wantAcknowledged || sequence.closed != 1 {
+			if !errors.Is(err, tc.wantError) || !errors.Is(err, cleanup) || summary.RegisteredSessions != 1 || sequence.acknowledged != tc.wantAcknowledged || sequence.closed != 1 {
 				t.Fatal("error or unfinished tail hidden", summary, sequence, err)
 			}
 			if used, _ := r.ReadBudget.Charged(); used != 0 {
@@ -231,9 +279,9 @@ func TestRegistrationResultRetainsOnlyItsOwnedCharge(t *testing.T) {
 	if used, _ := budget.Charged(); used <= 37 {
 		t.Fatal("live legacy result escaped charging", used)
 	}
-	copy := result
+	copied := result
 	result.Close()
-	copy.Close()
+	copied.Close()
 	if used, _ := budget.Charged(); used != 37 {
 		t.Fatal("result close consumed another owner", used)
 	}
@@ -262,8 +310,12 @@ func TestRegistrationReportingPressurePrecedesDurableAdmission(t *testing.T) {
 		t.Fatal("reporting refusal queued unreported work", requests, delta, err)
 	}
 	result, err := r.Run(candidates)
+	if err != nil {
+		result.Close()
+		t.Fatal(err)
+	}
 	defer result.Close()
-	if err != nil || len(result.Sessions) != 1 || result.Sessions[0] != id {
+	if len(result.Sessions) != 1 || result.Sessions[0] != id {
 		t.Fatal("resource retry lost reserved identity", result, err)
 	}
 	reg, found, err := r.Store.LoadRegistration(id)
@@ -274,9 +326,16 @@ func TestRegistrationReportingPressurePrecedesDurableAdmission(t *testing.T) {
 
 func TestRegistrationSequenceRejectsNonprogressPages(t *testing.T) {
 	t.Parallel()
-	for _, page := range [][]Candidate{nil, make([]Candidate, maxHoldSteps+1)} {
+	for _, tc := range []struct {
+		page []Candidate
+		done bool
+	}{
+		{nil, false},
+		{make([]Candidate, maxHoldSteps+1), false},
+		{make([]Candidate, 1), true},
+	} {
 		r, _ := registrationSequenceFixture(t, 1, 0)
-		sequence := &invalidCandidateSequence{page: page}
+		sequence := &invalidCandidateSequence{page: tc.page, done: tc.done}
 		if _, err := r.RunSequence(sequence); err == nil || sequence.calls != 1 || !sequence.closed {
 			t.Fatal("invalid sequence retried or left open", sequence, err)
 		}
@@ -285,16 +344,18 @@ func TestRegistrationSequenceRejectsNonprogressPages(t *testing.T) {
 
 type invalidCandidateSequence struct {
 	page   []Candidate
+	done   bool
 	calls  int
 	closed bool
 }
 
-func (s *invalidCandidateSequence) Next(context.Context, int) ([]Candidate, error) {
+func (s *invalidCandidateSequence) Next(context.Context, int) ([]Candidate, bool, error) {
 	s.calls++
-	return s.page, nil
+	return s.page, s.done, nil
 }
 
 func (*invalidCandidateSequence) Advance(int) error { return nil }
-func (s *invalidCandidateSequence) Close() error    { s.closed = true; return nil }
+
+func (s *invalidCandidateSequence) Close() error { s.closed = true; return nil }
 
 var _ CandidateSequence = (*observedCandidateSequence)(nil)
