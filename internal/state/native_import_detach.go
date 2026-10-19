@@ -51,9 +51,9 @@ func (s *Store) DetachNativeImportBatchMembership(ctx context.Context, batchID, 
 		return false, err
 	}
 	proof := &nativeImportDetachProof{store: read, batchID: batchID, receiptID: receiptID, controlDigest: digest}
-	cap := &nativeImportOwnerCommit{ctx: ctx, store: s, detach: proof}
+	commit := &nativeImportOwnerCommit{ctx: ctx, store: s, detach: proof}
 	var selected archive.SessionRegistration
-	err = read.writeUnderLock(lockedWrite{nativeImport: cap, path: s.registrationPath(id), lock: func() (func(), error) { return s.lockNativeImport(ctx, held, batchID, id) }, check: func() error {
+	err = read.writeUnderLock(lockedWrite{nativeImport: commit, path: s.registrationPath(id), lock: func() (func(), error) { return s.lockNativeImport(ctx, held, batchID, id) }, check: func() error {
 		current, err := read.readNativeImportControl(ctx, held, batchID)
 		if err != nil {
 			return err

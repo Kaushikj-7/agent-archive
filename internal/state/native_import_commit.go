@@ -85,8 +85,8 @@ func (s *Store) CommitNativeImport(ctx context.Context, p *PreparedNativeImport)
 	if err := p.reserveImportIdentity(ctx, locks); err != nil {
 		return archive.SessionRegistration{}, err
 	}
-	cap := &nativeImportOwnerCommit{ctx: ctx, store: s, confirmation: p.confirmation, stage: p.stage, reg: p.reg}
-	if err := s.commitNativeImportOwner(ctx, cap, locks, p.index, func() error { return p.verify(ctx) }); err != nil {
+	commit := &nativeImportOwnerCommit{ctx: ctx, store: s, confirmation: p.confirmation, stage: p.stage, reg: p.reg}
+	if err := s.commitNativeImportOwner(ctx, commit, locks, p.index, func() error { return p.verify(ctx) }); err != nil {
 		return archive.SessionRegistration{}, err
 	}
 	p.committed = true
@@ -120,31 +120,8 @@ func (p *PreparedNativeImport) allocateImportIdentity(ctx context.Context) error
 		return err
 	}
 	if p.indexFound && !p.index.Absent {
-		expected, err := p.reservationAuthority()
-		if err != nil || p.index.NativeReservation != expected || !supportedNativeReservationEntry(p.index) {
-			return errors.Join(ErrSessionIdentityConflict, err)
-		}
-		p.reg.ArchiveSessionID = p.index.ArchiveSessionID
-		stage, found, err := p.read.loadPreparedImportStage(ctx, p.index.ArchiveSessionID)
-		if err != nil {
+		if adopted, err := p.adoptReservedImportIndex(ctx); err != nil || adopted {
 			return err
-		}
-		if found {
-			authority, err := nativeImportReservationAuthority(stage.Registration)
-			if err != nil || authority != expected || stage.Version != 2 || !stage.TypedSelection {
-				return errors.Join(ErrReadySelectionFrozen, err)
-			}
-			current, owned, err := p.store.LoadRegistration(p.index.ArchiveSessionID)
-			if err != nil || owned && (!sameImportStageOwner(stage.Registration, current) || !sameNativeImportReceipt(stage.Registration.NativeImport, current.NativeImport) || current.StagedImportSHA256 != stage.SHA256) {
-				return errors.Join(ErrSessionIdentityConflict, err)
-			}
-			p.stage = stage
-			p.reg = stage.Registration
-			p.reg.StagedImportSHA256 = stage.SHA256
-			return nil
-		}
-		if _, owned, err := p.store.LoadRegistration(p.index.ArchiveSessionID); err != nil || owned {
-			return errors.Join(ErrSessionIdentityConflict, err)
 		}
 	} else if err := p.store.sessionIndexMissAllowed(); err != nil {
 		return err
@@ -154,6 +131,42 @@ func (p *PreparedNativeImport) allocateImportIdentity(ctx context.Context) error
 			return errors.Join(ErrSessionIdentityConflict, err)
 		}
 	}
+	return p.buildImportStage(ctx)
+}
+
+// adoptReservedImportIndex proves a present native reservation and adopts its prepared stage, reporting whether one was adopted.
+func (p *PreparedNativeImport) adoptReservedImportIndex(ctx context.Context) (bool, error) {
+	expected, err := p.reservationAuthority()
+	if err != nil || p.index.NativeReservation != expected || !supportedNativeReservationEntry(p.index) {
+		return false, errors.Join(ErrSessionIdentityConflict, err)
+	}
+	p.reg.ArchiveSessionID = p.index.ArchiveSessionID
+	stage, found, err := p.read.loadPreparedImportStage(ctx, p.index.ArchiveSessionID)
+	if err != nil {
+		return false, err
+	}
+	if found {
+		authority, err := nativeImportReservationAuthority(stage.Registration)
+		if err != nil || authority != expected || stage.Version != 2 || !stage.TypedSelection {
+			return false, errors.Join(ErrReadySelectionFrozen, err)
+		}
+		current, owned, err := p.store.LoadRegistration(p.index.ArchiveSessionID)
+		if err != nil || owned && (!sameImportStageOwner(stage.Registration, current) || !sameNativeImportReceipt(stage.Registration.NativeImport, current.NativeImport) || current.StagedImportSHA256 != stage.SHA256) {
+			return false, errors.Join(ErrSessionIdentityConflict, err)
+		}
+		p.stage = stage
+		p.reg = stage.Registration
+		p.reg.StagedImportSHA256 = stage.SHA256
+		return true, nil
+	}
+	if _, owned, err := p.store.LoadRegistration(p.index.ArchiveSessionID); err != nil || owned {
+		return false, errors.Join(ErrSessionIdentityConflict, err)
+	}
+	return false, nil
+}
+
+// buildImportStage charges the filtered bundle to the result ledger and builds the validated new import stage.
+func (p *PreparedNativeImport) buildImportStage(ctx context.Context) error {
 	cfg, found, err := p.store.loadConfig()
 	if err != nil || !found {
 		return errors.Join(ErrReadySelectionFrozen, err)
@@ -376,28 +389,28 @@ func (s *Store) lockNativeImportAfterHooks(ctx context.Context, held *local.Root
 	return unlock, nil
 }
 
-func (s *Store) commitNativeImportOwner(ctx context.Context, cap *nativeImportOwnerCommit, locks *local.RootedHome, reserved qualifiedSessionIndexEntry, verify func() error) error {
-	bound, ctx, closeContext := cap.confirmation.read.withDurableContext(ctx)
+func (s *Store) commitNativeImportOwner(ctx context.Context, commit *nativeImportOwnerCommit, locks *local.RootedHome, reserved qualifiedSessionIndexEntry, verify func() error) error {
+	bound, ctx, closeContext := commit.confirmation.read.withDurableContext(ctx)
 	defer closeContext()
 	read, closeRead := bound.WithReadBudget(ctx, bound.resourceBudget)
 	defer closeRead()
-	key := agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: cap.reg.NativeSessionID}
+	key := agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: commit.reg.NativeSessionID}
 	lock := func() (func(), error) {
-		return s.lockNativeImport(ctx, locks, cap.reg.NativeImport.Confirmation.BatchID, cap.reg.ArchiveSessionID)
+		return s.lockNativeImport(ctx, locks, commit.reg.NativeImport.Confirmation.BatchID, commit.reg.ArchiveSessionID)
 	}
-	check := func() error { return cap.checkCurrentHeld(ctx, read, locks, reserved) }
-	err := read.writeUnderLock(lockedWrite{nativeImport: cap, path: s.registrationPath(cap.reg.ArchiveSessionID), lock: lock, beforeLock: verify, check: check, change: func(current fileSnapshot) (any, bool, error) {
+	check := func() error { return commit.checkCurrentHeld(ctx, read, locks, reserved) }
+	err := read.writeUnderLock(lockedWrite{nativeImport: commit, path: s.registrationPath(commit.reg.ArchiveSessionID), lock: lock, beforeLock: verify, check: check, change: func(current fileSnapshot) (any, bool, error) {
 		if current.found {
 			var reg archive.SessionRegistration
 			if err := archive.DecodeSessionRegistration(current.data, &reg); err != nil {
 				return nil, false, err
 			}
-			if !sameImportStageOwner(cap.reg, reg) || !sameNativeImportReceipt(cap.reg.NativeImport, reg.NativeImport) || reg.StagedImportSHA256 != cap.stage.SHA256 {
+			if !sameImportStageOwner(commit.reg, reg) || !sameNativeImportReceipt(commit.reg.NativeImport, reg.NativeImport) || reg.StagedImportSHA256 != commit.stage.SHA256 {
 				return nil, false, ErrSessionIdentityConflict
 			}
 			return nil, false, nil
 		}
-		return cap.reg, true, nil
+		return commit.reg, true, nil
 	}})
 	if err != nil {
 		return err
@@ -410,7 +423,7 @@ func (s *Store) commitNativeImportOwner(ctx context.Context, cap *nativeImportOw
 	indexStore := *read
 	indexStore.indexSnapshots = true
 	indexStore.onWriteSync = s.onIndexSync
-	err = indexStore.writeUnderLock(lockedWrite{nativeImport: cap, path: qualifiedSessionIndexPath(s.home, key), lock: lock, check: check, change: func(current fileSnapshot) (any, bool, error) {
+	err = indexStore.writeUnderLock(lockedWrite{nativeImport: commit, path: qualifiedSessionIndexPath(s.home, key), lock: lock, check: check, change: func(current fileSnapshot) (any, bool, error) {
 		if !current.found {
 			return nil, false, errIndexMoved
 		}
@@ -418,13 +431,13 @@ func (s *Store) commitNativeImportOwner(ctx context.Context, cap *nativeImportOw
 		if err := json.Unmarshal(current.data, &entry); err != nil {
 			return nil, false, err
 		}
-		if entry == indexEntry(key, cap.reg.ArchiveSessionID) {
+		if entry == indexEntry(key, commit.reg.ArchiveSessionID) {
 			return nil, false, nil
 		}
 		if entry != reserved {
 			return nil, false, errIndexMoved
 		}
-		return indexEntry(key, cap.reg.ArchiveSessionID), true, nil
+		return indexEntry(key, commit.reg.ArchiveSessionID), true, nil
 	}})
 	if err != nil {
 		return err
@@ -434,8 +447,8 @@ func (s *Store) commitNativeImportOwner(ctx context.Context, cap *nativeImportOw
 	}
 	// A later independent request is merged, never replaced or acknowledged by
 	// registration completion. The exact creating-batch policy is rechecked.
-	return read.writeUnderLock(lockedWrite{path: s.requestPath(cap.reg.ArchiveSessionID), lock: lock, check: check, change: func(current fileSnapshot) (any, bool, error) {
-		return mergeRequest(cap.reg.ArchiveSessionID, current, "backfill", cap.reg.AdmittedAt, false, nil)
+	return read.writeUnderLock(lockedWrite{path: s.requestPath(commit.reg.ArchiveSessionID), lock: lock, check: check, change: func(current fileSnapshot) (any, bool, error) {
+		return mergeRequest(commit.reg.ArchiveSessionID, current, "backfill", commit.reg.AdmittedAt, false, nil)
 	}})
 }
 
@@ -536,9 +549,9 @@ func (s *Store) resumeNativeImportFirstOwner(ctx context.Context, stage ImportSt
 		return err
 	}
 	defer func() { err = errors.Join(err, locks.Close()) }()
-	cap := &nativeImportOwnerCommit{ctx: ctx, store: s, confirmation: confirmation, stage: stage, reg: reg}
+	commit := &nativeImportOwnerCommit{ctx: ctx, store: s, confirmation: confirmation, stage: stage, reg: reg}
 	if absent {
-		entry, err = s.reserveInitialNativeImportStage(ctx, cap, locks, entry, found)
+		entry, err = s.reserveInitialNativeImportStage(ctx, commit, locks, entry, found)
 		if err != nil {
 			return err
 		}
@@ -554,7 +567,7 @@ func (s *Store) resumeNativeImportFirstOwner(ctx context.Context, stage ImportSt
 			return actual.Validate(ctx, reg)
 		})
 	}
-	return s.commitNativeImportOwner(ctx, cap, locks, entry, verify)
+	return s.commitNativeImportOwner(ctx, commit, locks, entry, verify)
 }
 
 func (p *PreparedNativeImport) committedOwner() (archive.SessionRegistration, error) {
@@ -577,11 +590,11 @@ func (p *nativeImportOwnerCommit) reservationAuthority() (string, error) {
 
 // Stage-first crash recovery may reserve only an authoritatively absent native
 // identity. No caller receipt, missing source or generic marker grants this port.
-func (s *Store) reserveInitialNativeImportStage(ctx context.Context, cap *nativeImportOwnerCommit, locks *local.RootedHome, before qualifiedSessionIndexEntry, found bool) (qualifiedSessionIndexEntry, error) {
-	key := agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: cap.reg.NativeSessionID}
-	next := indexEntry(key, cap.reg.ArchiveSessionID)
+func (s *Store) reserveInitialNativeImportStage(ctx context.Context, commit *nativeImportOwnerCommit, locks *local.RootedHome, before qualifiedSessionIndexEntry, found bool) (qualifiedSessionIndexEntry, error) {
+	key := agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: commit.reg.NativeSessionID}
+	next := indexEntry(key, commit.reg.ArchiveSessionID)
 	var err error
-	next.NativeReservation, err = cap.reservationAuthority()
+	next.NativeReservation, err = commit.reservationAuthority()
 	if err != nil {
 		return next, err
 	}
@@ -589,7 +602,7 @@ func (s *Store) reserveInitialNativeImportStage(ctx context.Context, cap *native
 	if err != nil {
 		return next, err
 	}
-	verify := func() error { return cap.checkInitialStage(ctx, locks, before, found) }
+	verify := func() error { return commit.checkInitialStage(ctx, locks, before, found) }
 	if err := verify(); err != nil {
 		return next, err
 	}
@@ -598,8 +611,8 @@ func (s *Store) reserveInitialNativeImportStage(ctx context.Context, cap *native
 	indexStore := *read
 	indexStore.indexSnapshots = true
 	indexStore.onWriteSync = s.onIndexSync
-	err = indexStore.writeUnderLock(lockedWrite{nativeImportStageReservation: cap, path: qualifiedSessionIndexPath(s.home, key), beforeLock: verify, lock: func() (func(), error) {
-		return s.lockNativeImport(ctx, locks, cap.reg.NativeImport.Confirmation.BatchID, cap.reg.ArchiveSessionID)
+	err = indexStore.writeUnderLock(lockedWrite{nativeImportStageReservation: commit, path: qualifiedSessionIndexPath(s.home, key), beforeLock: verify, lock: func() (func(), error) {
+		return s.lockNativeImport(ctx, locks, commit.reg.NativeImport.Confirmation.BatchID, commit.reg.ArchiveSessionID)
 	}, check: verify, change: func(current fileSnapshot) (any, bool, error) {
 		if current.found != found {
 			return nil, false, errIndexMoved
@@ -648,6 +661,14 @@ func (p *nativeImportOwnerCommit) checkInitialStage(ctx context.Context, held *l
 	if _, owned, err := read.LoadRegistration(p.reg.ArchiveSessionID); err != nil || owned {
 		return errors.Join(ErrSessionIdentityConflict, err)
 	}
+	if err := p.checkInitialStageUnpublished(ctx, read, held); err != nil {
+		return err
+	}
+	return errors.Join(ctx.Err(), held.Check())
+}
+
+// checkInitialStageUnpublished proves the exact prepared stage exists with no publication, pending work, or release controls.
+func (p *nativeImportOwnerCommit) checkInitialStageUnpublished(ctx context.Context, read *Store, held *local.RootedHome) error {
 	actual, found, err := read.loadPreparedImportStage(ctx, p.reg.ArchiveSessionID)
 	if err != nil || !found || actual.Canceled || actual.CancellationOnly || actual.ReleaseOnly || actual.SHA256 != p.stage.SHA256 || actual.Validate(ctx, p.reg) != nil {
 		return errors.Join(ErrReadySelectionFrozen, err)
@@ -664,7 +685,7 @@ func (p *nativeImportOwnerCommit) checkInitialStage(ctx context.Context, held *l
 			return errors.Join(ErrReadySelectionFrozen, err)
 		}
 	}
-	return errors.Join(ctx.Err(), held.Check())
+	return nil
 }
 
 func checkNativeImportLock(held *local.RootedHome, name string) error {
