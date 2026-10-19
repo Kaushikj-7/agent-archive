@@ -327,3 +327,58 @@ production Parser and Refilter execution is required for executable refusal
 claims. Selected native graph evidence is not full pipeline acceptance; all
 three controlled source files still need root-reviewed immutable-source full
 Filter/Parser/metadata/refilter acceptance. Capture remains a separate gate.
+
+## Bounded broad-read profile observation
+
+Muse 1.4.9-R6297.1, binary SHA
+`4c6ed04ccd5a453bd7b38799aeb9eb290b8635b32c95b5a35e6950a2f20446cb`,
+produced an isolated synthetic installed-skill experiment. The exact 145600-byte
+source has SHA `0bad3fa36ee7412ce84c020fa14ce9f766f19f2d2aaab6fa048d80cce61f0243`.
+A fixed-predicate diagnostic preserved the original format refusal at physical
+record52, tool_batch.effect.started/schema1, parallel-profile validation.
+Separate strict full-checksum/framing acquisition observed only
+`parallel_profile: {kind: broad_read}`. Its field has exactly the key `kind`,
+string10B, and no subject. No other payload values were projected.
+
+The shape worker exited0 with exact FD/ancestor stability, one145600-byte source
+read, full pins and joined process guards. The outer wrapper remains **FAIL**:
+Python emitted the exact110-byte confstr DARWIN_USER_TEMP_DIR warning and /tmp
+fallback. This attributed warning does not invalidate the bounded primary field
+observation, as separately adjudicated; it is not a general stderr waiver or a
+successful full Source/Filter qualification. No rerun silenced that warning.
+
+The Filter accepts only this exact omitted-body tag, erases it and retains all
+existing joins. Unknown tags, additional fields and subjects refuse. It cannot
+create committed_file_read_v1, skill eligibility, invocation, read-hash attribution,
+usage or capture admission. Deterministic native-shaped regression and a fuzz
+seed cover this compatibility change. Actual full-source qualification and
+read-skill use attribution remain open pending separate checks.
+
+## Committed broad-read omission compatibility
+
+A further bounded diagnostic of the same synthetic 1.4.9-R6297.1 source
+isolated record52's refusal to the existing native committed-call class check.
+The exact keyed earlier own session/run/call native item and its start both
+matched `read_skill`; task-known and earlier-call checks were true, pending
+approval overlap false, and the profile exactly `{kind: broad_read}`. The
+source checksum and complete77-record framing remained unchanged. Fixed report
+SHA `216a0b87e944d2b0366f4a3e753fe6218e4fd96eab907f148c68dd3b5377d491`
+contains only closed booleans and the bounded shape. It is a diagnosis;
+original full Source/Filter qualification remains failed until a later exact
+current-source consumer succeeds.
+
+The new `committed_broad_read_v1` marker is an omission-only compatibility
+class under existing effect_join, separate from committed_file_read_v1. Raw
+validation requires the exact observed native names/profile, known native task,
+earlier own call/run and no prior or later overlapping approval. Retained
+validation independently checks owned materialized run/prior committed call,
+start task/effect/call tuple and terminal order. It cannot recover erased
+native names/profile/proposed-task evidence. Native payload values do not
+survive; no skill name, arguments, body/hash, eligibility, invocation, use or
+result success is derived. The frozen previous file-read-only strict schema
+refuses the new marker and still accepts prior file-read starts.
+
+Synthetic full-pipeline, malformed/foreign/later/duplicate/overlap, retained
+marker/refilter, privacy, resource/cancellation and unchanged file-read golden
+regressions cover the boundary. The added fuzz seed is synthetic. These tests
+are not fresh native qualification, runtime identity or capture admission.

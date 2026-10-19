@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -110,6 +111,8 @@ func (versionHost) ProbeVersion(p agentapi.VersionProbe) (string, bool) {
 	switch p.Kind {
 	case agentapi.VersionCLI:
 		return boundedVersionCommand(p.Path, "--version")
+	case agentapi.VersionMuseCLI:
+		return runBoundedVersionCommand(true, p.Path, "--version")
 	case agentapi.VersionBundle:
 		return boundedVersionCommand("/usr/bin/plutil", "-extract", "CFBundleShortVersionString", "raw", "-o", "-", p.Path)
 	}
@@ -117,6 +120,10 @@ func (versionHost) ProbeVersion(p agentapi.VersionProbe) (string, bool) {
 }
 
 func boundedVersionCommand(argv ...string) (string, bool) {
+	return runBoundedVersionCommand(false, argv...)
+}
+
+func runBoundedVersionCommand(disableMuseUpdates bool, argv ...string) (string, bool) {
 	if len(argv) == 0 {
 		return "", false
 	}
@@ -124,6 +131,10 @@ func boundedVersionCommand(argv ...string) (string, bool) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.WaitDelay = 250 * time.Millisecond
+	if disableMuseUpdates {
+		cmd.Env = slices.DeleteFunc(cmd.Environ(), func(entry string) bool { return strings.HasPrefix(entry, "MUSE_NO_AUTO_UPDATE=") })
+		cmd.Env = append(cmd.Env, "MUSE_NO_AUTO_UPDATE=1")
+	}
 	var output cappedBuffer
 	cmd.Stdout = &output
 	cmd.Stderr = io.Discard
@@ -175,6 +186,12 @@ func normalizedVersion(value string) string { return versioninfo.Normalize(value
 func versionShape(value string) string { return versioninfo.Shape(value) }
 
 type cappedBuffer struct{ bytes.Buffer }
+
+// ReadFrom must use the capped Write rather than bytes.Buffer.ReadFrom, which
+// would bypass the bound when os/exec copies the process output.
+func (b *cappedBuffer) ReadFrom(r io.Reader) (int64, error) {
+	return io.Copy(struct{ io.Writer }{b}, r)
+}
 
 func (b *cappedBuffer) Write(p []byte) (int, error) {
 	const limit = 4096

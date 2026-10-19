@@ -312,6 +312,13 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 		}
 		return false
 	}
+	read := sourceRead{adapter: adapter, filtered: filtered, observed: observed, filterLease: s.nativeFilterLease(filterMark)}
+	if err := s.restoreSkillContent(&read, cached); err != nil {
+		s.skillContentFailure = err
+		s.warn(err)
+		return false
+	}
+	filtered, observed = read.filtered, read.observed
 	if err := s.persistNativeValidation(observed.prepared); err != nil {
 		s.warn(err)
 		return false

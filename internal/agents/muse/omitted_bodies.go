@@ -364,7 +364,7 @@ func projectToolEffect(r retained, p, e, f map[string]any) (map[string]any, erro
 // contribute retained tool results, error attribution or parallelism facts.
 func toolParallelProfile(v any) bool {
 	m := object(v)
-	return tagged(v, "ineligible") || keys(m, "kind", "subject") && str(m["kind"]) == "file_read" && stringFields(m, "subject")
+	return tagged(v, "ineligible") || tagged(v, "broad_read") || keys(m, "kind", "subject") && str(m["kind"]) == "file_read" && stringFields(m, "subject")
 }
 
 func toolEffectOutcome(v any) bool {
@@ -387,7 +387,7 @@ func effectFieldShape(r retained) (int64, []string, bool) {
 	}
 	names := []string{"kind", "event_kind", "run_id", "effect_id", "task_id", "tool_call_id", "model_call_index"}
 	if value, present := f["effect_join"]; present {
-		if r.Type != payloadToolBatchStarted || value != committedFileReadJoin {
+		if r.Type != payloadToolBatchStarted || (value != committedFileReadJoin && value != committedBroadReadJoin) {
 			return 0, nil, false
 		}
 		names = append(names, "effect_join")
