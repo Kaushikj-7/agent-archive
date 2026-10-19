@@ -328,7 +328,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	durableObligations, closeObligations, phase, durableErr := prepareDurablePass(ctx, census, local, opts)
 	defer closeObligations()
 	if durableErr != nil {
-		return Result{Errors: map[string]error{phase: durableErr}}, durableErr
+		return Result{Errors: map[string]error{string(phase): durableErr}}, durableErr
 	}
 	diagnosticReader, closeDiagnosticResults := census.WithImportResultScope(ctx)
 	defer func() {
@@ -439,31 +439,39 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	return p.result, p.saveStatus()
 }
 
+type durablePassPhase string
+
+const (
+	durablePassPhaseNone    durablePassPhase = ""
+	durablePassPhaseStorage durablePassPhase = "durable-storage"
+	durablePassPhaseImports durablePassPhase = "staged-imports"
+)
+
 // prepareDurablePass closes the initial result before recovery and retains only
 // the current, fully funded obligation result until Run ends.
-func prepareDurablePass(ctx context.Context, census, local *state.Store, opts Options) ([]state.DurableStorageObligation, func(), string, error) {
+func prepareDurablePass(ctx context.Context, census, local *state.Store, opts Options) ([]state.DurableStorageObligation, func(), durablePassPhase, error) {
 	_, closeInitial, err := census.DurableStorageObligationsOwned(ctx)
 	closeInitial()
 	if err != nil {
-		return nil, func() {}, "durable-storage", err
+		return nil, func() {}, durablePassPhaseStorage, err
 	}
 	if err := resumeImportAdmissionsForPass(ctx, local, opts); err != nil {
-		return nil, func() {}, "staged-imports", err
+		return nil, func() {}, durablePassPhaseImports, err
 	}
 	// Recovery can finish cancellation or establish selected admissions. Report
 	// their current obligations, rather than the pre-recovery orphan snapshot.
 	obligations, closeObligations, err := census.DurableStorageObligationsOwned(ctx)
 	if err != nil {
 		closeObligations()
-		return nil, func() {}, "durable-storage", err
+		return nil, func() {}, durablePassPhaseStorage, err
 	}
 	for _, obligation := range obligations {
 		if obligation.SessionID == "" {
 			closeObligations()
-			return nil, func() {}, "durable-storage", state.ErrDurableStorageRecovery
+			return nil, func() {}, durablePassPhaseStorage, state.ErrDurableStorageRecovery
 		}
 	}
-	return obligations, closeObligations, "", nil
+	return obligations, closeObligations, durablePassPhaseNone, nil
 }
 
 func replayPassAdmissions(ctx context.Context, local *state.Store, now time.Time, opts Options) error {
