@@ -318,6 +318,16 @@ limits. Text plans show the same counted breakdown. Unknown source reasons
 use a generic unavailable or resource-limit diagnostic; raw errors are never
 printed. These details explain the existing skip and do not change eligibility.
 
+For `own_task_missing`, an optional `residual` distinguishes
+`no_own_records_in_snapshot` from `own_records_without_task`. The first requires
+an explicit native own boundary, fully validated spans and no uncommitted tail;
+it describes that captured snapshot, which may later grow. The second establishes
+record presence only: control and unknown records do not prove independent
+conversation. Missing boundaries, clipped tails and unavailable dependencies stay
+uncertain. The primary skip/action and native task requirements still apply;
+project mappings cannot supply missing task evidence. Private project review
+shows the same residual when native qualification actually ran.
+
 `lookup_allowance_spent` with action `retry` means this run used its time or
 header-read allowance for finding Codex rollouts. Affected sessions remain
 unchecked under `related_history_pending`; this is not evidence of an oversized

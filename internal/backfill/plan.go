@@ -134,6 +134,7 @@ type work struct {
 	tooLarge         bool
 	sourceErr        error
 	refusalDetail    DiagnosticDetail
+	refusalResidual  DiagnosticDetail
 	workspaceCurrent func(context.Context) bool
 	proposedWitness  bool
 	validated        bool
@@ -679,7 +680,7 @@ func decidePlanCandidates(items []*work, since, until, now time.Time) []*work {
 		w.c.Diagnostic = candidateDiagnostic(w.c.Skip, w.res.outcome, w.res.cause)
 		if w.c.Skip == SkipRelatedHistory && w.refusalDetail != "" {
 			if description, ok := diagnosticDescriptions[w.refusalDetail]; ok {
-				w.c.Diagnostic = &Diagnostic{Detail: w.refusalDetail, Action: description.action}
+				w.c.Diagnostic = &Diagnostic{Detail: w.refusalDetail, Action: description.action, Residual: w.refusalResidual}
 			}
 		}
 		if w.c.Skip == "" {

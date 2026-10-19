@@ -822,6 +822,8 @@ publication. History reports admitted and remotely verified uploads separately.
 Planning renews bounded native lookup work; source safety limits still apply.
 Codex index paths may use a verified alias of an already trusted native home.
 Incomplete native inventory is reported; verified sessions remain eligible.
+Codex own-task refusals distinguish no own records in a validated snapshot from
+own records whose independent activity remains unqualified.
 A dry-run plan does not establish completed staging or publication.
 See agent-archive help backfill history, agent-archive help backfill projects,
 agent-archive help backfill review-projects, and

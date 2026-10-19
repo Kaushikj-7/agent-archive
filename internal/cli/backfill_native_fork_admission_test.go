@@ -18,7 +18,7 @@ import (
 )
 
 func TestBackfillForkRejectsInheritedFirstOwnTask(t *testing.T) {
-	for _, first := range []forkFirstTaskCase{forkTaskExternal, forkTaskPredates, forkTaskMissingTime, forkTaskMissingTask, forkTaskInvalidRoot} {
+	for _, first := range []forkFirstTaskCase{forkTaskExternal, forkTaskPredates, forkTaskMissingTime, forkTaskMissingTask, forkTaskInvalidRoot, forkTaskMalformed, forkTaskUnsupported} {
 		t.Run(string(first), func(t *testing.T) {
 			canonical := func() string { p, e := filepath.EvalSymlinks(t.TempDir()); must(t, e); return p }
 			home, userHome, project := canonical(), canonical(), canonical()
@@ -27,7 +27,11 @@ func TestBackfillForkRejectsInheritedFirstOwnTask(t *testing.T) {
 			at := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 			const fork = "11111111-1111-4111-8111-111111111111"
 			const ancestor = "22222222-2222-4222-8222-222222222222"
-			header, e := json.Marshal(map[string]any{"type": "session_meta", "payload": map[string]any{"id": fork, "timestamp": at.Format(time.RFC3339Nano), "cwd": project, "source": "cli", "originator": "codex_cli_rs", "cli_version": "dev", "forked_from_id": ancestor, "forked_from_ordinal_exclusive": 3}})
+			source := "cli"
+			if first == forkTaskUnsupported {
+				source = "synthetic_external"
+			}
+			header, e := json.Marshal(map[string]any{"type": "session_meta", "payload": map[string]any{"id": fork, "timestamp": at.Format(time.RFC3339Nano), "cwd": project, "source": source, "originator": "codex_cli_rs", "cli_version": "dev", "forked_from_id": ancestor, "forked_from_ordinal_exclusive": 3}})
 			must(t, e)
 			inherited := fmt.Sprintf(`{"type":"event_msg","payload":{"type":"task_started","turn_id":%q,"started_at":%q}}`+"\n"+`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic inherited fork context"}]}}`+"\n", ancestor, at.Add(-time.Hour).Format(time.RFC3339Nano))
 			own := fmt.Sprintf(`{"type":"event_msg","payload":{"type":"task_started","turn_id":%q,"started_at":%q}}`+"\n"+`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Synthetic fork own prompt"}]}}`+"\n", fork, at.Format(time.RFC3339Nano))
@@ -40,6 +44,12 @@ func TestBackfillForkRejectsInheritedFirstOwnTask(t *testing.T) {
 			}
 			if first == forkTaskMissingTime {
 				invalid = fmt.Sprintf(`{"type":"event_msg","payload":{"type":"task_started","turn_id":%q}}`+"\n", fork)
+			}
+			if first == forkTaskMalformed {
+				invalid = `{"type":"event_msg","payload":{"type":"task_started","turn_id":42}}` + "\n"
+			}
+			if first == forkTaskUnsupported {
+				invalid = ""
 			}
 			if first == forkTaskMissingTask {
 				invalid = ""
@@ -73,8 +83,21 @@ func TestBackfillForkRejectsInheritedFirstOwnTask(t *testing.T) {
 			if first == forkTaskPredates {
 				want = backfill.DetailOwnTaskBeforeCreation
 			}
+			if first == forkTaskMalformed {
+				want = backfill.DetailOwnTaskMalformed
+			}
+			if first == forkTaskUnsupported {
+				want = backfill.DetailOwnTaskExecutionUnsupported
+			}
 			if len(plan.Diagnostics) != 1 || plan.Diagnostics[0].Detail != want || plan.Diagnostics[0].Count != 1 {
 				t.Fatalf("missing own-task refusal detail: %s", preview.String())
+			}
+			wantResidual := backfill.DiagnosticDetail("")
+			if first == forkTaskMissingTask {
+				wantResidual = backfill.DetailOwnRecordsWithoutTask
+			}
+			if plan.Diagnostics[0].Residual != wantResidual {
+				t.Fatal("first-task refusal acquired unrelated residual", plan.Diagnostics[0])
 			}
 			if snapshotTree(t, home) != beforePreview {
 				t.Fatal("fork preview wrote protection or state")
@@ -105,4 +128,6 @@ const (
 	forkTaskPredates    forkFirstTaskCase = "predates"
 	forkTaskMissingTime forkFirstTaskCase = "missing_time"
 	forkTaskMissingTask forkFirstTaskCase = "missing_task"
+	forkTaskMalformed   forkFirstTaskCase = "malformed"
+	forkTaskUnsupported forkFirstTaskCase = "unsupported_execution"
 )

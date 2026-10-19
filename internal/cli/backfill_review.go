@@ -237,6 +237,9 @@ func renderRecoveryGroup(out io.Writer, g backfill.RecoveryReviewGroup) {
 	for _, detail := range slices.Sorted(maps.Keys(g.DiagnosticDetails)) {
 		terminal.Printf(out, "  Evidence/refusal: %s = %d\n", detail, g.DiagnosticDetails[detail])
 	}
+	for _, residual := range slices.Sorted(maps.Keys(g.NativeResiduals)) {
+		terminal.Printf(out, "  Native residual: %s = %d\n", residual, g.NativeResiduals[residual])
+	}
 	for _, reason := range slices.Sorted(maps.Keys(g.OtherReasons)) {
 		terminal.Printf(out, "  Still pending after project assignment: %s = %d\n", reason, g.OtherReasons[reason])
 	}
