@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -11,6 +12,9 @@ import (
 
 func TestNativeImportStoragePreparationDoesNotHoldHooksOrConvertOrdinaryGuard(t *testing.T) {
 	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	cfg := Config{NativeImportProtection: true, NativeAuthorityProtection: true, ImportStagingProtection: true, StagedSelectionProtection: true, DurableStorageProtection: true, PublicationCompositionProtection: true}
 	cfg.Archive.Enabled = true
 	if err := Save(home, cfg); err != nil {

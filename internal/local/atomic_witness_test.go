@@ -135,7 +135,11 @@ func TestAtomicWriteWitnessZeroAndCanceledRefuse(t *testing.T) {
 	if zero.Check(nil) == nil {
 		t.Fatal("zero witness accepted")
 	}
-	root, err := os.OpenRoot(t.TempDir())
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(home)
 	if err != nil {
 		t.Fatal(err)
 	}
