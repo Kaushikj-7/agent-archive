@@ -51,7 +51,7 @@ func addedSourcesFixture(t *testing.T) (*tree, Environment, config.Config, strin
 		case "other":
 			return sourcefacts.RepositoryIdentity{Root: path, Key: archive.RepoKey(addedOtherURL), Known: true}
 		case "keyless":
-			return sourcefacts.RepositoryIdentity{Root: path}
+			return sourcefacts.RepositoryIdentity{Root: path, Known: true}
 		case "unknown":
 			return sourcefacts.RepositoryIdentity{}
 		}

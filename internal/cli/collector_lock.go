@@ -8,7 +8,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/destination"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -41,8 +40,9 @@ func lockCollector(home, holder string, now time.Time) (func(), error) {
 	return recordCollectorLock(home, holder, now, func() (func(), error) { return local.Lock(home) })
 }
 
-func lockCollectorGuard(home, holder string, now time.Time, format destination.ArchiveFormat) (*local.CollectorGuard, func(), error) {
-	if format != destination.FormatCatalogV4 {
+// lockCollectorGuard returns typed ownership when publication requires it.
+func lockCollectorGuard(home, holder string, now time.Time, needsGuard bool) (*local.CollectorGuard, func(), error) {
+	if !needsGuard {
 		unlock, err := lockCollector(home, holder, now)
 		return nil, unlock, err
 	}
@@ -63,6 +63,23 @@ func lockCollectorWait(home, holder string, now time.Time, wait time.Duration) (
 	return recordCollectorLock(home, holder, now, func() (func(), error) {
 		return local.NamedLockWait(home, "collector.lock", wait)
 	})
+}
+
+// lockCollectorGuardWait retains the typed publication guard while waiting for
+// the same collector lock used by ordinary import registration.
+func lockCollectorGuardWait(home, holder string, now time.Time, needsGuard bool, wait time.Duration) (*local.CollectorGuard, func(), error) {
+	if !needsGuard {
+		unlock, err := lockCollectorWait(home, holder, now, wait)
+		return nil, unlock, err
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		guard, unlock, err := lockCollectorGuard(home, holder, now, needsGuard)
+		if !errors.Is(err, local.ErrBusy) || !time.Now().Before(deadline) {
+			return guard, unlock, err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func recordCollectorLock(home, holder string, now time.Time, lock func() (func(), error)) (func(), error) {

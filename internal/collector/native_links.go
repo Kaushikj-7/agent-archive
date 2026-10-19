@@ -54,7 +54,7 @@ func (p *pass) reconcileNativeLinks() {
 	p.nativeChildGraphUnchecked = false
 	children := 0
 	for _, reg := range p.registrations {
-		if reg.NativeChild && (p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)) {
+		if reg.NativeChild && p.opts.selectsSession(reg) && (p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)) {
 			children++
 		}
 	}
@@ -98,7 +98,7 @@ func (p *pass) reconcileNativeLinks() {
 		parents[key] = reg
 	}
 	for i, reg := range p.registrations {
-		if !reg.NativeChild || p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
+		if !reg.NativeChild || !p.opts.selectsSession(reg) || p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
 		if !graph.accepts(reg) {

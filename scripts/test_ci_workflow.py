@@ -7,6 +7,7 @@ Read without PyYAML, like test_release_assets.py.
 import ast
 from pathlib import Path
 import json
+import os
 import re
 import shutil
 import shlex
@@ -96,6 +97,57 @@ def condition_matches(expression, *args, **kwargs):
 def step_key(text, key):
     match = re.search(rf'(?m)^        {re.escape(key)}:(.*)$', text)
     return match.group(1).strip() if match else None
+
+
+class PerformanceIdentityTest(unittest.TestCase):
+    def test_trusted_gate_receives_original_uploaded_archive_and_download_failure_stops_it(self):
+        workflow = jobs((ROOT / '.github/workflows/test.yml').read_text())['linux-race']
+        upload = next(step for step in steps(workflow) if 'name: Preserve bounded run identity' in step)
+        gate = next(step for step in steps(workflow) if 'name: Required performance budgets' in step)
+        self.assertIn('IDENTITY_ARTIFACT_ID: ${{ steps.' + step_key(upload, 'id') + '.outputs.artifact-id }}', gate)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scripts, binary, scratch = root/'scripts', root/'bin', root/'scratch'
+            for folder in (scripts, binary, scratch):
+                folder.mkdir()
+            # A synthetic enforcer checks transport through the real workflow
+            # shell; the gate tests separately authenticate these archive bytes.
+            (scripts/'ci_performance_gate.py').write_text(textwrap.dedent('''\
+                import os
+                from pathlib import Path
+                artifact, path = os.environ['CI_PERFORMANCE_IDENTITY_ARCHIVE'].split(':', 1)
+                assert artifact == '99'
+                assert Path(path).read_bytes() == b'original ZIP bytes\\x00'
+                Path(os.environ['RESULT']).write_text('invoked')
+                '''))
+            gh = binary/'gh'
+            gh.write_text(f'#!{sys.executable}\n' + textwrap.dedent('''\
+                import os
+                import sys
+                assert sys.argv[1:] == ['api', 'repos/wangjohn/agent-archive/actions/artifacts/99/zip']
+                if os.environ['FAIL_DOWNLOAD'] == 'true':
+                    sys.exit(1)
+                sys.stdout.buffer.write(b'original ZIP bytes\\x00')
+                '''))
+            gh.chmod(0o755)
+            (binary/'python3').symlink_to(sys.executable)
+            env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ['PATH'],
+                       GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
+                       GIT_AUTHOR_NAME='CI test', GIT_AUTHOR_EMAIL='ci@example.invalid',
+                       GIT_COMMITTER_NAME='CI test', GIT_COMMITTER_EMAIL='ci@example.invalid',
+                       RUNNER_TEMP=str(scratch), GITHUB_REPOSITORY='wangjohn/agent-archive',
+                       IDENTITY_ARTIFACT_ID='99', RESULT=str(root/'result'))
+            for command in (['init', '-q'], ['add', 'scripts'], ['commit', '-qm', 'trusted base'],
+                            ['commit', '--allow-empty', '-qm', 'tested source']):
+                subprocess.run(['git', *command], cwd=root, env=env, check=True, capture_output=True)
+            for failed in (False, True):
+                (root/'result').unlink(missing_ok=True)
+                result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c',
+                                         textwrap.dedent(run_texts(gate)[0])], cwd=root,
+                                        env=dict(env, FAIL_DOWNLOAD=str(failed).lower()),
+                                        text=True, capture_output=True)
+                self.assertEqual(result.returncode == 0, not failed, result.stderr)
+                self.assertEqual((root/'result').exists(), not failed)
 
 
 class LinuxFullMemoryTest(unittest.TestCase):
@@ -375,6 +427,39 @@ class CandidateCampaignTest(unittest.TestCase):
 
 
 class CadenceTest(unittest.TestCase):
+    def test_full_fuzz_job_outlives_tier_deadline_and_keeps_daily_limit(self):
+        job = jobs(EXTENDED_YML.read_text())['fuzz']
+        step = next(step for step in steps(job) if '--suite fuzz' in step)
+        command = shlex.split(run_texts(step)[0])
+        config = tiers.catalog()
+        for event, ref, suite, schedule in (
+                ('push', 'refs/heads/release-candidate/check', '', ''),
+                ('workflow_dispatch', 'refs/heads/main', 'fuzz', ''),
+                ('workflow_dispatch', 'refs/heads/main', 'all', ''),
+                ('schedule', 'refs/heads/main', 'all', config['weekly_cron']),
+                ('schedule', 'refs/heads/main', 'all', config['daily_cron'])):
+            with self.subTest(event=event, suite=suite, schedule=schedule):
+                self.assertTrue(condition_matches(job_key(job, 'if'), event, ref,
+                                                  suite, schedule))
+                environment = {'GITHUB_EVENT_NAME': event, 'GITHUB_REF': ref,
+                               'CI_SUITE': suite, 'CI_SCHEDULE': schedule}
+                with mock.patch.dict(tiers.os.environ, environment, clear=True), \
+                        mock.patch.object(sys, 'argv', command[1:]), \
+                        mock.patch.object(tiers.signal, 'signal'), \
+                        mock.patch.object(tiers, 'run_suite') as run:
+                    self.assertEqual(tiers.main(), 0)
+                tier, actual_suite, _, _, seconds = run.call_args.args
+                self.assertEqual(actual_suite, 'fuzz')
+                self.assertEqual(seconds, 2400)
+                minutes = expression_value(job_key(job, 'timeout-minutes'), event,
+                                           ref, suite, schedule)
+                if tier == 'full':
+                    # Setup and artifact upload sit outside the tier supervisor.
+                    self.assertGreaterEqual(minutes * 60, seconds + 5 * 60)
+                else:
+                    self.assertEqual(tier, 'daily')
+                    self.assertEqual(minutes, 30)
+
     def test_required_test_display_names_are_unique_across_workflows(self):
         workflows = ROOT / '.github/workflows'
         required = {job_key(text, 'name') or job

@@ -66,26 +66,62 @@ completes. Identity conflicts and other archive read errors still stop the plan.
 
 After confirmation, backfill stores the selected privacy-filtered evidence in
 private local staging before admitting each session. Setup's recent import and
-`--background` use the same protection. Once staged, an import can finish even
-if the apps delete their native files. A source that disappears before staging
-finishes is reported for retry; it is not counted as admitted.
+`--background` use the same protection. Once a complete parent and its selected
+children are staged, that group can finish even if the apps delete their native
+files. A child payload written before its parent manifest is complete still needs
+the parent's native input to finish preparation. A source that disappears before
+group staging finishes is reported for retry; it is not counted as admitted.
+
+Explicit imports renew bounded native lookup work during preparation and staging,
+including with `--background`. Before the first durable selection, repository,
+native dependency locations and current policy are checked again, including
+before each fresh child payload. After complete group preparation, retained
+evidence supplies recovery even when native files are gone. A later first upload
+keeps that staged evidence's original capture time, rather than the retry time.
+Run the same options again to finish registration and foreground publication;
+matching mapping files can be renamed or reordered without changing batch identity.
+
+Run `agent-archive sync` to retry an interrupted staged upload, including
+supported protected legacy imports whose native files have already disappeared.
 
 Staging and pending publication share a 1 GiB local quota. Foreground imports
-upload completed groups to free capacity; setup and background imports preserve
-completed work and report a capacity error so you can retry after the collector
-makes room. Each selected revision set and its encoded staging journal has a
-32 MiB upper bound; each child has a separate journal under the same quota.
+upload and verify bounded owned groups before preparing more evidence. Setup and
+background imports preserve completed work and report a capacity error so you
+can retry after the collector makes room. Each selected revision set and its
+encoded staging journal has a 32 MiB upper bound; each child has a separate
+journal under the same quota.
 Encoded expansion and recovery work for large records can lower the practical
 input limit. A source that exceeds these bounds is rejected before admission;
 completed groups stay recoverable. `backfill history` distinguishes staged/admitted sessions from
 remotely verified uploads. Uploaded means the collector has read back the
 selected remote sources and metadata and committed its local completion state.
+Linked subagent transcripts keep their own pending registration and publication
+obligations.
+An import reports completion only after those transcripts finish too; rerunning
+the same options retries their retained evidence after native deletion.
+Temporarily excluding their project or disabling their app preserves that
+continuation until the configuration permits publication again.
+An already recorded remote publication can still be waiting for local release
+of its stage and covered request. Current exclusions keep that first import
+pending until its existing release owner can settle it; they grant no upload
+permission. After settlement, ordinary later updates follow current settings.
+An unrelated owner's pending evidence is never uploaded merely to make room for
+this import. Its retry schedule and existing status issues remain intact while
+the import publishes its own work. Provider failures or unrelated quota occupancy
+retain completed evidence and report a retry action; they do not expand the quota.
 
 Pausing keeps referenced evidence for retry. Updated privacy rules are applied
-again before staged evidence is published. Canceling before admission removes
-unreferenced evidence, with a cleanup journal if interrupted; canceling after
-admission keeps evidence for recovery. Undo removes that import's owned staging
-along with its sessions. Dry-run writes no staging or admission state.
+again before staged evidence is published. For cancellable legacy preparations,
+canceling before admission removes unreferenced evidence, with a cleanup journal
+if interrupted. Canceling after admission keeps evidence for recovery. Undo
+includes cancellable legacy staging along with its sessions; protected typed
+staging retains its existing cancellation and undo refusal. Dry-run writes no
+staging or admission state.
+If policy changes while children are being prepared, cancellable legacy child
+payloads are cleaned up; earlier complete groups remain recoverable. Protected
+typed selections retain their evidence. Restore the policy and retry with native
+input present to finish an incomplete group. An I/O interruption
+before the parent manifest can leave a child payload for retry with native input.
 
 ## What gets imported
 
@@ -259,6 +295,56 @@ blanket refusal of supported complete histories. Complete native children, forks
 and selected physical revisions use the validated shared history reader and
 durable staging; missing or ambiguous dependencies remain unresolved.
 Summaries contain no transcript paths, native IDs, remote URLs, or content.
+
+Foreground planning and dry runs continue native preparation and inspection
+across bounded lookup scopes, including a supported history requiring several
+scopes. No timeout flag is needed. Each native I/O operation remains bounded;
+source byte, record, graph and shared resource limits still apply. A dry-run
+plan does not establish confirmed staging, admission or publication completion.
+Those later phases retain their existing work allowances.
+
+Codex's thread index may spell an already trusted native home through a symbolic
+link or a macOS directory alias. Backfill verifies that the original spelling
+still names the same physical home and substitutes only that home prefix.
+The rollout remains confined to its approved store; an alias cannot authorize
+another home or a source outside it. A removed, retargeted or replaced home
+invalidates the lookup, including a cached selection.
+
+Local Git origins use bounded, read-only chain resolution for both proposed and
+configured projects. Absolute/relative paths and local `file://` URLs (empty or
+ASCII `localhost` host, case-insensitive) can lead to a portable repository
+identity through another checkout or bare repository.
+Filesystem names may contain colons when a slash precedes the first colon, as in
+`/work/mirror:backup.git` or `./mirror:backup.git`. Git still treats an unprefixed
+`host:path` as a remote, even if a similarly named local directory exists.
+Paths follow filesystem symlink and parent-directory semantics, and their
+dependencies are checked again before admission. Every origin value must
+resolve consistently. Two physical clones of the same
+repository remain competitors, even when one points at the other. Excluded
+projects remain part of automatic recovery evidence.
+
+Cycles, missing or unreadable targets, conflicting identities, unsupported
+references, keyless chain terminals and traversal limits keep recovery pending
+with a specific `project_origin_*` diagnostic. `status` directs pending automatic
+recovery to `backfill --dry-run` for these reasons and reviewed assignments.
+The observer compares at most 16
+repository directories and 128 dependencies for one chain graph. Git is never
+asked to fetch, and configuration is unchanged. Reviewed exact mappings or a
+mapping file can resolve supported assignments independently of unrelated
+uncertain clones. Mappings still respect exclusions and target identity; native
+history must pass its own checks.
+
+Discovery resumes partial repository sweeps and retries earlier incomplete origin
+observations within its existing lookup allowance. Persistent failures do not
+restart enumeration or prevent later roots from being observed. Restored access
+can require several bounded discovery passes before automatic recovery completes.
+
+The [large-backfill completion plan](../../dev/proposals/large-backfill-completion.md)
+tracks remaining confirmed-import continuation, larger inventories and recovery
+assistance. Planning continuation and bounded local-origin evidence are available;
+broader completion and recovery assistance remain planned behavior. Existing
+supported mappings and historical destinations remain available.
+
 For Codex history refusals, `diagnostics` preserves fixed source reason codes
 when available: a missing or duplicated rollout a thread continues from, no
 single current rollout, missing dependencies or ownership boundaries, missing or invalid first-own-task evidence, and specific resource
@@ -266,9 +352,124 @@ limits. Text plans show the same counted breakdown. Unknown source reasons
 use a generic unavailable or resource-limit diagnostic; raw errors are never
 printed. These details explain the existing skip and do not change eligibility.
 
+For `own_task_missing`, an optional `residual` distinguishes
+`no_own_records_in_snapshot` from `own_records_without_task`. The first requires
+an explicit native own boundary, fully validated spans and no uncommitted tail;
+it describes that captured snapshot, which may later grow. The second establishes
+record presence only: control and unknown records do not prove independent
+conversation. Missing boundaries, clipped tails and unavailable dependencies stay
+uncertain. The primary skip/action and native task requirements still apply;
+project mappings cannot supply missing task evidence. Private project review
+shows the same residual when native qualification actually ran.
+
+`lookup_allowance_spent` with action `retry` means this run used its time or
+header-read allowance for finding Codex rollouts. Affected sessions remain
+unchecked under `related_history_pending`; this is not evidence of an oversized
+or unsupported source. Foreground preparation and inspection renew this
+scheduling allowance automatically. Confirmed import and background collection
+retain separate allowances. `lookup_io_timeout` identifies an actual failed
+bounded I/O operation; check source access before retrying. `lookup_no_progress`
+means inventory could not advance its directory cursor or finish another source;
+preparation stops once and reports an incomplete-inventory warning. JSON includes
+the optional `native_lookup_incomplete` diagnostic with this detail and `retry`
+action. Independently verified sessions remain eligible; a session still missing
+required native facts keeps its own refusal. No candidate or unreadable-folder
+count is invented for unknown inventory. Repair source access before retrying.
+Failed I/O is not retried automatically.
+Actual source byte and record limits remain
+`source_size_limit` and `source_record_limit`; history graph, aggregate byte and
+record limits keep their specific reasons. Missing native evidence remains a
+separate refusal.
+
+For a content-free planning baseline, use `AGENT_ARCHIVE_TRACE=1` with a dry run.
+The timing tree includes native preparation separately from inventory/recovery
+and inspection. Fixed aggregate counters report `codex_lookup_scopes` (initial
+and explicitly renewed allowances), `backfill_native_preparation_attempts`
+(deduplicated requested thread lookups), `backfill_native_inspection_attempts` (child or
+related-history inspections), and `backfill_lookup_unfinished_candidates`
+(final candidates left pending specifically by a spent allowance). These count
+attempts and final decisions, not complete histories or published sessions;
+zero counters are omitted. They share the existing bounded trace aggregates and
+retain no individual source records.
+
 File and database-only candidates receive the same diagnostic details. For
 `unsafe_format`, the `source_inspection_unavailable` detail asks you to review
 source access and format support; the skip alone cannot prove which is missing.
+
+## Private project recovery review
+
+Use a terminal to review the missing original working directories observed by
+the current planner and export exact assignments:
+
+```sh
+agent-archive backfill review-projects --harness codex --output reviewed-projects.json
+agent-archive backfill --dry-run --mapping-file reviewed-projects.json
+agent-archive backfill --mapping-file reviewed-projects.json
+```
+
+The review shows original cwds, normalized recorded repository keys, affected
+counts, current decisions, known remaining refusals and physical checkout
+evidence. These are private local metadata. Transcript content, native session
+IDs and transcript locators are omitted. Terminal input and output are required;
+JSON and piped review are unavailable. Ordinary previews do not expose this
+private evidence unless you separately supply an explicit mapping file.
+Database-only Cursor chats with a usable original folder join the same bounded
+groups as transcript files. Shared configured-target observations are reused
+across recorded keys; an incompatible key remains refused without repeatedly
+spending the lookup allowance needed by later compatible groups.
+Choose a historical destination for database-only Cursor chats. A configured
+choice at a mixed cwd can recover supported transcript files while leaving those
+database-only chats unresolved; the review reports their count explicitly.
+
+Choose a displayed compatible configured destination, an import-only historical
+project, `new` to define an import-only historical identity, or `skip`. Even a
+single compatible choice requires selection. Multiple physical clones remain
+distinct; unresolved chains, excluded sources/targets and conflicting usable
+keys are shown without relaxing existing mapping policy. Existing disabled
+historical decisions cannot be enabled by export. A historical identity with no
+current-destination permission receives it only through a later confirmed import.
+
+All observed repository keys at one exact cwd share one destination decision.
+An assignment covers every supported source at that cwd, including identities
+outside this incomplete review; repository keys are evidence rather than mapping
+selectors. `skip` skips the whole cwd. A configured choice may recover only some
+observed identities; incompatible/unresolved evidence is shown for each key.
+The later import still checks each source's restrictions, identity and native
+evidence. Paths and labels are safely quoted in the review.
+
+Review the exact JSON and type `export` to create the named file with mode 0600.
+An existing file, including a symlink, is refused. EOF, `cancel`, rejected export
+or an invalid answer writes no assignment file. Review/export never changes
+configuration, capture policy, admission, stages or archive; export is not an
+import or upload. The later import renews all ordinary policy and evidence checks.
+Assignments cover only exact original cwds and that import's supported scope;
+they do not authorize future capture. Keep the file for canonical resume/undo:
+reordering assignments or changing its filename does not create another batch.
+
+The initial assistance keeps one deterministic original spelling and shows the
+exact normalized assignment spelling when it differs. Multiple original
+spellings sharing that assignment key retain all observed source restrictions.
+Originals containing `..` path components require separate
+manual review: the assistance refuses to qualify their traversal from a cleaned
+spelling. Benign cleanups such as `.` retain the existing assignment behavior.
+Existing exact mapping/import policy and its per-source checks remain
+unchanged.
+
+This initial review has **bounded, incomplete coverage**: at most 128 observed
+cwd/key groups are retained; observed candidate records outside those groups
+are counted, with the distinct omitted group count unknown. At most 128
+configured targets, 128 existing historical choices and 128 automatic checkout
+evidence rows are shown; unlisted rows are counted. Unlisted choices require a
+separately hand-reviewed exact mapping file. Existing source and witness
+inventory windows remain in force. No
+partial window establishes uniqueness or promises a complete recovery inventory.
+Counts are candidates for project recovery, not promises of importability:
+native history, independent own-task evidence, excluded ancestors and source
+limits may still prevent import after assignment. Complete reviews across larger
+paged inventories and oversized review partitioning require later integration.
+Existing inline (128) and mapping-file (4 MiB, 16,384 assignments/definitions)
+limits are unchanged. Hand-reviewed exact files remain available independently
+of this assistance.
 
 ## Historical-only projects
 

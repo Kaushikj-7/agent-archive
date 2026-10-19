@@ -227,17 +227,17 @@ func readCursorDatabase(ctx context.Context, catalogs agentapi.DatabaseCatalogLo
 // none is project_unknown. If a chat can't be read safely after all (Cursor
 // held a lock, the copy failed), the database counts as not checked and none
 // of its chats is included, as when it can't be listed.
-func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState, r *resolver, projectFilter []string, since, until time.Time, workers int, plan *Plan) (err error) {
+func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState, r *resolver, projectFilter []string, since, until time.Time, workers int, plan *Plan) (reviewItems []*work, err error) {
 	if env.CursorDatabase == nil || !harnessMatches(plan.Filters.Harnesses, "cursor") {
-		return nil
+		return nil, nil
 	}
 	if plan.cursorIncomplete {
 		plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = false, CursorUncheckedTranscriptsUnreadable
-		return nil
+		return nil, nil
 	}
 	res, err := env.CursorDatabase(ctx)
 	if err != nil {
-		return fmt.Errorf("read Cursor's database: %w", err)
+		return nil, fmt.Errorf("read Cursor's database: %w", err)
 	}
 	if res.Close != nil {
 		// The plan's copy of the database holds every chat; one that can't
@@ -252,26 +252,31 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 	plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = res.Checked, res.Reason
 	plan.CursorDatabaseNewerFormat = res.NewerFormat
 	if !res.Checked {
-		return nil
+		return nil, nil
 	}
 	items, toRead, err := selectCursorDatabaseChats(res.Chats, plan.Candidates, state, plan.Filters.IncludeRemoved, since, until)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if res.ReadChat == nil && res.ReadSnapshot == nil {
 		plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = false, CursorUncheckedUnreadable
-		return nil
+		return nil, nil
 	}
 	if err := readCursorDatabaseChats(ctx, env, workers, res.ReadChat, res.ReadSnapshot, toRead, env.Sources); err != nil {
 		if ctx.Err() != nil || fatalSourceFailure(err) {
-			return err
+			return nil, err
 		}
 		plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = false, cursorstore.ReasonOf(err)
-		return nil
+		return nil, nil
 	}
 	appendCursorDatabaseChats(env, r, projectFilter, items, plan)
 	plan.CursorSubagentsNotImported += cursorDatabaseSubagentCount(plan.Candidates, res.Subagents)
-	return nil
+	if env.ReviewProjects {
+		// Borrow finalized work only for this plan's private projection. The
+		// existing database owner closes its snapshot before returning.
+		return items, nil
+	}
+	return nil, nil
 }
 
 // selectCursorDatabaseChats decides which listed rows may need a whole-chat
@@ -449,8 +454,9 @@ func appendCursorDatabaseChats(env Environment, r *resolver, projectFilter []str
 			continue
 		}
 		if !w.duplicate {
-			if folder := cursorChatFolder(env, w.chat, w.messageFolders); folder != "" {
-				w.res = r.resolve(folder)
+			w.t.cwd = cursorChatFolder(env, w.chat, w.messageFolders)
+			if w.t.cwd != "" {
+				w.res = r.resolve(w.t.cwd)
 			} else {
 				w.res = resolution{skip: SkipProjectUnknown}
 			}

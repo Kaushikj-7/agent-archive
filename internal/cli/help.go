@@ -747,6 +747,32 @@ Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: agent-archive handoff SESSION_ID --to claude --worktree
 Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 `,
+	"backfill review-projects": `Usage: agent-archive backfill review-projects --output FILE [options]
+
+Privately review observed missing original cwd groups and export exact project
+assignments in mapping-file schema 1. Terminal input and output are required;
+JSON and piped review are unavailable. Nothing is automatically selected.
+
+Coverage is bounded and incomplete (at most 128 groups); this is not a complete
+inventory or proof of uniqueness. Counts describe project-recovery candidates,
+not promises of importability. Native evidence and source limits still apply.
+
+  --output FILE               New private local assignment file; never overwrite
+  --harness APP               Review one app; repeatable (claude, codex, cursor)
+  --include-temp              Review temporary-directory candidates
+
+Configured choices use existing exact mapping policy; exclusions and conflicting
+usable keys still refuse. Historical destinations are import only. Review and
+export do not change configuration, capture policy, stages or archive.
+Cancellation, EOF or rejected confirmation writes no file. Export mode is 0600.
+
+One decision covers all observed keys at an exact cwd, including unlisted
+identities. Skip skips the whole cwd. The later import still checks each
+source's restrictions, configured-key compatibility and native proof.
+
+Then run agent-archive backfill --dry-run --mapping-file FILE before a
+separately confirmed import. Keep the file for exact semantic resume and undo.
+`,
 	"backfill projects": `Usage: agent-archive backfill projects list
        agent-archive backfill projects rename PROJECT_ID LABEL
        agent-archive backfill projects enable PROJECT_ID
@@ -760,6 +786,7 @@ import.
 	"backfill": `Usage: agent-archive backfill [options]
        agent-archive backfill history
        agent-archive backfill projects list|rename|enable|disable
+       agent-archive backfill review-projects --output FILE
        agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
                                 [--restore-retention]
 
@@ -767,7 +794,9 @@ Import the Claude Code, Codex, and Cursor sessions already on this machine that
 the archive has not captured. First shows each project with its session count
 per app, and why any session is not imported; archive and configuration changes
 require confirmation. Planning may update a disposable local inspection cache.
-Live repositories can be proposed for matching deleted worktrees.
+Live repositories can be proposed for matching deleted worktrees. Local Git
+origin chains require complete, renewed identity evidence; ambiguous clones
+remain pending for an exact --map-project or --mapping-file assignment.
 Projects the import needs are added to capture. Prints project
 folders, counts, and recovery reasons, never conversation content.
 After confirmation, filtered evidence is staged before admission; uploads can
@@ -790,8 +819,16 @@ publication. History reports admitted and remotely verified uploads separately.
   --yes                 Skip the confirmation (required without a terminal)
   --background          Stage and register sessions, then exit; the background
                         collector verifies and uploads them
+Planning and staging renew bounded lookup work; source safety limits apply.
+Foreground imports verify owned groups before staging more within the quota.
+Codex index paths may use a verified alias of an already trusted native home.
+Incomplete native inventory is reported; verified sessions remain eligible.
+Codex own-task refusals distinguish no own records in a validated snapshot from
+own records whose independent activity remains unqualified.
+A dry-run plan does not establish completed staging or publication.
 See agent-archive help backfill history, agent-archive help backfill projects,
-and agent-archive help backfill undo.
+agent-archive help backfill review-projects, and
+agent-archive help backfill undo.
 Example: agent-archive backfill --dry-run --since 30d
 `,
 	"backfill history": `Usage: agent-archive backfill history

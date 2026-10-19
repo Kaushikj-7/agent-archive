@@ -509,6 +509,9 @@ func (p *Published) write(next publishedState) error {
 		}
 	}()
 	if next.PublicationVersion == 5 {
+		// The commit has settled: its digests, not a second and third copy of
+		// the uploaded source, are what later passes and recovery compare.
+		next = releaseSettledInline(next)
 		if err := p.store.validateSelectingPublishedBudgeted(next); err != nil {
 			return err
 		}

@@ -27,8 +27,8 @@ var errCatalogChanged = errors.New("native catalog changed while read")
 const maxCatalogBytes = 32 << 20
 
 // PassCacheBytes is the most the lookup keeps between sessions: catalog,
-// rollout observations and listings, and metadata inventory, all charged
-// unscoped.
+// rollout observations and listings, and metadata inventory (including trusted
+// home alias mappings), all charged unscoped.
 const PassCacheBytes = maxCatalogBytes + maxObservationBytes + maxListingBytes + metadataBytes
 
 // reserveCatalog keeps restored facts and new catalog allocations charged for
@@ -80,11 +80,29 @@ func (l *CodexRolloutLookup) readCatalog(ctx context.Context, path string, c *ca
 		}
 	}()
 	raw := make([]byte, n)
-	if _, err := io.ReadFull(f, raw); err != nil {
-		return err
+	if foregroundWork(ctx) == nil {
+		if _, err := io.ReadFull(f, raw); err != nil {
+			return err
+		}
+	} else {
+		for offset := 0; offset < len(raw); {
+			end := min(offset+64<<10, len(raw))
+			n, err := nativeReadAt(ctx, f, raw[offset:end], int64(offset))
+			if err != nil {
+				return err
+			}
+			if n != end-offset {
+				return io.ErrUnexpectedEOF
+			}
+			offset = end
+		}
 	}
 	var extra [1]byte
-	if count, err := f.Read(extra[:]); count != 0 || !errors.Is(err, io.EOF) {
+	count, err := nativeReadAt(ctx, f, extra[:], n)
+	if nativeInterrupted(err) {
+		return err
+	}
+	if count != 0 || !errors.Is(err, io.EOF) {
 		return errCatalogChanged
 	}
 	if err := ctx.Err(); err != nil {
