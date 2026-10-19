@@ -651,8 +651,9 @@ prefixes select beyond the first 50 filtered previews. Scrolling past the last
 row (o when reading lines) loads another 50; / filters loaded rows only. Word
 queries report their bounded preview window.
 --project requires a directory; --all-projects explicitly broadens the scope.
-Local --latest ranks file modification time and requires complete identity
-coverage. Direct --to uses an exact current identity or asks for selection;
+Local --latest ranks file modification time. Enumeration must finish, and no
+unresolved history may be as recent as the selected session. Missing checkouts
+are skipped. Direct --to uses an exact current identity or asks for selection;
 it never guesses newest. --source archive requires setup. No capture hooks,
 credentials, configuration, registrations or scheduler are created. Private
 temporary launch files survive launch; later local handoffs clean owned files

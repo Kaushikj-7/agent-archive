@@ -45,6 +45,7 @@ type Integration struct {
 
 // Registry holds validated immutable lookups and operation projections.
 type Registry struct {
+	fixedPrivacy   *fixedRetainedPrivacy
 	fixedCapture   *fixedCursorCapture
 	catalog        agentmeta.Catalog
 	sourceBindings map[string]Integration
@@ -137,12 +138,13 @@ func NewBuiltins() *Registry {
 		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Claude}, Launcher: claude.Launcher{}, Skills: claude.Skills(), Imports: claude.Imports(), Evidence: claude.CapabilityEvidence{}, Version: claude.VersionInspector{}, NativeHeaders: claude.NativeHeaders{}, Discovery: claude.NativeHeaders{}, NativePaths: claude.ProjectEvidence{}, Worktrees: claude.ProjectEvidence{}, Children: claude.Children{}, Sources: claude.SourceProvider{}, Filter: claude.Filter{}, Runtime: claude.RuntimeDetector{}, Hooks: claude.Hooks(), Decoder: claude.Decoder(), Parser: claude.Parser{}, Preview: claude.Previewer{}},
 		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Skills: codex.Skills(), Imports: codex.Imports(), Evidence: codex.CapabilityEvidence{}, Version: codex.VersionInspector{}, NativeHeaders: codex.NativeHeaders{}, Discovery: codex.NativeHeaders{}, NativePaths: codex.ProjectEvidence{}, Sources: codex.SourceProvider{}, Filter: codex.Filter{}, Runtime: codex.RuntimeDetector{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Parser: codex.Parser{}, Preview: codex.Previewer{}, Labels: codex.LabelProvider{}},
 		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Skills: cursor.Skills(), Imports: cursor.Imports(), Evidence: cursor.CapabilityEvidence{}, Version: cursor.VersionInspector{}, Discovery: cursor.Discovery{}, NativePaths: cursor.ProjectEvidence{}, Workspace: cursor.ProjectEvidence{}, DatabaseCatalog: cursor.DatabaseCatalogInspector{}, Sources: cursor.SourceProvider{}, Filter: cursor.Filter{}, Runtime: cursor.RuntimeDetector{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Parser: cursor.Parser{}, Labels: cursor.LabelProvider{}},
-		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Muse}, Decoder: muse.Decoder(), Hooks: muse.Hooks(), NativeHeaders: muse.NativeHeaders{}, Discovery: muse.NativeHeaders{}, Preview: muse.Previewer{}, Runtime: muse.RuntimeDetector{}, Sources: muse.SourceProvider{}, Filter: muse.Filter{}, Parser: muse.Parser{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Muse}, Decoder: muse.Decoder(), Hooks: muse.Hooks(), Skills: muse.Skills(), Version: muse.VersionInspector{}, NativeHeaders: muse.NativeHeaders{}, Discovery: muse.NativeHeaders{}, Preview: muse.Previewer{}, Runtime: muse.RuntimeDetector{}, Sources: muse.SourceProvider{}, Filter: muse.Filter{}, Parser: muse.Parser{}},
 	})
 	if err != nil {
 		panic(err)
 	}
 	r.fixedCapture = &fixedCursorCapture{}
+	r.fixedPrivacy = &fixedRetainedPrivacy{}
 	return r
 }
 

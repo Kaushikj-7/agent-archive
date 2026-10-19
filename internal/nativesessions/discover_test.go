@@ -118,13 +118,13 @@ func TestDiscoveryBudgetCapAndUnknownIdentityRefuseCompleteness(t *testing.T) {
 	limits := discoveryLimits()
 	limits.Files = 3
 	r, e := Discover(context.Background(), builtin.NewBuiltins(), &countedFiles{}, []StoreRoot{root}, Scope{Directories: []string{cwd}}, limits)
-	if e != nil || r.Coverage.IdentityComplete || r.Coverage.Enumerated > 3 {
+	if e != nil || r.Coverage.IdentityComplete || r.Coverage.LatestComplete(time.Unix(100000, 0)) || r.Coverage.Enumerated > 3 {
 		t.Fatalf("cap %+v %v", r.Coverage, e)
 	}
 	limits = discoveryLimits()
 	limits.TotalBytes = 1
 	r, e = Discover(context.Background(), builtin.NewBuiltins(), &countedFiles{}, []StoreRoot{root}, Scope{Directories: []string{cwd}}, limits)
-	if e != nil || r.Coverage.IdentityComplete || r.Coverage.ReservedBytes > 1 {
+	if e != nil || r.Coverage.IdentityComplete || r.Coverage.LatestComplete(time.Unix(100000, 0)) || r.Coverage.ReservedBytes > 1 {
 		t.Fatalf("budget %+v %v", r.Coverage, e)
 	}
 	path := filepath.Join(root.Path, "project", "session-00000.jsonl")

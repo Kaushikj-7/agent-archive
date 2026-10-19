@@ -1202,8 +1202,10 @@ Their seeds come from the fixtures in `testdata/` and from
 `testdata/fuzz/<target>/`, and plain `go test` runs them on every pull request.
 The `fuzz` job in [Extended CI](../../.github/workflows/extended.yml) mutates
 every discovered target (at least the 24 currently known) for five seconds daily
-and 30 seconds weekly, on candidates or on demand. For a change to
-redaction or parsing, run the affected targets for a couple of minutes each,
+and 30 seconds weekly, on candidates or on demand. Full campaigns have a
+45-minute job limit around the tier runner's 40-minute deadline, leaving room
+for setup and artifact upload; daily jobs retain their 30-minute limit. For a
+change to redaction or parsing, run the affected targets for a couple of minutes each,
 with fast minimization so a
 failure is reported promptly:
 

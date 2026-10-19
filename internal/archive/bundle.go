@@ -350,6 +350,10 @@ func supplementalIdentity(e SupplementalEvidence) string {
 	identity := string(e.Kind) + "\x00" + e.Provenance
 	if e.Kind == EvidenceKindSkillSnapshot {
 		identity += "\x00" + firstString(e.Payload, "name") + "\x00" + firstString(e.Payload, "scope")
+		declared := SkillDeclarationIdentity{Scope: firstString(e.Payload, "scope"), ID: firstString(e.Payload, "id")}
+		if e.Provenance == "filesystem:muse" && firstString(e.Payload, "coverage") == string(SkillCoverageInstalledOnly) && declared.Valid() {
+			identity += "\x00" + declared.ID
+		}
 	} else {
 		identity += "\x00" + firstString(e.Payload, "coverage") + "\x00" + firstString(e.Payload, "scope")
 	}

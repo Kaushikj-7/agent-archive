@@ -6,6 +6,29 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Muse installed versions use a bounded, update-disabled `--version` probe.
+  Skill installation shares `.agents/skills` with Codex and Cursor. Muse skill
+  evidence follows the existing `none`, `metadata` and `body` settings, with
+  filtered installed inventory, including the exact bundled Muse skill root
+  under the caller-qualified data home and declared files from the supported
+  native-local installed plugin registry. A qualified own native
+  `skill_read_observed` report can identify a harness skill read independently
+  of eligible inventory. Its original-file hash is erased. A content-only hash
+  may come from an actual authorized observation whose full bytes are unchanged
+  by credential redaction and contain no replacement marker; native and installed
+  display identities remain separate. Redacted-content hashes, origin,
+  eligibility and activation remain unqualified. Retained hashes use the existing
+  producer-evidence trust model, without authenticated-producer claims.
+  Metadata preserves distinct installed declaration identities even when skills
+  share a name and content hash. Exact runtime identity and public capture remain gated.
+
+- No-bucket handoff discovery reuses unused header-read reservations between
+  batches, so large Codex histories do not stop after reserving bytes they never
+  read. Removed checkouts no longer block selection. Local `--latest` can ignore
+  unresolved histories with verified modification times strictly older than the
+  selected session; incomplete enumeration, exhausted read budgets and potentially
+  newer unresolved histories still require explicit selection.
+
 - Confirmed backfill continues supported native preparation and staging across
   bounded lookup scopes. Foreground imports publish and verify owned groups
   before preparing more evidence under the shared 1 GiB quota. Rerunning the
@@ -53,8 +76,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Backfill planning and dry runs continue supported Codex preparation and
   inspection across bounded lookup scopes, including histories needing more
   than five seconds of total lookup work. Native I/O timeouts and inventory
-  no-progress results stay specific. Incomplete inventory is reported while
-  independently verified sessions remain eligible. Shared native resource
+  no-progress results stay specific. Incomplete Codex inventory is reported while
+  independently verified Codex sessions remain eligible. Shared native resource
   exhaustion remains a failure. Source safety limits and
   scheduled background work are unchanged.
 
@@ -310,6 +333,9 @@ follow [Semantic Versioning](https://semver.org/).
   metadata and full evaluation exports while preserving prompt/message counts.
   Cursor tool calls without recorded results no longer claim zero results;
   unstructured exports omit unavailable edited-file lists.
+
+- Refuse generation recovery when its exact prior publication changed, and serialize
+  cached publication updates with recovery routing.
 
 - Recover complete historical source-set publications from exact private retained evidence,
   with one shared disk/memory budget and permanent source-set writer protection.

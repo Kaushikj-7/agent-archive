@@ -27,7 +27,7 @@ func TestSkillsConformance(t *testing.T) {
 func TestSkillsPurposeLocationsPreserveCurrentCoverage(t *testing.T) {
 	t.Parallel()
 	r := NewBuiltins()
-	if got := r.SkillAgents(); !slices.Equal(got, []string{"claude", "codex", "cursor"}) {
+	if got := r.SkillAgents(); !slices.Equal(got, []string{"claude", "codex", "cursor", "muse"}) {
 		t.Fatalf("existing skill coverage changed: %v", got)
 	}
 	cursor, _ := r.LookupSkills("cursor")

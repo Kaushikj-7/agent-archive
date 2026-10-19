@@ -427,6 +427,39 @@ class CandidateCampaignTest(unittest.TestCase):
 
 
 class CadenceTest(unittest.TestCase):
+    def test_full_fuzz_job_outlives_tier_deadline_and_keeps_daily_limit(self):
+        job = jobs(EXTENDED_YML.read_text())['fuzz']
+        step = next(step for step in steps(job) if '--suite fuzz' in step)
+        command = shlex.split(run_texts(step)[0])
+        config = tiers.catalog()
+        for event, ref, suite, schedule in (
+                ('push', 'refs/heads/release-candidate/check', '', ''),
+                ('workflow_dispatch', 'refs/heads/main', 'fuzz', ''),
+                ('workflow_dispatch', 'refs/heads/main', 'all', ''),
+                ('schedule', 'refs/heads/main', 'all', config['weekly_cron']),
+                ('schedule', 'refs/heads/main', 'all', config['daily_cron'])):
+            with self.subTest(event=event, suite=suite, schedule=schedule):
+                self.assertTrue(condition_matches(job_key(job, 'if'), event, ref,
+                                                  suite, schedule))
+                environment = {'GITHUB_EVENT_NAME': event, 'GITHUB_REF': ref,
+                               'CI_SUITE': suite, 'CI_SCHEDULE': schedule}
+                with mock.patch.dict(tiers.os.environ, environment, clear=True), \
+                        mock.patch.object(sys, 'argv', command[1:]), \
+                        mock.patch.object(tiers.signal, 'signal'), \
+                        mock.patch.object(tiers, 'run_suite') as run:
+                    self.assertEqual(tiers.main(), 0)
+                tier, actual_suite, _, _, seconds = run.call_args.args
+                self.assertEqual(actual_suite, 'fuzz')
+                self.assertEqual(seconds, 2400)
+                minutes = expression_value(job_key(job, 'timeout-minutes'), event,
+                                           ref, suite, schedule)
+                if tier == 'full':
+                    # Setup and artifact upload sit outside the tier supervisor.
+                    self.assertGreaterEqual(minutes * 60, seconds + 5 * 60)
+                else:
+                    self.assertEqual(tier, 'daily')
+                    self.assertEqual(minutes, 30)
+
     def test_required_test_display_names_are_unique_across_workflows(self):
         workflows = ROOT / '.github/workflows'
         required = {job_key(text, 'name') or job
@@ -493,7 +526,7 @@ class CadenceTest(unittest.TestCase):
         self.assertIn('name: ci-tier-plan', found['linux-full'])
         self.assertIn('--verify-plan', found['linux-race'])
         self.assertIn('--verify-native-plan', found['linux-race'])
-        for script in ('test_release_candidate.py','test_ci_workflow.py','test_stage_native_verify.py','test_scope_native_verify.py','test_go_shards.py','test_ci_tiers.py'):
+        for script in ('test_release_candidate.py','test_ci_workflow.py','test_stage_native_verify.py','test_scope_native_verify.py','test_go_shards.py','test_ci_tiers.py','test_muse_final_acceptance.py'):
             step=next(step for step in steps(found['script-static']) if script in step)
             self.assertIsNone(step_key(step,'if'))
 
