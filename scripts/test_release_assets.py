@@ -565,7 +565,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
             with self.subTest(job=job):
                 text = job_text(self.workflow, job)
                 self.assertRegex(text, r'(?m)^    runs-on: macos-14$')
-                self.assertRegex(text, r'(?m)^    timeout-minutes: 45$')
+                self.assertRegex(text, r'(?m)^    timeout-minutes: 60$')
                 # Release scripts may not expand expressions, so the worker
                 # index arrives through the environment instead.
                 expected = [line.replace('${{ matrix.worker }}', '$WORKER')
