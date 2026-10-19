@@ -24,7 +24,7 @@ import (
 func commitNativeImportPreview(ctx context.Context, env Env, home string, cfg config.Config, opts backfillCommandOptions, p *nativeImportPreview) (batch backfill.Batch, err error) {
 	if p.inventory != nil {
 		for _, row := range p.Rows {
-			if row.Status == "selected" {
+			if row.Status == nativeImportSelected {
 				if err := p.inventory.Check(ctx, row.NativeID, row.token); err != nil {
 					return batch, errors.New("native source changed since preview; confirm a new preview")
 				}
@@ -66,41 +66,14 @@ func commitNativeImportPreview(ctx context.Context, env Env, home string, cfg co
 	defer func() { err = errors.Join(err, handle.Close()) }()
 	for i := range p.Rows {
 		row := &p.Rows[i]
-		if row.Status != "selected" {
+		if row.Status != nativeImportSelected {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
 			return batch, err
 		}
-		key := agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: row.NativeID}
-		id, owned, err := store.ArchiveSessionID(key)
-		if err != nil {
+		if err := registerNativeImportRow(ctx, env, store, handle, cfg, p, row, &batch); err != nil {
 			return batch, err
-		}
-		if owned {
-			reg, found, err := store.LoadRegistration(id)
-			if err != nil || !found || reg.NativeImport == nil || reg.NativeImport.Confirmation.BatchID != batch.ID || reg.NativeImport.Confirmation.BatchInstance != batch.NativeImport.Instance || reg.NativeImport.Confirmation.ScopeSHA256 != batch.NativeImport.ScopeSHA256 || reg.NativeImport.Membership.State != archive.NativeImportAttached || !nativeImportExistingOwnerMatches(reg, *row, batch.DestinationID) {
-				return batch, errors.Join(errors.New("independent or changed owner is preserved; confirm a new preview"), err)
-			}
-			batch.AddSessions([]string{id}, nil)
-		} else {
-			if p.inventory == nil {
-				if err := prepareResumedNativeImportInventory(ctx, cfg, p); err != nil {
-					return batch, err
-				}
-			}
-			if row.token == "" {
-				located, err := p.inventory.Locate(ctx, agentapi.LocatorRequest{Purpose: agentapi.LocatorHistoricalImport, Root: row.candidate.Root, NativeID: row.NativeID})
-				if err != nil || located.Status != agentapi.LocatorFound || len(located.Candidates) != 1 {
-					return batch, errors.Join(errors.New("confirmed source unavailable; preserved batch can resume when exact source returns"), err)
-				}
-				row.ref, row.token = located.Candidates[0], located.Revision
-			}
-			reg, err := prepareAndCommitNativeImport(ctx, env, store, handle, *row, p)
-			if err != nil {
-				return batch, fmt.Errorf("import %s stopped at entry %d; its frozen scope is preserved, run sync and retry the same explicit filters", batch.ID, row.Ordinal)
-			}
-			batch.AddSessions([]string{reg.ArchiveSessionID}, nil)
 		}
 		if err := backfill.SaveBatch(home, batch); err != nil {
 			return batch, err
@@ -112,6 +85,41 @@ func commitNativeImportPreview(ctx context.Context, env Env, home string, cfg co
 	at := env.now().UTC()
 	batch.CompletedAt = &at
 	return batch, backfill.SaveBatch(home, batch)
+}
+
+// registerNativeImportRow attaches an exact existing owner or commits one confirmed row.
+func registerNativeImportRow(ctx context.Context, env Env, store *state.Store, handle *state.ConfirmedNativeImportBatch, cfg config.Config, p *nativeImportPreview, row *nativeImportRow, batch *backfill.Batch) error {
+	key := agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: row.NativeID}
+	id, owned, err := store.ArchiveSessionID(key)
+	if err != nil {
+		return err
+	}
+	if owned {
+		reg, found, err := store.LoadRegistration(id)
+		if err != nil || !found || reg.NativeImport == nil || reg.NativeImport.Confirmation.BatchID != batch.ID || reg.NativeImport.Confirmation.BatchInstance != batch.NativeImport.Instance || reg.NativeImport.Confirmation.ScopeSHA256 != batch.NativeImport.ScopeSHA256 || reg.NativeImport.Membership.State != archive.NativeImportAttached || !nativeImportExistingOwnerMatches(reg, *row, batch.DestinationID) {
+			return errors.Join(errors.New("independent or changed owner is preserved; confirm a new preview"), err)
+		}
+		batch.AddSessions([]string{id}, nil)
+		return nil
+	}
+	if p.inventory == nil {
+		if err := prepareResumedNativeImportInventory(ctx, cfg, p); err != nil {
+			return err
+		}
+	}
+	if row.token == "" {
+		located, err := p.inventory.Locate(ctx, agentapi.LocatorRequest{Purpose: agentapi.LocatorHistoricalImport, Root: row.candidate.Root, NativeID: row.NativeID})
+		if err != nil || located.Status != agentapi.LocatorFound || len(located.Candidates) != 1 {
+			return errors.Join(errors.New("confirmed source unavailable; preserved batch can resume when exact source returns"), err)
+		}
+		row.ref, row.token = located.Candidates[0], located.Revision
+	}
+	reg, err := prepareAndCommitNativeImport(ctx, env, store, handle, *row, p)
+	if err != nil {
+		return fmt.Errorf("import %s stopped at entry %d; its frozen scope is preserved, run sync and retry the same explicit filters", batch.ID, row.Ordinal)
+	}
+	batch.AddSessions([]string{reg.ArchiveSessionID}, nil)
+	return nil
 }
 
 func prepareAndCommitNativeImport(ctx context.Context, env Env, store *state.Store, handle *state.ConfirmedNativeImportBatch, row nativeImportRow, p *nativeImportPreview) (reg archive.SessionRegistration, err error) {
@@ -184,7 +192,7 @@ func confirmNativeImportPreview(ctx context.Context, env Env, store *state.Store
 	}
 	scope := archive.NativeImportBatchScope{BatchID: batch.ID, StartedAtUTC: batch.StartedAt.UTC().Format(time.RFC3339Nano), DestinationID: cfg.DestinationID(), Filters: archive.ImportBatchFilters(batch.Filters), SinceUTC: p.SinceUTC, UntilExclusiveUTC: p.UntilUTC, ProjectIDs: []string{}, Selected: []archive.NativeImportBatchSelection{}}
 	for _, row := range p.Rows {
-		if row.Status != "selected" {
+		if row.Status != nativeImportSelected {
 			continue
 		}
 		scope.Selected = append(scope.Selected, row.selection)

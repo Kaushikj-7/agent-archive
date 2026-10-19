@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -15,8 +16,7 @@ func TestNativeImportStoragePreparationDoesNotHoldHooksOrConvertOrdinaryGuard(t 
 	if err := os.Chmod(home, 0700); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{NativeImportProtection: true, NativeAuthorityProtection: true, ImportStagingProtection: true, StagedSelectionProtection: true, DurableStorageProtection: true, PublicationCompositionProtection: true}
-	cfg.Archive.Enabled = true
+	cfg := Config{NativeImportProtection: true, NativeAuthorityProtection: true, ImportStagingProtection: true, StagedSelectionProtection: true, DurableStorageProtection: true, PublicationCompositionProtection: true, Archive: archive.Config{Enabled: true}}
 	if err := Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}

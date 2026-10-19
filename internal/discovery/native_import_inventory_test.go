@@ -32,6 +32,9 @@ func importInventoryOpen(t *testing.T, root archive.NativeRoot) *NativeInventory
 	return l
 }
 
+// futureLocatorPurpose is a purpose no current release defines.
+const futureLocatorPurpose agentapi.LocatorPurpose = "future"
+
 func TestNativeImportInventorySharesCensusAndExpiresTokens(t *testing.T) {
 	t.Parallel()
 	home, root, raw := inventoryFixture(t)
@@ -60,7 +63,7 @@ func TestNativeImportInventorySharesCensusAndExpiresTokens(t *testing.T) {
 	if l.Counts().PageReads != pages {
 		t.Fatal("selected source started a second census")
 	}
-	for _, purpose := range []agentapi.LocatorPurpose{agentapi.LocatorAdmittedOwner, agentapi.LocatorStartupCandidate, "future"} {
+	for _, purpose := range []agentapi.LocatorPurpose{agentapi.LocatorAdmittedOwner, agentapi.LocatorStartupCandidate, futureLocatorPurpose} {
 		result, err := l.Locate(t.Context(), agentapi.LocatorRequest{Purpose: purpose, Root: root, NativeID: inventoryOwner})
 		if err != nil || result.Status != agentapi.LocatorRefused {
 			t.Fatal("historical mode accepted another purpose", purpose, result, err)
@@ -156,7 +159,7 @@ func TestNativeImportInventoryPartialAndCancelledCloseDoNotPersist(t *testing.T)
 func TestNativeImportInventoryPurposeDoesNotEnterOrdinaryConstructor(t *testing.T) {
 	t.Parallel()
 	home, root, _ := inventoryFixture(t)
-	for _, purpose := range []agentapi.LocatorPurpose{agentapi.LocatorHistoricalImport, "future"} {
+	for _, purpose := range []agentapi.LocatorPurpose{agentapi.LocatorHistoricalImport, futureLocatorPurpose} {
 		budget := agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
 		l, err := NewNativeInventory(t.Context(), home, []archive.NativeRoot{root}, []agentapi.LocatorRequest{{Purpose: purpose, NativeID: inventoryOwner, Root: root}}, budget, muse.ValidateNativeLocator)
 		if err == nil || l != nil {

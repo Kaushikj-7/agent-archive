@@ -15,6 +15,7 @@ import (
 // preparation to already-sticky configuration. It cannot convert to an ordinary
 // DurableStorageGuard, and does not imply that hooks.lock remains held.
 type NativeImportStoragePreparation struct{ scope *nativeImportStorageScope }
+
 type nativeImportStorageScope struct {
 	home   *local.RootedHome
 	path   string

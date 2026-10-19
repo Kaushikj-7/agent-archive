@@ -78,7 +78,7 @@ func planNativeImport(ctx context.Context, env Env, home string, cfg config.Conf
 	defer closeRead()
 	resolver := sourcefacts.NewProjectResolver()
 	for _, id := range candidates.IDs {
-		row := nativeImportRow{NativeID: id, Status: "unavailable", Reason: "bounded namespace coverage incomplete"}
+		row := nativeImportRow{NativeID: id, Status: nativeImportUnavailable, Reason: "bounded namespace coverage incomplete"}
 		if p.Complete {
 			row, err = inspectNativeImportRow(ctx, env, store, cfg, opts, &p, resolver, id)
 			if err != nil {
@@ -113,12 +113,11 @@ func planNativeImportResume(ctx context.Context, home string, cfg config.Config,
 	p.resume, p.Complete = &last, true
 	p.SinceUTC, p.UntilUTC = last.NativeImport.Scope.SinceUTC, last.NativeImport.Scope.UntilExclusiveUTC
 	for _, selected := range last.NativeImport.Scope.Selected {
-		row := nativeImportRow{NativeID: selected.NativeID, ProjectID: selected.ProjectID, Status: "selected", Reason: "resume this exact previously confirmed scope", selection: selected}
 		original, err := time.Parse(time.RFC3339Nano, selected.OriginalTUTC)
-		row.OriginalT = &original
 		if err != nil {
 			return err
 		}
+		row := nativeImportRow{NativeID: selected.NativeID, OriginalT: &original, ProjectID: selected.ProjectID, Status: nativeImportSelected, Reason: "resume this exact previously confirmed scope", selection: selected}
 		for _, project := range cfg.Archive.Projects {
 			if project.ProjectID == row.ProjectID && project.Included {
 				row.Project = project.Root
@@ -139,8 +138,7 @@ func planNativeImportResume(ctx context.Context, home string, cfg config.Config,
 	return nil
 }
 
-func inspectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg config.Config, opts backfillCommandOptions, p *nativeImportPreview, resolver *sourcefacts.ProjectResolver, id string) (row nativeImportRow, err error) {
-	row = nativeImportRow{NativeID: id, Status: "refused"}
+func inspectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg config.Config, opts backfillCommandOptions, p *nativeImportPreview, resolver *sourcefacts.ProjectResolver, id string) (nativeImportRow, error) {
 	var root archive.NativeRoot
 	for _, candidate := range cfg.NativeRoots {
 		if candidate.Agent == "muse" {
@@ -149,14 +147,18 @@ func inspectNativeImportRow(ctx context.Context, env Env, store *state.Store, cf
 	}
 	located, err := p.inventory.Locate(ctx, agentapi.LocatorRequest{Purpose: agentapi.LocatorHistoricalImport, NativeID: id, Root: root})
 	if err != nil {
-		row.Reason = "current native source/proof unavailable; retry this bounded preview"
-		return row, nil
+		return nativeImportRow{NativeID: id, Status: nativeImportRefused, Reason: "current native source/proof unavailable; retry this bounded preview"}, nil
 	}
 	if located.Status != agentapi.LocatorFound || len(located.Candidates) != 1 {
-		row.Reason = "native locator " + string(located.Status)
-		return row, nil
+		return nativeImportRow{NativeID: id, Status: nativeImportRefused, Reason: "native locator " + string(located.Status)}, nil
 	}
-	row.ref, row.token = located.Candidates[0], located.Revision
+	row := nativeImportRow{NativeID: id, Status: nativeImportRefused, ref: located.Candidates[0], token: located.Revision}
+	return inspectLocatedNativeImportRow(ctx, env, store, cfg, opts, p, resolver, root, row)
+}
+
+// inspectLocatedNativeImportRow reads one located source's ordinary root binding.
+func inspectLocatedNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg config.Config, opts backfillCommandOptions, p *nativeImportPreview, resolver *sourcefacts.ProjectResolver, root archive.NativeRoot, row nativeImportRow) (_ nativeImportRow, err error) {
+	id := row.NativeID
 	pass, snapshot, err := openNativeImportSource(ctx, env, root, row.ref, p.inventory, p.budget)
 	if err != nil {
 		row.Reason = "current native source/proof unavailable; retry this bounded preview"
@@ -179,9 +181,15 @@ func inspectNativeImportRow(ctx context.Context, env Env, store *state.Store, cf
 	}
 	original := binding.NativeCreatedAt
 	row.OriginalT = &original
+	return selectNativeImportRow(ctx, env, store, cfg, opts, p, resolver, root, binding, row)
+}
+
+// selectNativeImportRow applies filter, ownership and removal checks to a bound root.
+func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg config.Config, opts backfillCommandOptions, p *nativeImportPreview, resolver *sourcefacts.ProjectResolver, root archive.NativeRoot, binding *archive.NativeSourceBinding, row nativeImportRow) (nativeImportRow, error) {
+	id := row.NativeID
 	day := row.OriginalT.In(env.now().Location()).Format("2006-01-02")
 	if opts.filters.Since != "" && day < opts.filters.Since || opts.filters.Until != "" && day > opts.filters.Until {
-		row.Status, row.Reason = "filtered", "outside exact original-start date bounds"
+		row.Status, row.Reason = nativeImportFiltered, "outside exact original-start date bounds"
 		return row, nil
 	}
 	physical, known := resolver.Resolve(binding.Cwd)
@@ -200,14 +208,14 @@ func inspectNativeImportRow(ctx context.Context, env Env, store *state.Store, cf
 		return row, nil
 	}
 	if len(p.projects) > 0 && !slices.Contains(p.projects, row.ProjectID) {
-		row.Status, row.Reason = "filtered", "outside selected configured project IDs"
+		row.Status, row.Reason = nativeImportFiltered, "outside selected configured project IDs"
 		return row, nil
 	}
 	if _, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: id}); err != nil {
 		row.Reason = "existing ownership/index requires recovery"
 		return row, nil
 	} else if found {
-		row.Status, row.Reason = "duplicate", "independent existing owner is preserved"
+		row.Status, row.Reason = nativeImportDuplicate, "independent existing owner is preserved"
 		return row, nil
 	}
 	if _, removed, err := store.Removal("muse", id); err != nil {
@@ -230,7 +238,7 @@ func inspectNativeImportRow(ctx context.Context, env Env, store *state.Store, cf
 		row.Reason = "current native source/proof unavailable; retry this bounded preview"
 		return row, nil
 	}
-	row.Status, row.Reason = "selected", "ordinary root; child coverage unavailable"
+	row.Status, row.Reason = nativeImportSelected, "ordinary root; child coverage unavailable"
 	return row, nil
 }
 

@@ -64,9 +64,48 @@ func assertHistoricalReleaseFiles(t *testing.T, f historicalNativeStage, expecte
 	}
 }
 
+type releaseFrontierPhase string
+
+const (
+	frontierAck           releaseFrontierPhase = "ack"
+	frontierReceipt       releaseFrontierPhase = "receipt"
+	frontierVerified      releaseFrontierPhase = "verified"
+	frontierLocalComplete releaseFrontierPhase = "local-complete"
+	frontierPendingAbsent releaseFrontierPhase = "pending-absent"
+	frontierBothAbsent    releaseFrontierPhase = "both-absent"
+	frontierReleased      releaseFrontierPhase = "released"
+)
+
+type releaseOwnerModifier string
+
+const (
+	ownerAttachedOriginal releaseOwnerModifier = "attached-original"
+	ownerDetachedOriginal releaseOwnerModifier = "detached-original"
+	ownerDetachedLater    releaseOwnerModifier = "detached-later"
+	ownerAttachedLater    releaseOwnerModifier = "attached-later"
+)
+
+type releaseRoute string
+
+const (
+	releaseRouteDirect releaseRoute = "direct"
+	releaseRouteResume releaseRoute = "resume"
+)
+
+type absentStageChange string
+
+const (
+	absentStageOwner          absentStageChange = "owner"
+	absentStageForeignReceipt absentStageChange = "foreign-receipt"
+	absentStageProgressDigest absentStageChange = "progress-digest"
+	absentStageMissingReceipt absentStageChange = "missing-receipt"
+	absentStageMissingAck     absentStageChange = "missing-ack"
+	absentStageFutureProgress absentStageChange = "future-progress"
+)
+
 // These snapshots come from a real typed ACK and completed remote readback.
 // Only interrupted phases consistent with those exact bytes are restored.
-func historicalReleaseFrontier(t *testing.T, phase string) historicalNativeStage {
+func historicalReleaseFrontier(t *testing.T, phase releaseFrontierPhase) historicalNativeStage {
 	t.Helper()
 	f := newHistoricalNativeStage(t)
 	f.remote.failRelease = true
@@ -82,7 +121,7 @@ func historicalReleaseFrontier(t *testing.T, phase string) historicalNativeStage
 	if err != nil || len(result.Errors) != 0 {
 		t.Fatal("actual immutable release receipt", err, result.Errors)
 	}
-	if phase == "released" {
+	if phase == frontierReleased {
 		return f
 	}
 	complete := captureHistoricalReleaseFiles(t, f)
@@ -97,18 +136,18 @@ func historicalReleaseFrontier(t *testing.T, phase string) historicalNativeStage
 		t.Fatal("actual completed/initial controls absent")
 	}
 	switch phase {
-	case "ack":
+	case frontierAck:
 		complete[receipt], complete[progress] = nil, nil
-	case "receipt":
+	case frontierReceipt:
 		complete[progress] = nil
-	case "verified", "local-complete", "pending-absent", "both-absent":
+	case frontierVerified, frontierLocalComplete, frontierPendingAbsent, frontierBothAbsent:
 		var doc map[string]json.RawMessage
 		if err := json.Unmarshal(complete[progress], &doc); err != nil {
 			t.Fatal(err)
 		}
-		value := "local-complete"
-		if phase == "verified" {
-			value = "verified"
+		value := string(frontierLocalComplete)
+		if phase == frontierVerified {
+			value = string(frontierVerified)
 		}
 		doc["phase"], err = json.Marshal(value)
 		if err != nil {
@@ -118,14 +157,14 @@ func historicalReleaseFrontier(t *testing.T, phase string) historicalNativeStage
 		if err != nil {
 			t.Fatal(err)
 		}
-		if phase != "verified" {
+		if phase != frontierVerified {
 			// Covered request removal precedes the local-complete write.
 			complete[request] = nil
 		}
-		if phase == "pending-absent" || phase == "both-absent" {
+		if phase == frontierPendingAbsent || phase == frontierBothAbsent {
 			complete[pending] = nil
 		}
-		if phase == "both-absent" {
+		if phase == frontierBothAbsent {
 			complete[stage] = nil
 		}
 	default:
@@ -135,9 +174,9 @@ func historicalReleaseFrontier(t *testing.T, phase string) historicalNativeStage
 	return f
 }
 
-func modifyHistoricalReleaseOwner(t *testing.T, f *historicalNativeStage, modifier string) {
+func modifyHistoricalReleaseOwner(t *testing.T, f *historicalNativeStage, modifier releaseOwnerModifier) {
 	t.Helper()
-	if modifier == "detached-original" || modifier == "detached-later" {
+	if modifier == ownerDetachedOriginal || modifier == ownerDetachedLater {
 		path := filepath.Join(f.store.Home(), "imports", f.reg.ImportBatch.Recorded()+".json")
 		raw, err := os.ReadFile(path)
 		if err != nil {
@@ -161,7 +200,7 @@ func modifyHistoricalReleaseOwner(t *testing.T, f *historicalNativeStage, modifi
 			t.Fatal(err)
 		}
 	}
-	if modifier == "attached-later" || modifier == "detached-later" {
+	if modifier == ownerAttachedLater || modifier == ownerDetachedLater {
 		if err := f.store.SaveRequest(f.reg.ArchiveSessionID, "later-independent", f.at.Add(2*time.Hour)); err != nil {
 			t.Fatal(err)
 		}
@@ -169,10 +208,10 @@ func modifyHistoricalReleaseOwner(t *testing.T, f *historicalNativeStage, modifi
 }
 
 func TestNativeImportPublicReleaseFrontiers(t *testing.T) {
-	for _, phase := range []string{"ack", "receipt", "verified", "local-complete", "pending-absent", "both-absent", "released"} {
-		t.Run(phase, func(t *testing.T) {
-			for _, modifier := range []string{"attached-original", "detached-original", "detached-later", "attached-later"} {
-				t.Run(modifier, func(t *testing.T) {
+	for _, phase := range []releaseFrontierPhase{frontierAck, frontierReceipt, frontierVerified, frontierLocalComplete, frontierPendingAbsent, frontierBothAbsent, frontierReleased} {
+		t.Run(string(phase), func(t *testing.T) {
+			for _, modifier := range []releaseOwnerModifier{ownerAttachedOriginal, ownerDetachedOriginal, ownerDetachedLater, ownerAttachedLater} {
+				t.Run(string(modifier), func(t *testing.T) {
 					f := historicalReleaseFrontier(t, phase)
 					modifyHistoricalReleaseOwner(t, &f, modifier)
 					before := captureHistoricalReleaseFiles(t, f)
@@ -180,15 +219,15 @@ func TestNativeImportPublicReleaseFrontiers(t *testing.T) {
 						t.Fatal("independent public local read before cleanup", err)
 					}
 					assertHistoricalReleaseFiles(t, f, before)
-					refuse := modifier == "attached-later" && phase != "released"
-					for _, route := range []string{"direct", "resume"} {
-						t.Run(route, func(t *testing.T) {
+					refuse := modifier == ownerAttachedLater && phase != frontierReleased
+					for _, route := range []releaseRoute{releaseRouteDirect, releaseRouteResume} {
+						t.Run(string(route), func(t *testing.T) {
 							restoreHistoricalReleaseFiles(t, f, before)
 							reopened, err := state.Open(f.store.Home())
 							if err != nil {
 								t.Fatal(err)
 							}
-							if route == "direct" {
+							if route == releaseRouteDirect {
 								err = reopened.VerifyAndBeginStagedRelease(t.Context(), f.reg.ArchiveSessionID, f.remote, f.opts.CollectorGuard)
 							} else {
 								var holds map[string]error
@@ -214,7 +253,7 @@ func TestNativeImportPublicReleaseFrontiers(t *testing.T) {
 							if err := reopened.NativeImportRetainedAuthority(t.Context(), f.reg); err != nil {
 								t.Fatal("cleanup did not finish exact release", err)
 							}
-							if modifier == "detached-later" || modifier == "attached-later" {
+							if modifier == ownerDetachedLater || modifier == ownerAttachedLater {
 								raw, err := os.ReadFile(filepath.Join(f.store.Home(), "requests", f.reg.ArchiveSessionID+".json"))
 								if err != nil || !bytes.Equal(raw, before[filepath.Join("requests", f.reg.ArchiveSessionID+".json")]) {
 									t.Fatal("later request changed", err)
@@ -229,14 +268,14 @@ func TestNativeImportPublicReleaseFrontiers(t *testing.T) {
 }
 
 func TestNativeImportLocalCompleteAbsentStageRefusesChangedAuthority(t *testing.T) {
-	for _, change := range []string{"owner", "foreign-receipt", "progress-digest", "missing-receipt", "missing-ack", "future-progress"} {
-		t.Run(change, func(t *testing.T) {
-			f := historicalReleaseFrontier(t, "both-absent")
-			modifyHistoricalReleaseOwner(t, &f, "detached-later")
+	for _, change := range []absentStageChange{absentStageOwner, absentStageForeignReceipt, absentStageProgressDigest, absentStageMissingReceipt, absentStageMissingAck, absentStageFutureProgress} {
+		t.Run(string(change), func(t *testing.T) {
+			f := historicalReleaseFrontier(t, frontierBothAbsent)
+			modifyHistoricalReleaseOwner(t, &f, ownerDetachedLater)
 			id := f.reg.ArchiveSessionID
 			relative := filepath.Join("sessions", id, "import-stage", "release-progress.json")
 			switch change {
-			case "owner":
+			case absentStageOwner:
 				relative = filepath.Join("registrations", id+".json")
 				raw, err := os.ReadFile(filepath.Join(f.store.Home(), relative))
 				if err != nil {
@@ -250,8 +289,8 @@ func TestNativeImportLocalCompleteAbsentStageRefusesChangedAuthority(t *testing.
 				if err := local.Write(filepath.Join(f.store.Home(), relative), reg); err != nil {
 					t.Fatal(err)
 				}
-			case "foreign-receipt":
-				other := historicalReleaseFrontier(t, "both-absent")
+			case absentStageForeignReceipt:
+				other := historicalReleaseFrontier(t, frontierBothAbsent)
 				for _, name := range []string{"release.json", "release-progress.json"} {
 					raw, err := os.ReadFile(filepath.Join(other.store.Home(), "sessions", other.reg.ArchiveSessionID, "import-stage", name))
 					if err != nil {
@@ -261,8 +300,8 @@ func TestNativeImportLocalCompleteAbsentStageRefusesChangedAuthority(t *testing.
 						t.Fatal(err)
 					}
 				}
-			case "missing-receipt", "missing-ack":
-				if change == "missing-receipt" {
+			case absentStageMissingReceipt, absentStageMissingAck:
+				if change == absentStageMissingReceipt {
 					relative = filepath.Join("sessions", id, "import-stage", "release.json")
 				} else {
 					relative = filepath.Join("published", id+".json")
@@ -270,9 +309,9 @@ func TestNativeImportLocalCompleteAbsentStageRefusesChangedAuthority(t *testing.
 				if err := os.Remove(filepath.Join(f.store.Home(), relative)); err != nil {
 					t.Fatal(err)
 				}
-			case "progress-digest", "future-progress":
+			case absentStageProgressDigest, absentStageFutureProgress:
 				value := []byte(`{"version":999}`)
-				if change == "progress-digest" {
+				if change == absentStageProgressDigest {
 					raw, err := os.ReadFile(filepath.Join(f.store.Home(), relative))
 					if err != nil {
 						t.Fatal(err)

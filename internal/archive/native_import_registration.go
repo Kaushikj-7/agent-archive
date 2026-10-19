@@ -147,7 +147,7 @@ func nativeImportEscapedKeyPossible(raw []byte) bool {
 	if bytes.IndexByte(raw, '\\') < 0 {
 		return false
 	}
-	for start := 0; start < len(raw); start++ {
+	for start := range len(raw) {
 		if raw[start] != '"' || nativeImportQuoteEscaped(raw, start) {
 			continue
 		}

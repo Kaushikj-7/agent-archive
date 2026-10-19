@@ -29,7 +29,7 @@ func explicitNativeImport(args []string, env Env) bool {
 		if !supplied {
 			value, supplied = strings.CutPrefix(arg, "-harness=")
 		}
-		if (arg == "--harness" || arg == "-harness") && i+1 < len(args) {
+		if isHarnessFlag(arg) && i+1 < len(args) {
 			value, supplied = args[i+1], true
 		}
 		if supplied {
@@ -42,14 +42,31 @@ func explicitNativeImport(args []string, env Env) bool {
 	return false
 }
 
+// isHarnessFlag reports whether arg is exactly -harness or --harness.
+func isHarnessFlag(arg string) bool {
+	name, dashed := strings.CutPrefix(arg, "-")
+	return dashed && strings.TrimPrefix(name, "-") == "harness"
+}
+
+// nativeImportStatus is the preview disposition of one historical session.
+type nativeImportStatus string
+
+const (
+	nativeImportSelected    nativeImportStatus = "selected"
+	nativeImportRefused     nativeImportStatus = "refused"
+	nativeImportUnavailable nativeImportStatus = "unavailable"
+	nativeImportFiltered    nativeImportStatus = "filtered"
+	nativeImportDuplicate   nativeImportStatus = "duplicate"
+)
+
 type nativeImportRow struct {
-	Ordinal   int        `json:"entry"`
-	NativeID  string     `json:"-"`
-	OriginalT *time.Time `json:"original_started_at,omitempty"`
-	Project   string     `json:"project"`
-	ProjectID string     `json:"project_id"`
-	Status    string     `json:"status"`
-	Reason    string     `json:"reason,omitempty"`
+	Ordinal   int                `json:"entry"`
+	NativeID  string             `json:"-"`
+	OriginalT *time.Time         `json:"original_started_at,omitempty"`
+	Project   string             `json:"project"`
+	ProjectID string             `json:"project_id"`
+	Status    nativeImportStatus `json:"status"`
+	Reason    string             `json:"reason,omitempty"`
 	selection archive.NativeImportBatchSelection
 	candidate state.NativeImportCandidate
 	ref       agentapi.SourceRef
@@ -103,7 +120,7 @@ func nativeImportBounds(opts backfillCommandOptions, now time.Time) (string, str
 	return bounds[0], bounds[1], nil
 }
 
-func runNativeImportCommand(stdin io.Reader, stdout, stderr io.Writer, env Env, opts backfillCommandOptions) int {
+func runNativeImportCommand(stdin io.Reader, stdout, stderr io.Writer, env Env, opts backfillCommandOptions) (code int) {
 	fail := func(err error) int { terminal.Printf(stderr, "agent-archive: backfill: %v\n", err); return 1 }
 	home, err := env.readHome()
 	if err != nil {
@@ -130,7 +147,11 @@ func runNativeImportCommand(stdin io.Reader, stdout, stderr io.Writer, env Env, 
 	if err != nil {
 		return fail(err)
 	}
-	defer preview.close()
+	defer func() {
+		if err := preview.close(); err != nil {
+			code = fail(err)
+		}
+	}()
 	if err := renderNativeImport(stdout, preview, opts.jsonOut); err != nil {
 		return fail(err)
 	}
@@ -142,7 +163,7 @@ func runNativeImportCommand(stdin io.Reader, stdout, stderr io.Writer, env Env, 
 	}
 	selected := 0
 	for _, row := range preview.Rows {
-		if row.Status == "selected" {
+		if row.Status == nativeImportSelected {
 			selected++
 		}
 	}
@@ -198,7 +219,7 @@ func renderNativeImport(out io.Writer, p nativeImportPreview, jsonOut bool) erro
 		if row.OriginalT != nil {
 			started = row.OriginalT.UTC().Format(time.RFC3339Nano)
 		}
-		terminal.Printf(out, "  entry %d  %s  %s  %s  %s\n", row.Ordinal, started, archive.DisplayLine(row.Project), archive.DisplayLine(row.Status), archive.DisplayLine(row.Reason))
+		terminal.Printf(out, "  entry %d  %s  %s  %s  %s\n", row.Ordinal, started, archive.DisplayLine(row.Project), archive.DisplayLine(string(row.Status)), archive.DisplayLine(row.Reason))
 	}
 	terminal.Printf(out, "Namespace complete: %t. Child coverage: UNAVAILABLE. No descendant completeness is claimed.\n", p.Complete)
 	return nil

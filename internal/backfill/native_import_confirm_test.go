@@ -50,10 +50,20 @@ func nativeImportConfirmationControl(t *testing.T) (*state.Store, Batch, archive
 	return store, b, scope
 }
 
+type confirmationMode string
+
+const (
+	confirmationValid          confirmationMode = "valid"
+	confirmationStale          confirmationMode = "stale"
+	confirmationUnknown        confirmationMode = "unknown"
+	confirmationDuplicate      confirmationMode = "duplicate"
+	confirmationCallerProgress confirmationMode = "caller-progress"
+)
+
 func TestNativeImportConfirmationMintsOnlyExactCurrentOrdinaryControl(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"valid", "stale", "unknown", "duplicate", "caller-progress"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []confirmationMode{confirmationValid, confirmationStale, confirmationUnknown, confirmationDuplicate, confirmationCallerProgress} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			store, b, scope := nativeImportConfirmationControl(t)
 			path := batchPath(store.Home(), b.ID)
@@ -62,11 +72,11 @@ func TestNativeImportConfirmationMintsOnlyExactCurrentOrdinaryControl(t *testing
 				t.Fatal(err)
 			}
 			switch mode {
-			case "unknown":
+			case confirmationUnknown:
 				raw = bytes.Replace(raw, []byte("{"), []byte(`{"future":true,`), 1)
-			case "duplicate":
+			case confirmationDuplicate:
 				raw = bytes.Replace(raw, []byte("{"), []byte(`{"id":"duplicate",`), 1)
-			case "caller-progress":
+			case confirmationCallerProgress:
 				b.Sessions = []string{"unrecorded"}
 			}
 			if err := os.WriteFile(path, raw, 0600); err != nil {
@@ -74,7 +84,7 @@ func TestNativeImportConfirmationMintsOnlyExactCurrentOrdinaryControl(t *testing
 			}
 			sum := sha256.Sum256(raw)
 			expected := hex.EncodeToString(sum[:])
-			if mode == "stale" {
+			if mode == confirmationStale {
 				expected = hex.EncodeToString(make([]byte, 32))
 			}
 			confirmed, err := ConfirmNativeImportBatch(t.Context(), store, b, expected, scope)
@@ -82,7 +92,7 @@ func TestNativeImportConfirmationMintsOnlyExactCurrentOrdinaryControl(t *testing
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
-			if mode != "valid" {
+			if mode != confirmationValid {
 				if err == nil {
 					t.Fatal("unreviewed control confirmed")
 				}

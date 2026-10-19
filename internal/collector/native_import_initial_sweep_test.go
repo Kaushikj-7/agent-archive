@@ -10,9 +10,19 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
+type initialSweepChange string
+
+const (
+	initialSweepInitial            initialSweepChange = "initial"
+	initialSweepFutureReceipt      initialSweepChange = "future-receipt"
+	initialSweepOrphanProgress     initialSweepChange = "orphan-progress"
+	initialSweepMalformedPublished initialSweepChange = "malformed-published"
+	initialSweepChangedOwner       initialSweepChange = "changed-owner"
+)
+
 func TestNativeImportInitialReleaseSweepPreservesStageAndRefusesFalseRelease(t *testing.T) {
-	for _, change := range []string{"initial", "future-receipt", "orphan-progress", "malformed-published", "changed-owner"} {
-		t.Run(change, func(t *testing.T) {
+	for _, change := range []initialSweepChange{initialSweepInitial, initialSweepFutureReceipt, initialSweepOrphanProgress, initialSweepMalformedPublished, initialSweepChangedOwner} {
+		t.Run(string(change), func(t *testing.T) {
 			f := newHistoricalNativeStage(t)
 			id := f.reg.ArchiveSessionID
 			write := func(relative string, raw []byte) {
@@ -26,14 +36,14 @@ func TestNativeImportInitialReleaseSweepPreservesStageAndRefusesFalseRelease(t *
 				}
 			}
 			switch change {
-			case "initial":
-			case "future-receipt":
+			case initialSweepInitial:
+			case initialSweepFutureReceipt:
 				write(filepath.Join("sessions", id, "import-stage", "release.json"), []byte(`{"version":99}`))
-			case "orphan-progress":
+			case initialSweepOrphanProgress:
 				write(filepath.Join("sessions", id, "import-stage", "release-progress.json"), []byte(`{"version":3,"receipt_sha256":"`+strings.Repeat("a", 64)+`","phase":"local-complete"}`))
-			case "malformed-published":
+			case initialSweepMalformedPublished:
 				write(filepath.Join("published", id+".json"), []byte(`{"publication_version":3`))
-			case "changed-owner":
+			case initialSweepChangedOwner:
 				reg := f.reg
 				receipt := *reg.NativeImport
 				receipt.Membership.ReceiptID = strings.Repeat("b", 32)
@@ -53,7 +63,7 @@ func TestNativeImportInitialReleaseSweepPreservesStageAndRefusesFalseRelease(t *
 			if closeResult != nil {
 				defer closeResult()
 			}
-			if change == "initial" {
+			if change == initialSweepInitial {
 				if err != nil || len(holds) != 0 {
 					t.Fatal("initial stage was treated as released publication", err, holds)
 				}

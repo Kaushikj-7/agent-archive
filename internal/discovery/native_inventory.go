@@ -661,39 +661,11 @@ func (l *NativeInventory) acquire(ctx context.Context, directory func(string) (*
 			l.stopped = true
 			return nil
 		}
-		prior := *d
-		priorPages, priorChildren, priorMatches, priorDirectories := len(d.Pages), len(d.Children), len(d.Matches), len(l.progress.Directories)
-		priorOwners := l.progress.Owners
-		d.Generation = g
 		kind := nativeCompletePage
 		if n == 0 {
 			kind = nativeEOF
 		}
-		d.Pages = append(d.Pages, nativePage{Kind: kind, Start: offset, End: next, Names: len(names), Bytes: n})
-		// Work on acquired complete batches only. Do not discard a tail/cookie.
-		children := []nativeDirectory{}
-		for _, name := range names {
-			if nativeChild(d.Path, name) {
-				child := filepath.ToSlash(filepath.Join(d.Path, name))
-				d.Children = append(d.Children, child)
-				children = append(children, nativeDirectory{Path: child})
-			} else if nativeDepth(d.Path) == 3 && (slices.Contains(l.progress.Owners, name) || l.historical && nativeOwner(name)) {
-				d.Matches = append(d.Matches, name)
-			}
-		}
-		l.progress.Directories = append(l.progress.Directories, children...)
-		if l.historical {
-			l.collectImportOwners()
-		}
-		if !l.withinRetainedLimits() {
-			l.counts.UncommittedNames += int64(len(names))
-			prior.Pages = prior.Pages[:priorPages]
-			prior.Children = prior.Children[:priorChildren]
-			prior.Matches = prior.Matches[:priorMatches]
-			l.progress.Directories = l.progress.Directories[:priorDirectories]
-			l.progress.Directories[index] = prior
-			l.progress.Owners = priorOwners
-			l.stopped = true
+		if !l.recordNativePage(index, g, nativePage{Kind: kind, Start: offset, End: next, Names: len(names), Bytes: n}, names) {
 			return nil
 		}
 		if n > 0 {
@@ -701,6 +673,44 @@ func (l *NativeInventory) acquire(ctx context.Context, directory func(string) (*
 		}
 	}
 	return nil
+}
+
+// recordNativePage records one checked page and queues its child directories.
+// It restores the prior entry, stops, and reports false past retained limits.
+func (l *NativeInventory) recordNativePage(index int, g nativeGeneration, page nativePage, names []string) bool {
+	d := &l.progress.Directories[index]
+	prior := *d
+	priorPages, priorChildren, priorMatches, priorDirectories := len(d.Pages), len(d.Children), len(d.Matches), len(l.progress.Directories)
+	priorOwners := l.progress.Owners
+	d.Generation = g
+	d.Pages = append(d.Pages, page)
+	// Work on acquired complete batches only. Do not discard a tail/cookie.
+	children := []nativeDirectory{}
+	for _, name := range names {
+		if nativeChild(d.Path, name) {
+			child := filepath.ToSlash(filepath.Join(d.Path, name))
+			d.Children = append(d.Children, child)
+			children = append(children, nativeDirectory{Path: child})
+		} else if nativeDepth(d.Path) == 3 && (slices.Contains(l.progress.Owners, name) || l.historical && nativeOwner(name)) {
+			d.Matches = append(d.Matches, name)
+		}
+	}
+	l.progress.Directories = append(l.progress.Directories, children...)
+	if l.historical {
+		l.collectImportOwners()
+	}
+	if !l.withinRetainedLimits() {
+		l.counts.UncommittedNames += int64(len(names))
+		prior.Pages = prior.Pages[:priorPages]
+		prior.Children = prior.Children[:priorChildren]
+		prior.Matches = prior.Matches[:priorMatches]
+		l.progress.Directories = l.progress.Directories[:priorDirectories]
+		l.progress.Directories[index] = prior
+		l.progress.Owners = priorOwners
+		l.stopped = true
+		return false
+	}
+	return true
 }
 
 // A checked page may be recorded without further I/O after the work cutoff,

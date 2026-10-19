@@ -35,16 +35,20 @@ type publicImportFilter struct {
 }
 
 func (f *publicImportFilter) LeasedFilterFor(adapter archive.Adapter) bool { return adapter == f }
+
 func (f *publicImportFilter) FilterLeased(ctx context.Context, in agentapi.NativeInput, opts agentapi.FilterContext, budget *agentapi.NativeReadBudget) (archive.FilteredTranscript, func(), error) {
 	f.calls++
 	return f.publicImportBase.FilterLeased(ctx, in, opts, budget)
 }
 
 type publicNativeImportFixture struct {
-	env                         Env
-	home, native, path, project string
-	filter                      *publicImportFilter
-	remote                      *storagetest.MemoryStore
+	env     Env
+	home    string
+	native  string
+	path    string
+	project string
+	filter  *publicImportFilter
+	remote  *storagetest.MemoryStore
 }
 
 func newPublicNativeImportFixture(t *testing.T) publicNativeImportFixture {
@@ -74,12 +78,15 @@ func newPublicNativeImportFixture(t *testing.T) publicNativeImportFixture {
 		t.Fatal(err)
 	}
 	at := time.Now().UTC()
-	cfg := config.Config{MachineID: "machine-1", Storage: credentialsTestConfig(), RetentionDays: 90, Archive: archive.Config{SchemaVersion: 1, MachineID: "machine-1"}}
-	cfg.Harnesses = []string{"claude"}
-	cfg.Archive.Enabled = true
-	cfg.Archive.Projects = []archive.ProjectActivation{{ProjectID: "opaque-muse-project", Root: f.project, Included: true, ActivatedAt: at.Add(-time.Hour)}}
-	cfg.NativeAuthorityProtection = true
-	cfg.NativeRoots = []archive.NativeRoot{{Agent: "muse", Configured: f.native, Canonical: f.native, Revision: "public-import-root"}}
+	cfg := config.Config{
+		MachineID:                 "machine-1",
+		Storage:                   credentialsTestConfig(),
+		RetentionDays:             90,
+		Archive:                   archive.Config{SchemaVersion: 1, MachineID: "machine-1", Enabled: true, Projects: []archive.ProjectActivation{{ProjectID: "opaque-muse-project", Root: f.project, Included: true, ActivatedAt: at.Add(-time.Hour)}}},
+		Harnesses:                 []string{"claude"},
+		NativeAuthorityProtection: true,
+		NativeRoots:               []archive.NativeRoot{{Agent: "muse", Configured: f.native, Canonical: f.native, Revision: "public-import-root"}},
+	}
 	if err := config.Save(f.home, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +173,7 @@ func TestBackfillNativeImportPublicPreviewAndCancelHaveNoEffects(t *testing.T) {
 				Sessions []nativeImportRow `json:"sessions"`
 				Complete bool              `json:"identity_complete"`
 			}
-			if err := json.Unmarshal([]byte(out), &result); err != nil || !result.Complete || len(result.Sessions) != 1 || result.Sessions[0].Ordinal != 1 || result.Sessions[0].NativeID != "" || result.Sessions[0].Status != "selected" || result.Sessions[0].ProjectID != "opaque-muse-project" {
+			if err := json.Unmarshal([]byte(out), &result); err != nil || !result.Complete || len(result.Sessions) != 1 || result.Sessions[0].Ordinal != 1 || result.Sessions[0].NativeID != "" || result.Sessions[0].Status != nativeImportSelected || result.Sessions[0].ProjectID != "opaque-muse-project" {
 				t.Fatal("public JSON selection", result, err, stderr)
 			}
 		}
@@ -313,9 +320,19 @@ func (r *nativeImportAnswer) Read(p []byte) (int, error) {
 	return r.input.Read(p)
 }
 
+// previewChange names what changes between a native import preview and its confirmation.
+type previewChange string
+
+const (
+	previewChangeSource      previewChange = "source"
+	previewChangeDestination previewChange = "destination"
+	previewChangeRoot        previewChange = "root"
+	previewChangeProject     previewChange = "project"
+)
+
 func TestBackfillNativeImportPublicChangedPreviewRefusesConfirmation(t *testing.T) {
-	for _, change := range []string{"source", "destination", "root", "project"} {
-		t.Run(change, func(t *testing.T) {
+	for _, change := range []previewChange{previewChangeSource, previewChangeDestination, previewChangeRoot, previewChangeProject} {
+		t.Run(string(change), func(t *testing.T) {
 			f := newPublicNativeImportFixture(t)
 			f.env.IsTerminal = func(any) bool { return true }
 			f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
@@ -324,7 +341,7 @@ func TestBackfillNativeImportPublicChangedPreviewRefusesConfirmation(t *testing.
 			}
 			var externalConfig []byte
 			answer := &nativeImportAnswer{input: strings.NewReader("yes\n"), before: func() {
-				if change == "source" {
+				if change == previewChangeSource {
 					file, err := os.OpenFile(f.path, os.O_APPEND|os.O_WRONLY, 0600)
 					if err != nil {
 						t.Fatal(err)
@@ -340,11 +357,11 @@ func TestBackfillNativeImportPublicChangedPreviewRefusesConfirmation(t *testing.
 					t.Fatal(err)
 				}
 				switch change {
-				case "destination":
+				case previewChangeDestination:
 					cfg.Storage.Bucket = "other-synthetic-bucket"
-				case "root":
+				case previewChangeRoot:
 					cfg.NativeRoots[0].Revision = "changed-root-revision"
-				case "project":
+				case previewChangeProject:
 					cfg.Archive.Projects[0].Included = false
 				}
 				if err := config.Save(f.home, cfg); err != nil {
