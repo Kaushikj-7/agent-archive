@@ -25,10 +25,11 @@ type NativeImportUndoSession struct {
 	Detached  bool
 }
 
-// NativeImportUndoPlan retains one bounded actual control and owner snapshot.
-// Close releases its read loan; callers cannot construct an executable plan.
+// nativeImportUndoLifetime serializes one plan's close and execution.
 type nativeImportUndoLifetime struct{ mu sync.Mutex }
 
+// NativeImportUndoPlan retains one bounded actual control and owner snapshot.
+// Close releases its read loan; callers cannot construct an executable plan.
 type NativeImportUndoPlan struct {
 	lifetime    *nativeImportUndoLifetime
 	self        *NativeImportUndoPlan
