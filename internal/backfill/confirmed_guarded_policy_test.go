@@ -58,7 +58,7 @@ func TestConfirmedGuardedPolicyRefusalCleansUnlinkedChildren(t *testing.T) {
 
 func guardedHistoricalFixture(t *testing.T) (Registration, Candidate, config.Config, archive.SessionRegistration) {
 	t.Helper()
-	r, c, cfg := stagingFixture(t)
+	r, c, _ := stagingFixture(t)
 	c.Harness = archive.HarnessClaude
 	result, err := r.Run([]Candidate{c})
 	if err != nil || len(result.Sessions) != 1 {
@@ -84,7 +84,7 @@ func guardedHistoricalFixture(t *testing.T) (Registration, Candidate, config.Con
 	if err := SaveBatch(r.Home, Batch{ID: r.Batch, StartedAt: fixedNow, DestinationID: r.DestinationID}); err != nil {
 		t.Fatal(err)
 	}
-	cfg, _, err = config.Load(r.Home)
+	cfg, _, err := config.Load(r.Home)
 	if err != nil {
 		t.Fatal(err)
 	}
