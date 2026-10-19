@@ -30,10 +30,10 @@ OpenAI and Anthropic are constantly one-upping each other for the best model and
 1. **Install:**
 
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 sh
+   curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.2.2/install.sh | AGENT_ARCHIVE_VERSION=v0.2.2 sh
    ```
 
-   Note the published binaries are macOS only.
+   Release binaries cover macOS (Intel and Apple Silicon) and Linux (x86-64 and arm64).
 
 2. **Continue a session in another agent**:
 
