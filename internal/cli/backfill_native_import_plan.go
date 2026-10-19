@@ -147,7 +147,7 @@ func inspectNativeImportRow(ctx context.Context, env Env, store *state.Store, cf
 	}
 	located, err := p.inventory.Locate(ctx, agentapi.LocatorRequest{Purpose: agentapi.LocatorHistoricalImport, NativeID: id, Root: root})
 	if err != nil {
-		return nativeImportRow{NativeID: id, Status: nativeImportRefused, Reason: "current native source/proof unavailable; retry this bounded preview"}, nil
+		return refuseNativeImportRow(nativeImportRow{NativeID: id}, "current native source/proof unavailable; retry this bounded preview")
 	}
 	if located.Status != agentapi.LocatorFound || len(located.Candidates) != 1 {
 		return nativeImportRow{NativeID: id, Status: nativeImportRefused, Reason: "native locator " + string(located.Status)}, nil
@@ -212,8 +212,7 @@ func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg
 		return row, nil
 	}
 	if _, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: id}); err != nil {
-		row.Reason = "existing ownership/index requires recovery"
-		return row, nil
+		return refuseNativeImportRow(row, "existing ownership/index requires recovery")
 	} else if found {
 		row.Status, row.Reason = nativeImportDuplicate, "independent existing owner is preserved"
 		return row, nil
@@ -235,10 +234,16 @@ func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg
 	row.selection = archive.NativeImportBatchSelection{Kind: archive.NativeImportOrdinaryRoot, NativeID: id, OriginalTUTC: row.OriginalT.UTC().Format(time.RFC3339Nano), ProjectID: row.ProjectID, RootFingerprint: fingerprint, RootRevision: root.Revision, BindingSHA256: digest, Source: *binding.Checkpoint}
 	row.candidate = state.NativeImportCandidate{NativeID: id, Root: root, ProjectRoot: row.Project, ProjectID: row.ProjectID}
 	if err := p.inventory.Check(ctx, id, row.token); err != nil {
-		row.Reason = "current native source/proof unavailable; retry this bounded preview"
-		return row, nil
+		return refuseNativeImportRow(row, "current native source/proof unavailable; retry this bounded preview")
 	}
 	row.Status, row.Reason = nativeImportSelected, "ordinary root; child coverage unavailable"
+	return row, nil
+}
+
+// refuseNativeImportRow reports a bounded per-row refusal. The underlying
+// error stays private to the preview and does not fail other rows.
+func refuseNativeImportRow(row nativeImportRow, reason string) (nativeImportRow, error) {
+	row.Status, row.Reason = nativeImportRefused, reason
 	return row, nil
 }
 

@@ -112,29 +112,31 @@ var terminalPackageUses = classifiedCalls{
 // hand): every place agent-archive can ask a question. The comment says what
 // stops the question when interaction is off.
 var promptSites = classifiedCalls{
-	"picker_browse.go":    {"newPrompter": 1},                  // bounded list browser is reached only after browseInteractive, through runListCommand.
-	"purge.go":            {"newPrompter": 1},                  // Exact digest consent is refused when noninteractive unless --yes.
-	"machines_revoke.go":  {"newPrompter": 1},                  // confirmation and token prompt require Env.interactive; --yes/--json never prompt
-	"machines_own_key.go": {"newPrompter": 1},                  // own-key confirmation/token require Env.interactive; --yes uses environment only
-	"pairing_rollout.go":  {"newPrompter": 1},                  // first-run question requires terminal input/output, fresh setup, and Env.interactive
-	"machines_verify.go":  {"newPrompter": 1},                  // readManagementToken prompts only with env.interactive(stdin), without --yes or --json.
-	"issuance.go":         {"newPrompter": 1},                  // reserveSpare builds a nil-input/discard-output prompter for checkKey diagnostics only; it never reads or asks a question. Selection questions use the caller's source prompter behind its interactive gate.
-	"pairing_source.go":   {"newPrompter": 1},                  // source requires interactive input/output unless deliberate --yes; the scripted path never prompts
-	"pairing_receive.go":  {"newPrompter": 2},                  // receiver refuses prompts-off unless --yes; redirected bundle input switches code and review to a checked private terminal
-	"prompt.go":           {"newPrompter": 2, "prompter{}": 1}, // the definition, and typedInput.prompter, which handoff's picker and ambiguous-title chooser ask through (both behind browseInteractive: see handoff_select.go and handoff_title.go)
-	"setup.go":            {"newPrompter": 3},                  // interactive setup, buffered-input handoff, and output-only completion buffer; runSetupCommand requires Env.interactive
-	"setup_review.go":     {"newPrompter": 1},                  // Details is rendered to an output-only buffer; it never reads or asks a question.
-	"setup_flags.go":      {"newPrompter": 1, "prompter{}": 1}, // setup --yes: only reads a secret, guarded in readR2Secret; the literal has no input, it only prints
-	"uninstall.go":        {"newPrompter": 1},                  // runUninstallCommand refuses unless env.interactive(stdin) or --yes
-	"backfill.go":         {"newPrompter": 1},                  // runBackfillCommand refuses unless env.interactive(stdin) or --yes
-	"backfill_review.go":  {"newPrompter": 1},                  // private review requires Env.interactive on both input and output; no noninteractive prompt/export route
-	"backfill_undo.go":    {"newPrompter": 1},                  // runBackfillUndo refuses unless env.interactive(stdin) or --yes
-	"list_browse.go":      {"newPrompter": 1},                  // selectArchivedSession: reached only after browseInteractive
-	"inspect.go":          {"newPrompter": 2},                  // list and show browsers: reached only after browseInteractive
-	"show_resolve.go":     {"newPrompter": 1},                  // the ambiguity picker, after browseInteractive
-	"handoff.go":          {"newPrompter": 1},                  // "Continue in:": offersDestinations requires browseInteractive
-	"handoff_match.go":    {"newPrompter": 1},                  // "Hand off this session?" for a repository-only match: gateRepoMatch refuses without browseInteractive
-	"handoff_worktree.go": {"newPrompter": 1},                  // the active-source y/N/w question: checkActiveSource asks only when env.interactive(stdin) and (stderr)
+	"picker_browse.go":               {"newPrompter": 1},                  // bounded list browser is reached only after browseInteractive, through runListCommand.
+	"purge.go":                       {"newPrompter": 1},                  // Exact digest consent is refused when noninteractive unless --yes.
+	"machines_revoke.go":             {"newPrompter": 1},                  // confirmation and token prompt require Env.interactive; --yes/--json never prompt
+	"machines_own_key.go":            {"newPrompter": 1},                  // own-key confirmation/token require Env.interactive; --yes uses environment only
+	"pairing_rollout.go":             {"newPrompter": 1},                  // first-run question requires terminal input/output, fresh setup, and Env.interactive
+	"machines_verify.go":             {"newPrompter": 1},                  // readManagementToken prompts only with env.interactive(stdin), without --yes or --json.
+	"issuance.go":                    {"newPrompter": 1},                  // reserveSpare builds a nil-input/discard-output prompter for checkKey diagnostics only; it never reads or asks a question. Selection questions use the caller's source prompter behind its interactive gate.
+	"pairing_source.go":              {"newPrompter": 1},                  // source requires interactive input/output unless deliberate --yes; the scripted path never prompts
+	"pairing_receive.go":             {"newPrompter": 2},                  // receiver refuses prompts-off unless --yes; redirected bundle input switches code and review to a checked private terminal
+	"prompt.go":                      {"newPrompter": 2, "prompter{}": 1}, // the definition, and typedInput.prompter, which handoff's picker and ambiguous-title chooser ask through (both behind browseInteractive: see handoff_select.go and handoff_title.go)
+	"setup.go":                       {"newPrompter": 3},                  // interactive setup, buffered-input handoff, and output-only completion buffer; runSetupCommand requires Env.interactive
+	"setup_review.go":                {"newPrompter": 1},                  // Details is rendered to an output-only buffer; it never reads or asks a question.
+	"setup_flags.go":                 {"newPrompter": 1, "prompter{}": 1}, // setup --yes: only reads a secret, guarded in readR2Secret; the literal has no input, it only prints
+	"uninstall.go":                   {"newPrompter": 1},                  // runUninstallCommand refuses unless env.interactive(stdin) or --yes
+	"backfill.go":                    {"newPrompter": 1},                  // runBackfillCommand refuses unless env.interactive(stdin) or --yes
+	"backfill_review.go":             {"newPrompter": 1},                  // private review requires Env.interactive on both input and output; no noninteractive prompt/export route
+	"backfill_undo.go":               {"newPrompter": 1},                  // runBackfillUndo refuses unless env.interactive(stdin) or --yes
+	"backfill_native_import.go":      {"newPrompter": 1},                  // runNativeImportCommand refuses a confirmation unless env.interactive(stdin), --yes or --dry-run
+	"backfill_native_import_undo.go": {"newPrompter": 1},                  // native batch undo refuses unless env.interactive(stdin) or --yes
+	"list_browse.go":                 {"newPrompter": 1},                  // selectArchivedSession: reached only after browseInteractive
+	"inspect.go":                     {"newPrompter": 2},                  // list and show browsers: reached only after browseInteractive
+	"show_resolve.go":                {"newPrompter": 1},                  // the ambiguity picker, after browseInteractive
+	"handoff.go":                     {"newPrompter": 1},                  // "Continue in:": offersDestinations requires browseInteractive
+	"handoff_match.go":               {"newPrompter": 1},                  // "Hand off this session?" for a repository-only match: gateRepoMatch refuses without browseInteractive
+	"handoff_worktree.go":            {"newPrompter": 1},                  // the active-source y/N/w question: checkActiveSource asks only when env.interactive(stdin) and (stderr)
 }
 
 // inputReads are the ways a command reads a stream it was handed, other than

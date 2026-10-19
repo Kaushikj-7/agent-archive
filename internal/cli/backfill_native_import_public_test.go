@@ -357,6 +357,7 @@ func TestBackfillNativeImportPublicChangedPreviewRefusesConfirmation(t *testing.
 					t.Fatal(err)
 				}
 				switch change {
+				case previewChangeSource:
 				case previewChangeDestination:
 					cfg.Storage.Bucket = "other-synthetic-bucket"
 				case previewChangeRoot:

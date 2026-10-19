@@ -136,6 +136,7 @@ func historicalReleaseFrontier(t *testing.T, phase releaseFrontierPhase) histori
 		t.Fatal("actual completed/initial controls absent")
 	}
 	switch phase {
+	case frontierReleased:
 	case frontierAck:
 		complete[receipt], complete[progress] = nil, nil
 	case frontierReceipt:

@@ -63,7 +63,7 @@ func TestAtomicWritePreverifiedWitnessStrongIdentityAndLifetime(t *testing.T) {
 					t.Fatal("second verification acquired a fresh rename")
 				}
 				switch mode {
-				case preverifiedValid:
+				case preverifiedValid, preverifiedOmitted:
 				case preverifiedCancel:
 					cancel()
 				case preverifiedReplace:

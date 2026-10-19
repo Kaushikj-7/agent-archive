@@ -72,6 +72,7 @@ func TestNativeImportConfirmationMintsOnlyExactCurrentOrdinaryControl(t *testing
 				t.Fatal(err)
 			}
 			switch mode {
+			case confirmationValid, confirmationStale:
 			case confirmationUnknown:
 				raw = bytes.Replace(raw, []byte("{"), []byte(`{"future":true,`), 1)
 			case confirmationDuplicate:
