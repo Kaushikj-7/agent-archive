@@ -21,6 +21,10 @@ import (
 func TestImportFullConsumersAcquireStageNamesOnce(t *testing.T) {
 	for _, count := range []int{5000, 50000} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			if testing.Short() && count == 50000 {
+				t.Skip("full 50000-directory sparse recovery/reconciliation/undo NOT RUN in short mode")
+			}
+			constructStarted := time.Now()
 			r, candidate, _ := stagingFixture(t)
 			r.AfterStage = func(string) error { return errors.New("synthetic interruption") }
 			if _, err := r.Run([]Candidate{candidate}); err == nil {
@@ -36,6 +40,7 @@ func TestImportFullConsumersAcquireStageNamesOnce(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			t.Logf("physical sparse fixture directories=%d construction_elapsed=%s", count, time.Since(constructStarted))
 			if err := os.Remove(candidate.TranscriptPath); err != nil {
 				t.Fatal(err)
 			}

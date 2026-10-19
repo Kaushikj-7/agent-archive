@@ -19,6 +19,7 @@ import (
 // These are physical synthetic files/directories, not a virtual entry count.
 func TestDurableCensusCompletesCombinedRoots(t *testing.T) {
 	t.Log("begin physical synthetic combined-root fixture construction")
+	constructStarted := time.Now()
 	s := newTestStore(t)
 	reg := registration(t)
 	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "test", AdapterVersion: "test-v1", FilterVersion: archive.FilterVersion, CapturedAt: reg.RegisteredAt}}
@@ -62,8 +63,18 @@ func TestDurableCensusCompletesCombinedRoots(t *testing.T) {
 	}
 	t.Log("small identical SaveImportSourceSet -> LoadImportStage positive control PASS; exact selected bundle/digest")
 	settledBytes := int64(0)
-	for i := range durableEntryLimit / 2 {
+	// Exercise more than one publication batch without repeatedly decoding
+	// thousands of equivalent peers in every independent quota assertion.
+	// Empty settled session directories still count toward the same shared
+	// inventory boundary, so the actual writer retains the former limit trigger.
+	const peers = durableDirectoryBatch
+	for i := range peers {
 		settledBytes += seedPeer(s, fmt.Sprintf("settled-%05d", i))
+	}
+	for i := range durableEntryLimit - 2*peers {
+		if err := os.MkdirAll(filepath.Join(s.home, "sessions", fmt.Sprintf("empty-%05d", i)), 0700); err != nil {
+			t.Fatal(err)
+		}
 	}
 	physicalPublished, err := os.ReadDir(filepath.Join(s.home, "published"))
 	if err != nil {
@@ -73,17 +84,21 @@ func TestDurableCensusCompletesCombinedRoots(t *testing.T) {
 	if err != nil {
 		t.Fatal("physical fixture session enumeration", err)
 	}
-	if len(physicalPublished) != durableEntryLimit/2+1 || len(physicalSessions) != durableEntryLimit/2 {
+	if len(physicalPublished) != peers+1 || len(physicalSessions) != durableEntryLimit-peers {
 		t.Fatal("physical fixture did not cross combined entry window", len(physicalPublished), len(physicalSessions))
 	}
-	t.Logf("physical fixture complete: published=%d sessions=%d combined=%d; begin actual SaveImportSourceSet", len(physicalPublished), len(physicalSessions), len(physicalPublished)+len(physicalSessions))
+	t.Logf("physical fixture complete: published=%d sessions=%d combined=%d construction_elapsed=%s; begin actual SaveImportSourceSet", len(physicalPublished), len(physicalSessions), len(physicalPublished)+len(physicalSessions), time.Since(constructStarted))
 	started := time.Now()
 	digest, err := s.SaveImportSourceSet(t.Context(), reg, bundle, nil, config.SkillEvidenceNone)
 	if err != nil {
 		t.Fatal("supported stage beyond combined entry window", err)
 	}
-	t.Logf("physical combined inventory: published=%d session_directories=%d supported_save_elapsed=%s legacy_wire_bytes=%d", durableEntryLimit/2+1, durableEntryLimit/2+1, time.Since(started), settledBytes)
+	t.Logf("physical combined inventory: published=%d session_directories=%d supported_save_elapsed=%s legacy_wire_bytes=%d", len(physicalPublished), len(physicalSessions)+1, time.Since(started), settledBytes)
 	reg.StagedImportSHA256 = digest
+	selected, selectedFound, err = s.LoadImportStage(t.Context(), reg)
+	if err != nil || !selectedFound || selected.SHA256 != digest || !reflect.DeepEqual(selected.Bundle, bundle) {
+		t.Fatal("large combined inventory selected stage/digest readback", selectedFound, err)
+	}
 	stagePath := filepath.Join(s.home, importStageRelative(reg.ArchiveSessionID))
 	info, err := os.Stat(stagePath)
 	if err != nil {

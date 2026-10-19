@@ -251,6 +251,11 @@ million-record related-history limit. Confirmed backfill runs its actual mixed
 3/17-session import, publication and readback cases in short mode; daily,
 weekly and exact-commit candidate runs also restore the unchanged 513-session
 case. A short pass records the full 513-session body as NOT RUN.
+The sparse staged-import traversal test runs all three actual consumers over
+5,000 physical session directories in short mode; daily, weekly and exact-commit
+candidate runs restore the unchanged 50,000-directory body. Short evidence marks
+that full body as **NOT RUN**. These content-free directory fixtures do not
+qualify full native-session throughput.
 The small cached-prefix history test pins
 aggregate refusal/release/retry; it does not prove million-record physical
 streaming. Metadata 16384, retained warm sources 2000 and physical/indexed

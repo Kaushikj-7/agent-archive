@@ -4,6 +4,17 @@
   "weekly_cron": "17 8 * * 0",
   "restorations": [
     {
+      "package": "internal/backfill",
+      "test": "TestImportFullConsumersAcquireStageNamesOnce",
+      "restore": "daily",
+      "pr": "all three actual 5000-directory sparse consumers; full 50000-directory body NOT RUN",
+      "full_children": [
+        "5000",
+        "50000"
+      ],
+      "full_fixture": "5000 and50000 physical sparse session directories; actual full recovery, batch reconciliation and legacy undo each acquire names once, without native-session throughput qualification"
+    },
+    {
       "package": "internal/archive",
       "test": "TestFitStagesNeverGrowWithThePrefix",
       "restore": "weekly",
