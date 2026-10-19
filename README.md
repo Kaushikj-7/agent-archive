@@ -7,7 +7,7 @@
 
 Continue a Claude Code session in Codex, or vice-versa. You can pick a session and bring its conversation context into another coding agent. Add your own S3 or R2 bucket for automatic backups and access from other machines.
 
-OpenAI and Anthropic are constantly one-upping each other for the best model and harness, but it's a pain to switch between their coding agents, especially if you have multiple computers and accounts. You lose your conversation history as you switch and then have to search in multiple places to figure out where you working on something. You also can't introspect your sessions as easily.
+OpenAI and Anthropic are constantly one-upping each other for the best model and harness, but it's a pain to switch between their coding agents, especially if you have multiple computers and accounts. You lose your conversation history as you switch and then have to search in multiple places to figure out where you were working on something. You also can't introspect your sessions as easily.
 
 `agent-archive` solves these problems, and can perform the following:
 
@@ -49,7 +49,7 @@ OpenAI and Anthropic are constantly one-upping each other for the best model and
    agent-archive setup
    ```
 
-  Connect your own S3 or R2 bucket if you want your sessions backed up and available from another computer.
+   Connect your own S3 or R2 bucket if you want your sessions backed up and available from another computer.
 
 
 [Setup guide](docs/getting-started/setup.md) · [Bucket options](docs/getting-started/bucket.md) · [Platforms](docs/getting-started/install.md#platforms) · [Privacy](docs/security/privacy.md) · [Multiple machines](docs/guides/multiple-machines.md)
