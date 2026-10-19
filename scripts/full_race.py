@@ -116,6 +116,12 @@ def coverage(text, package_map, selected, body_evidence):
     return actual
 
 
+def plain_owned(restorations):
+    """Restored children a separate plain invocation owns instead of the race run."""
+    return {('github.com/wangjohn/agent-archive/' + e['package'], e['test']): e['plain_children']
+            for e in restorations if e.get('plain_children')}
+
+
 def verify(directory, report, patterns, root, body_evidence, verify_selected, restorations):
     """Recompute discovery, canonical argv, exhaustive assignment and raw coverage."""
     value = report.get('full_schedule')
@@ -160,7 +166,7 @@ def verify(directory, report, patterns, root, body_evidence, verify_selected, re
                 raise shards.Failure('required restoration absent from compiled discovery')
             required.setdefault(pkg, []).append(entry['test'])
             children[(pkg, entry['test'])] = entry.get('full_children', [])
-    verify_selected(all_actual, required, children)
+    verify_selected(all_actual, required, children, plain_owned=plain_owned(restorations))
 
 
 def run(patterns, out, deadline, report, persist, checked, execute_batch, root, body_evidence, verify_selected, restorations):

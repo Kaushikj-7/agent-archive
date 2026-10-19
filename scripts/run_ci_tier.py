@@ -38,8 +38,39 @@ def catalog():
         if (key in seen or not re.fullmatch(r'internal/[\w/-]+', key[0])
                 or not re.fullmatch(r'Test\w+', key[1]) or item['restore'] not in ('daily', 'weekly')):
             raise Failure('invalid or duplicate restoration')
+        plain = item.get('plain_children', [])
+        if not set(plain) <= set(item.get('full_children', [])) or len(set(plain)) != len(plain):
+            raise Failure('plain restoration child is not a declared full child')
         seen.add(key)
+    if len({item['package'] for item in value['restorations'] if item.get('plain_children')}) > 1:
+        raise Failure('plain restorations must share one package')
     return value
+
+
+# Restored children listed in plain_children skip under the race detector with
+# exactly this reason, and one plain invocation must pass each of them.
+PLAIN_RESTORATION_SKIP = 'full-scale body owned by the plain restoration run; race body NOT RUN'
+
+
+def plain_restoration():
+    """Return the plain command, selected parents and required children, or None."""
+    entries = [e for e in catalog()['restorations'] if e.get('plain_children')]
+    if not entries:
+        return None
+    relative = entries[0]['package']
+    names = sorted(e['test'] for e in entries)
+    children = sorted({c for e in entries for c in e['plain_children']})
+    pattern = ('^(' + '|'.join(re.escape(n) for n in names) + ')$/^('
+               + '|'.join(re.escape(c) for c in children) + ')$')
+    command = ['go', 'test', '-count=1', '-json', '-timeout', '20m', '-run', pattern, './' + relative]
+    return (command, {MODULE + relative: names},
+            {(MODULE + e['package'], e['test']): e['plain_children'] for e in entries})
+
+
+def race_skipped():
+    """Restored children whose race body may record the plain-owned skip."""
+    plain = plain_restoration()
+    return plain[2] if plain else {}
 
 
 def resolve(event, ref='', schedule='', suite='all'):
@@ -318,6 +349,40 @@ def prepare_performance(out, deadline, env, expected_source):
             'parallel': 2, 'completed': True}
 
 
+def required_plain_restoration(packages=None):
+    """The plain restoration, when its package is in the run (None means always)."""
+    plain = plain_restoration()
+    if plain and (packages is None or set(plain[1]) <= set(packages)):
+        return plain
+    return None
+
+
+def execute_plain_restoration(execute, packages=None):
+    """Run restored children that skip under the race detector without it."""
+    plain = required_plain_restoration(packages)
+    if plain:
+        command, selected, children = plain
+        execute(command, 'plain-restoration', selected=selected, children=children)
+
+
+def verify_plain_restoration(directory, invocations, packages):
+    """Require the exact plain invocation to pass every plain-owned child."""
+    plain = required_plain_restoration(packages)
+    receipts = [i for i in invocations if i['log'] == 'plain-restoration.jsonl']
+    if plain is None:
+        if receipts:
+            raise Failure('unexpected plain restoration invocation')
+        return
+    command, selected, children = plain
+    if (len(receipts) != 1 or receipts[0]['command'] != command
+            or receipts[0].get('performance_enabled') is not False
+            or receipts[0].get('real_systemd_enabled') is not False):
+        raise Failure('plain restoration invocation missing or weakened')
+    text = (directory/'plain-restoration.jsonl').read_text()
+    verify_pr_stream(text, selected)
+    verify_selected(body_evidence(text, False)['actual'], selected, children)
+
+
 def expected_real_manager_skip(record):
     """One fake-manager case is unrepresentable on the actual user manager."""
     name = 'TestRealUserManagerConformance/UnreadableAndAbsentDefinitions'
@@ -334,17 +399,28 @@ def expected_real_manager_skip(record):
         lines[0]) is not None
 
 
-def verify_selected(actual, selected, children=None, real_manager=False):
+def verify_selected(actual, selected, children=None, real_manager=False, plain_owned=None):
+    """plain_owned maps a parent to children a plain invocation must pass instead."""
     passed = {(r['package'], r['test']) for r in actual if r['status'] == 'pass'}
+    def owned_skip(r):
+        child = r['test'].split('/', 1)[1] if '/' in r['test'] else None
+        if r['status'] != 'skip' or child not in (plain_owned or {}).get((r['package'], r['test'].split('/')[0]), []):
+            return False
+        # Go's own run/skip frames aside, the ownership diagnostic must be the only reason.
+        lines = [line for line in r.get('reason', '').splitlines()
+                 if line != '=== RUN   '+r['test']
+                 and not re.fullmatch(r'--- SKIP: '+re.escape(r['test'])+r' \([0-9.]+s\)', line)]
+        return len(lines) == 1 and re.fullmatch(r'\s*\w+\.go:\d+: '+re.escape(PLAIN_RESTORATION_SKIP), lines[0]) is not None
+    deferred = {(r['package'], r['test']) for r in actual if owned_skip(r)}
     for pkg, names in selected.items():
         for name in names:
             if (pkg, name) not in passed:
                 raise Failure('selected full body did not pass: '+pkg+'/'+name)
-            if any(r['status'] != 'pass' and not (real_manager and expected_real_manager_skip(r))
+            if any(r['status'] != 'pass' and not (real_manager and expected_real_manager_skip(r)) and not owned_skip(r)
                    for r in actual if r['package'] == pkg and (r['test'] == name or r['test'].startswith(name+'/'))):
                 raise Failure('selected full body skipped a child')
             for child in (children or {}).get((pkg, name), []):
-                if (pkg, name+'/'+child) not in passed:
+                if (pkg, name+'/'+child) not in passed | deferred:
                     raise Failure('required full-scale child missing')
 
 
@@ -761,7 +837,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
         # Native smoke owns its two actual checkpoints around all commands.
         # Avoid adding redundant whole-repository scans outside that boundary.
         report['source_proof'] = None if suite == 'macos' else full_race.source_proof(ROOT)
-    def execute(command, name, short=False, selected=None, children=None, env=None, real_manager=False):
+    def execute(command, name, short=False, selected=None, children=None, env=None, real_manager=False, plain_owned=None):
         if env is None:
             env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
             env.pop('AGENT_ARCHIVE_PERF', None)
@@ -777,7 +853,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
         if selected:
             if tier == 'pr' or command == SOURCE_AUDIT_COMMAND:
                 verify_pr_stream(text, selected)
-            verify_selected(proof['actual'], selected, children, real_manager=real_manager)
+            verify_selected(proof['actual'], selected, children, real_manager=real_manager, plain_owned=plain_owned)
         invocation['evidence'] = proof
         path.write_text(json.dumps(report, indent=2)+'\n')
     def execute_full_batch(batch):
@@ -854,13 +930,16 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
                 if not set(names) <= set(listing.get(pkg, [])):
                     raise Failure('daily restoration absent from discovery')
                 pattern = '^('+'|'.join(re.escape(n) for n in names)+')$'
-                execute(common+['-run', pattern, './'+pkg[len(MODULE):]], 'medium-'+pkg.rsplit('/',1)[1], selected={pkg:names}, children=children)
+                execute(common+['-run', pattern, './'+pkg[len(MODULE):]], 'medium-'+pkg.rsplit('/',1)[1], selected={pkg:names}, children=children,
+                        plain_owned=race_skipped())
+            execute_plain_restoration(execute)
         if tier == 'full' and packages:
             performance_env = dict(os.environ, AGENT_ARCHIVE_PERF='1', AGENT_ARCHIVE_REAL_SYSTEMD='0')
             report['performance_compile'] = prepare_performance(
                 out, deadline, performance_env, report['full_schedule']['source_proof'])
             path.write_text(json.dumps(report, indent=2)+'\n')
             execute(PERFORMANCE, 'performance', env=performance_env)
+            execute_plain_restoration(execute, report['full_schedule']['packages'])
     if suite == 'macos' and tier in ('daily', 'full'):
         execute(['bash','scripts/test_published_writer.sh'],'published-writer', selected={MODULE+'internal/config':['TestPublishedWriterRefusesProtectedConfiguration']})
     if suite == 'fuzz' or suite == 'extra' and extras['fuzz']:
@@ -956,6 +1035,10 @@ def verify_full(directory, plan, expected_suite=None):
     allowed = {f'race-{n}.jsonl': cmd for n, cmd in enumerate(report.get('full_schedule', {}).get('commands', []))}
     if expected_packages:
         allowed['performance.jsonl'] = PERFORMANCE
+        plain = required_plain_restoration(report['full_schedule']['packages'])
+        if plain:
+            allowed['plain-restoration.jsonl'] = plain[0]
+        verify_plain_restoration(directory, report['invocations'], report['full_schedule']['packages'])
     if report.get('suite') == 'macos':
         allowed['published-writer.jsonl'] = ['bash', 'scripts/test_published_writer.sh']
         selected = {MODULE+'internal/config': ['TestPublishedWriterRefusesProtectedConfiguration']}
