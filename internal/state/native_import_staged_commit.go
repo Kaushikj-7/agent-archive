@@ -66,8 +66,8 @@ func (s *Store) nativeImportStagedCommit(ctx context.Context, id string, candida
 		if err != nil {
 			return err
 		}
-		defer held.Close()
-		return commit(held)
+		err = commit(held)
+		return errors.Join(err, held.Close())
 	}, nil
 }
 
@@ -139,6 +139,7 @@ func (s *Store) nativeImportStagedCandidate(ctx context.Context, id string, cand
 	var metadata []byte
 	if candidate != nil {
 		if candidate.ValidateReadySlot(id) != nil {
+			//lint:ignore nilerr a pending file outside this ready slot is not a staged candidate; the caller keeps its ordinary path
 			return nil, nil, false, nil
 		}
 		if err := s.validateStagedSelection(ctx, *candidate); err != nil {

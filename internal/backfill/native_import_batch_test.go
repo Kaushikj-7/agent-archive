@@ -55,6 +55,7 @@ func TestNativeImportBatchOrdinaryWireUnchanged(t *testing.T) {
 	}
 }
 
+//lint:ignore tparallel the test is parallel, but its subtests share one home and batch file, in order
 func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -78,14 +79,14 @@ func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 		"destination": func(b *Batch) { b.DestinationID += "other" },
 		"started":     func(b *Batch) { b.StartedAt = b.StartedAt.Add(time.Second) },
 		"scope": func(b *Batch) {
-			copy := *b.NativeImport
-			copy.ScopeSHA256 = strings.Repeat("f", 64)
-			b.NativeImport = &copy
+			confirmation := *b.NativeImport
+			confirmation.ScopeSHA256 = strings.Repeat("f", 64)
+			b.NativeImport = &confirmation
 		},
 		"instance": func(b *Batch) {
-			copy := *b.NativeImport
-			copy.Instance = strings.Repeat("f", 32)
-			b.NativeImport = &copy
+			confirmation := *b.NativeImport
+			confirmation.Instance = strings.Repeat("f", 32)
+			b.NativeImport = &confirmation
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -116,6 +117,7 @@ func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 	}
 }
 
+//lint:ignore tparallel the test is parallel, but its subtests share one home and batch file, in order
 func TestNativeImportBatchUnreadableAuthorityPreventsFallback(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()

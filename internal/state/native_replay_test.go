@@ -64,7 +64,11 @@ func TestNativeReplayPreparedPolicyRequiresStrongerCurrentFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer prepared.Close()
+	defer func() {
+		if err := prepared.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	// Current codec deliberately refuses replay candidates. Exercise the shared
 	// prepared policy directly so the future consumer cannot bypass this fence.
 	prepared.candidate.Intent.Replay = &archive.Replay{}

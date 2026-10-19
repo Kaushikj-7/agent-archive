@@ -302,7 +302,7 @@ func generationRecoveryBuilder(ctx context.Context, owner *sessionScan, filtered
 
 func (s *sessionScan) retainedOnlyAuthority() error {
 	if s.reg.NativeImport != nil {
-		return s.published.ValidateNativeImportAuthority(s.reg)
+		return s.published.ValidateNativeImportAuthority(s.ctx, s.reg)
 	}
 	if s.reg.HistoricalProject != nil {
 		return s.reg.ValidateHistoricalProject()

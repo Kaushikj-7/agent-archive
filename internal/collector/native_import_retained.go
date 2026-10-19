@@ -15,7 +15,7 @@ func (s *sessionScan) importStageActive() bool {
 func (s *sessionScan) validateNativeImportRetained() error {
 	s.releasedHistoricalImport = false
 	if s.reg.NativeImport != nil && s.hasRetainedPublication() {
-		active, err := s.published.NativeImportStageActive(s.reg)
+		active, err := s.published.NativeImportStageActive(s.ctx, s.reg)
 		if err != nil {
 			return err
 		}

@@ -303,7 +303,7 @@ func assertInterruptedNativeImportLocalRead(t *testing.T, f historicalNativeStag
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := published.ValidateNativeImportAuthority(f.reg); err == nil {
+	if err := published.ValidateNativeImportAuthority(t.Context(), f.reg); err == nil {
 		t.Fatal("local-read exception granted released publication authority")
 	}
 	// Exact persisted ACK reads retain their authority when the configured

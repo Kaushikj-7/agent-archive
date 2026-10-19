@@ -294,7 +294,7 @@ func (s *Store) generationRecoveryOriginal(id string) (archive.SessionRegistrati
 // ResumeGenerationRecoveries replays interrupted local transitions before any
 // census, admission replay or storage work. Caller owns collector.lock.
 func (s *Store) ResumeGenerationRecoveries(ctx context.Context) error {
-	if err := s.CheckDurableReadRoots(); err != nil {
+	if _, err := s.inspectDurableReadRoots(ctx); err != nil {
 		return err
 	}
 	files, err := os.ReadDir(filepath.Join(s.home, generationRecoveryDir))

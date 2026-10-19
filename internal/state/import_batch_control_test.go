@@ -115,32 +115,45 @@ func TestNativeImportBatchReplacementRechecksAfterPreparation(t *testing.T) {
 	}
 }
 
+// importLockFixture names how a lock file is altered before inspection.
+type importLockFixture string
+
+const (
+	importLockValid     importLockFixture = "valid"
+	importLockName      importLockFixture = "name"
+	importLockContent   importLockFixture = "content"
+	importLockDirectory importLockFixture = "directory"
+	importLockSymlink   importLockFixture = "symlink"
+)
+
 func TestNativeImportBatchLockInspectionRefusesUnknownContent(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"valid", "name", "content", "directory", "symlink"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []importLockFixture{importLockValid, importLockName, importLockContent, importLockDirectory, importLockSymlink} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
 			home := privateBatchTestHome(t)
 			if err := WithImportBatchLock(t.Context(), home, "2026-10-17-1", func(*local.RootedHome) error { return nil }); err != nil {
 				t.Fatal(err)
 			}
 			name := filepath.Join(home, importLocksDirectory, "2026-10-17-1.lock")
 			switch mode {
-			case "name":
+			case importLockValid:
+			case importLockName:
 				if err := os.Rename(name, filepath.Join(home, importLocksDirectory, "future.lock")); err != nil {
 					t.Fatal(err)
 				}
-			case "content":
+			case importLockContent:
 				if err := os.WriteFile(name, []byte("authority"), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "directory":
+			case importLockDirectory:
 				if err := os.Remove(name); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Mkdir(name, 0700); err != nil {
 					t.Fatal(err)
 				}
-			case "symlink":
+			case importLockSymlink:
 				if err := os.Remove(name); err != nil {
 					t.Fatal(err)
 				}
@@ -152,13 +165,17 @@ func TestNativeImportBatchLockInspectionRefusesUnknownContent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer held.Close()
+			defer func() {
+				if err := held.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			remaining := durableEntryLimit
 			err = inspectImportLocks(t.Context(), held, &remaining)
-			if (err == nil) != (mode == "valid") {
+			if (err == nil) != (mode == importLockValid) {
 				t.Fatalf("inspection %s: %v", mode, err)
 			}
-			if mode == "valid" && remaining != durableEntryLimit-1 {
+			if mode == importLockValid && remaining != durableEntryLimit-1 {
 				t.Fatal("lock entry was not charged")
 			}
 		})

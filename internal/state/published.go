@@ -515,7 +515,7 @@ func (p *Published) writeWithStaged(next publishedState, staged *PendingPublicat
 		// The commit has settled: its digests, not a second and third copy of
 		// the uploaded source, are what later passes and recovery compare.
 		next = releaseSettledInline(next)
-		if err := p.store.validateSelectingPublishedBudgeted(next); err != nil {
+		if err := p.store.validateSelectingPublishedBudgeted(p.store.durableContext(), next); err != nil {
 			return err
 		}
 		writeErr = config.WithPublicationComposition(p.store.home, func(g config.PublicationCompositionGuard) error {

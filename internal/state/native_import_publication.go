@@ -97,7 +97,7 @@ func (s *Store) nativeImportPublicationState(ctx context.Context, id string, tar
 	if err != nil {
 		return fail(fmt.Errorf("load historical selecting publication: %w", err))
 	}
-	if err := published.ValidateNativeImportAuthority(reg); err != nil {
+	if err := published.ValidateNativeImportAuthority(ctx, reg); err != nil {
 		return fail(fmt.Errorf("validate historical released lineage: %w", err))
 	}
 	currentMetadata := readySHA(published.state.MetadataBytes)

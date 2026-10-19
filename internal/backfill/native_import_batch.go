@@ -49,7 +49,7 @@ func readBatch(path string, b *Batch) (err error) {
 	return decodeBatch(raw, b)
 }
 
-func (b Batch) nativeImportControl() archive.NativeImportBatchControl {
+func (b *Batch) nativeImportControl() archive.NativeImportBatchControl {
 	return archive.NativeImportBatchControl{ID: b.ID, StartedAt: b.StartedAt, CompletedAt: b.CompletedAt, Filters: archive.ImportBatchFilters(b.Filters), DestinationID: b.DestinationID, UndoneAt: b.UndoneAt, NativeImport: b.NativeImport}
 }
 
