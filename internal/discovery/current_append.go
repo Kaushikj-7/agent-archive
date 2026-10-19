@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
-	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
 // indexAppendProof retains content-free validation of the initial native main
@@ -29,8 +28,8 @@ type indexAppendProof struct {
 
 // appendCurrentIndex validates the same generation and unchanged initial main,
 // then applies only newly committed frames to the existing private projection.
-// The caller closes SQLite first and poisons this view on any failure. Native
-// SQLite/WAL/SHM files are only read through confined regular-file handles.
+// The caller closes SQLite first and discards an interrupted view; other failures
+// poison it. Native SQLite/WAL/SHM files are only read through confined handles.
 func appendCurrentIndex(ctx context.Context, root string, p *privateIndex, budget *agentapi.NativeReadBudget) error {
 	reservation := budget.Reservation()
 	if err := ctx.Err(); err != nil {
@@ -49,7 +48,7 @@ func appendCurrentIndex(ctx context.Context, root string, p *privateIndex, budge
 	if !sameIndexFile(mainPath, proof.main, true) {
 		return errIndexChanged
 	}
-	wal, header, info, err := openSnapshotWAL(root, mainPath+"-wal")
+	wal, header, info, err := openSnapshotWAL(ctx, root, mainPath+"-wal")
 	if err != nil {
 		return err
 	}
@@ -73,7 +72,7 @@ func appendCurrentIndex(ctx context.Context, root string, p *privateIndex, budge
 	if err != nil || end < proof.end || pageSize != proof.pageSize || sha256.Sum256(raw[:proof.end]) != proof.prefixHash {
 		return errIndexChanged
 	}
-	main, err := sourcefacts.OpenRegular(root, mainPath)
+	main, err := nativeOpenRegular(ctx, root, mainPath)
 	if err != nil {
 		return err
 	}
@@ -88,7 +87,7 @@ func appendCurrentIndex(ctx context.Context, root string, p *privateIndex, budge
 	if err := verifyIndexPrefix(ctx, wal, mainPath+"-wal", info, raw[:end], &metrics); err != nil {
 		return err
 	}
-	if err := verifyIndexGeneration(mainPath, proof.main, wal, info, header, &metrics); err != nil {
+	if err := verifyIndexGeneration(ctx, mainPath, proof.main, wal, info, header, &metrics); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -118,9 +117,12 @@ func verifyIndexHash(ctx context.Context, file *os.File, size int64, expected [3
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		n, err := file.ReadAt(scratch[:min(int64(len(scratch)), size-offset)], offset)
+		n, err := nativeReadAt(ctx, file, scratch[:min(int64(len(scratch)), size-offset)], offset)
 		metrics.NativeBytes += int64(n)
 		metrics.NativeReads++
+		if nativeInterrupted(err) {
+			return err
+		}
 		if err != nil && !errors.Is(err, io.EOF) || n == 0 {
 			return errIndexChanged
 		}
@@ -152,7 +154,7 @@ func writeAppendFrames(ctx context.Context, path string, raw []byte, start, end 
 		if page > pages {
 			continue
 		}
-		n, err := file.WriteAt(raw[offset+24:offset+24+pageSize], int64(page-1)*int64(pageSize))
+		n, err := nativeWriteAt(ctx, file, raw[offset+24:offset+24+pageSize], int64(page-1)*int64(pageSize))
 		metrics.PrivateBytes += int64(n)
 		metrics.PrivateWrites++
 		if err != nil {
@@ -162,5 +164,5 @@ func writeAppendFrames(ctx context.Context, path string, raw []byte, start, end 
 			return io.ErrShortWrite
 		}
 	}
-	return file.Truncate(size)
+	return nativeUnit(ctx, func(context.Context) error { return file.Truncate(size) })
 }

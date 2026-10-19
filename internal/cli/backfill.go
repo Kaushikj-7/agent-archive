@@ -113,6 +113,9 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	// temporary folder goes first, whatever this command is (history, undo,
 	// and --dry-run included). A copy in use is never removed.
 	cursorstore.RemoveStaleSnapshots()
+	if len(args) > 0 && args[0] == "review-projects" {
+		return runBackfillReviewProjects(args[1:], stdin, stdout, stderr, env)
+	}
 	if len(args) > 0 && args[0] == "projects" {
 		return runBackfillProjects(args[1:], stdout, stderr, env)
 	}
@@ -354,7 +357,7 @@ func reportBackfillPlan(env Env, stdout, stderr io.Writer, home string, cfg conf
 		terminal.Println(stdout)
 		backfill.RenderText(stdout, plan)
 		printInterruptedImport(stdout, home, plan, cfg)
-		if err := finishInterruptedBatch(env, stdout, home, plan, cfg); err != nil {
+		if err := finishInterruptedBatch(env, stdout, stderr, home, plan, cfg, opts.background); err != nil {
 			terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
 			return true, 1
 		}

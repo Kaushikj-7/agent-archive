@@ -17,8 +17,8 @@ import (
 //   - Owed: work the collector will do on its next pass. A queued request, an
 //     interrupted scan, a publication built and not yet accepted by storage
 //     (in flight, or held back by the upload interval), or a cached
-//     candidate still waiting for that interval. Evidence exists locally
-//     that is not in the bucket yet.
+//     candidate still waiting for that interval, or an admitted import's
+//     selected stage still awaiting exact local settlement.
 //   - Pending: Owed, or a session never captured at all. This is the count
 //     users see as "pending".
 //   - Rechecking: Pending, for a session already published that owes only
@@ -27,11 +27,15 @@ import (
 //   - SyncCanFinish: Pending, less a session only waiting for its
 //     transcript, which nothing a sync does can publish.
 //
-// A recorded capture gap (Blocked) or a policy decline is not owed work: the
-// collector has done everything it can until the source changes. A session
+// A recorded capture gap (Blocked) or a policy decline without retained import
+// staging is not owed work: the collector has done everything it can until the
+// source changes. A session
 // the configuration no longer publishes is the caller's to leave out (see
 // config.Config.AcceptSession); Outstanding does not read the configuration.
 type Outstanding struct {
+	// StagedImport: an admitted import still has its selected local stage.
+	// Publication recording alone does not settle this retained obligation.
+	StagedImport bool
 	// Removal reports a durable owner-bound deletion or restoration still owed.
 	Removal bool
 	// Requested: a hook or import request is queued and not yet
@@ -62,8 +66,8 @@ type Outstanding struct {
 }
 
 // Owed reports work the collector will do for the session on its next pass:
-// a queued request, an interrupted scan, an upload not yet accepted, or a
-// candidate waiting for the upload interval.
+// a queued request, an interrupted scan, an upload not yet accepted, a candidate
+// waiting for the upload interval, or an unsettled admitted import stage.
 func (o Outstanding) Owed() bool {
 	return o.OwedAfterScan() || o.Scan
 }
@@ -71,7 +75,7 @@ func (o Outstanding) Owed() bool {
 // OwedAfterScan is Owed without the scan journal: what decides, once a scan
 // has run, whether its journal entry may be cleared.
 func (o Outstanding) OwedAfterScan() bool {
-	return o.Requested || o.Upload || o.RateLimited || o.Removal
+	return o.Requested || o.Upload || o.RateLimited || o.Removal || o.StagedImport
 }
 
 // DefersExpiry reports work that postpones the session's expiry: a queued
@@ -140,7 +144,12 @@ func (s *Store) Outstanding(reg archive.SessionRegistration, requested bool) (Ou
 	if err != nil {
 		return Outstanding{}, err
 	}
+	staged, err := s.hasReferencedImportStage(reg)
+	if err != nil {
+		return Outstanding{}, err
+	}
 	o := Outstanding{
+		StagedImport:  staged,
 		Removal:       removal,
 		Requested:     requested,
 		Scan:          scan,

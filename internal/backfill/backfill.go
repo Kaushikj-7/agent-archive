@@ -353,6 +353,9 @@ type Environment struct {
 	CursorRecoveryDatabase func(context.Context, int, int64) (CursorDatabaseResult, error)
 	// Workers overrides the filter worker count; zero uses defaultWorkers.
 	Workers int
+	// ReviewProjects requests private bounded recovery observations for an
+	// explicit local review. Ordinary previews never retain this projection.
+	ReviewProjects bool
 	// OS is the operating system whose app locations are looked in: the
 	// macOS desktop-app folders and privacy-protected folders only exist on
 	// platform.Darwin, and Cursor keeps its data under ~/Library/Application

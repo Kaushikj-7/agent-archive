@@ -1630,8 +1630,46 @@ func (s *historySnapshot) AdmissionEvidence(ctx context.Context, admission agent
 	if err != nil {
 		return agentapi.AdmissionEvidence{}, err
 	}
-	evidence := agentapi.AdmissionEvidence{Binding: agentapi.SourceBinding{Codex: &binding}, Task: task}
-	return evidence, s.check(ctx)
+	err = s.check(ctx)
+	var ownRecords agentapi.OwnRecordState
+	if err == nil {
+		ownRecords = s.ownRecordState()
+	}
+	return agentapi.AdmissionEvidence{Binding: agentapi.SourceBinding{Codex: &binding}, Task: task, OwnRecords: ownRecords}, err
+}
+
+// ownRecordState uses only the existing validated spans. It interprets no native
+// record variant and describes the captured snapshot, which may later grow.
+func (s *historySnapshot) ownRecordState() agentapi.OwnRecordState {
+	if s.history.OwnStart == nil || len(s.spans) == 0 {
+		return ""
+	}
+	var nativeBoundary *uint64
+	for _, span := range s.spans {
+		if span.file.identity.ThreadID != s.selection.thread {
+			continue
+		}
+		for _, boundary := range []*uint64{span.file.identity.ForkOrdinal, span.file.identity.SubagentOrdinal} {
+			if boundary != nil && (nativeBoundary == nil || *boundary > *nativeBoundary) {
+				nativeBoundary = boundary
+			}
+		}
+	}
+	// A retained-only boundary cannot prove a current native no-record shape.
+	if nativeBoundary == nil || *nativeBoundary != *s.history.OwnStart {
+		return ""
+	}
+	leaf := s.spans[len(s.spans)-1]
+	if leaf.file != s.selection.leaf || leaf.end != leaf.file.file.Length() {
+		// A valid but uncommitted trailing record remains unknown.
+		return ""
+	}
+	for _, span := range s.spans {
+		if span.file.identity.ThreadID == s.selection.thread && span.endOrdinal > max(span.startOrdinal, *nativeBoundary) {
+			return agentapi.OwnRecordsPresent
+		}
+	}
+	return agentapi.OwnRecordsNone
 }
 
 func (s *ordinarySnapshot) AdmissionEvidence(ctx context.Context, admission agentapi.SourceAdmission) (agentapi.AdmissionEvidence, error) {

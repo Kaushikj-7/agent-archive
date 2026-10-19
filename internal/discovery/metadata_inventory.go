@@ -65,6 +65,14 @@ type metadataRoot struct {
 	info os.FileInfo
 }
 
+// current fences the original trusted spelling and the approved physical home.
+// It resolves only the home, never a descendant locator.
+func (r metadataRoot) current() bool {
+	resolved, err := filepath.EvalSymlinks(r.home)
+	info, statErr := os.Lstat(r.path)
+	return r.info != nil && err == nil && statErr == nil && resolved == r.path && info.IsDir() && os.SameFile(r.info, info)
+}
+
 type metadataCursor struct {
 	file    *os.File
 	reader  io.ReaderAt
@@ -257,7 +265,7 @@ func metadataLimit() error {
 // shared ledger only (agentapi.PassCacheReserve holds its metadataBytes):
 // it is no one session's, whichever session's validation built it.
 func (m *metadataInventory) reserve(n int64) bool {
-	if n < 0 || m.charge+m.headerBytes+n > metadataBytes || !m.owner.readBudget.ReserveUnscoped(n) {
+	if n < 0 || m.owner.homeAliasCharge+m.charge+m.headerBytes+n > metadataBytes || !m.owner.readBudget.ReserveUnscoped(n) {
 		return false
 	}
 	m.charge += n
@@ -302,10 +310,8 @@ func (m *metadataInventory) fail(err error) error {
 
 func (m *metadataInventory) rootCurrent(r metadataRoot) bool {
 	m.counts.resolutions++
-	resolved, err := filepath.EvalSymlinks(r.home)
 	m.counts.stats++
-	info, statErr := os.Lstat(r.path)
-	return err == nil && statErr == nil && resolved == r.path && info.IsDir() && os.SameFile(r.info, info)
+	return r.current()
 }
 
 func (m *metadataInventory) rootsCurrent(ctx context.Context) error {
@@ -584,7 +590,7 @@ func (m *metadataInventory) readHeaderByte(ctx context.Context) error {
 	}
 
 	c := m.cursor
-	if len(c.line) >= metadataHeaderBytes || m.headerBytes+m.charge+1 > metadataBytes {
+	if len(c.line) >= metadataHeaderBytes || m.owner.homeAliasCharge+m.headerBytes+m.charge+1 > metadataBytes {
 		return metadataLimit()
 	}
 	var b [1]byte

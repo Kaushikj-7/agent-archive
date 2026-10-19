@@ -10,13 +10,11 @@ import (
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 )
 
-// A proposed clone whose origin is not a shareable remote (for example a local
-// path to a deleted worktree) has a checkout root but no repository key. It
-// cannot own the recorded key, so it must not block recovery into a configured
-// project; configured, unobserved and budget-exhausted roots stay strict.
-func TestFirstRunRecoveryKeylessProposedCloneDoesNotBlockConfiguredMatch(t *testing.T) {
+// Proposed and configured local-only roots need complete ownership evidence.
+// A resolved unrelated chain permits recovery until that evidence changes.
+func TestFirstRunRecoveryRequiresResolvedProposedCloneIdentity(t *testing.T) {
 	key := archive.RepoKey("https://example.test/acme/repo")
-	for _, kind := range []string{"proposed_keyless", "configured_keyless", "proposed_budget", "proposed_unobserved", "proposed_gains_key"} {
+	for _, kind := range []string{"proposed_keyless", "configured_keyless", "proposed_budget", "proposed_unobserved", "proposed_resolved_other"} {
 		t.Run(kind, func(t *testing.T) {
 			tr, env, cfg, root, goneID := firstRunRecoveryFixture(t, false)
 			cfg.Archive.Projects = []archive.ProjectActivation{project(root, true)}
@@ -36,6 +34,8 @@ func TestFirstRunRecoveryKeylessProposedCloneDoesNotBlockConfiguredMatch(t *test
 					return known(path)
 				case kind == "proposed_budget":
 					return sourcefacts.RepositoryIdentity{BudgetExhausted: true}
+				case kind == "proposed_resolved_other":
+					return sourcefacts.RepositoryIdentity{Root: path, Key: archive.RepoKey("https://example.test/acme/other"), Known: true, Dependencies: []sourcefacts.RepositoryDependency{{Path: path, Stamp: "s"}}}
 				case kind == "proposed_unobserved":
 					return sourcefacts.RepositoryIdentity{}
 				}
@@ -43,11 +43,14 @@ func TestFirstRunRecoveryKeylessProposedCloneDoesNotBlockConfiguredMatch(t *test
 				return sourcefacts.RepositoryIdentity{Root: path}
 			}
 			// Like gitremote.ProjectIdentityCurrent, stamps never validate unknown identity.
-			env.RepositoryIdentityCurrent = func(id sourcefacts.RepositoryIdentity) bool { return id.Known && len(id.Dependencies) > 0 }
+			env.RepositoryIdentityCurrent = func(id sourcefacts.RepositoryIdentity) bool {
+				return id.Known && len(id.Dependencies) > 0 && (!gained || id.Root != clone)
+			}
 			p := plan(t, env, nil, cfg, Filters{})
 			c := candidate(t, p, goneID)
 			want := map[string]sourcefacts.RecoveryOutcome{
 				"configured_keyless":  sourcefacts.RecoveryInventoryUnavailable,
+				"proposed_keyless":    sourcefacts.RecoveryInventoryUnavailable,
 				"proposed_budget":     sourcefacts.RecoveryBudgetExhausted,
 				"proposed_unobserved": sourcefacts.RecoveryInventoryUnavailable,
 			}[kind]
@@ -58,9 +61,9 @@ func TestFirstRunRecoveryKeylessProposedCloneDoesNotBlockConfiguredMatch(t *test
 				return
 			}
 			if c.Skip != "" || c.ProjectRoot != root || c.ProjectResolution == nil || c.ProjectResolution.Method != "recorded_repository" {
-				t.Fatalf("keyless proposed clone blocked recovery: %+v diagnostic %+v", c, c.Diagnostic)
+				t.Fatalf("resolved unrelated clone blocked recovery: %+v diagnostic %+v", c, c.Diagnostic)
 			}
-			gained = kind == "proposed_gains_key"
+			gained = kind == "proposed_resolved_other"
 			err := p.CheckRecovery(t.Context())
 			if gained && err == nil {
 				t.Fatal("proposed clone that gained the recorded key kept the unique match")

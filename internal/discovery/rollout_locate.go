@@ -174,8 +174,18 @@ func walkRollouts(ctx context.Context, root, dir string, visit func(id, path str
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		names, next, complete, err := readBatch(d)
+		var names []string
+		var next int64
+		var complete bool
+		err := nativeUnit(ctx, func(context.Context) error {
+			var readErr error
+			names, next, complete, readErr = readBatch(d)
+			return readErr
+		})
 		if err != nil {
+			if nativeInterrupted(err) {
+				return err
+			}
 			return agentapi.Wrap(agentapi.Unavailable, errors.New("native rollout directory unavailable; retry next scan"))
 		}
 		for _, name := range names {
@@ -196,6 +206,9 @@ func walkRollouts(ctx context.Context, root, dir string, visit func(id, path str
 		}
 		if complete {
 			return nil
+		}
+		if next == d.Offset {
+			return agentapi.Wrap(agentapi.Unavailable, errors.New("native rollout directory made no progress"))
 		}
 		d.Offset = next
 	}
