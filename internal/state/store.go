@@ -53,6 +53,7 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
+	atomicWitness *local.AtomicWriteWitness
 	// stagedPrivacyCompressionBoundary is a nil-default fixture observation around canonical retained compression.
 	stagedPrivacyCompressionBoundary func(after bool)
 	nativeContinuation               *nativeContinuation
@@ -136,7 +137,7 @@ var storeDirs = []string{"registrations", "requests", "request-locks", "publishe
 
 // lazyStoreDirs are the directories the store creates under home on first
 // use rather than up front.
-var lazyStoreDirs = []string{generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir, deletionDirectory}
+var lazyStoreDirs = []string{importLocksDirectory, generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir, deletionDirectory}
 
 // OwnedEntries lists every top-level entry a Store can create under its
 // home: its directories, its status file, and the storage clock reading
@@ -249,7 +250,7 @@ func (s *Store) updateRegistration(archiveSessionID string, update func(*archive
 			return nil, false, nil
 		}
 		var reg archive.SessionRegistration
-		if err := json.Unmarshal(current.data, &reg); err != nil {
+		if err := archive.DecodeSessionRegistration(current.data, &reg); err != nil {
 			return nil, false, fmt.Errorf("read registration %q: %w", archiveSessionID, err)
 		}
 		originalStage := reg.StagedImportSHA256
@@ -471,7 +472,7 @@ func (s *Store) registrationPath(archiveSessionID string) string {
 // LoadRegistrations returns every registered session, sorted by archive
 // session ID for deterministic scan order.
 func (s *Store) LoadRegistrations() ([]archive.SessionRegistration, error) {
-	return s.loadRegistrations(local.Read)
+	return s.loadRegistrations(s.readRegistrationJSON)
 }
 
 func (s *Store) loadRegistrations(read func(string, any) error) ([]archive.SessionRegistration, error) {
@@ -1036,7 +1037,7 @@ func (s *Store) loadPendingContext(ctx context.Context, id string) (PendingPubli
 	if probeErr != nil {
 		return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, probeErr)
 	}
-	cfg, cfgErr := s.inspectDurableReadRoots()
+	cfg, cfgErr := s.inspectDurableReadRoots(ctx)
 	if cfgErr != nil {
 		return PendingPublication{}, true, errors.Join(ErrDurableStorageRecovery, cfgErr)
 	}

@@ -342,6 +342,7 @@ type ProjectResolution struct {
 // SessionStartedAt is when the conversation began. It is not the capture
 // boundary: project activation and the storage destination compare Admitted().
 type SessionRegistration struct {
+	NativeImport       *NativeImport           `json:"native_import,omitempty"`
 	NativeAdmission    *NativeAdmission        `json:"native_admission,omitempty"`
 	NativeBinding      *NativeSourceBinding    `json:"native_binding,omitempty"`
 	HistoricalProject  *HistoricalProjectProof `json:"historical_project,omitempty"`
@@ -452,6 +453,11 @@ func (r SessionRegistration) IsChild() bool { return r.NativeChild || r.ParentSe
 // Validate reports the first problem that makes the registration unusable:
 // a missing session ID, project, harness name, start time or incompatible source.
 func (r SessionRegistration) Validate() error {
+	if r.NativeImport != nil {
+		if err := r.ValidateNativeImport(); err != nil {
+			return err
+		}
+	}
 	if err := r.validateNativeChild(); err != nil {
 		return err
 	}

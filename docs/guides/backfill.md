@@ -365,7 +365,7 @@ shows the same residual when native qualification actually ran.
 `lookup_allowance_spent` with action `retry` means this run used its time or
 header-read allowance for finding Codex rollouts. Affected sessions remain
 unchecked under `related_history_pending`; this is not evidence of an oversized
-or unsupported source. Foreground preparation and inspection renew this
+or unsupported source. Codex foreground preparation and inspection renew this
 scheduling allowance automatically. Confirmed import and background collection
 retain separate allowances. `lookup_io_timeout` identifies an actual failed
 bounded I/O operation; check source access before retrying. `lookup_no_progress`

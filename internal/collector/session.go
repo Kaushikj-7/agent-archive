@@ -59,17 +59,18 @@ import (
 // saves it through this one copy rather than decoding published/<id>.json
 // again (it holds whole source bundles).
 type sessionScan struct {
-	publicationAttempt *publicationAttempt
-	parser             agentapi.TranscriptParser
-	parserResolved     bool
-	ctx                context.Context
-	local              *state.Store
-	remote             storage.ObjectStore
-	opts               Options
-	now                time.Time
-	reg                archive.SessionRegistration
-	req                state.Request
-	published          *state.Published
+	releasedHistoricalImport bool
+	publicationAttempt       *publicationAttempt
+	parser                   agentapi.TranscriptParser
+	parserResolved           bool
+	ctx                      context.Context
+	local                    *state.Store
+	remote                   storage.ObjectStore
+	opts                     Options
+	now                      time.Time
+	reg                      archive.SessionRegistration
+	req                      state.Request
+	published                *state.Published
 	// readyAt is when a publication the scan left waiting for the upload
 	// interval (outcomeRateLimited) becomes due.
 	readyAt time.Time
@@ -208,21 +209,8 @@ func (s *sessionScan) scanOnce(ctx context.Context) (sessionOutcome, error) {
 }
 
 func (s *sessionScan) scanRetainedOrNative(ctx context.Context) (sessionOutcome, error) {
-	if err := s.prepareRetainedOwnership(); err != nil {
-		return outcomeSkipped, err
-	}
-	if outcome, handled, err := s.prepareRetainedHistoryWork(ctx); handled || err != nil {
+	if outcome, handled, err := s.prepareRetainedOrFrozen(ctx); handled || err != nil {
 		return outcome, err
-	}
-	if err := s.checkRetainedHistory(); err != nil {
-		return outcomeSkipped, err
-	}
-	if s.maintainsRetainedOnly() {
-		outcome, err := s.maintainFrozen()
-		if err != nil {
-			return outcome, err
-		}
-		return outcome, s.recordFrozenSignature()
 	}
 	if err := s.local.GenerationCaptureAllowed(s.reg); err != nil {
 		return outcomeSkipped, err
@@ -278,6 +266,36 @@ func (s *sessionScan) scanRetainedOrNative(ctx context.Context) (sessionOutcome,
 	return outcome, err
 }
 
+func (s *sessionScan) prepareRetainedOrFrozen(ctx context.Context) (sessionOutcome, bool, error) {
+	if err := s.prepareRetainedOwnership(); err != nil {
+		return outcomeSkipped, true, err
+	}
+	if outcome, handled, err := s.prepareRetainedHistoryWork(ctx); handled || err != nil {
+		return outcome, handled, err
+	}
+	if err := s.checkRetainedHistory(); err != nil {
+		return outcomeSkipped, true, err
+	}
+	if s.reg.NativeImport != nil && s.reg.StagedImportSHA256 != "" && s.published.TypedStagedPublished() {
+		// Preserve exact ACK/readback release after a crash before retained-only
+		// maintenance; the creating receipt itself outlives this ephemeral stage.
+		if err := s.releaseTypedStage(); err != nil {
+			return outcomeSkipped, true, err
+		}
+	}
+	if err := s.validateNativeImportRetained(); err != nil {
+		return outcomeSkipped, true, err
+	}
+	if s.maintainsRetainedOnly() {
+		outcome, err := s.maintainFrozen()
+		if err != nil {
+			return outcome, true, err
+		}
+		return outcome, true, s.recordFrozenSignature()
+	}
+	return outcomeSkipped, false, nil
+}
+
 // resume retries a pending publication, or runs the metadata refresh when
 // there is none. handled reports that the scan ends here.
 func (s *sessionScan) resume(ctx context.Context) (outcome sessionOutcome, handled bool, err error) {
@@ -298,7 +316,7 @@ func (s *sessionScan) resume(ctx context.Context) (outcome sessionOutcome, handl
 		}
 		return regenerateMetadata(s)
 	}
-	if s.reg.StagedImportSHA256 != "" && pending.History == nil {
+	if s.importStageActive() && pending.History == nil {
 		pending, err = s.resumeStagedPolicy(pending)
 		if err != nil {
 			return outcomeSkipped, true, err
@@ -384,7 +402,7 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 	if s.skillContentFailure != nil {
 		return read, false, s.skillContentFailure
 	}
-	if s.reg.StagedImportSHA256 != "" {
+	if s.importStageActive() {
 		if s.published.TypedStagedPublished() {
 			err := s.releaseTypedStage()
 			read.outcome = outcomeSkipped
@@ -828,7 +846,7 @@ func (s *sessionScan) publish(ctx context.Context, read sourceRead, candidate ar
 		frozenSignature = &proof
 	}
 	expectedImportMetadata := ""
-	if s.reg.StagedImportSHA256 != "" && s.published.Summary().Published {
+	if s.importStageActive() && s.published.Summary().Published {
 		expectedImportMetadata = metadataSHA(s.published.Metadata())
 	}
 	pending := state.PendingPublication{
@@ -992,6 +1010,9 @@ func (opts Options) historicalProjectName(reg archive.SessionRegistration) strin
 }
 
 func (s *sessionScan) validateHistoricalSnapshot() error {
+	if s.reg.NativeImport != nil {
+		return s.reg.ValidateNativeImport()
+	}
 	if s.reg.HistoricalProject == nil {
 		return nil
 	}
@@ -1005,5 +1026,5 @@ func (s *sessionScan) validateHistoricalSnapshot() error {
 }
 
 func (s *sessionScan) maintainsRetainedOnly() bool {
-	return s.reg.CaptureFrozen || s.reg.HistoricalProject != nil && s.hasRetainedPublication()
+	return s.reg.CaptureFrozen || (s.reg.HistoricalProject != nil || s.reg.NativeImport != nil) && s.hasRetainedPublication()
 }

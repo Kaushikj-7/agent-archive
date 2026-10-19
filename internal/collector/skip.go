@@ -26,6 +26,16 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 	} else if found && deletion.Phase != state.DeletionRestored && deletion.Phase != state.DeletionCancelled {
 		return false
 	}
+	if reg.NativeImport != nil {
+		active, err := p.activeNativeImportStage(reg)
+		if err != nil {
+			p.fail(id, err)
+			return true
+		}
+		if active {
+			return false
+		}
+	}
 	var unchanged bool
 	var signature state.ScanSignature
 	var err error

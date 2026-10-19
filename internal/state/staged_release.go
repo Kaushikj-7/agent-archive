@@ -173,7 +173,7 @@ func (s *Store) verifyAndBeginStagedRelease(ctx context.Context, id string, remo
 	if err != nil || e != nil || home != expected {
 		return ErrReadySelectionFrozen
 	}
-	cfg, err := s.inspectDurableReadRoots()
+	cfg, err := s.inspectDurableReadRoots(ctx)
 	if err != nil || !cfg.SupportsStagedSelection() {
 		return errors.Join(ErrReadySelectionFrozen, err)
 	}
@@ -449,6 +449,18 @@ func (s *Store) loadStagedReleaseState(ctx context.Context, id string) (out stag
 		return out, err
 	}
 	if out.progressFound && out.progress.Phase == stagedReleaseReleased {
+		reg, found, err := s.LoadRegistration(id)
+		if err != nil {
+			return out, err
+		}
+		if found && reg.NativeImport != nil {
+			original, err := s.nativeImportReleasedSelection(ctx, reg)
+			if err != nil || !sameStagedSelection(original, *out.selection) {
+				return out, errors.Join(ErrDurableStorageRecovery, err)
+			}
+			out.released = true
+			return out, nil
+		}
 		if err := s.checkReleasedStageAbsent(ctx, id); err != nil {
 			return out, err
 		}
@@ -591,6 +603,9 @@ func (s *Store) validateFinalStagedAuthority(ctx context.Context, id string, q *
 	if err != nil || !registered || !cfg.AcceptSession(reg) || reg.StagedImportSHA256 != q.StageSHA256 {
 		return errors.Join(ErrReadySelectionFrozen, err)
 	}
+	if err := validateNativeImportSelectionAuthority(reg, q.Core); err != nil {
+		return err
+	}
 	admission, err := s.readyDigest(ctx, reg)
 	if err != nil || admission != q.Core.AdmissionContext {
 		return errors.Join(ErrReadySelectionFrozen, err)
@@ -690,6 +705,13 @@ func (s *Store) resumeStagedOwner(ctx context.Context, id string, remote StagedR
 		return err
 	}
 	if !published.TypedStagedPublished() {
+		reg, found, err := s.LoadRegistration(id)
+		if err != nil {
+			return err
+		}
+		if found && reg.NativeImport != nil {
+			return published.validateNativeImportAuthority(ctx, reg)
+		}
 		return nil
 	}
 	return s.VerifyAndBeginStagedRelease(ctx, id, remote, guard)

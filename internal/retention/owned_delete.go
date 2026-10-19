@@ -21,6 +21,11 @@ import (
 // source union before removing metadata. Catalog commits retain their own CAS
 // tombstone and snapshot ownership; they never use legacy namespace cleanup.
 func DeleteOwnedSession(ctx context.Context, local *state.Store, store storage.ObjectStore, reg archive.SessionRegistration, reason state.RemovalReason, now time.Time) error {
+	if reason == state.RemovalReasonUndo {
+		if err := local.CheckSessionUndo(reg); err != nil {
+			return err
+		}
+	}
 	if catalog, ok := store.(interface{ CatalogMetadataAuthority() bool }); ok && catalog.CatalogMetadataAuthority() {
 		return DeleteWholeSession(ctx, store, reg.Harness.Name, reg.ArchiveSessionID)
 	}

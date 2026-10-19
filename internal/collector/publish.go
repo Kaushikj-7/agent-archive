@@ -143,7 +143,7 @@ func (s *sessionScan) publishPending(ctx context.Context, pending state.PendingP
 	if err := s.upload(pending); err != nil {
 		return outcomeSkipped, err
 	}
-	if (s.reg.StagedImportSHA256 != "" && pending.History == nil) || pending.Selection != nil || pending.StagedProof() != nil {
+	if (s.importStageActive() && pending.History == nil) || pending.Selection != nil || pending.StagedProof() != nil {
 		if err := s.verifyImportPublication(pending); err != nil {
 			return outcomeSkipped, err
 		}
@@ -258,7 +258,7 @@ func (s *sessionScan) acknowledgePublication(pending state.PendingPublication, k
 			return outcomeSkipped, err
 		}
 	}
-	if s.reg.StagedImportSHA256 != "" && !keepPending {
+	if s.importStageActive() && !keepPending {
 		if err := s.local.RemoveImportStage(s.id()); err != nil {
 			return outcomeSkipped, err
 		}
@@ -318,7 +318,7 @@ func (s *sessionScan) upload(pending state.PendingPublication) error {
 		}
 		return s.publicationRemote(pending).Put(s.ctx, pending.MetadataKey, pending.MetadataBytes)
 	}
-	if !pending.CarriesNoSource() && s.reg.StagedImportSHA256 != "" {
+	if !pending.CarriesNoSource() && s.importStageActive() {
 		return s.uploadImportPending(pending)
 	}
 	if !pending.CarriesNoSource() {

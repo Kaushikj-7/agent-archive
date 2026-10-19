@@ -113,7 +113,7 @@ func (s *Store) LoadSubagentCandidate(id string) (SubagentCandidate, bool, error
 	if !safeFileComponent(id) {
 		return SubagentCandidate{}, false, ErrSubagentCandidateIncomplete
 	}
-	return readJSON[SubagentCandidate](s.subagentCandidatePath(id))
+	return readJSON[SubagentCandidate](s, s.subagentCandidatePath(id))
 }
 
 // LoadSubagentCandidates returns every subagent candidate hooks and backfill

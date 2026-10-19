@@ -83,10 +83,21 @@ Recovery permanently fences older binaries out of this data directory.
 `,
 	"eval": `Usage: agent-archive eval export SESSION_ID... | --ids-from - | --scan
        | --file PATH --harness NAME [--detail metadata|full] [--max-bytes N]
+       agent-archive eval replay-plan --harness muse < request.json
 
 Export sessions for an evaluation tool, one JSON Lines record per session
 (schemas/eval-export.schema.json), from the archive or from transcripts on
-this machine. Read-only and never interactive.
+this machine. Read-only and never interactive. The replay-plan action prepares
+private launch artifacts for an external replay runner.
+`,
+	"eval replay-plan": `Usage: agent-archive eval replay-plan --harness muse < request.json
+
+Prepare one bounded, versioned JSON replay launch plan from explicit file and
+ownership observations. Planning reads no settings or archive state and changes
+no files. The request and response each have a 64 KiB aggregate limit.
+
+The plan reports qualified:false. Native launch, forwarding qualification and
+runner lifetime belong to the external runner; ordinary handoff stays unchanged.
 `,
 	"eval export": `Usage: agent-archive eval export SESSION_ID... [--detail metadata|full]
        agent-archive eval export --ids-from - [--detail metadata|full]
@@ -405,6 +416,14 @@ Example: agent-archive uninstall
 `,
 	"list": `Usage: agent-archive list [WORDS] [options]
 
+With --source local, find bounded native sessions before setup without opening
+storage or changing archive state. Use --harness muse for Muse Code. Only the
+first 50 bounded previews are searched; incomplete discovery and unavailable
+labels are reported. --project needs an existing checkout directory; use
+--all-projects to broaden the scope. Local output is a separate read-only view.
+Archive is the default source; the following options describe archive reads.
+  --source archive|local Archive metadata (default) or bounded native reads
+
 Find sessions using metadata; does not download conversation content.
 With WORDS (quote them: one argument), list only the sessions they match.
 Every word must appear, in any case, in some field of a session: its name,
@@ -522,6 +541,16 @@ On a terminal, the summary and transcript are paged; in the default less,
 scroll with the mouse wheel, arrows, or space, search with /, and quit with
 q. Nothing is asked when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside
 coding agents: give a SESSION_ID.
+  --source archive|local Select archive (default) or read-only native sessions
+                        before setup; local reads validate the entire selected
+                        source and never enable archiving or write archive state
+  --project DIRECTORY  With --source local, search an existing checkout
+  --all-projects       With --source local, search every native checkout
+                        Example: show NATIVE_ID --source local --harness muse
+                        Local reads have bounded discovery; archive revisions
+                        and stored metadata are unavailable. Local JSON is a
+                        separate view; --transcript includes its conversation.
+                        No full-transcript artifact is saved for local reads.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --revisions           List active and preserved native revision IDs, capture
@@ -719,7 +748,7 @@ given.
   --output FILE         Write to FILE (mode 0600) instead of printing it
   --force               With --output, replace FILE if it exists
   --no-preamble         Omit the note addressed to the receiving agent
-  --to NAME             Start claude, codex, or cursor without asking (its
+  --to NAME             Start claude, codex, cursor, or muse (its
                         CLI must be on PATH). It reads a private copy of the
                         handoff, kept 7 days. With no session named, hands
                         off the agent session it runs in, else picks one on
@@ -738,6 +767,7 @@ given.
                         and the first 8 characters of SESSION_ID)
   -- ARGS               Everything after -- goes to the launched agent, after
                         any arguments set in config.json's handoff.args
+                        For muse, an initial exec selects the headless command
 Example: agent-archive handoff
 Example: agent-archive handoff --to codex
 Example: agent-archive handoff "fix the auth bug" --harness codex --to claude

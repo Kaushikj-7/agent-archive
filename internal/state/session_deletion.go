@@ -159,6 +159,9 @@ func (j SessionDeletion) validateMetadata(id string) error {
 }
 
 func (j SessionDeletion) validateOwner(id string) error {
+	if j.Reason == RemovalReasonUndo && j.Registration.NativeImport != nil {
+		return archive.ErrUnsupportedNativeImport
+	}
 	if unsafeDurableSessionID(id) || j.Version != 1 || j.Registration.ArchiveSessionID != id || j.Registration.Validate() != nil || j.OwnerSHA256 != deletionOwner(j.Registration) || j.At.IsZero() || j.SHA256 != deletionSHA(j) || (j.Reason != RemovalReasonRetention && j.Reason != RemovalReasonUndo) {
 		return ErrDurableStorageRecovery
 	}
@@ -355,6 +358,11 @@ func (s *Store) saveSessionDeletionContext(ctx context.Context, j SessionDeletio
 				return err
 			}
 			defer unlock()
+			if j.Reason == RemovalReasonUndo {
+				if err := s.checkSessionUndoLocked(j.Registration.ArchiveSessionID); err != nil {
+					return err
+				}
+			}
 			current, found, err := s.LoadRegistration(j.Registration.ArchiveSessionID)
 			if err != nil {
 				return err
@@ -383,6 +391,11 @@ func (s *Store) saveSessionDeletionContext(ctx context.Context, j SessionDeletio
 // PrepareSessionDeletion freezes complete, exact selecting metadata under the
 // request decision. It does not itself authorize any remote deletion.
 func (s *Store) PrepareSessionDeletion(reg archive.SessionRegistration, reason RemovalReason, raw []byte, at time.Time, token string) (SessionDeletion, error) {
+	if reason == RemovalReasonUndo {
+		if err := s.CheckSessionUndo(reg); err != nil {
+			return SessionDeletion{}, err
+		}
+	}
 	if err := s.retainDeletionCharge(3 * int64(len(raw))); err != nil {
 		return SessionDeletion{}, err
 	}
