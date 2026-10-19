@@ -37,8 +37,8 @@ draft or mismatched release fails closed before signing.
 Both platforms run the full tier on the tagged commit: every discovered
 Test/Fuzz/Example parent and its children, race, `-count=1`, and each
 invocation's 20-minute package timeout. Linux runs it in `build-linux` with
-`scripts/run_ci_tier.py` under a 2400-second tier deadline (job limit 60
-minutes). macOS no longer fits one runner, so it uses Extended's split with the
+`scripts/run_ci_tier.py` under a 3300-second tier deadline (job limit 80
+minutes), the default for the full Linux tier in Test and Extended too. macOS no longer fits one runner, so it uses Extended's split with the
 same `scripts/run_native_full.py` commands: `macos-plan` (with the tag and
 `main` guard) compiles the catalog and assigns three `macos-workers`, while
 `macos-obligations` runs full-size plain performance and the

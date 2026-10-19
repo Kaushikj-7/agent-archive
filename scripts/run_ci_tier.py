@@ -816,6 +816,10 @@ def run_native_smoke(out, deadline, report, save, execute, sensitive, *, local=F
                          source_proof=post_source_proof, context=post_context)
 
 
+# Shared deadline for the full Linux tier; its outer jobs allow at least 75 minutes.
+FULL_LINUX_SECONDS = 3300
+
+
 def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=False, native_local=False):
     if native_local and (tier != 'pr' or suite != 'macos'
             or os.environ.get('GITHUB_ACTIONS') == 'true' or os.environ.get('GITHUB_EVENT_NAME')):
@@ -1160,7 +1164,7 @@ def main():
     parser.add_argument('--suite', choices=['linux','macos','fuzz','systemd','extra','audit'], default='linux')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--extra-plan', type=Path)
-    parser.add_argument('--seconds', type=int, default=2400)
+    parser.add_argument('--seconds', type=int, help='shared deadline; default 3300 for the full Linux tier, else 2400')
     args = parser.parse_args()
     if (args.verify_plan or args.verify_native_plan) and args.extra_plan is None:
         parser.error('plan verification requires --extra-plan')
@@ -1168,7 +1172,7 @@ def main():
         parser.error('--require-pr-proof requires --plan')
     if args.native_local and (args.plan or args.verify or args.verify_audit or args.verify_plan or args.verify_native_plan or args.own_plain_vet):
         parser.error('--native-local only supports local native test execution')
-    if args.seconds <= 0:
+    if args.seconds is not None and args.seconds <= 0:
         parser.error('--seconds must be positive')
     def interrupted(signum, frame):
         raise Failure('tier command cancelled')
@@ -1224,7 +1228,10 @@ def main():
                 raise Failure('extra plan source mismatch')
             if tier == 'pr' and args.suite not in ('extra', 'macos', 'audit'):
                 raise Failure('PR ordinary coverage belongs to exhaustive shards')
-            run_suite(tier,args.suite,args.output,extra,args.seconds,own_plain_vet=args.own_plain_vet,native_local=args.native_local)
+            # The full Linux tier runs every race body plus the plain
+            # restoration and performance invocations on one runner.
+            seconds = args.seconds or (FULL_LINUX_SECONDS if tier == 'full' and args.suite == 'linux' else 2400)
+            run_suite(tier,args.suite,args.output,extra,seconds,own_plain_vet=args.own_plain_vet,native_local=args.native_local)
     except (Failure,ValueError,KeyError,TypeError,OSError,subprocess.SubprocessError) as error:
         print('tier gate failed: '+str(error),file=sys.stderr)
         return 1

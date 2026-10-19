@@ -650,7 +650,7 @@ class ExecutionPlanTest(unittest.TestCase):
                 with mock.patch.object(tier,'run_suite') as run, mock.patch.object(sys,'argv',['run_ci_tier','--tier','full','--suite',suite,'--output',d]):
                     self.assertEqual(tier.main(),0)
                     self.assertEqual(run.call_args.args[:2],('full',suite))
-                    self.assertEqual(run.call_args.args[4],2400)
+                    self.assertEqual(run.call_args.args[4],3300 if suite == 'linux' else 2400)
                 with mock.patch.object(tier,'verify_full') as verify, mock.patch.object(sys,'argv',['run_ci_tier','--verify','--tier','full','--suite',suite,'--extra-plan',str(output),'--output',d]):
                     self.assertEqual(tier.main(),0)
                     self.assertEqual(verify.call_args.kwargs,{'expected_suite':suite})
