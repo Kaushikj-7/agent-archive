@@ -84,8 +84,9 @@ func TestNativeImportInitialStageQuotaHandoffAllowsLegacyWriter(t *testing.T) {
 }
 
 func TestNativeImportInitialStageHandoffRefusesChangedControlAndForeignTemp(t *testing.T) {
-	for _, mode := range []string{"undone", "canceled", "foreign-temp"} {
-		t.Run(mode, func(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []stageHandoffChange{handoffChangeUndone, handoffChangeCanceled, handoffChangeForeignTemp} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			f := newNativeImportPrepareFixture(t)
 			ctx, cancel := context.WithCancel(t.Context())
@@ -102,11 +103,11 @@ func TestNativeImportInitialStageHandoffRefusesChangedControlAndForeignTemp(t *t
 				}
 				called = true
 				switch mode {
-				case "undone":
+				case handoffChangeUndone:
 					markActualNativeImportUndone(t, f.native.store, p.reg)
-				case "canceled":
+				case handoffChangeCanceled:
 					cancel()
-				case "foreign-temp":
+				case handoffChangeForeignTemp:
 					path := filepath.Join(f.native.store.home, filepath.Dir(importStageRelative(p.reg.ArchiveSessionID)), ".pending-foreign")
 					if err := os.WriteFile(path, []byte("foreign"), 0600); err != nil {
 						t.Error(err)
@@ -124,7 +125,7 @@ func TestNativeImportInitialStageHandoffRefusesChangedControlAndForeignTemp(t *t
 			if _, found, err := f.native.store.LoadRegistration(p.reg.ArchiveSessionID); err != nil || found {
 				t.Fatal("refusal registered owner", found, err)
 			}
-			if mode == "foreign-temp" {
+			if mode == handoffChangeForeignTemp {
 				raw, err := os.ReadFile(filepath.Join(f.native.store.home, filepath.Dir(importStageRelative(p.reg.ArchiveSessionID)), ".pending-foreign"))
 				if err != nil || string(raw) != "foreign" {
 					t.Fatal("foreign temp changed", err)
@@ -133,3 +134,12 @@ func TestNativeImportInitialStageHandoffRefusesChangedControlAndForeignTemp(t *t
 		})
 	}
 }
+
+// stageHandoffChange names what a test changes during the initial stage handoff.
+type stageHandoffChange string
+
+const (
+	handoffChangeCanceled    stageHandoffChange = "canceled"
+	handoffChangeForeignTemp stageHandoffChange = "foreign-temp"
+	handoffChangeUndone      stageHandoffChange = "undone"
+)

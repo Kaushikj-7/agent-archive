@@ -15,11 +15,20 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
+// reservationRawDamage names how a test corrupts a raw index entry.
+type reservationRawDamage string
+
+const (
+	reservationDamageAfter         reservationRawDamage = "after"
+	reservationDamageBeforeEscaped reservationRawDamage = "before-escaped"
+	reservationDamageFullyEscaped  reservationRawDamage = "fully-escaped"
+)
+
 func TestNativeImportReservationMalformedRawPreservesEveryBoundary(t *testing.T) {
 	t.Parallel()
 	for _, scheme := range []string{nativeReservationPrefix, nativeImportReservationPrefix, "muse-import-reservation-v2:"} {
-		for _, damage := range []string{"after", "before-escaped", "fully-escaped"} {
-			t.Run(scheme+damage, func(t *testing.T) {
+		for _, damage := range []reservationRawDamage{reservationDamageAfter, reservationDamageBeforeEscaped, reservationDamageFullyEscaped} {
+			t.Run(scheme+string(damage), func(t *testing.T) {
 				t.Parallel()
 				s := newTestStore(t)
 				key := agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: "protected-root"}
@@ -31,11 +40,11 @@ func TestNativeImportReservationMalformedRawPreservesEveryBoundary(t *testing.T)
 					t.Fatal(err)
 				}
 				switch damage {
-				case "after":
+				case reservationDamageAfter:
 					raw = append(raw[:len(raw)-1], []byte(`,"damaged":`)...)
-				case "before-escaped":
+				case reservationDamageBeforeEscaped:
 					raw = append([]byte(`{"ignored":"unterminated,`), bytes.Replace(raw[1:], []byte(`"native_reservation"`), []byte(`"native_\u0072eservation"`), 1)...)
-				case "fully-escaped":
+				case reservationDamageFullyEscaped:
 					raw = append([]byte(`{"ignored":"unterminated,`), bytes.Replace(raw[1:], []byte(`"native_reservation"`), []byte(`"\u006e\u0061\u0074\u0069\u0076\u0065\u005f\u0072\u0065\u0073\u0065\u0072\u0076\u0061\u0074\u0069\u006f\u006e"`), 1)...)
 				}
 				path := qualifiedSessionIndexPath(s.home, key)

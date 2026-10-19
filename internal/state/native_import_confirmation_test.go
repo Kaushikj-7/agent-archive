@@ -127,8 +127,8 @@ func TestNativeImportConfirmationHandleLifetimeAndStoreBinding(t *testing.T) {
 
 func TestNativeImportConfirmationRechecksCurrentControl(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"missing", "future", "instance", "undone", "completed", "progress"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []confirmationControlChange{controlChangeMissing, controlChangeFuture, controlChangeInstance, controlChangeUndone, controlChangeCompleted, controlChangeProgress} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			s, control := nativeImportConfirmationFixture(t)
 			h, err := s.OpenConfirmedNativeImportBatch(t.Context(), control.ID)
@@ -146,23 +146,23 @@ func TestNativeImportConfirmationRechecksCurrentControl(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch mode {
-			case "missing":
+			case controlChangeMissing:
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
 				}
-			case "future":
+			case controlChangeFuture:
 				if err := os.WriteFile(path, bytes.Replace(raw, []byte("muse-historical-import-v1"), []byte("muse-historical-import-v2"), 1), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "instance":
+			case controlChangeInstance:
 				control.NativeImport.Instance = strings.Repeat("f", 32)
-			case "undone":
+			case controlChangeUndone:
 				at := time.Now().UTC()
 				control.UndoneAt = &at
-			case "completed":
+			case controlChangeCompleted:
 				at := time.Now().UTC()
 				control.CompletedAt = &at
-			case "progress":
+			case controlChangeProgress:
 				var fields map[string]json.RawMessage
 				if err := json.Unmarshal(raw, &fields); err != nil {
 					t.Fatal(err)
@@ -176,13 +176,13 @@ func TestNativeImportConfirmationRechecksCurrentControl(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if mode == "instance" || mode == "undone" || mode == "completed" {
+			if mode == controlChangeInstance || mode == controlChangeUndone || mode == controlChangeCompleted {
 				if err := local.Write(path, control); err != nil {
 					t.Fatal(err)
 				}
 			}
 			err = h.checkCurrent(t.Context(), s)
-			if (err == nil) != (mode == "progress") {
+			if (err == nil) != (mode == controlChangeProgress) {
 				t.Fatal("current control eligibility", err)
 			}
 		})
@@ -191,8 +191,8 @@ func TestNativeImportConfirmationRechecksCurrentControl(t *testing.T) {
 
 func TestNativeImportConfirmationScopeRechecksConfiguration(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"paused", "root", "project", "destination", "flag"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []confirmationConfigChange{confirmConfigPaused, confirmConfigRoot, confirmConfigProject, confirmConfigDestination, confirmConfigFlag} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			s, control := nativeImportConfirmationFixture(t)
 			h, err := s.OpenConfirmedNativeImportBatch(t.Context(), control.ID)
@@ -209,9 +209,9 @@ func TestNativeImportConfirmationScopeRechecksConfiguration(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch mode {
-			case "paused":
+			case confirmConfigPaused:
 				cfg.Paused = true
-			case "root":
+			case confirmConfigRoot:
 				path := filepath.Join(s.Home(), "config.json")
 				raw, err := os.ReadFile(path)
 				if err != nil {
@@ -229,11 +229,11 @@ func TestNativeImportConfirmationScopeRechecksConfiguration(t *testing.T) {
 					t.Fatal("changed root accepted")
 				}
 				return
-			case "project":
+			case confirmConfigProject:
 				cfg.Archive.Projects[0].Included = false
-			case "destination":
+			case confirmConfigDestination:
 				cfg.Storage.Bucket += "-changed"
-			case "flag":
+			case confirmConfigFlag:
 				cfg.NativeImportProtection = false
 			}
 			// Deliberately model a stale writer without weakening config.Save sticky
@@ -247,3 +247,26 @@ func TestNativeImportConfirmationScopeRechecksConfiguration(t *testing.T) {
 		})
 	}
 }
+
+// confirmationControlChange names how a test changes a confirmed batch control.
+type confirmationControlChange string
+
+const (
+	controlChangeCompleted confirmationControlChange = "completed"
+	controlChangeFuture    confirmationControlChange = "future"
+	controlChangeInstance  confirmationControlChange = "instance"
+	controlChangeMissing   confirmationControlChange = "missing"
+	controlChangeProgress  confirmationControlChange = "progress"
+	controlChangeUndone    confirmationControlChange = "undone"
+)
+
+// confirmationConfigChange names how a test changes configuration after confirmation.
+type confirmationConfigChange string
+
+const (
+	confirmConfigDestination confirmationConfigChange = "destination"
+	confirmConfigFlag        confirmationConfigChange = "flag"
+	confirmConfigPaused      confirmationConfigChange = "paused"
+	confirmConfigProject     confirmationConfigChange = "project"
+	confirmConfigRoot        confirmationConfigChange = "root"
+)

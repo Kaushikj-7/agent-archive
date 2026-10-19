@@ -3,10 +3,10 @@ package state
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,12 +52,11 @@ func nativeImportSelectingACK(t *testing.T, s *Store, reg archive.SessionRegistr
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending := PendingPublication{Bundle: stage.Bundle, SourceKey: sourceKey, MetadataKey: metadataKey, SourceBytes: source.Bytes, SourceSHA256: source.SHA256, ReadyAt: reg.AdmittedAt, Attempted: true, SkillEvidence: string(stage.SkillEvidence)}
 	request, found, err := s.LoadRequest(reg.ArchiveSessionID)
 	if err != nil || !found || request.Token == "" {
 		t.Fatal("actual import request missing before selecting ACK", found, err)
 	}
-	pending.RequestToken = request.Token
+	pending := PendingPublication{Bundle: stage.Bundle, SourceKey: sourceKey, MetadataKey: metadataKey, SourceBytes: source.Bytes, SourceSHA256: source.SHA256, ReadyAt: reg.AdmittedAt, Attempted: true, SkillEvidence: string(stage.SkillEvidence), RequestToken: request.Token}
 	metadata, err := archive.BuildMetadataWithAnalysis(stage.Bundle, archive.Analysis{}, nil, "synthetic", reg.SessionStartedAt, reg.AdmittedAt, pending.SourceReference(), archive.ParserInfo{Name: "muse", Version: "synthetic"})
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +149,7 @@ func TestNativeImportExactUndoPreservesInitialACKAndFrozenStage(t *testing.T) {
 	if err := os.RemoveAll(f.candidate.Root.Canonical); err != nil {
 		t.Fatal(err)
 	}
-	changeNativeImportInitialConfig(t, s, current, nativeImportTestRemoved)
+	changeNativeImportInitialConfig(t, s, current, configChangeRemoved)
 	reopened, err := Open(s.home)
 	if err != nil {
 		t.Fatal(err)
@@ -221,7 +220,7 @@ func TestNativeImportExactUndoBeforeACKCannotAuthorizePublication(t *testing.T) 
 func TestNativeImportExactUndoRefusesWrongReceiptAndMissingUndo(t *testing.T) {
 	t.Parallel()
 	for _, undone := range []bool{false, true} {
-		t.Run(fmt.Sprint(undone), func(t *testing.T) {
+		t.Run(strconv.FormatBool(undone), func(t *testing.T) {
 			t.Parallel()
 			f, reg := nativeImportCommitForUndo(t)
 			if undone {
@@ -283,8 +282,9 @@ func TestNativeImportExactUndoRefusesOwnerReplacementBeforeCAS(t *testing.T) {
 }
 
 func TestNativeImportDetachedACKRefusesChangedOwnerStageAndSelection(t *testing.T) {
-	for _, mode := range []string{"owner", "receipt", "stage", "ack", "missing-ack"} {
-		t.Run(mode, func(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []detachedACKChange{ackChangeOwner, ackChangeReceipt, ackChangeStage, ackChangeAck, ackChangeMissingAck} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			f, reg := nativeImportCommitForUndo(t)
 			s := f.native.store
@@ -298,19 +298,19 @@ func TestNativeImportDetachedACKRefusesChangedOwnerStageAndSelection(t *testing.
 				t.Fatal(found, err)
 			}
 			switch mode {
-			case "owner":
+			case ackChangeOwner:
 				current.RegisteredAt = current.RegisteredAt.Add(time.Nanosecond)
 				if err := local.Write(s.registrationPath(current.ArchiveSessionID), current); err != nil {
 					t.Fatal(err)
 				}
-			case "receipt":
+			case ackChangeReceipt:
 				receipt := *current.NativeImport
 				receipt.Confirmation.BatchInstance = strings.Repeat("f", 32)
 				current.NativeImport = &receipt
 				if err := local.Write(s.registrationPath(current.ArchiveSessionID), current); err != nil {
 					t.Fatal(err)
 				}
-			case "stage":
+			case ackChangeStage:
 				stage, found, err := s.LoadImportStage(t.Context(), current)
 				if err != nil || !found {
 					t.Fatal(found, err)
@@ -319,7 +319,7 @@ func TestNativeImportDetachedACKRefusesChangedOwnerStageAndSelection(t *testing.
 				if err := local.Write(filepath.Join(s.home, importStageRelative(current.ArchiveSessionID)), stage); err != nil {
 					t.Fatal(err)
 				}
-			case "ack":
+			case ackChangeAck:
 				var ack publishedState
 				if err := s.readRegistrationJSON(s.publishedPath(current.ArchiveSessionID), &ack); err != nil {
 					t.Fatal(err)
@@ -328,7 +328,7 @@ func TestNativeImportDetachedACKRefusesChangedOwnerStageAndSelection(t *testing.
 				if err := local.Write(s.publishedPath(current.ArchiveSessionID), ack); err != nil {
 					t.Fatal(err)
 				}
-			case "missing-ack":
+			case ackChangeMissingAck:
 				if err := os.Remove(s.publishedPath(current.ArchiveSessionID)); err != nil {
 					t.Fatal(err)
 				}
@@ -337,7 +337,7 @@ func TestNativeImportDetachedACKRefusesChangedOwnerStageAndSelection(t *testing.
 				t.Fatal(err)
 			}
 			paths := []string{s.registrationPath(current.ArchiveSessionID), filepath.Join(s.home, importStageRelative(current.ArchiveSessionID)), s.pendingPath(current.ArchiveSessionID), s.requestPath(current.ArchiveSessionID)}
-			if mode != "missing-ack" {
+			if mode != ackChangeMissingAck {
 				paths = append(paths, s.publishedPath(current.ArchiveSessionID))
 			}
 			before := map[string][]byte{}
@@ -376,3 +376,14 @@ func TestNativeImportDetachedACKRefusesChangedOwnerStageAndSelection(t *testing.
 		})
 	}
 }
+
+// detachedACKChange names the state a test changes before a detached ACK.
+type detachedACKChange string
+
+const (
+	ackChangeAck        detachedACKChange = "ack"
+	ackChangeMissingAck detachedACKChange = "missing-ack"
+	ackChangeOwner      detachedACKChange = "owner"
+	ackChangeReceipt    detachedACKChange = "receipt"
+	ackChangeStage      detachedACKChange = "stage"
+)

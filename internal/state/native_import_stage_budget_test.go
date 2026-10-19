@@ -31,7 +31,7 @@ func largeNativeImportFixture(t *testing.T) nativeImportPrepareFixture {
 	// Privacy retains at most 64KiB per text. Use many valid smaller records,
 	// not oversized values whose retained output would silently shrink.
 	const messages = 320
-	for i := 0; i < messages; i++ {
+	for i := range messages {
 		var row map[string]any
 		if err := json.Unmarshal(lines[len(lines)-2], &row); err != nil {
 			t.Fatal(err)

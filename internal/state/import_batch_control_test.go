@@ -12,9 +12,20 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
+// privateBatchHome returns an owner-only temporary archive home, which
+// WithImportBatchLock requires.
+func privateBatchHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
 func TestNativeImportBatchLockSerializesBeforeRequest(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
+	home := privateBatchHome(t)
 	if err := os.Mkdir(filepath.Join(home, "request-locks"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +44,11 @@ func TestNativeImportBatchLockSerializesBeforeRequest(t *testing.T) {
 			return nil
 		})
 	}()
-	<-entered
+	select {
+	case <-entered:
+	case err := <-done:
+		t.Fatal("batch lock holder stopped before entering", err)
+	}
 	acquired := make(chan struct{})
 	second := make(chan error, 1)
 	go func() {
@@ -55,7 +70,7 @@ func TestNativeImportBatchLockSerializesBeforeRequest(t *testing.T) {
 
 func TestNativeImportBatchReplacementRechecksAfterPreparation(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
+	home := privateBatchHome(t)
 	if err := local.WriteBytes(filepath.Join(home, "imports", "2026-10-17-1.json"), []byte(`{"undone_at":null}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -98,31 +113,33 @@ func TestNativeImportBatchReplacementRechecksAfterPreparation(t *testing.T) {
 
 func TestNativeImportBatchLockInspectionRefusesUnknownContent(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []nativeImportTestMode{nativeImportTestValid, nativeImportTestName, nativeImportTestContent, nativeImportTestDirectory, nativeImportTestSymlink} {
+	for _, mode := range []batchLockDamage{lockDamageValid, lockDamageName, lockDamageContent, lockDamageDirectory, lockDamageSymlink} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
-			home := t.TempDir()
+			home := privateBatchHome(t)
 			if err := WithImportBatchLock(t.Context(), home, "2026-10-17-1", func(*local.RootedHome) error { return nil }); err != nil {
 				t.Fatal(err)
 			}
 			name := filepath.Join(home, importLocksDirectory, "2026-10-17-1.lock")
 			switch mode {
-			case nativeImportTestName:
+			case lockDamageValid:
+				// Leave the released lock intact.
+			case lockDamageName:
 				if err := os.Rename(name, filepath.Join(home, importLocksDirectory, "future.lock")); err != nil {
 					t.Fatal(err)
 				}
-			case nativeImportTestContent:
+			case lockDamageContent:
 				if err := os.WriteFile(name, []byte("authority"), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case nativeImportTestDirectory:
+			case lockDamageDirectory:
 				if err := os.Remove(name); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Mkdir(name, 0700); err != nil {
 					t.Fatal(err)
 				}
-			case nativeImportTestSymlink:
+			case lockDamageSymlink:
 				if err := os.Remove(name); err != nil {
 					t.Fatal(err)
 				}
@@ -141,12 +158,23 @@ func TestNativeImportBatchLockInspectionRefusesUnknownContent(t *testing.T) {
 			}()
 			remaining := durableEntryLimit
 			err = inspectImportLocks(t.Context(), held, &remaining)
-			if (err == nil) != (mode == nativeImportTestValid) {
+			if (err == nil) != (mode == lockDamageValid) {
 				t.Fatalf("inspection %s: %v", mode, err)
 			}
-			if mode == nativeImportTestValid && remaining != durableEntryLimit-1 {
+			if mode == lockDamageValid && remaining != durableEntryLimit-1 {
 				t.Fatal("lock entry was not charged")
 			}
 		})
 	}
 }
+
+// batchLockDamage names how a test changes a released import batch lock.
+type batchLockDamage string
+
+const (
+	lockDamageContent   batchLockDamage = "content"
+	lockDamageDirectory batchLockDamage = "directory"
+	lockDamageName      batchLockDamage = "name"
+	lockDamageSymlink   batchLockDamage = "symlink"
+	lockDamageValid     batchLockDamage = "valid"
+)

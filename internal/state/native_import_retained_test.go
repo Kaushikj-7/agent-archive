@@ -149,21 +149,23 @@ func releasedNativeImportFixture(t *testing.T, snapshots ...*nativeImportRelease
 }
 
 func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) {
-	for _, mode := range []nativeImportTestMode{nativeImportTestValid, nativeImportTestMissing, nativeImportTestFuture, nativeImportTestTampered, nativeImportTestPredecessor, nativeImportTestOwner, nativeImportTestOrdinary, nativeImportTestMetadata, nativeImportTestProgressMissing, nativeImportTestProgressFuture, nativeImportTestStage, nativeImportTestCheckpoint} {
+	for _, mode := range []releasedAuthorityDamage{releasedDamageValid, releasedDamageMissing, releasedDamageFuture, releasedDamageTampered, releasedDamagePredecessor, releasedDamageOwner, releasedDamageOrdinary, releasedDamageMetadata, releasedDamageProgressMissing, releasedDamageProgressFuture, releasedDamageStage, releasedDamageCheckpoint} {
 		t.Run(string(mode), func(t *testing.T) {
 			s, reg, next := releasedNativeImportFixture(t)
 			path := filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseReceiptName))
 			switch mode {
-			case nativeImportTestMissing:
+			case releasedDamageValid:
+				// Leave released authority intact.
+			case releasedDamageMissing:
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
 				}
-			case nativeImportTestFuture, nativeImportTestTampered:
+			case releasedDamageFuture, releasedDamageTampered:
 				raw, err := os.ReadFile(path)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if mode == nativeImportTestFuture {
+				if mode == releasedDamageFuture {
 					raw = bytes.Replace(raw, []byte(`"version":3`), []byte(`"version":99`), 1)
 				} else {
 					raw = append(raw[:len(raw)-2], []byte(`,"future":true}`)...)
@@ -171,10 +173,10 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 				if err := os.WriteFile(path, raw, 0600); err != nil {
 					t.Fatal(err)
 				}
-			case nativeImportTestPredecessor:
+			case releasedDamagePredecessor:
 				next.Preparation.PredecessorSHA256 = strings.Repeat("a", 64)
-			case nativeImportTestOwner, nativeImportTestOrdinary:
-				if mode == nativeImportTestOrdinary {
+			case releasedDamageOwner, releasedDamageOrdinary:
+				if mode == releasedDamageOrdinary {
 					reg.NativeImport = nil
 				} else {
 					reg.RegisteredAt = reg.RegisteredAt.Add(time.Second)
@@ -182,16 +184,16 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 				if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
 					t.Fatal(err)
 				}
-			case nativeImportTestProgressMissing:
+			case releasedDamageProgressMissing:
 				if err := os.Remove(filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseProgressName))); err != nil {
 					t.Fatal(err)
 				}
-			case nativeImportTestProgressFuture:
+			case releasedDamageProgressFuture:
 				if err := os.WriteFile(filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseProgressName)), []byte(`{"version":99}`), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case nativeImportTestStage, nativeImportTestCheckpoint:
-				if mode == nativeImportTestStage {
+			case releasedDamageStage, releasedDamageCheckpoint:
+				if mode == releasedDamageStage {
 					reg.StagedImportSHA256 = strings.Repeat("a", 64)
 				} else {
 					reg.NativeBinding.Checkpoint.SHA256 = strings.Repeat("f", 64)
@@ -199,7 +201,7 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 				if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
 					t.Fatal(err)
 				}
-			case nativeImportTestMetadata:
+			case releasedDamageMetadata:
 				next.MetadataBytes = append(next.MetadataBytes, ' ')
 			}
 			before, err := os.ReadFile(s.registrationPath(reg.ArchiveSessionID))
@@ -207,7 +209,7 @@ func TestNativeImportMissingPendingRequiresExactReleasedAuthority(t *testing.T) 
 				t.Fatal(err)
 			}
 			err = s.SavePending(reg.ArchiveSessionID, next)
-			if mode == nativeImportTestValid {
+			if mode == releasedDamageValid {
 				if err != nil {
 					t.Fatal("valid released successor", err)
 				}
@@ -375,3 +377,21 @@ func TestNativeImportInterruptedReleaseRestartsFromActualReceipt(t *testing.T) {
 		}
 	}
 }
+
+// releasedAuthorityDamage names how a test damages released import authority.
+type releasedAuthorityDamage string
+
+const (
+	releasedDamageCheckpoint      releasedAuthorityDamage = "checkpoint"
+	releasedDamageFuture          releasedAuthorityDamage = "future"
+	releasedDamageMetadata        releasedAuthorityDamage = "metadata"
+	releasedDamageMissing         releasedAuthorityDamage = "missing"
+	releasedDamageOrdinary        releasedAuthorityDamage = "ordinary"
+	releasedDamageOwner           releasedAuthorityDamage = "owner"
+	releasedDamagePredecessor     releasedAuthorityDamage = "predecessor"
+	releasedDamageProgressFuture  releasedAuthorityDamage = "progress-future"
+	releasedDamageProgressMissing releasedAuthorityDamage = "progress-missing"
+	releasedDamageStage           releasedAuthorityDamage = "stage"
+	releasedDamageTampered        releasedAuthorityDamage = "tampered"
+	releasedDamageValid           releasedAuthorityDamage = "valid"
+)

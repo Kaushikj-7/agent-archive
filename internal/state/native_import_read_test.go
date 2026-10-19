@@ -110,7 +110,7 @@ func assertUnsupportedNativeOwnerReads(t *testing.T, s *Store, owner archive.Ses
 }
 
 func TestNativeImportRegistrationReadRefusesOutsideRoot(t *testing.T) {
-	for _, mode := range []nativeImportTestMode{nativeImportTestFileSymlink, nativeImportTestDirectorySymlink, nativeImportTestAbsoluteOutside} {
+	for _, mode := range []outsideRootRead{outsideRootFileSymlink, outsideRootDirectorySymlink, outsideRootAbsoluteOutside} {
 		t.Run(string(mode), func(t *testing.T) {
 			f, owner := historicalNativeOwnerFixture(t)
 			original, err := json.Marshal(owner)
@@ -124,14 +124,14 @@ func TestNativeImportRegistrationReadRefusesOutsideRoot(t *testing.T) {
 			}
 			path := f.store.registrationPath(owner.ArchiveSessionID)
 			switch mode {
-			case nativeImportTestFileSymlink:
+			case outsideRootFileSymlink:
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Symlink(target, path); err != nil {
 					t.Fatal(err)
 				}
-			case nativeImportTestDirectorySymlink:
+			case outsideRootDirectorySymlink:
 				directory := filepath.Dir(path)
 				if err := os.Rename(directory, directory+"-original"); err != nil {
 					t.Fatal(err)
@@ -139,7 +139,7 @@ func TestNativeImportRegistrationReadRefusesOutsideRoot(t *testing.T) {
 				if err := os.Symlink(outside, directory); err != nil {
 					t.Fatal(err)
 				}
-			case nativeImportTestAbsoluteOutside:
+			case outsideRootAbsoluteOutside:
 				path = target
 			}
 			var decoded archive.SessionRegistration
@@ -149,7 +149,7 @@ func TestNativeImportRegistrationReadRefusesOutsideRoot(t *testing.T) {
 			if decoded.NativeImport != nil {
 				t.Fatal("outside authority was decoded")
 			}
-			if mode != nativeImportTestAbsoluteOutside {
+			if mode != outsideRootAbsoluteOutside {
 				if _, _, err := f.store.LoadRegistration(owner.ArchiveSessionID); err == nil {
 					t.Fatal("public owner load followed outside link")
 				}
@@ -162,3 +162,12 @@ func TestNativeImportRegistrationReadRefusesOutsideRoot(t *testing.T) {
 		})
 	}
 }
+
+// outsideRootRead names how a registration path escapes the archive root.
+type outsideRootRead string
+
+const (
+	outsideRootAbsoluteOutside  outsideRootRead = "absolute-outside"
+	outsideRootDirectorySymlink outsideRootRead = "directory-symlink"
+	outsideRootFileSymlink      outsideRootRead = "file-symlink"
+)

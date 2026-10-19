@@ -153,8 +153,8 @@ func TestPreparedNativeImportProvesHistoricalSourceWithoutLiveWindow(t *testing.
 
 func TestPreparedNativeImportRechecksSourceConfirmationAndCancellation(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"source", "confirmation", "cancel"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []prepareRecheck{prepareStopSource, prepareStopConfirmation, prepareStopCancel} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			f := newNativeImportPrepareFixture(t)
 			p, err := f.prepare(t.Context())
@@ -168,7 +168,7 @@ func TestPreparedNativeImportRechecksSourceConfirmationAndCancellation(t *testin
 			}()
 			ctx := t.Context()
 			switch mode {
-			case "source":
+			case prepareStopSource:
 				raw, err := os.ReadFile(f.native.path)
 				if err != nil {
 					t.Fatal(err)
@@ -176,11 +176,11 @@ func TestPreparedNativeImportRechecksSourceConfirmationAndCancellation(t *testin
 				if err := os.WriteFile(f.native.path, append(raw, '\n'), 0600); err != nil {
 					t.Fatal(err)
 				}
-			case "confirmation":
+			case prepareStopConfirmation:
 				if err := f.confirmation.Close(); err != nil {
 					t.Fatal(err)
 				}
-			case "cancel":
+			case prepareStopCancel:
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
@@ -194,16 +194,16 @@ func TestPreparedNativeImportRechecksSourceConfirmationAndCancellation(t *testin
 
 func TestPreparedNativeImportRejectsUnselectedAndWrongPhysicalProject(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"unselected", "project", "root"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []prepareScopeChange{scopeChangeUnselected, scopeChangeProject, scopeChangeRoot} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			f := newNativeImportPrepareFixture(t)
 			switch mode {
-			case "unselected":
+			case scopeChangeUnselected:
 				f.candidate.NativeID = "different"
-			case "project":
+			case scopeChangeProject:
 				f.candidate.ProjectRoot = t.TempDir()
-			case "root":
+			case scopeChangeRoot:
 				f.candidate.Root.Revision = "different"
 			}
 			if p, err := f.prepare(t.Context()); err == nil {
@@ -243,3 +243,21 @@ func TestPreparedNativeImportPreservesOpaqueConfiguredProject(t *testing.T) {
 	}
 	f.native.assertReleased(t)
 }
+
+// prepareRecheck names what a test changes while preparing a native import.
+type prepareRecheck string
+
+const (
+	prepareStopCancel       prepareRecheck = "cancel"
+	prepareStopConfirmation prepareRecheck = "confirmation"
+	prepareStopSource       prepareRecheck = "source"
+)
+
+// prepareScopeChange names how a test moves a session outside the prepared scope.
+type prepareScopeChange string
+
+const (
+	scopeChangeProject    prepareScopeChange = "project"
+	scopeChangeRoot       prepareScopeChange = "root"
+	scopeChangeUnselected prepareScopeChange = "unselected"
+)

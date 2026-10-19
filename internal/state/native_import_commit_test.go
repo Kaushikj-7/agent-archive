@@ -141,8 +141,8 @@ func TestNativeImportStageFirstRecoveryNeedsNoNativeSource(t *testing.T) {
 
 func TestNativeImportStageFirstRecoveryRefusesForeignAuthority(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"future", "mismatch", "root", "other-owner", "undone", "released"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, mode := range []stageRecoveryAuthority{recoveryAuthorityFuture, recoveryAuthorityMismatch, recoveryAuthorityRoot, recoveryAuthorityOtherOwner, recoveryAuthorityUndone, recoveryAuthorityReleased} {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			f := newNativeImportPrepareFixture(t)
 			p, err := f.prepare(t.Context())
@@ -166,23 +166,23 @@ func TestNativeImportStageFirstRecoveryRefusesForeignAuthority(t *testing.T) {
 			key := agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: p.reg.NativeSessionID}
 			path := qualifiedSessionIndexPath(f.native.store.home, key)
 			switch mode {
-			case "future", "mismatch", "root", "other-owner":
+			case recoveryAuthorityFuture, recoveryAuthorityMismatch, recoveryAuthorityRoot, recoveryAuthorityOtherOwner:
 				entry := indexEntry(key, p.reg.ArchiveSessionID)
 				entry.Reservation = strings.Repeat("a", 32)
 				entry.NativeReservation = nativeImportReservationPrefix + strings.Repeat("0", 64)
-				if mode == "future" {
+				if mode == recoveryAuthorityFuture {
 					entry.NativeReservation = "muse-import-reservation-v2:" + strings.Repeat("0", 64)
 				}
-				if mode == "root" {
+				if mode == recoveryAuthorityRoot {
 					entry.NativeReservation = nativeReservationPrefix + strings.Repeat("0", 64)
 				}
-				if mode == "other-owner" {
+				if mode == recoveryAuthorityOtherOwner {
 					entry = indexEntry(key, strings.Repeat("e", 32))
 				}
 				if err := local.Write(path, entry); err != nil {
 					t.Fatal(err)
 				}
-			case "undone":
+			case recoveryAuthorityUndone:
 				control := f.confirmation.control
 				at := time.Now().UTC()
 				control.UndoneAt = &at
@@ -190,7 +190,7 @@ func TestNativeImportStageFirstRecoveryRefusesForeignAuthority(t *testing.T) {
 				if err := local.Write(path, control); err != nil {
 					t.Fatal(err)
 				}
-			case "released":
+			case recoveryAuthorityReleased:
 				path = filepath.Join(f.native.store.home, stagedControl(p.reg.ArchiveSessionID, stagedReleaseProgressName))
 				if err := local.Write(path, map[string]any{"phase": "future"}); err != nil {
 					t.Fatal(err)
@@ -224,3 +224,15 @@ func TestNativeImportStageFirstRecoveryRefusesForeignAuthority(t *testing.T) {
 		})
 	}
 }
+
+// stageRecoveryAuthority names the foreign authority a test plants before stage-first recovery.
+type stageRecoveryAuthority string
+
+const (
+	recoveryAuthorityFuture     stageRecoveryAuthority = "future"
+	recoveryAuthorityMismatch   stageRecoveryAuthority = "mismatch"
+	recoveryAuthorityOtherOwner stageRecoveryAuthority = "other-owner"
+	recoveryAuthorityReleased   stageRecoveryAuthority = "released"
+	recoveryAuthorityRoot       stageRecoveryAuthority = "root"
+	recoveryAuthorityUndone     stageRecoveryAuthority = "undone"
+)
