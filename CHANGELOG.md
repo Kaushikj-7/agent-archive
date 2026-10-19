@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- No-bucket handoff discovery reuses unused header-read reservations between
+  batches, so large Codex histories do not stop after reserving bytes they never
+  read. Removed checkouts no longer block selection. Local `--latest` can ignore
+  unresolved histories with verified modification times strictly older than the
+  selected session; incomplete enumeration, exhausted read budgets and potentially
+  newer unresolved histories still require explicit selection.
+
 - Confirmed backfill continues supported native preparation and staging across
   bounded lookup scopes. Foreground imports publish and verify owned groups
   before preparing more evidence under the shared 1 GiB quota. Rerunning the
