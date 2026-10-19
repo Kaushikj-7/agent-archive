@@ -230,8 +230,7 @@ try:
         assert restored(), 'terminal modes not restored while stopped'
         assert output.endswith(b'\x1b[?25h' + LEAVE), ('screen or cursor not restored while stopped', output[-200:])
         stopped = len(output)
-        p.send_signal(signal.SIGCONT)
-        wait_until(keys_on, 'key mode not back on after continuing')
+        continue_job(p.pid, keys_on, pump)
         wait_for(b'q quit', wait_for(ENTER, stopped))
         os.write(master, b'q')
         finish(0)

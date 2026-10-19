@@ -32,9 +32,27 @@ const ptyHarnessStopGrace = 10 * time.Second
 // is waiting, so its finally block stops the child under test and the
 // traceback says where it was. A harness killed outright would leave its
 // child running with nobody to stop it.
-const ptyHarnessPrelude = `import signal as _signal
+//
+// continue_job continues a child that waitpid reported stopped and that
+// catches SIGCONT (ttyKeys.stop does while it is stopped), sending SIGCONT
+// again until running() says it runs, pumping output with pump. macOS marks
+// a process stopped, which waitpid reports, before it suspends the
+// process's threads; a SIGCONT in between finds nothing to resume, and the
+// process then suspends with nobody to continue it. A shell's fg comes long
+// after the stop; a script's comes at once. For a caught SIGCONT, macOS
+// resumes the threads on every one, so the next SIGCONT continues such a
+// process, and to one already running it is harmless. A process that stops
+// itself again is reported by waitpid, and fails here.
+const ptyHarnessPrelude = `import os as _os, signal as _signal
 def _stopped(signum, frame): raise RuntimeError("stopped at the Go test's deadline")
 _signal.signal(_signal.SIGTERM, _stopped)
+def continue_job(pid, running, pump):
+    while True:
+        _os.kill(pid, _signal.SIGCONT)
+        if running(): return
+        pump()
+        changed, status = _os.waitpid(pid, _os.WUNTRACED | _os.WNOHANG)
+        if changed: raise RuntimeError('the job stopped or ended again after continuing', status)
 `
 
 // runPTYScript runs a Python PTY harness script with args and returns what
