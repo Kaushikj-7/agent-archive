@@ -26,6 +26,9 @@ func TestImportCapacityPublishesCanonicalEvidenceBeforeContinuingAdmission(t *te
 	if testing.Short() {
 		t.Skip("real fixed-quota canonical publication regression")
 	}
+	if raceEnabled {
+		t.Skip("the >512 MiB fixture rescans published state on every write and exceeds the package timeout under the race detector")
+	}
 	verifyCanonicalPublicationCapacity(t, false)
 }
 
@@ -33,6 +36,9 @@ func TestImportCapacityPublishesCanonicalEvidenceBeforeContinuingAdmission(t *te
 func TestImportCapacityPublishesLegacyLiveLocatorEvidence(t *testing.T) {
 	if testing.Short() {
 		t.Skip("real fixed-quota live-locator publication regression")
+	}
+	if raceEnabled {
+		t.Skip("the >512 MiB fixture rescans published state on every write and exceeds the package timeout under the race detector")
 	}
 	verifyCanonicalPublicationCapacity(t, true)
 }
