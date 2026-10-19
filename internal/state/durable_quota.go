@@ -164,22 +164,43 @@ func (q *durableQuota) usageContext(ctx context.Context) (u durableUsage, err er
 	}
 	for _, dir := range []string{"pending", generationRecoveryDir, deletionDirectory, "publication-evidence", "temporary-reservations", "temporary-scratch", "admission-stages"} {
 		recovery := durableRootPath(dir) == admissionDurableRoot || durableRootPath(dir) == reservationDurableRoot || durableRootPath(dir) == scratchDurableRoot
+		if recovery {
+			if e := ctx.Err(); e != nil {
+				return u, errors.Join(ErrDurableStorageRecovery, e)
+			}
+			// Unknown owners are incomplete inventory, regardless of their size.
+			// Refuse here so quota charging cannot hide recovery behind capacity.
+			present, e := rootHasEntries(q.home.Root, dir)
+			if present || e != nil {
+				u.recovery = true
+				u.charged = durableStorageQuota
+				return u, errors.Join(ErrDurableStorageRecovery, e)
+			}
+		}
 		e := q.scan(ctx, dir, 0, &visited, &u)
 		if errors.Is(e, os.ErrNotExist) {
 			continue
 		}
 		if e != nil {
+			if recovery && errors.Is(e, ErrDurableStorageCapacity) {
+				// An owner may have appeared after the presence probe. Its
+				// inventory is unavailable, not recoverable by draining uploads.
+				u.recovery = true
+				u.charged = durableStorageQuota
+				return u, ErrDurableStorageRecovery
+			}
 			return u, errors.Join(ErrDurableStorageRecovery, e)
 		}
 		if recovery { // Unavailable owners never provide reservation credit.
 			// Presence, rather than aggregate usage from preceding roots, determines refusal.
 			present, e := rootHasEntries(q.home.Root, dir)
 			if e != nil {
-				return u, e
+				return u, errors.Join(ErrDurableStorageRecovery, e)
 			}
-			u.recovery = u.recovery || present
 			if present {
+				u.recovery = true
 				u.charged = durableStorageQuota
+				return u, ErrDurableStorageRecovery
 			}
 		}
 	}
