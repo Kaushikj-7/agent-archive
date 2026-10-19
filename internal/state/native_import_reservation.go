@@ -42,6 +42,8 @@ func (p *PreparedNativeImport) reservationAuthority() (string, error) {
 // Generic repair can finish an import index only after the exact complete owner
 // and original durable stage plus still-current confirmation prove completion.
 // Missing/future/mismatched source or controls preserve the marker unchanged.
+//
+//nolint:contextcheck // durableContext supplies the original receiver-owned read scope; the analyzer cannot follow Store fields.
 func (s *Store) nativeImportReservationOwner(entry qualifiedSessionIndexEntry) error {
 	read, closeRead := s.WithImportResultScope(s.durableContext())
 	defer closeRead()
