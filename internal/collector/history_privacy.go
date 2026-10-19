@@ -455,11 +455,24 @@ func (s *sessionScan) prepareStricterHistoryInput(next *state.PendingPublication
 	return filtered, ref, stage, receiptRelease, nil
 }
 
+func (s *sessionScan) nativeParentRequestCovered(headerMaintenance bool) bool {
+	return headerMaintenance && s.reg.NativeChild && s.reg.ParentSessionID != "" &&
+		s.req.Token != "" && len(s.req.Reasons) == 1 && s.req.Reasons[0] == "native-parent-linked" &&
+		len(s.req.HookEvidence) == 0
+}
+
 func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bundle archive.SourceBundle, adapterVersion string) (state.PendingPublication, error) {
 	// Header maintenance transforms the exact committed current input through
 	// the same frozen receipt factory as preserved inputs. Pre-freeze hook
 	// normalization must not replace that original reference.
 	headerMaintenance := nativeParentResolved(s.reg, bundle) || nativeChildMarkerPending(s.reg, bundle)
+	// Determine covered work before updating the retained header. Live requests
+	// still owe native reads unless this exact request contains only the proven
+	// relationship repair. A newer hook token remains protected by request CAS.
+	requestToken := ""
+	if s.reg.RetainedOnly() || s.nativeParentRequestCovered(headerMaintenance) {
+		requestToken = s.req.Token
+	}
 	inputs, err := s.retainedManifestInputs(authority, nil)
 	if err != nil {
 		return state.PendingPublication{}, err
@@ -483,11 +496,6 @@ func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bund
 	}
 	if nativeChildMarkerPending(s.reg, bundle) {
 		bundle.NativeChild = true
-	}
-	// Live requests still owe native reads; frozen requests cover retained observations.
-	requestToken := ""
-	if s.reg.RetainedOnly() {
-		requestToken = s.req.Token
 	}
 	p := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), Bundle: bundle, MetadataKey: key, MetadataBytes: append([]byte(nil), s.published.Metadata()...), RequestToken: requestToken, ReadyAt: s.now, History: &state.PendingHistory{Version: 1, Preparing: true, Inputs: inputs, FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion, ExpectedMetadataSHA256: metadataSHA(s.published.Metadata())}}
 	if err := s.local.SweepPendingSources(s.id()); err != nil {
