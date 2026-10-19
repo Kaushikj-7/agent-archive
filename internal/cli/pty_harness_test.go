@@ -144,7 +144,10 @@ finally:
 // that comes even after the job looks running, as key mode stays on while
 // a job is stopped, is left for the script to see. The child here stops
 // itself and runs on only after a second SIGCONT, simulating a first one
-// that did nothing without the kernel's race.
+// that did nothing without the kernel's race. It then waits to be killed,
+// like the views under test: had it exited, waitpid could report the exit
+// before pump read "running", and continue_job fails an ended job as it
+// does a stopped one.
 func TestPTYHarnessContinuesAStoppedJobUntilItRuns(t *testing.T) {
 	t.Parallel()
 	python, err := exec.LookPath("python3")
@@ -162,6 +165,7 @@ os.write(1, b'running')
 if sys.argv[1] == 'stops-again':
     os.kill(os.getpid(), signal.SIGSTOP)
     os.write(1, b' and continued again')
+while True: signal.pause()
 '''
 p = subprocess.Popen([sys.executable, '-c', child, sys.argv[1]], stdout=subprocess.PIPE)
 out = b''
