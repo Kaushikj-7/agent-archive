@@ -12,6 +12,11 @@ follow [Semantic Versioning](https://semver.org/).
   in groups of at most 50 directories. The 1 GiB quota and per-write validation
   remain unchanged; large inventories can still make admission checks slow.
 
+- Codex backfill missing-task diagnostics distinguish a validated snapshot with
+  no own records from own records without task proof. Unknown tails, missing
+  boundaries and dependencies remain uncertain. Text, JSON and private project
+  review preserve the existing refusal and capture requirements.
+
 - `sync` and scheduled collection can publish supported protected legacy imports
   from their frozen staged evidence after native deletion. They acquire the real
   collector guard required for exact publication and recovery.

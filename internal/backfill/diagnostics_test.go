@@ -65,7 +65,9 @@ const untrustedDetail DiagnosticDetail = "untrusted transcript content"
 func TestDiagnosticsAreBoundedContentFreeAndJSONOptional(t *testing.T) {
 	p := Plan{Filters: Filters{Harnesses: []string{"codex"}}}
 	for range 5000 {
-		p.Candidates = append(p.Candidates, Candidate{Harness: "codex", NativeSessionID: "private-native-id", TranscriptPath: "/private/native/locator.jsonl", SourceKey: "credential-secret", Skip: SkipWorktreeUnresolved, Diagnostic: candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryAmbiguous, noGapCause)})
+		diagnostic := candidateDiagnostic(SkipWorktreeUnresolved, sourcefacts.RecoveryAmbiguous, noGapCause)
+		diagnostic.Residual = untrustedDetail
+		p.Candidates = append(p.Candidates, Candidate{Harness: "codex", NativeSessionID: "private-native-id", TranscriptPath: "/private/native/locator.jsonl", SourceKey: "credential-secret", Skip: SkipWorktreeUnresolved, Diagnostic: diagnostic})
 	}
 	p.Candidates = append(p.Candidates, Candidate{Skip: SkipWorktreeUnresolved, Diagnostic: &Diagnostic{Detail: untrustedDetail}})
 	var text, structured bytes.Buffer
