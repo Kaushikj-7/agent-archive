@@ -140,6 +140,22 @@ class EvidenceTest(unittest.TestCase):
                     {'Action':'pass','Package':pkg,'Test':name})
         tier.verify_selected(tier.body_evidence(full,False)['actual'],{pkg:[name]},required)
 
+    def test_plain_owned_race_skip_requires_the_ownership_diagnostic_as_its_only_reason(self):
+        pkg=tier.MODULE+'internal/cli';name='TestBackfillConfirmedCompletesMixedNativeWindows';child=name+'/513'
+        def actual(*lines):
+            text=events(dict(Action='run',Package=pkg,Test=name),dict(Action='run',Package=pkg,Test=child),
+                        *[dict(Action='output',Package=pkg,Test=child,Output=line+'\n') for line in lines],
+                        dict(Action='skip',Package=pkg,Test=child),dict(Action='pass',Package=pkg,Test=name))
+            return tier.body_evidence(text,False)['actual']
+        owned={(pkg,name):['513']}
+        frames=('=== RUN   '+child,'--- SKIP: '+child+' (0.00s)')
+        tier.verify_selected(actual(frames[0],'    backfill_confirmed_test.go:202: '+tier.PLAIN_RESTORATION_SKIP,frames[1]),{pkg:[name]},{(pkg,name):['513']},plain_owned=owned)
+        for lines in ((frames[0],'    x_test.go:9: unrelated skip','    backfill_confirmed_test.go:202: '+tier.PLAIN_RESTORATION_SKIP,frames[1]),
+                      (frames[0],'    x_test.go:9: unrelated skip; '+tier.PLAIN_RESTORATION_SKIP,frames[1]),
+                      frames):
+            with self.assertRaises(tier.Failure):
+                tier.verify_selected(actual(*lines),{pkg:[name]},{(pkg,name):['513']},plain_owned=owned)
+
     def test_selected_skip_missing_run_or_duplicate_terminal_fails(self):
         pkg='p';name='TestA'
         with self.assertRaises(tier.Failure):tier.verify_selected([{'package':pkg,'test':name,'status':'skip'}],{pkg:[name]})
@@ -522,7 +538,7 @@ class ExecutionPlanTest(unittest.TestCase):
                     for child in children:
                         test=e['test']+'/'+child
                         if '-race' in args and child in e.get('plain_children',[]):
-                            lines += [{'Action':'output','Package':pkg,'Test':test,'Output':tier.PLAIN_RESTORATION_SKIP+'\n'},
+                            lines += [{'Action':'output','Package':pkg,'Test':test,'Output':'    x_test.go:1: '+tier.PLAIN_RESTORATION_SKIP+'\n'},
                                       {'Action':'skip','Package':pkg,'Test':test}]
                             continue
                         lines.append({'Action':'pass','Package':pkg,'Test':test})
@@ -731,7 +747,7 @@ class FullRaceTest(unittest.TestCase):
                 rows=[]
                 for row in map(json.loads,path.read_text().splitlines()):
                     if row.get('Test')==child and row['Action']=='pass':
-                        rows.append(dict(Action='output',Package=cli,Test=child,Output=reason+'\n'));row=dict(row,Action='skip')
+                        rows.append(dict(Action='output',Package=cli,Test=child,Output='    x_test.go:1: '+reason+'\n'));row=dict(row,Action='skip')
                     rows.append(row)
                 text=events(*rows);path.write_text(text);invocation['evidence']=tier.body_evidence(text,False)
             if plain_status:

@@ -283,7 +283,7 @@ class NativeFullTest(unittest.TestCase):
                 events = []
                 for e in map(json.loads, (out/record['log']).read_text().splitlines()):
                     if e.get('Test') == 'TestFull/large' and e['Action'] == 'pass':
-                        events.append(dict(Package=CLI, Test='TestFull/large', Action='output', Output=native.tier.PLAIN_RESTORATION_SKIP+'\n'))
+                        events.append(dict(Package=CLI, Test='TestFull/large', Action='output', Output='    x_test.go:1: '+native.tier.PLAIN_RESTORATION_SKIP+'\n'))
                         e = dict(e, Action='skip')
                     events.append(e)
                 (out/record['log']).write_text(stream(events))

@@ -404,8 +404,13 @@ def verify_selected(actual, selected, children=None, real_manager=False, plain_o
     passed = {(r['package'], r['test']) for r in actual if r['status'] == 'pass'}
     def owned_skip(r):
         child = r['test'].split('/', 1)[1] if '/' in r['test'] else None
-        return (r['status'] == 'skip' and child in (plain_owned or {}).get((r['package'], r['test'].split('/')[0]), [])
-                and PLAIN_RESTORATION_SKIP in r.get('reason', ''))
+        if r['status'] != 'skip' or child not in (plain_owned or {}).get((r['package'], r['test'].split('/')[0]), []):
+            return False
+        # Go's own run/skip frames aside, the ownership diagnostic must be the only reason.
+        lines = [line for line in r.get('reason', '').splitlines()
+                 if line != '=== RUN   '+r['test']
+                 and not re.fullmatch(r'--- SKIP: '+re.escape(r['test'])+r' \([0-9.]+s\)', line)]
+        return len(lines) == 1 and re.fullmatch(r'\s*\w+\.go:\d+: '+re.escape(PLAIN_RESTORATION_SKIP), lines[0]) is not None
     deferred = {(r['package'], r['test']) for r in actual if owned_skip(r)}
     for pkg, names in selected.items():
         for name in names:
