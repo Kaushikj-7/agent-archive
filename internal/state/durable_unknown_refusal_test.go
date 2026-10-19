@@ -3,10 +3,10 @@ package state
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -59,7 +59,7 @@ func TestUnavailableStorageRefusalPreservesRecovery(t *testing.T) {
 		}
 	}
 	for _, size := range []int64{1, durableStorageQuota} {
-		t.Run(fmt.Sprint(size), func(t *testing.T) {
+		t.Run(strconv.FormatInt(size, 10), func(t *testing.T) {
 			s, path, stage, cfg := fixture(t)
 			unknown := filepath.Join(s.home, "temporary-reservations", "unknown")
 			sparseDurable(t, unknown, size)

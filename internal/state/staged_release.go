@@ -173,7 +173,7 @@ func (s *Store) verifyAndBeginStagedRelease(ctx context.Context, id string, remo
 	if err != nil || e != nil || home != expected {
 		return ErrReadySelectionFrozen
 	}
-	cfg, err := s.inspectDurableReadRoots()
+	cfg, err := s.inspectDurableReadRoots(ctx)
 	if err != nil || !cfg.SupportsStagedSelection() {
 		return errors.Join(ErrReadySelectionFrozen, err)
 	}

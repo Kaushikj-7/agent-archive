@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ import (
 // Each reported count belongs to the actual individual name acquisition.
 func TestImportFullConsumersAcquireStageNamesOnce(t *testing.T) {
 	for _, count := range []int{5000, 50000} {
-		t.Run(fmt.Sprint(count), func(t *testing.T) {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			r, candidate, _ := stagingFixture(t)
 			r.AfterStage = func(string) error { return errors.New("synthetic interruption") }
 			if _, err := r.Run([]Candidate{candidate}); err == nil {

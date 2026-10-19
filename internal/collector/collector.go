@@ -319,26 +319,10 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	opts.readBudgetOwner = (&sessionScan{opts: opts}).readBudget()
 	census, closeCensus := local.WithReadBudget(ctx, opts.readBudgetOwner)
 	defer closeCensus()
-	_, closeInitial, durableErr := census.DurableStorageObligationsOwned(ctx)
-	closeInitial()
-	if durableErr != nil {
-		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
-	}
-	admissionErr := resumeImportAdmissionsForPass(ctx, local, opts)
-	if admissionErr != nil {
-		return Result{Errors: map[string]error{"staged-imports": admissionErr}}, admissionErr
-	}
-	// Recovery can finish cancellation or establish selected admissions. Report
-	// their current obligations, rather than the pre-recovery orphan snapshot.
-	durableObligations, closeObligations, durableErr := census.DurableStorageObligationsOwned(ctx)
+	durableObligations, closeObligations, phase, durableErr := prepareDurablePass(ctx, census, local, opts)
 	defer closeObligations()
 	if durableErr != nil {
-		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
-	}
-	for _, obligation := range durableObligations {
-		if obligation.SessionID == "" {
-			return Result{Errors: map[string]error{"durable-storage": state.ErrDurableStorageRecovery}}, state.ErrDurableStorageRecovery
-		}
+		return Result{Errors: map[string]error{phase: durableErr}}, durableErr
 	}
 	diagnosticReader, closeDiagnosticResults := census.WithImportResultScope(ctx)
 	defer func() {
@@ -447,6 +431,33 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		return p.result, err
 	}
 	return p.result, p.saveStatus()
+}
+
+// prepareDurablePass closes the initial result before recovery and retains only
+// the current, fully funded obligation result until Run ends.
+func prepareDurablePass(ctx context.Context, census, local *state.Store, opts Options) ([]state.DurableStorageObligation, func(), string, error) {
+	_, closeInitial, err := census.DurableStorageObligationsOwned(ctx)
+	closeInitial()
+	if err != nil {
+		return nil, func() {}, "durable-storage", err
+	}
+	if err := resumeImportAdmissionsForPass(ctx, local, opts); err != nil {
+		return nil, func() {}, "staged-imports", err
+	}
+	// Recovery can finish cancellation or establish selected admissions. Report
+	// their current obligations, rather than the pre-recovery orphan snapshot.
+	obligations, closeObligations, err := census.DurableStorageObligationsOwned(ctx)
+	if err != nil {
+		closeObligations()
+		return nil, func() {}, "durable-storage", err
+	}
+	for _, obligation := range obligations {
+		if obligation.SessionID == "" {
+			closeObligations()
+			return nil, func() {}, "durable-storage", state.ErrDurableStorageRecovery
+		}
+	}
+	return obligations, closeObligations, "", nil
 }
 
 func resumeImportAdmissionsForPass(ctx context.Context, local *state.Store, opts Options) error {

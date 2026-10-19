@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 
@@ -18,9 +19,16 @@ func (s *Store) DurableStorageObligationsOwned(ctx context.Context) ([]DurableSt
 	if budget == nil {
 		budget = agentapi.NewNativeReadBudget(128 << 20)
 	}
+	s, ctx, closeContext := s.withDurableContext(ctx)
 	read, closeRead := s.WithReadBudget(ctx, budget)
-	out, err := read.DurableStorageObligations()
-	return out, closeRead, err
+	out, err := read.durableStorageObligations(ctx)
+	var once sync.Once
+	return out, func() {
+		once.Do(func() {
+			closeRead()
+			closeContext()
+		})
+	}, err
 }
 
 func (s *Store) appendDurableObligations(out []DurableStorageObligation, values ...DurableStorageObligation) ([]DurableStorageObligation, error) {
@@ -65,8 +73,17 @@ func (s *Store) copyDurableObligations(values []DurableStorageObligation) ([]Dur
 
 // Cached names are bounded separately from completion. Scoped cache storage is
 // charged to the same ledger and invalidated before its captured owner closes.
-func (s *Store) cacheDurableObligations(cache *durableInspectionCache, values []DurableStorageObligation) {
-	charge := int64(512)
+func (s *Store) cacheDurableObligations(values []DurableStorageObligation, generation uint64) {
+	cache := s.durableInspection
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.generation != generation || !cache.summaryValid || cache.valid {
+		return
+	}
+	charge := int64(0)
+	if len(values) > 0 {
+		charge = 512
+	}
 	for _, value := range values {
 		charge += 32 + int64(len(value.SessionID))
 	}
@@ -74,10 +91,13 @@ func (s *Store) cacheDurableObligations(cache *durableInspectionCache, values []
 		return
 	}
 	owner := s.readReservation()
-	if s.resourceBudget != nil && !owner.Reserve(charge) {
+	if s.resourceBudget != nil && (charge > owner.Available() || !owner.Reserve(charge)) {
 		return
 	}
-	cached := make([]DurableStorageObligation, len(values))
+	var cached []DurableStorageObligation
+	if len(values) > 0 {
+		cached = make([]DurableStorageObligation, len(values))
+	}
 	for i, value := range values {
 		value.SessionID = strings.Clone(value.SessionID)
 		cached[i] = value
@@ -103,4 +123,33 @@ func (s *Store) cacheDurableObligations(cache *durableInspectionCache, values []
 			release()
 		})
 	}
+}
+
+// clearObligations releases only the optional cached names. Independently
+// returned vectors keep their captured charges and remain valid until close.
+// The caller holds cache.mu; fixed summary observations remain reusable.
+func (cache *durableInspectionCache) clearObligations() {
+	cache.generation++
+	cache.valid = false
+	cache.obligations = nil
+	cache.budget = nil
+	if cache.release != nil {
+		cache.release()
+		cache.release = nil
+	}
+}
+
+func (s *Store) beginDurableObligations(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	// Optional names from an earlier result must not crowd this mandatory
+	// census. Drop their exact owner before any allocations or refusals.
+	if s.resourceBudget != nil && s.durableInspection != nil {
+		cache := s.durableInspection
+		cache.mu.Lock()
+		cache.clearObligations()
+		cache.mu.Unlock()
+	}
+	return nil
 }

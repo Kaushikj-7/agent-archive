@@ -249,7 +249,7 @@ func (s *Store) accountingBinding(home *local.RootedHome) (binding publicationAc
 	return binding, err
 }
 
-func (s *Store) preparePublicationAccounting(id string) {
+func (s *Store) preparePublicationAccounting(ctx context.Context, id string) {
 	a := s.accountingScope()
 	if a == nil {
 		return
@@ -261,7 +261,7 @@ func (s *Store) preparePublicationAccounting(id string) {
 	}
 	a.seeded = true
 	a.mu.Unlock()
-	if err := s.seedPublicationAccounting(a, id); err != nil {
+	if err := s.seedPublicationAccounting(ctx, a, id); err != nil {
 		a.clear()
 		return
 	}
@@ -270,7 +270,12 @@ func (s *Store) preparePublicationAccounting(id string) {
 	a.mu.Unlock()
 }
 
-func (s *Store) seedPublicationAccounting(a *publicationAccounting, id string) (err error) {
+func (s *Store) seedPublicationAccounting(ctx context.Context, a *publicationAccounting, id string) (err error) {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	home, err := local.OpenRootedHome(s.home)
 	if err != nil {
 		return err
@@ -315,10 +320,10 @@ func (s *Store) seedPublicationAccounting(a *publicationAccounting, id string) (
 	defer a.reservation.Release(enumeration)
 	visited := 0
 	for {
-		if err = s.durableContext().Err(); err != nil {
+		if err = ctx.Err(); err != nil {
 			return err
 		}
-		entries, e := readDurableDirectory(s.durableContext(), dir)
+		entries, e := readDurableDirectory(ctx, dir)
 		if e != nil && !errors.Is(e, io.EOF) {
 			return e
 		}

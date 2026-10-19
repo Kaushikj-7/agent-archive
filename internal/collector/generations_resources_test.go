@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -129,28 +130,62 @@ func TestRunGenerationReplayUsesSharedBudgetBeforeStartupRead(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
+	transcript := writeTranscript(t, t.TempDir(), "claude.jsonl", `{"type":"assistant","sessionId":"native-1","message":{"role":"assistant","content":[{"type":"text","text":"synthetic funded retry"}]}}`)
+	reg := registration(t, transcript)
+	reg.Harness = archive.Harness{Name: "claude"}
+	if err := s.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(s.Home(), "config.json")
+	beforeConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	budget := agentapi.NewNativeReadBudget(128 << 20)
 	reservation := budget.Reservation()
 	pressure := budget.Available()
 	if !reservation.Reserve(pressure) {
 		t.Fatal("pressure")
 	}
-	opts := Options{MachineID: "machine", Sources: testSources, Parsers: testParsers, SkipSessionIndexRecovery: true, CodexRollouts: recoveryBudgetLookup{budget: budget}}
-	result, err := Run(t.Context(), s, storagetest.NewMemoryStore(), opts)
-	if err != nil || !errors.Is(result.Errors["generation-recovery"], agentapi.ErrReadBudget) {
-		t.Fatal("scheduled replay bypassed shared pressure", result.Errors, err)
+	opts := Options{MachineID: "machine", Sources: refuseNativeSources{t}, Parsers: testParsers, SkipSessionIndexRecovery: true, CodexRollouts: recoveryBudgetLookup{budget: budget}}
+	remote := storagetest.NewMemoryStore()
+	result, runErr := Run(t.Context(), s, remote, opts)
+	defer result.CloseStagedResults()
+	result.CloseStagedResults()
+	if !errors.Is(runErr, agentapi.ErrReadBudget) || !errors.Is(runErr, state.ErrDurableStorageRecovery) || len(result.Errors) != 1 || !errors.Is(result.Errors["durable-storage"], agentapi.ErrReadBudget) {
+		t.Fatal("complete census did not refuse exhausted ledger before replay", result.Errors, runErr)
+	}
+	if result.Scanned != 0 || len(result.Published) != 0 {
+		t.Fatal("exhausted preflight reached native capture", result)
+	}
+	if used, _ := budget.Charged(); used != pressure || budget.Available() != 0 {
+		t.Fatal("refusal consumed or reset inherited pressure", used, pressure)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(after, raw) {
+		t.Fatal("refusal changed receipt", err)
+	}
+	afterConfig, err := os.ReadFile(configPath)
+	if err != nil || !bytes.Equal(afterConfig, beforeConfig) {
+		t.Fatal("refusal changed configuration", err)
+	}
+	if objects, err := remote.List(t.Context(), ""); err != nil || len(objects) != 0 {
+		t.Fatal("refusal changed remote storage", objects, err)
+	}
+	if _, err := os.Stat(filepath.Join(s.Home(), "pending", reg.ArchiveSessionID+".json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("refusal created pending publication", err)
 	}
 	reservation.Release(pressure)
 	if used, _ := budget.Charged(); used != 0 {
 		t.Fatal("replay refusal leaked", used)
 	}
-	after, err := os.ReadFile(path)
-	if err != nil || string(after) != string(raw) {
-		t.Fatal("refusal changed receipt", err)
+	opts.Sources = testSources
+	retry, err := Run(t.Context(), s, remote, opts)
+	defer retry.CloseStagedResults()
+	if err != nil || len(retry.Errors) != 0 || len(retry.Published) != 1 || retry.Published[0] != reg.ArchiveSessionID {
+		t.Fatal("funded replay and native capture could not retry", retry, err)
 	}
-	if _, err := Run(t.Context(), s, storagetest.NewMemoryStore(), opts); err != nil {
-		t.Fatal("replay could not retry", err)
-	}
+	retry.CloseStagedResults()
 	if used, _ := budget.Charged(); used != 0 {
 		t.Fatal("successful replay leaked", used)
 	}

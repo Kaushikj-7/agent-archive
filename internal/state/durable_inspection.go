@@ -19,25 +19,26 @@ import (
 type durableRootStamp struct{ info os.FileInfo }
 
 type durableInspectionCache struct {
-	mu          sync.Mutex
-	home        os.FileInfo
-	stamps      [3]durableRootStamp
-	obligations []DurableStorageObligation
-	anonymous   bool
-	valid       bool
-	scans       int
-	legacy      bool
-	configHome  os.FileInfo
-	configStamp os.FileInfo
-	configValue config.Config
-	configFound bool
-	configValid bool
-	configLoads int
-	legacyTemps bool
-	entries     int
-	budget      *agentapi.NativeReadBudget
-	release     func()
-	generation  uint64
+	mu           sync.Mutex
+	home         os.FileInfo
+	stamps       [3]durableRootStamp
+	obligations  []DurableStorageObligation
+	anonymous    bool
+	valid        bool
+	summaryValid bool
+	scans        int
+	legacy       bool
+	configHome   os.FileInfo
+	configStamp  os.FileInfo
+	configValue  config.Config
+	configFound  bool
+	configValid  bool
+	configLoads  int
+	legacyTemps  bool
+	entries      int
+	budget       *agentapi.NativeReadBudget
+	release      func()
+	generation   uint64
 }
 
 func sameDurableStamp(a, b os.FileInfo) bool {
@@ -54,43 +55,35 @@ func (s *Store) durableContext() context.Context {
 	return context.Background()
 }
 
-func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]DurableStorageObligation, bool, int, error) {
-	ctx := s.durableContext()
+func (s *Store) inspectPendingRoots(ctx context.Context, home *local.RootedHome, legacy, collectNames bool) ([]DurableStorageObligation, bool, int, uint64, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, true, 0, err
+		return nil, true, 0, 0, err
 	}
 	cache := s.durableInspection
 	if cache == nil {
-		return nil, true, 0, ErrDurableStorageRecovery
+		return nil, true, 0, 0, ErrDurableStorageRecovery
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	homeInfo, err := home.Root.Stat(".")
 	if err != nil {
-		return nil, true, 0, err
+		return nil, true, 0, 0, err
 	}
 	roots := [3]string{"pending", generationRecoveryDir, "published"}
-	var stamps [3]durableRootStamp
-	for i, name := range roots {
-		info, e := home.Root.Lstat(name)
-		if errors.Is(e, os.ErrNotExist) {
-			continue
-		}
-		if e != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return nil, true, 0, errors.Join(ErrDurableStorageRecovery, e)
-		}
-		stamps[i].info = info
+	stamps, err := inspectPendingRootStamps(home, roots)
+	if err != nil {
+		return nil, true, 0, 0, err
 	}
-	if cache.valid && cache.budget == s.resourceBudget && cache.legacy == legacy && os.SameFile(cache.home, homeInfo) && sameDurableStamp(cache.stamps[0].info, stamps[0].info) && sameDurableStamp(cache.stamps[1].info, stamps[1].info) && sameDurableStamp(cache.stamps[2].info, stamps[2].info) {
+	current := cache.summaryValid && cache.legacy == legacy && os.SameFile(cache.home, homeInfo) && sameDurableRootStamps(cache.stamps, stamps)
+	if current && !collectNames {
+		return nil, cache.anonymous, cache.entries, cache.generation, errors.Join(ctx.Err(), home.Check())
+	}
+	if current && cache.valid && cache.budget == s.resourceBudget {
 		out, err := s.copyDurableObligations(cache.obligations)
-		return out, cache.anonymous, cache.entries, errors.Join(err, home.Check())
+		return out, cache.anonymous, cache.entries, cache.generation, errors.Join(err, ctx.Err(), home.Check())
 	}
-	cache.valid = false
-	if cache.release != nil {
-		cache.release()
-		cache.release = nil
-	}
-	cache.obligations = nil
+	cache.summaryValid = false
+	cache.clearObligations()
 	cache.legacyTemps = false
 	cache.scans++
 	visited := 0
@@ -100,40 +93,58 @@ func (s *Store) inspectPendingRoots(home *local.RootedHome, legacy bool) ([]Dura
 		if stamps[i].info == nil {
 			continue
 		}
-		entries, unknown, e := s.inspectPendingRoot(home, name, &visited, legacy)
+		entries, unknown, e := s.inspectPendingRoot(ctx, home, name, &visited, legacy, collectNames)
 		if e != nil {
-			return out, true, visited, e
+			return out, true, visited, 0, e
 		}
-		out, e = s.appendDurableObligations(out, entries...)
-		if e != nil {
-			return out, true, visited, e
+		if collectNames {
+			out, e = s.appendDurableObligations(out, entries...)
+			if e != nil {
+				return out, true, visited, 0, e
+			}
 		}
 		anonymous = anonymous || unknown
 	}
-	for i, name := range roots {
-		info, e := home.Root.Lstat(name)
-		if errors.Is(e, os.ErrNotExist) {
-			info = nil
-			e = nil
-		}
-		if e != nil || !sameDurableStamp(stamps[i].info, info) {
-			return out, true, visited, errors.Join(ErrDurableStorageRecovery, e)
-		}
+	after, err := inspectPendingRootStamps(home, roots)
+	if err != nil || !sameDurableRootStamps(stamps, after) {
+		return out, true, visited, 0, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	if err := errors.Join(ctx.Err(), home.Check()); err != nil {
-		return out, true, visited, err
+		return out, true, visited, 0, err
 	}
 	cache.entries = visited
 	cache.legacy = legacy
 	cache.home = homeInfo
 	cache.stamps = stamps
 	cache.anonymous = anonymous
-	s.cacheDurableObligations(cache, out)
-	result, err := s.copyDurableObligations(out)
-	return result, anonymous, cache.entries, err
+	cache.summaryValid = !cache.legacyTemps
+	return out, anonymous, cache.entries, cache.generation, nil
 }
 
-func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, visited *int, legacy bool) (out []DurableStorageObligation, unknown bool, err error) {
+func inspectPendingRootStamps(home *local.RootedHome, roots [3]string) (stamps [3]durableRootStamp, err error) {
+	for i, name := range roots {
+		info, err := home.Root.Lstat(name)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return stamps, errors.Join(ErrDurableStorageRecovery, err)
+		}
+		stamps[i].info = info
+	}
+	return stamps, nil
+}
+
+func sameDurableRootStamps(before, after [3]durableRootStamp) bool {
+	for i := range before {
+		if !sameDurableStamp(before[i].info, after[i].info) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Store) inspectPendingRoot(ctx context.Context, home *local.RootedHome, name string, visited *int, legacy, collectNames bool) (out []DurableStorageObligation, unknown bool, err error) {
 	root, err := privateDirectory(home.Root, name, false)
 	if err != nil {
 		return nil, true, err
@@ -149,10 +160,10 @@ func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, visited 
 		namespace = GenerationRecoveryStorage
 	}
 	for {
-		if err = s.durableContext().Err(); err != nil {
+		if err = ctx.Err(); err != nil {
 			return out, true, err
 		}
-		entries, e := readDurableDirectory(s.durableContext(), d)
+		entries, e := readDurableDirectory(ctx, d)
 		if e != nil && !errors.Is(e, io.EOF) {
 			return out, true, e
 		}
@@ -172,7 +183,7 @@ func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, visited 
 			}
 			id := strings.TrimSuffix(entry.Name(), ".json")
 			if info.Mode().IsRegular() && strings.HasSuffix(entry.Name(), ".json") && safeFileComponent(id) && !strings.HasPrefix(entry.Name(), ".pending-") {
-				if name != "published" {
+				if collectNames && name != "published" {
 					out, err = s.appendDurableObligations(out, DurableStorageObligation{SessionID: id, Namespace: namespace})
 					if err != nil {
 						return out, true, err
@@ -186,7 +197,7 @@ func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, visited 
 			break
 		}
 	}
-	if unknown {
+	if unknown && collectNames {
 		out, err = s.appendDurableObligations(out, DurableStorageObligation{Namespace: namespace})
 		if err != nil {
 			return out, true, err
@@ -195,14 +206,14 @@ func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, visited 
 	return out, unknown, nil
 }
 
-func (s *Store) loadDurableInspectionConfig(home *local.RootedHome) (cfg config.Config, found bool, err error) {
+func (s *Store) loadDurableInspectionConfig(ctx context.Context, home *local.RootedHome) (cfg config.Config, found bool, err error) {
 	cache := s.durableInspection
 	if cache == nil {
 		return cfg, false, ErrDurableStorageRecovery
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	if err = s.durableContext().Err(); err != nil {
+	if err = ctx.Err(); err != nil {
 		return cfg, false, err
 	}
 	homeInfo, err := home.Root.Stat(".")
@@ -234,7 +245,7 @@ func (s *Store) loadDurableInspectionConfig(home *local.RootedHome) (cfg config.
 	if err != nil || !sameDurableStamp(info, after) {
 		return cfg, false, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	if err = errors.Join(s.durableContext().Err(), home.Check()); err != nil {
+	if err = errors.Join(ctx.Err(), home.Check()); err != nil {
 		return cfg, false, err
 	}
 	cache.configHome = homeInfo
@@ -245,28 +256,33 @@ func (s *Store) loadDurableInspectionConfig(home *local.RootedHome) (cfg config.
 	return cfg, found, nil
 }
 
-func (s *Store) inspectDurableReadRoots() (cfg config.Config, err error) {
+func (s *Store) inspectDurableReadRoots(ctx context.Context) (cfg config.Config, err error) {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
+	if err := ctx.Err(); err != nil {
+		return cfg, err
+	}
 	home, err := local.OpenRootedHome(s.home)
 	if errors.Is(err, os.ErrNotExist) {
-		return cfg, nil
+		return cfg, ctx.Err()
 	}
 	if err != nil {
 		return cfg, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	defer func() { err = errors.Join(err, home.Close()) }()
-	cfg, _, err = s.inspectHeldDurableReadRoots(home)
+	cfg, _, err = s.inspectHeldDurableReadRoots(ctx, home)
 	return cfg, err
 }
 
-func (s *Store) inspectHeldDurableReadRoots(home *local.RootedHome) (cfg config.Config, found bool, err error) {
-	cfg, found, err = s.loadDurableInspectionConfig(home)
+func (s *Store) inspectHeldDurableReadRoots(ctx context.Context, home *local.RootedHome) (cfg config.Config, found bool, err error) {
+	cfg, found, err = s.loadDurableInspectionConfig(ctx, home)
 	if err != nil {
 		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	if present, e := rootHasEntries(home.Root, deletionDirectory); e != nil || present && (!found || !cfg.DeletionProtection) {
 		return cfg, found, errors.Join(ErrDurableStorageRecovery, e)
 	}
-	_, anonymous, entries, err := s.inspectPendingRoots(home, found && !cfg.DurableStorageProtection)
+	_, anonymous, entries, _, err := s.inspectPendingRoots(ctx, home, found && !cfg.DurableStorageProtection, false)
 	if anonymous || err != nil || !found && entries > 0 {
 		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
 	}
@@ -326,7 +342,7 @@ func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner) 
 			err = errors.Join(ErrDurableStorageRecovery, err)
 		}
 	}()
-	_, found, err := s.inspectHeldDurableReadRoots(home)
+	_, found, err := s.inspectHeldDurableReadRoots(s.durableContext(), home)
 	if err != nil {
 		return err
 	}
@@ -365,7 +381,10 @@ func (s *Store) checkDurableSessionRead(id string, owner *publicationReadOwner) 
 
 // CheckDurableReadRoots refuses anonymous recovery work before native content is read.
 // It reuses bounded observations, never ownership or cleanup authority.
-func (s *Store) CheckDurableReadRoots() error { _, err := s.inspectDurableReadRoots(); return err }
+func (s *Store) CheckDurableReadRoots() error {
+	_, err := s.inspectDurableReadRoots(s.durableContext())
+	return err
+}
 
 func publicationReadOwnerChanged(metadata archive.Metadata, reg archive.SessionRegistration, origin archive.SessionOrigin, owner *publicationReadOwner, pending PendingPublication) bool {
 	return (metadata.SessionID != reg.ArchiveSessionID || metadata.NativeSessionID != reg.NativeSessionID || metadata.ProjectID != reg.ProjectID || metadata.Harness.Name != reg.Harness.Name || metadata.PreviousGenerationID != reg.PreviousGenerationID || !metadata.StartedAt.Equal(reg.SessionStartedAt) || metadata.Origin != origin || owner.machine != "" && metadata.MachineID != owner.machine || pending.Preparation == nil || pending.Preparation.DestinationID != reg.DestinationID || pending.Preparation.AdmissionContext != owner.admission)

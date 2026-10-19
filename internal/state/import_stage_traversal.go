@@ -15,6 +15,7 @@ import (
 )
 
 var errImportStageMembershipChanged = errors.New("import stage directory membership changed; retry recovery")
+
 var errImportAdmissionsPaused = errors.New("import admissions paused")
 
 type importStageNames struct {
