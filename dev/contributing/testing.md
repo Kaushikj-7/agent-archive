@@ -250,7 +250,11 @@ same-root warm SQL /128+/512, actual CLI1100/1050 pagination and physical
 million-record related-history limit. Confirmed backfill runs its actual mixed
 3/17-session import, publication and readback cases in short mode; daily,
 weekly and exact-commit candidate runs also restore the unchanged 513-session
-case. A short pass records the full 513-session body as NOT RUN.
+case. A short pass records the full 513-session body as NOT RUN. Under the
+race detector its durable-quota rescans exceed the 20-minute package timeout,
+so the race build skips that child with the exact `plain_children` reason and
+the restored tiers (Linux and the macOS obligations job) run it in one plain
+`plain-restoration` invocation whose pass the tier gate requires.
 The small cached-prefix history test pins
 aggregate refusal/release/retry; it does not prove million-record physical
 streaming. Metadata 16384, retained warm sources 2000 and physical/indexed
