@@ -1,12 +1,15 @@
 package state
 
 import (
+	"context"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"io"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/local"
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
@@ -47,4 +50,20 @@ func openTestStore(home string) (*Store, error) {
 		err = config.Save(home, config.Config{MachineID: "synthetic", RetentionDays: config.DefaultRetentionDays})
 	}
 	return store, err
+}
+
+// inspectPendingRoot inspects one pending root without an atomic witness.
+func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remaining *int, legacy bool) ([]DurableStorageObligation, bool, error) {
+	matched := false
+	return s.inspectPendingRootWitnessed(home, name, remaining, legacy, &matched)
+}
+
+// validateDurableReadPending validates pending state without a native import ACK.
+func (s *Store) validateDurableReadPending(id string, history bool, owner *publicationReadOwner) error {
+	return s.validateDurableReadPendingSelection(id, history, owner, nil)
+}
+
+// writeContext writes through the durable quota without a commit check.
+func (q *durableQuota) writeContext(ctx context.Context, path string, n int64, write func(io.Writer) error) error {
+	return q.writeWithHeadroomContext(ctx, path, n, write, nil, 0)
 }
