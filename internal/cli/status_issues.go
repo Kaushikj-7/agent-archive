@@ -28,10 +28,16 @@ func printStatusIssues(out io.Writer, view statusView, sc statusScreen) {
 	for _, id := range ids {
 		rows = append(rows, statusRow{cells: []string{id, issueGapDetail(view.Collector.SessionIssues[id])}})
 	}
-	for _, app := range view.Apps {
+	for _, app := range slices.Concat(view.Apps, view.importedApps) {
 		rows = append(rows, sc.discoveryIssueRows(app)...)
 		for _, gap := range app.CaptureGaps {
 			rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{appName(app.Name), gap.Detail}})
+		}
+		// The rows above already name individual gaps. Share the detailed
+		// view's remaining transcript and import notices without that aggregate.
+		app.CaptureGaps = nil
+		if notes := sc.gapNotes(app); len(notes) > 0 {
+			rows = append(rows, statusRow{cells: []string{appName(app.Name)}, notes: notes})
 		}
 		if app.PreSetupSessions != nil {
 			rows = append(rows, statusRow{cells: []string{fmt.Sprintf("%s: %d sessions from before setup were not captured", appName(app.Name), app.PreSetupSessions.Sessions)}, notes: sc.preSetupNotes(app)})

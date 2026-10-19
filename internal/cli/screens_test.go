@@ -518,7 +518,7 @@ var screens = []screen{
 			must(t, store.SaveStatus(status))
 			cfg, _, err := config.Load(f.home)
 			must(t, err)
-			must(t, saveStatusSummary(f.home, cfg, f.env, f.env.now(), nil, false))
+			must(t, beginStatusProgress(f.home, cfg, f.env).saveSummary(cfg, nil, true))
 		},
 	},
 	{

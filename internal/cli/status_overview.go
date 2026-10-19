@@ -136,6 +136,8 @@ func (view *statusOverview) applySummary(summary statusSummary, now time.Time) {
 	}
 	if summary.Problem != statusProblemNone {
 		view.state, view.problem = overviewAttention, statusProblemText(summary.Problem)
+	} else if summary.VerificationFailures > 0 {
+		view.state, view.problem = overviewAttention, "Some uploads have unresolved read-back failures."
 	}
 }
 
@@ -186,13 +188,18 @@ func (view *statusOverview) readLiveness(ctx context.Context, root *os.Root, hom
 	found, recordErr := readStatusFile(root, collectorLockRecordName, 4096, &record)
 	held, lockErr := statusCollectorLockHeld(root)
 	if found && recordErr == nil && lockErr == nil && held && processAlive(record.PID) && !record.Since.IsZero() && !record.Since.After(now) {
-		view.background = "Collection active"
-		if view.state == overviewWorking || view.state == overviewUnknown {
-			view.state = overviewProcessing
-		}
-		view.readProgress(root, record, now, id)
-		if now.Sub(record.Since) > collectLockStuckAfter {
-			view.state, view.problem = overviewAttention, "Collection has exceeded its expected lifetime."
+		switch record.Holder {
+		case "collect", "sync", "scheduled collection", "backfill upload":
+			view.background = "Collection active"
+			if view.state == overviewWorking || view.state == overviewUnknown {
+				view.state = overviewProcessing
+			}
+			view.readProgress(root, record, now, id)
+			if now.Sub(record.Since) > collectLockStuckAfter {
+				view.state, view.problem = overviewAttention, "Collection has exceeded its expected lifetime."
+			}
+		default:
+			view.background = "Waiting for another operation"
 		}
 	} else if lockErr != nil || held {
 		view.background = "Collection activity unavailable"
@@ -266,7 +273,7 @@ func statusCollectorLockHeld(root *os.Root) (held bool, err error) {
 func (view *statusOverview) readProgress(root *os.Root, record collectorLockRecord, now time.Time, id string) {
 	var progress statusProgress
 	found, err := readStatusFile(root, statusProgressFile, statusFileLimit, &progress)
-	if err != nil || !found || progress.Version != 1 || progress.ConfigurationID != id || progress.PID != record.PID || !progress.StartedAt.Equal(record.Since) || progress.UpdatedAt.Before(record.Since) || progress.UpdatedAt.After(now) || progress.Processed < 0 || progress.Published < 0 || progress.Published > progress.Processed {
+	if id == "" || err != nil || !found || progress.Version != 1 || progress.ConfigurationID != id || progress.PID != record.PID || !progress.StartedAt.Equal(record.Since) || progress.UpdatedAt.Before(record.Since) || progress.UpdatedAt.After(now) || progress.Processed < 0 || progress.Published < 0 || progress.Published > progress.Processed {
 		return
 	}
 	switch progress.Phase {
