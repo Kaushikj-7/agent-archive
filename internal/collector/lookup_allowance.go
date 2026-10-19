@@ -337,21 +337,23 @@ func nextLookupRetry(since, after time.Time) time.Time {
 
 // lookupRetryDue reports whether an attempt is due on this pass for a
 // session on the backoff schedule (state.Status.NextRetryAt), and when the
-// attempt it is due for, or else its next one, is. One is due when an
-// attempt falls after the previous pass and no later than now, or when the
-// previous pass found one due without giving it the lane (its NextRetryAt
-// is no later than that pass). A previous pass whose time is unknown, or
-// after now, makes one due.
-func (p *pass) lookupRetryDue(id string, since time.Time) (bool, time.Time) {
+// attempt it is due for, or else its next one, is. The existing saved next
+// attempt remains due until attempted, even when a scoped pass did not give it
+// the lane. A previous whole pass whose time is unknown, or after now, makes
+// one due, as does a missing saved next time.
+func (p *pass) lookupRetryDue(id string, _ time.Time) (bool, time.Time) {
 	now := p.now.UTC()
 	if p.priorScanAt.IsZero() || p.priorScanAt.After(now) {
 		return true, now
 	}
-	if prior := p.priorRetryAt[id]; !prior.After(p.priorScanAt) {
+	// Scoped publication keeps the last whole-pass clock for untouched waiter
+	// ordering. A selected attempt can nevertheless have scheduled its own next
+	// retry since then; its saved nonzero time is the existing per-owner state.
+	prior := p.priorRetryAt[id]
+	if prior.IsZero() {
 		return true, prior
 	}
-	at := nextLookupRetry(since, p.priorScanAt)
-	return !at.After(now), at
+	return !prior.After(now), prior
 }
 
 // scheduleLookupRetry puts a session that failed this pass for waiting on

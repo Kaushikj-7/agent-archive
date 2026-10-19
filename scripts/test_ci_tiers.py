@@ -42,7 +42,7 @@ class PolicyTest(unittest.TestCase):
 
     def test_daily_exact_restorations_include_physical_boundary_without_weekly_scale(self):
         selected = {(e['package'],e['test']) for e in tier.catalog()['restorations'] if e['restore']=='daily'}
-        self.assertEqual(selected, {('internal/cli','TestRealCLICatalogDefaultList50Bounded'),('internal/cli','TestRealCLICatalogListNonMultiplePageLimit'),('internal/reader','TestRemoteRootChildrenReusesOnlyCompleteSameRootSQL'),('internal/agents/codex','TestRelatedMillionRecordLimit')})
+        self.assertEqual(selected, {('internal/cli','TestRealCLICatalogDefaultList50Bounded'),('internal/cli','TestRealCLICatalogListNonMultiplePageLimit'),('internal/cli','TestBackfillConfirmedCompletesMixedNativeWindows'),('internal/reader','TestRemoteRootChildrenReusesOnlyCompleteSameRootSQL'),('internal/agents/codex','TestRelatedMillionRecordLimit')})
         physical = next(e for e in tier.catalog()['restorations'] if e['test']=='TestRelatedMillionRecordLimit')
         self.assertEqual(physical['counterpart'], 'TestRelatedCachedRecordCountLimitIsTypedAndReleasesBudget')
         boundary = {e['test'] for e in tier.catalog()['restorations'] if e['package']=='internal/backfill'}
@@ -123,6 +123,22 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual(proof['full_restorations'][0]['full_body'],'NOT RUN')
         self.assertIn('skip',[r['status'] for r in proof['actual']])
         with self.assertRaises(tier.Failure):tier.verify_selected(proof['actual'],{pkg:[name]},{(pkg,name):['128','512']})
+
+    def test_confirmed_backfill_requires_the_full_513_child_for_restoration(self):
+        pkg=tier.MODULE+'internal/cli';name='TestBackfillConfirmedCompletesMixedNativeWindows'
+        entry=next(e for e in tier.catalog()['restorations'] if e['test']==name)
+        self.assertEqual(entry['restore'],'daily')
+        self.assertEqual(entry['full_children'],['3','17','513'])
+        short=events(*[{'Action':'pass','Package':pkg,'Test':name+'/'+child} for child in ('3','17')],
+                     {'Action':'pass','Package':pkg,'Test':name})
+        proof=tier.body_evidence(short,True)
+        self.assertEqual(proof['full_restorations'][0]['full_body'],'NOT RUN')
+        required={(pkg,name):entry['full_children']}
+        with self.assertRaises(tier.Failure):
+            tier.verify_selected(proof['actual'],{pkg:[name]},required)
+        full=events(*[{'Action':'pass','Package':pkg,'Test':name+'/'+child} for child in ('3','17','513')],
+                    {'Action':'pass','Package':pkg,'Test':name})
+        tier.verify_selected(tier.body_evidence(full,False)['actual'],{pkg:[name]},required)
 
     def test_selected_skip_missing_run_or_duplicate_terminal_fails(self):
         pkg='p';name='TestA'
@@ -477,7 +493,7 @@ class SourceAuditTest(unittest.TestCase):
 
 
 class ExecutionPlanTest(unittest.TestCase):
-    def test_daily_executes_all_short_and_four_exact_full_bodies_with_expected_children(self):
+    def test_daily_executes_all_short_and_five_exact_full_bodies_with_expected_children(self):
         entries=[e for e in tier.catalog()['restorations'] if e['restore']=='daily']
         def command(args,output,deadline,env=None):
             if args == tier.SOURCE_AUDIT_COMMAND:
@@ -493,7 +509,13 @@ class ExecutionPlanTest(unittest.TestCase):
                 if pattern and './'+pkg[len(tier.MODULE):] not in args:continue
                 for e in selected:
                     if pattern and not __import__('re').fullmatch(pattern,e['test']):continue
-                    for child in (['128'] if '-short' in args and e.get('full_children')==['128','512'] else e.get('full_children',[])):
+                    children=e.get('full_children',[])
+                    if '-short' in args:
+                        if children==['128','512']:
+                            children=['128']
+                        elif e['test']=='TestBackfillConfirmedCompletesMixedNativeWindows':
+                            children=['3','17']
+                    for child in children:
                         lines.append({'Action':'pass','Package':pkg,'Test':e['test']+'/'+child})
                     lines.append({'Action':'pass','Package':pkg,'Test':e['test']})
                 lines.append({'Action':'pass','Package':pkg})

@@ -37,8 +37,8 @@ func trustedCodexReadHomes(cfg config.Config, env Env) ([]string, error) {
 	return homes, nil
 }
 
-// foregroundCodexRollouts selects renewable work only for foreground planning.
-// Confirmed admission and background consumers retain their existing policies.
+// foregroundCodexRollouts selects renewable work for explicit import work.
+// Scheduled collection retains its bounded background policy.
 func foregroundCodexRollouts(ctx context.Context, store *state.Store, cfg config.Config, env Env) (*discovery.CodexRolloutLookup, []string, error) {
 	homes, err := trustedCodexReadHomes(cfg, env)
 	if err != nil {

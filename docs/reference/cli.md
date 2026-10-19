@@ -916,7 +916,8 @@ publication. History reports admitted and remotely verified uploads separately.
   --yes                 Skip the confirmation (required without a terminal)
   --background          Stage and register sessions, then exit; the background
                         collector verifies and uploads them
-Planning renews bounded native lookup work; source safety limits still apply.
+Planning and staging renew bounded lookup work; source safety limits apply.
+Foreground imports verify owned groups before staging more within the quota.
 Codex index paths may use a verified alias of an already trusted native home.
 Incomplete native inventory is reported; verified sessions remain eligible.
 Codex own-task refusals distinguish no own records in a validated snapshot from

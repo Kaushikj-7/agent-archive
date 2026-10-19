@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/config"
 )
 
 func TestImportStageTraversalPreservesPagesAndCharges(t *testing.T) {
@@ -105,5 +106,57 @@ func TestDurableDirectoryRequiresEOFAndChecksOverflow(t *testing.T) {
 	count := int(^uint(0) >> 1)
 	if err := countDurableEntry(&count); !errors.Is(err, ErrDurableStorageRecovery) || count < 0 {
 		t.Fatal("entry counter overflow", count, err)
+	}
+}
+
+func TestImportRecoveryPreservesUnchangedCursor(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		name := "scheduled"
+		if explicit {
+			name = "explicit"
+		}
+		t.Run(name, func(t *testing.T) {
+			s := newTestStore(t)
+			cfg, _, err := config.Load(s.home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.Archive.Enabled = true
+			if err := config.Save(s.home, cfg); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.WithImportStaging(s.home, func(g config.DurableStorageGuard) error { return g.CheckHome(s.home) }); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(s.home, "sessions", "settled"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(s.home, "import-stage-cursor.json")
+			if err := os.WriteFile(path, []byte(`{"after":""}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			budget := agentapi.NewNativeReadBudget(128 << 20)
+			read, closeRead := s.WithReadBudget(t.Context(), budget)
+			defer closeRead()
+			if explicit {
+				err = read.ResumeAllImportAdmissions(t.Context())
+			} else {
+				err = read.ResumeImportAdmissions(t.Context())
+			}
+			if err != nil {
+				t.Fatal("settled recovery", err)
+			}
+			after, err := os.Stat(path)
+			if err != nil || !sameDurableStamp(before, after) {
+				t.Fatal("settled recovery rewrote unchanged scheduling cursor", err)
+			}
+			if used, peak := budget.Charged(); used != 0 || peak == 0 {
+				t.Fatal("recovery skipped charged traversal or leaked its owner", used, peak)
+			}
+		})
 	}
 }
