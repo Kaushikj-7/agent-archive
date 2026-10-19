@@ -27,6 +27,7 @@ func TestStatusConfigurationIDTracksMusePolicy(t *testing.T) {
 		{"policy", func(c *config.Config) { c.NativeRoots[0].Revision = "new-root" }},
 	} {
 		t.Run(change.name, func(t *testing.T) {
+			t.Parallel()
 			cfg := f.cfg
 			cfg.NativeRoots = append(cfg.NativeRoots[:0:0], cfg.NativeRoots...)
 			change.apply(&cfg)
@@ -131,10 +132,11 @@ func TestScopedUploadWithoutMatchingSummaryKeepsGlobalHealthUnknown(t *testing.T
 
 func TestStatusOverviewDistinguishesCollectionFromMaintenance(t *testing.T) {
 	t.Parallel()
-	for _, holder := range []string{"sync", "scheduled collection", "backfill upload", "collect", "purge apply", "migrate", "machine rename", "backfill projects", "backfill undo", "unknown command"} {
-		t.Run(holder, func(t *testing.T) {
+	for _, holder := range []collectorHolder{collectorHolderSync, collectorHolderScheduled, collectorHolderBackfillUpload, collectorHolderLegacyCollect, "purge apply", "migrate", "machine rename", "backfill projects", "backfill undo", "unknown command"} {
+		t.Run(string(holder), func(t *testing.T) {
+			t.Parallel()
 			home, env, cfg, _ := overviewFixture(t)
-			unlock, err := lockCollector(home, holder, env.now().Add(-3*time.Hour))
+			unlock, err := lockCollector(home, string(holder), env.now().Add(-3*time.Hour))
 			must(t, err)
 			defer unlock()
 			// Even matching leftover progress cannot turn maintenance into collection.
@@ -143,7 +145,7 @@ func TestStatusOverviewDistinguishesCollectionFromMaintenance(t *testing.T) {
 			view, err := readStatusOverview(env)
 			must(t, err)
 			switch holder {
-			case "sync", "scheduled collection", "backfill upload", "collect":
+			case collectorHolderSync, collectorHolderScheduled, collectorHolderBackfillUpload, collectorHolderLegacyCollect:
 				if view.state != overviewAttention || !strings.Contains(view.problem, "expected lifetime") {
 					t.Fatalf("collection lost overdue warning: %+v", view)
 				}

@@ -20,6 +20,13 @@ const collectorLockRecordName = "collector-lock.json"
 
 type collectorHolder string
 
+const (
+	collectorHolderLegacyCollect  collectorHolder = "collect"
+	collectorHolderSync           collectorHolder = "sync"
+	collectorHolderScheduled      collectorHolder = "scheduled collection"
+	collectorHolderBackfillUpload collectorHolder = "backfill upload"
+)
+
 // collectorLockRecord is written by the holder right after taking
 // collector.lock and removed just before releasing it. A holder that dies
 // leaves it behind, but then nothing holds the lock, and status only reads

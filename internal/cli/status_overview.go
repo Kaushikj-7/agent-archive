@@ -189,7 +189,7 @@ func (view *statusOverview) readLiveness(ctx context.Context, root *os.Root, hom
 	held, lockErr := statusCollectorLockHeld(root)
 	if found && recordErr == nil && lockErr == nil && held && processAlive(record.PID) && !record.Since.IsZero() && !record.Since.After(now) {
 		switch record.Holder {
-		case "collect", "sync", "scheduled collection", "backfill upload":
+		case collectorHolderLegacyCollect, collectorHolderSync, collectorHolderScheduled, collectorHolderBackfillUpload:
 			view.background = "Collection active"
 			if view.state == overviewWorking || view.state == overviewUnknown {
 				view.state = overviewProcessing
