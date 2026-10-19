@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Transcript recovery of a session first imported through a released typed stage
+  starts its new generation without that stage link, which stays with the frozen
+  original. Recovery refuses until an unreleased, mismatched or redirected stage
+  settles; run `agent-archive sync` first.
+
 ## [0.2.2]
 
 Candidate scope frozen on 2026-10-19 for the intended `v0.2.2` tag. This record

@@ -261,6 +261,9 @@ func generationRecoveryBuilder(ctx context.Context, owner *sessionScan, filtered
 				owner.releaseRetainedAfter(mark)
 			}
 		}()
+		// A settled import stage stays with the predecessor; state refuses
+		// recovery before building while that stage is still owed.
+		latest.StagedImportSHA256 = ""
 		latest.ArchiveSessionID = id
 		latest.PreviousGenerationID = reg.ArchiveSessionID
 		bundle, err := owner.newSourceBundle(latest, adapter, filtered, at, nil)
