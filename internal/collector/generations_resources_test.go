@@ -270,9 +270,16 @@ func TestRunGenerationPressurePreservesJournalAndCapturesUnrelatedSource(t *test
 		t.Fatal(err)
 	}
 	budget := agentapi.NewNativeReadBudget(40 << 20)
+	pressure := budget.Reservation()
+	const inherited = 4096
+	if !pressure.Reserve(inherited) {
+		t.Fatal("inherited pressure")
+	}
+	defer pressure.Release(inherited)
 	opts := Options{MachineID: "machine", Sources: testSources, Parsers: testParsers, SkipSessionIndexRecovery: true, CodexRollouts: recoveryBudgetLookup{budget: budget}}
 	remote := storagetest.NewMemoryStore()
 	result, err := Run(t.Context(), s, remote, opts)
+	defer result.CloseStagedResults()
 	if err != nil || !errors.Is(result.Errors["generation-recovery"], agentapi.ErrReadBudget) {
 		t.Fatal("pressure was hidden", result, err)
 	}
@@ -283,7 +290,18 @@ func TestRunGenerationPressurePreservesJournalAndCapturesUnrelatedSource(t *test
 	if err != nil || string(after) != string(raw) {
 		t.Fatal("pressure changed journal", err)
 	}
-	if used, _ := budget.Charged(); used != 0 {
-		t.Fatal("pass leaked", used)
+	// The incomplete journal leaves one independently owned diagnostic key,
+	// session-1 (9 bytes), valid through every alias until result close.
+	if used, _ := budget.Charged(); used != inherited+9 || result.Errors[scan.id()] == nil {
+		t.Fatal("returned durable diagnostic lost its owner", used, result.Errors)
+	}
+	alias := result
+	if alias.Errors[scan.id()] == nil {
+		t.Fatal("result alias lost durable diagnostic")
+	}
+	alias.CloseStagedResults()
+	result.CloseStagedResults()
+	if used, _ := budget.Charged(); used != inherited {
+		t.Fatal("result close leaked or consumed inherited pressure", used)
 	}
 }

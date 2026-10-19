@@ -81,6 +81,8 @@ func (p ImportStage) digest(ctx context.Context) (string, error) {
 // ImportStages returns a bounded slice of durable preparation journals. The
 // lexical cursor is progress only, never a proof of absence or permission.
 func (s *Store) ImportStages(ctx context.Context, after string, limit int) (stages []ImportStage, next string, err error) {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	names, err := s.openImportStageNames(ctx)
 	if err != nil {
 		return nil, "", err
@@ -750,7 +752,9 @@ func (s *Store) removeImportFile(id, name string) (err error) {
 // ResumeAllImportAdmissions is explicit import recovery under setup/collector
 // ownership. Scheduled callers use the single-group method instead.
 func (s *Store) ResumeAllImportAdmissions(ctx context.Context) error {
-	cfg, found, err := s.loadConfig()
+	read, ctx, closeRead := s.withImportResultScope(ctx)
+	defer closeRead()
+	cfg, found, err := read.loadConfig()
 	if err != nil {
 		return err
 	}
@@ -760,15 +764,13 @@ func (s *Store) ResumeAllImportAdmissions(ctx context.Context) error {
 	if !cfg.Archive.Enabled {
 		return nil
 	}
-	read, closeRead := s.WithImportResultScope(ctx)
-	defer closeRead()
 	var cursor struct {
 		After string `json:"after"`
 	}
-	if err := s.readImportControl("import-stage-cursor.json", &cursor); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := read.readImportControl("import-stage-cursor.json", &cursor); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	err = read.VisitImportStagePages(ctx, cursor.After, func(stages []ImportStage, next string) error {
+	err = read.VisitImportStagePages(ctx, "", func(stages []ImportStage, next string) error {
 		// Reload pause/authorization at the same per-page boundary as the
 		// scheduled method. Each descriptor is freshly read by this page.
 		cfg, found, err := read.loadConfig()
@@ -1081,11 +1083,7 @@ func (s *Store) retainImportDescriptor(ctx context.Context, stage ImportStage) e
 // ImportStagesOwned returns one captured page. The close must follow all
 // descriptor/roster use; ordinary ImportStages retains its legacy API.
 func (s *Store) ImportStagesOwned(ctx context.Context, after string, limit int) ([]ImportStage, string, func(), error) {
-	budget := s.resourceBudget
-	if budget == nil {
-		budget = agentapi.NewNativeReadBudget(128 << 20)
-	}
-	read, closePage := s.WithReadBudget(ctx, budget)
+	read, ctx, closePage := s.withImportResultScope(ctx)
 	stages, next, err := read.ImportStages(ctx, after, limit)
 	if err != nil {
 		closePage()
@@ -1097,11 +1095,23 @@ func (s *Store) ImportStagesOwned(ctx context.Context, after string, limit int) 
 // WithImportResultScope keeps bounded copied results and nested page/child
 // reads on one captured owner. Returned values must not outlive close.
 func (s *Store) WithImportResultScope(ctx context.Context) (*Store, func()) {
+	read, _, closeRead := s.withImportResultScope(ctx)
+	return read, closeRead
+}
+
+// The joined context belongs to the returned result owner, including callers
+// that create a nested page with a different explicit context.
+func (s *Store) withImportResultScope(ctx context.Context) (*Store, context.Context, func()) {
+	s, ctx, closeContext := s.withDurableContext(ctx)
 	budget := s.resourceBudget
 	if budget == nil {
 		budget = agentapi.NewNativeReadBudget(128 << 20)
 	}
-	return s.WithReadBudget(ctx, budget)
+	read, closeRead := s.WithReadBudget(ctx, budget)
+	return read, ctx, func() {
+		closeRead()
+		closeContext()
+	}
 }
 
 // RetainImportID creates an independent result string while both page and

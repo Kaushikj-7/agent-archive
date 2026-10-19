@@ -9,8 +9,10 @@ follow [Semantic Versioning](https://semver.org/).
 - Durable quota and recovery checks traverse complete supported state inventories
   beyond 65,536 combined entries. Explicit import recovery, reconciliation and
   undo acquire session names once per invocation, with fresh stage/control reads
-  in groups of at most 50 directories. The 1 GiB quota and per-write validation
-  remain unchanged; large inventories can still make admission checks slow.
+  in groups of at most 50 directories. Explicit recovery covers stages before the
+  scheduled cursor; canceled censuses preserve queued work for retry.
+  The 1 GiB quota and per-write validation remain unchanged; large inventories
+  can still make admission checks slow.
 
 - Confirmed backfill continues supported native preparation and staging across
   bounded lookup scopes. Foreground imports publish and verify owned groups

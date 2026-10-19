@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -156,6 +157,124 @@ func TestImportRecoveryPreservesUnchangedCursor(t *testing.T) {
 			}
 			if used, peak := budget.Charged(); used != 0 || peak == 0 {
 				t.Fatal("recovery skipped charged traversal or leaked its owner", used, peak)
+			}
+		})
+	}
+}
+
+func TestImportStageTraversalPreservesBothCancellationOwners(t *testing.T) {
+	t.Parallel()
+	for _, captured := range []bool{false, true} {
+		name := "caller"
+		if captured {
+			name = "captured-owner"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s, reg, _ := ownedImportReleaseFixture(t, "canceled traversal")
+			path := filepath.Join(s.home, importStageRelative(reg.ArchiveSessionID))
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner, cancelOwner := context.WithCancel(t.Context())
+			defer cancelOwner()
+			caller, cancelCaller := context.WithCancel(t.Context())
+			defer cancelCaller()
+			budget := agentapi.NewNativeReadBudget(2 << 20)
+			pressure := budget.Reservation()
+			const inherited = 4096
+			if !pressure.Reserve(inherited) {
+				t.Fatal("inherited pressure")
+			}
+			defer pressure.Release(inherited)
+			read, closeRead := s.WithReadBudget(owner, budget)
+			defer closeRead()
+			positive := 0
+			if err := read.VisitImportStagePages(caller, "", func(stages []ImportStage, _ string) error {
+				positive += len(stages)
+				return nil
+			}); err != nil || positive != 1 {
+				t.Fatal("funded live traversal positive control", positive, err)
+			}
+			if captured {
+				cancelOwner()
+			} else {
+				cancelCaller()
+			}
+			called := false
+			traverseErr := read.VisitImportStagePages(caller, "", func([]ImportStage, string) error {
+				called = true
+				return nil
+			})
+			if !errors.Is(traverseErr, context.Canceled) || called {
+				t.Error("canceled traversal owner was replaced", called, traverseErr)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Error("canceled traversal changed selected evidence", err)
+			}
+			closeRead()
+			closeRead()
+			if used, _ := budget.Charged(); used != inherited {
+				t.Error("canceled traversal changed inherited charge or leaked", used)
+			}
+		})
+	}
+}
+
+func TestImportStageOwnedPagePreservesBothCancellationOwners(t *testing.T) {
+	t.Parallel()
+	for _, nested := range []bool{false, true} {
+		name := "direct"
+		if nested {
+			name = "nested-result-scope"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			for _, captured := range []bool{false, true} {
+				name := "caller"
+				if captured {
+					name = "captured-owner"
+				}
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+					s, _, _ := ownedImportReleaseFixture(t, "canceled owned page")
+					owner, cancelOwner := context.WithCancel(t.Context())
+					defer cancelOwner()
+					caller, cancelCaller := context.WithCancel(t.Context())
+					defer cancelCaller()
+					budget := agentapi.NewNativeReadBudget(2 << 20)
+					read, closeRead := s.WithReadBudget(owner, budget)
+					defer closeRead()
+					closeNested := func() {}
+					if nested {
+						read, closeNested = read.WithImportResultScope(caller)
+					}
+					defer closeNested()
+					stages, _, closePage, err := read.ImportStagesOwned(caller, "", 50)
+					if err != nil || len(stages) != 1 {
+						closePage()
+						t.Fatal("funded live owned page positive control", len(stages), err)
+					}
+					closePage()
+					if captured {
+						cancelOwner()
+					} else {
+						cancelCaller()
+					}
+					stages, _, closePage, err = read.ImportStagesOwned(caller, "", 50)
+					closePage()
+					closePage()
+					if !errors.Is(err, context.Canceled) || len(stages) != 0 {
+						t.Error("canceled owned page revived a prior owner", len(stages), err)
+					}
+					closeNested()
+					closeRead()
+					if used, _ := budget.Charged(); used != 0 {
+						t.Error("owned page or joined result scope leaked charge", used)
+					}
+				})
 			}
 		})
 	}

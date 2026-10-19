@@ -201,7 +201,7 @@ func (n *importStageNames) page(after string, limit int) (start, end int, next s
 // control reads still determine ownership, cancellation, and release. Observed
 // membership changes return an incomplete traversal, requiring a fresh retry.
 func (s *Store) VisitImportStagePages(ctx context.Context, after string, visit func([]ImportStage, string) error) (err error) {
-	read, closeRead := s.WithImportResultScope(ctx)
+	read, ctx, closeRead := s.withImportResultScope(ctx)
 	defer closeRead()
 	names, err := read.openImportStageNames(ctx)
 	if err != nil {

@@ -88,8 +88,10 @@ Staging and pending publication share a 1 GiB local quota. Quota and recovery
 checks visit complete supported state inventories, including more than 65,536
 combined entries. Explicit recovery, reconciliation and undo acquire session
 names once per invocation and read current stages in groups of at most 50
-directories. An observed membership change requires a fresh retry. Every durable
-write still validates the full quota census while holding the admission locks,
+directories. Explicit recovery starts at the beginning of this inventory,
+regardless of the scheduled cursor. An observed membership change requires a fresh
+retry. Cancellation before the census completes stops collection and leaves queued
+work for retry. Every durable write still validates the full quota census while holding the admission locks,
 so large settled inventories can make admission slow. Foreground imports
 upload and verify bounded owned groups before preparing more evidence. Setup and
 background imports preserve completed work and report a capacity error so you
