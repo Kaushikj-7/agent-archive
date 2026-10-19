@@ -42,7 +42,7 @@ class PolicyTest(unittest.TestCase):
 
     def test_daily_exact_restorations_include_physical_boundary_without_weekly_scale(self):
         selected = {(e['package'],e['test']) for e in tier.catalog()['restorations'] if e['restore']=='daily'}
-        self.assertEqual(selected, {('internal/cli','TestRealCLICatalogDefaultList50Bounded'),('internal/cli','TestRealCLICatalogListNonMultiplePageLimit'),('internal/cli','TestBackfillConfirmedCompletesMixedNativeWindows'),('internal/reader','TestRemoteRootChildrenReusesOnlyCompleteSameRootSQL'),('internal/agents/codex','TestRelatedMillionRecordLimit')})
+        self.assertEqual(selected, {('internal/cli','TestRealCLICatalogDefaultList50Bounded'),('internal/cli','TestRealCLICatalogListNonMultiplePageLimit'),('internal/cli','TestBackfillConfirmedCompletesMixedNativeWindows'),('internal/reader','TestRemoteRootChildrenReusesOnlyCompleteSameRootSQL'),('internal/agents/codex','TestRelatedMillionRecordLimit'),('internal/backfill','TestImportFullConsumersAcquireStageNamesOnce'),('internal/state','TestDurableCensusCompletesCombinedRoots')})
         physical = next(e for e in tier.catalog()['restorations'] if e['test']=='TestRelatedMillionRecordLimit')
         self.assertEqual(physical['counterpart'], 'TestRelatedCachedRecordCountLimitIsTypedAndReleasesBudget')
         boundary = {e['test'] for e in tier.catalog()['restorations'] if e['package']=='internal/backfill'}
@@ -493,7 +493,7 @@ class SourceAuditTest(unittest.TestCase):
 
 
 class ExecutionPlanTest(unittest.TestCase):
-    def test_daily_executes_all_short_and_five_exact_full_bodies_with_expected_children(self):
+    def test_daily_executes_all_short_and_declared_full_bodies_with_expected_children(self):
         entries=[e for e in tier.catalog()['restorations'] if e['restore']=='daily']
         def command(args,output,deadline,env=None):
             if args == tier.SOURCE_AUDIT_COMMAND:
@@ -515,6 +515,10 @@ class ExecutionPlanTest(unittest.TestCase):
                             children=['128']
                         elif e['test']=='TestBackfillConfirmedCompletesMixedNativeWindows':
                             children=['3','17']
+                        elif e['test']=='TestImportFullConsumersAcquireStageNamesOnce':
+                            children=['5000']
+                        elif e['test']=='TestDurableCensusCompletesCombinedRoots':
+                            children=['257']
                     for child in children:
                         lines.append({'Action':'pass','Package':pkg,'Test':e['test']+'/'+child})
                     lines.append({'Action':'pass','Package':pkg,'Test':e['test']})
@@ -526,7 +530,7 @@ class ExecutionPlanTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d,mock.patch.object(tier.full_race,'source_proof',return_value=SourceAuditTest.proof),mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'checked',side_effect=command),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}):
             tier.run_suite('daily','linux',Path(d))
             report=json.loads((Path(d)/'tier.json').read_text())
-            self.assertTrue(report['success']);self.assertEqual(len(report['invocations']),5)
+            self.assertTrue(report['success']);self.assertEqual(len(report['invocations']),7)
             self.assertEqual(report['invocations'][0]['command'], tier.SOURCE_AUDIT_COMMAND)
             self.assertIn('-short',report['invocations'][1]['command'])
             self.assertTrue(all('-short' not in i['command'] for i in report['invocations'][2:]))

@@ -4,6 +4,17 @@
   "weekly_cron": "17 8 * * 0",
   "restorations": [
     {
+      "package": "internal/state",
+      "test": "TestDurableCensusCompletesCombinedRoots",
+      "restore": "daily",
+      "pr": "257 physical combined entries with 129 published peers; full 65537-entry boundary NOT RUN",
+      "full_children": [
+        "257",
+        "65537"
+      ],
+      "full_fixture": "65537 physical combined entries across 129 supported published peers and 65408 session directories; actual source-set save/readback, exact quota accounting, late unknown-owner refusal and cancellation"
+    },
+    {
       "package": "internal/backfill",
       "test": "TestImportFullConsumersAcquireStageNamesOnce",
       "restore": "daily",

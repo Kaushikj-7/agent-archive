@@ -15,9 +15,21 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
-// The complete production census crosses its former shared root-entry window.
-// These are physical synthetic files/directories, not a virtual entry count.
+// The full production census crosses its former shared root-entry window.
+// Short mode keeps the same assertions with a physical multibatch representative.
 func TestDurableCensusCompletesCombinedRoots(t *testing.T) {
+	for _, entries := range []int{2*durableDirectoryBatch + 1, durableEntryLimit + 1} {
+		t.Run(fmt.Sprint(entries), func(t *testing.T) {
+			if testing.Short() && entries == durableEntryLimit+1 {
+				t.Skip("full 65537-entry physical combined census NOT RUN in short mode")
+			}
+			testDurableCensusCompletesCombinedRoots(t, entries)
+		})
+	}
+}
+
+func testDurableCensusCompletesCombinedRoots(t *testing.T, entries int) {
+	t.Helper()
 	t.Log("begin physical synthetic combined-root fixture construction")
 	constructStarted := time.Now()
 	s := newTestStore(t)
@@ -71,7 +83,7 @@ func TestDurableCensusCompletesCombinedRoots(t *testing.T) {
 	for i := range peers {
 		settledBytes += seedPeer(s, fmt.Sprintf("settled-%05d", i))
 	}
-	for i := range durableEntryLimit - 2*peers {
+	for i := range entries - 2*peers - 1 {
 		if err := os.MkdirAll(filepath.Join(s.home, "sessions", fmt.Sprintf("empty-%05d", i)), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -84,7 +96,7 @@ func TestDurableCensusCompletesCombinedRoots(t *testing.T) {
 	if err != nil {
 		t.Fatal("physical fixture session enumeration", err)
 	}
-	if len(physicalPublished) != peers+1 || len(physicalSessions) != durableEntryLimit-peers {
+	if len(physicalPublished) != peers+1 || len(physicalSessions) != entries-peers-1 || len(physicalPublished)+len(physicalSessions) != entries {
 		t.Fatal("physical fixture did not cross combined entry window", len(physicalPublished), len(physicalSessions))
 	}
 	t.Logf("physical fixture complete: published=%d sessions=%d combined=%d construction_elapsed=%s; begin actual SaveImportSourceSet", len(physicalPublished), len(physicalSessions), len(physicalPublished)+len(physicalSessions), time.Since(constructStarted))

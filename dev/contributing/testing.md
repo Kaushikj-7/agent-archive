@@ -256,6 +256,10 @@ The sparse staged-import traversal test runs all three actual consumers over
 candidate runs restore the unchanged 50,000-directory body. Short evidence marks
 that full body as **NOT RUN**. These content-free directory fixtures do not
 qualify full native-session throughput.
+The combined durable census keeps 129 supported published peers and every
+save/readback, accounting, late-unknown and cancellation assertion in short mode
+over 257 physical entries. Its named 65,537-entry boundary is **NOT RUN** in short
+mode and restored daily, weekly and for exact-commit candidates.
 The small cached-prefix history test pins
 aggregate refusal/release/retry; it does not prove million-record physical
 streaming. Metadata 16384, retained warm sources 2000 and physical/indexed
@@ -350,7 +354,7 @@ architecture, or signed-installer acceptance; see [releasing](../maintainers/rel
 The [Extended workflow](../../.github/workflows/extended.yml) uses separate
 daily `17 8 * * 1-6` and weekly `17 8 * * 0` cron events, avoiding a duplicate
 daily campaign on Sunday. Daily runs all Linux representative race bodies plus
-the five named full restorations, native Darwin platform smoke, expanded native
+the seven named full restorations, native Darwin platform smoke, expanded native
 config/catalog/capture/source-I/O integration and the pinned
 published writer, actual systemd scheduler/setup/timer/uninstall, five seconds
 of mutations on every discovered fuzz target and expanded purge cases. Weekly
