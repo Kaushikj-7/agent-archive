@@ -756,7 +756,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 // Known counts keep their existing policy, pause and interruption messages.
 func (u *upload) printCompletion(stdout io.Writer, passErr error, interrupted bool) {
 	switch {
-	case passErr != nil && u.pendingCount() == 0 && !errors.Is(passErr, errPaused) && !interrupted:
+	case passErr != nil && u.pendingCount() == 0:
 		terminal.Println(stdout, "Import publication is unfinished.")
 	case u.pendingCount() == 0:
 		terminal.Printf(stdout, "Uploaded %s (%s).\n", countNoun(u.total, "session"), backfill.FormatSize(u.totalBytes))

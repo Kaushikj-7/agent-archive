@@ -630,6 +630,9 @@ func (r Registration) stage(ctx context.Context, w *parentWork) error {
 	}
 	digest, err := r.Store.SaveConfirmedImportSourceSet(ctx, reg, bundle, preserved, cfg.EffectiveSkillEvidence(), children...)
 	if err != nil {
+		if errors.Is(err, state.ErrImportPolicyChanged) {
+			err = errors.Join(err, r.cancelUnlinkedChildren(ctx, w))
+		}
 		return fmt.Errorf("persist imported evidence before admission: %w", err)
 	}
 	w.stagedSHA256 = digest
@@ -736,7 +739,7 @@ func (r Registration) stageSelectedChild(ctx context.Context, parent archive.Ses
 		return "", current, err
 	}
 	digest, err := r.Store.SaveConfirmedImportSourceSet(ctx, reg, bundle, nil, mode)
-	return digest, true, err
+	return digest, !errors.Is(err, state.ErrImportPolicyChanged), err
 }
 
 func (r Registration) cancelPrepared(works []*parentWork) error {

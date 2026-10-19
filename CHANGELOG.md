@@ -15,7 +15,9 @@ follow [Semantic Versioning](https://semver.org/).
   Linked subagent registration or publication failures remain pending and retry
   with the same options instead of reporting a completed import. Temporary policy
   holds preserve their validated retained continuation. Unreadable child
-  ownership reports unfinished publication. A delayed first upload preserves the
+  ownership reports unfinished publication, including when paused or interrupted.
+  Guarded policy refusal cleans cancellable legacy child payloads; protected
+  selections retain their evidence. A delayed first upload preserves the
   retained evidence's original capture time. Scoped publication preserves unrelated
   sessions' retry schedules, deferral clocks and actionable issues.
 

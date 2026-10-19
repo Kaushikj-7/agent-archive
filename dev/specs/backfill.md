@@ -105,8 +105,10 @@ durable writer under that lock. The selection format and quota are unchanged.
 Complete prepared groups subsequently use frozen evidence and current policy,
 without requiring the native input to remain present. A child payload alone,
 before the durable parent manifest selects its membership, does not provide
-native-loss recovery for the unstaged parent. Policy refusal cleans unlinked,
-unadmitted child payloads through existing cancellation; I/O interruption can
+native-loss recovery for the unstaged parent. Known policy refusal cleans
+unlinked, cancellable legacy child payloads through existing cancellation.
+Typed selections retain their existing frozen cleanup protection; restoring
+policy and current native input can finish an incomplete group. I/O interruption can
 retain them for retry with native input. Earlier completed groups remain owned.
 Foreground registration publishes
 and verifies bounded groups of its own batch before staging more. Existing
@@ -1172,10 +1174,12 @@ verified immutable sources precede metadata, and verified metadata and source
 readback precede local completion and staging removal. The history display reports
 staged/admitted progress separately from remotely verified sessions.
 
-Cancellation before admission journals and cleans unreferenced preparation.
-Admitted staging survives cancellation, pause and upload failure. Undo includes
-selected preparations that crashed before registration and records removal before
-releasing their bytes. Unknown or damaged obligations remain protected for recovery.
+Cancellation before admission journals and cleans unreferenced cancellable legacy
+preparation. Admitted staging survives cancellation, pause and upload failure. Undo
+includes cancellable legacy preparations that crashed before registration and
+records removal before releasing their bytes. Protected typed staging retains its
+existing cancellation and undo refusal; this path adds no typed retirement
+authority. Unknown or damaged obligations remain protected for recovery.
 
 Import staging permanently enables the `import-staging-v9` writer fence. Earlier
 mutating binaries must refuse the installation before updating registrations or

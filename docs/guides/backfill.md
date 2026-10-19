@@ -111,12 +111,16 @@ the import publishes its own work. Provider failures or unrelated quota occupanc
 retain completed evidence and report a retry action; they do not expand the quota.
 
 Pausing keeps referenced evidence for retry. Updated privacy rules are applied
-again before staged evidence is published. Canceling before admission removes
-unreferenced evidence, with a cleanup journal if interrupted; canceling after
-admission keeps evidence for recovery. Undo removes that import's owned staging
-along with its sessions. Dry-run writes no staging or admission state.
-If policy changes while children are being prepared, unlinked child payloads
-are cleaned up; earlier complete groups remain recoverable. An I/O interruption
+again before staged evidence is published. For cancellable legacy preparations,
+canceling before admission removes unreferenced evidence, with a cleanup journal
+if interrupted. Canceling after admission keeps evidence for recovery. Undo
+includes cancellable legacy staging along with its sessions; protected typed
+staging retains its existing cancellation and undo refusal. Dry-run writes no
+staging or admission state.
+If policy changes while children are being prepared, cancellable legacy child
+payloads are cleaned up; earlier complete groups remain recoverable. Protected
+typed selections retain their evidence. Restore the policy and retry with native
+input present to finish an incomplete group. An I/O interruption
 before the parent manifest can leave a child payload for retry with native input.
 
 ## What gets imported

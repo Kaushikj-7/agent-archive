@@ -47,6 +47,10 @@ type ImportStage struct {
 // reader's 128 MiB allowance, including encoded strings and ownership context.
 const MaxImportStageBytes int64 = 32 << 20
 
+// ErrImportPolicyChanged identifies a known policy refusal before a fresh
+// confirmed stage is written. Configuration read failures do not match it.
+var ErrImportPolicyChanged = errors.New("import policy changed before durable staging; run backfill again with the same options")
+
 func importStageRelative(id string) string {
 	return filepath.Join("sessions", id, "import-stage", "stage.json")
 }
@@ -495,9 +499,12 @@ func (s *Store) savePreparedImportStagePolicy(ctx context.Context, reg archive.S
 
 func (s *Store) checkConfirmedImportPolicy(reg archive.SessionRegistration, mode config.SkillEvidence) error {
 	cfg, present, err := s.loadConfig()
+	if err != nil || !present {
+		return errors.Join(ErrDurableStorageRecovery, errors.New("reload import policy before durable staging; run backfill again with the same options"), err)
+	}
 	stalePolicy := reg.ProjectResolution != nil && reg.ProjectResolution.PolicyContext != sourcefacts.RecoveryContext(cfg.Archive.Projects, nil, filepath.Clean)
-	if err != nil || !present || stalePolicy || cfg.Paused || !cfg.Archive.Enabled || !cfg.AcceptSession(reg) || cfg.DestinationID() != reg.DestinationID || cfg.EffectiveSkillEvidence() != mode {
-		return errors.Join(ErrDurableStorageRecovery, errors.New("import policy changed before durable staging; run backfill again with the same options"), err)
+	if stalePolicy || cfg.Paused || !cfg.Archive.Enabled || !cfg.AcceptSession(reg) || cfg.DestinationID() != reg.DestinationID || cfg.EffectiveSkillEvidence() != mode {
+		return errors.Join(ErrDurableStorageRecovery, ErrImportPolicyChanged)
 	}
 	return nil
 }
