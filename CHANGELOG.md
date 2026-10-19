@@ -12,11 +12,9 @@ Candidate scope frozen on 2026-10-19 for the intended `v0.2.2` tag. This record
 establishes no release date or publication until the tag's signed candidate is
 promoted. Freeze the final code/documentation SHA and complete a fresh
 exact-commit campaign before tagging.
-Comparison links below name the intended tag and may not resolve before its
-authorized creation.
-Published installation examples remain pinned to v0.1.1 until the tested candidate
-is promoted. Production S3/R2 scoped catalog activation remains refused pending
-provider qualification and credential authority.
+Installation examples pin v0.2.2, which adds Linux binaries. Production S3/R2
+scoped catalog activation remains refused pending provider qualification and
+credential authority.
 
 Two failed candidate tags remain immutable:
 
