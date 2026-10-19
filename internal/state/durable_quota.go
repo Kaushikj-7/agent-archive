@@ -305,10 +305,6 @@ func (q *durableQuota) write(path string, n int64, write func(io.Writer) error) 
 	return q.writeChecked(path, n, write, nil)
 }
 
-func (q *durableQuota) writeContext(ctx context.Context, path string, n int64, write func(io.Writer) error) error {
-	return q.writeWithHeadroomContext(ctx, path, n, write, nil, 0)
-}
-
 func (q *durableQuota) writeChecked(path string, n int64, write func(io.Writer) error, commit func(func() error) error) error {
 	return q.writeWithHeadroom(path, n, write, commit, 0)
 }
