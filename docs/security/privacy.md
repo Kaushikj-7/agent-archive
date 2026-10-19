@@ -171,12 +171,71 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
   | Claude Code | `~/.claude/skills` | `<project>/.claude/skills` |
   | Codex | `~/.agents/skills`, `~/.codex/skills` | `<project>/.agents/skills` |
   | Cursor | `~/.cursor/skills` | `<project>/.cursor/skills` |
+  | Muse | `.agents/skills`, `.claude/skills` under home; exact Muse config, Codex and bundled skill roots | `.agents/skills`, `.codex/skills`, `.claude/skills` under project |
 
-  Only each folder's immediate `<skill>/SKILL.md` files are read (up to 256
-  per folder), never other files in them. In a user-level folder a
+  Muse config inventory uses the injected `$XDG_CONFIG_HOME/muse/skills`, or
+  `~/.config/muse/skills` only when that variable is known unset. Codex foreign
+  inventory uses injected `$CODEX_HOME/skills`, or `~/.codex/skills` only when
+  known unset. Unknown, empty or invalid configured paths are not guessed.
+  Builtin inventory uses only the caller-qualified effective data home plus
+  `muse/skills/bundled/muse-core/skills`. The data home is fixed once per Muse
+  observation pass, using the existing injected XDG data-location policy; no
+  provider guesses another location. Native-local plugin inventory reads the exact
+  `muse/plugins/installed.json` version-1 registry under that same data home,
+  derives its local cache location, checks the manifest's raw hash, and reads
+  only its finite declared skill files. Other registry versions, provenance
+  families and ambiguous declarations remain incomplete. Inventory proves installation only;
+  project trust, native activation and eligibility remain unknown. Skill presence
+  cannot activate Muse capture. Separately, an exact qualified own native
+  `skill_read_observed` report can retain its canonical skill ID and owning
+  run/source sequence and derive positive harness skill-read evidence. It does
+  not establish a successful tool-result join. The original-file digest is
+  validated then erased. An optional content-only hash can be joined from an
+  actual authorized skill observation only when the whole file is unchanged by
+  the credential redactor and contains no literal `[REDACTED]`. The producer
+  compares only that existing safe digest, never an original hash from redacted
+  candidates. Native identity stays separate from installed display identity;
+  no origin, trust or eligibility is inferred. Credential-bearing, literal-marker
+  and otherwise unmatched skills remain hashless. Only ordinary evidence is
+  cached across the pass: private safe digests end with the current callback
+  view after finalization or error. The first actual user/project reads can
+  match; later project reads can match only their own new content, and cached
+  evidence supplies no digest or filesystem reread. Optional witness capacity
+  refusal preserves ordinary evidence and the exact already-restored output;
+  required restoration, source, output and cancellation failures still refuse.
+  Exact prior-event safe proof
+  restores before activity comparison without filesystem access; only the normal
+  active observation gate can add new proof. Private native digests die with the
+  leased operation and never enter evidence, state or diagnostics. The closed
+  retained hash uses the existing producer-evidence trust boundary, not an
+  authenticated-producer or coherent-forgery guarantee. General redacted-content
+  read-hash association and origin qualification remain unavailable.
+
+  Only each folder's immediate `<skill>/SKILL.md` files are read, never
+  other files in them. Across Claude, Codex, Cursor and Muse, directory
+  acquisition requests at most 257 entries once. A complete folder with at
+  most 256 entries is sorted before inspection. An overflowing folder yields
+  an empty, unreadable/incomplete inventory before any skill bodies are read;
+  no partial prefix or exact omitted total is claimed. In a user-level folder a
   symlinked skill is followed only when its resolved `SKILL.md` stays inside
   that selected skill root. A project's `SKILL.md` that resolves outside the
-  project is skipped. Sessions imported with `backfill` carry no skill evidence.
+  project is skipped. The shared observer also supports finite caller-qualified
+  manifest file declarations: only the declared regular files inside that exact
+  package can be read, with no recursive search or undeclared neighbors. This
+  requires installed registry provenance for native plugins; a scratch manifest
+  alone supplies no installed authority. Registry and manifest reads are each
+  limited to 256 KB and together to 1 MB, included in the existing allowance;
+  no more than 256 packages and 256 declared files are admitted. Only private,
+  current-user-owned regular files under the exact installed boundary are read;
+  unsupported ownership platforms remain unavailable. Raw package/manifest
+  digests, source paths, settings and non-skill capabilities are not uploaded.
+  User roots share
+  one 4 MB allowance and physical-file cache per observation; each project's roots
+  have a separate 4 MB allowance and cache. One file is limited to 1 MB and an
+  archived body to 16 KB. Sessions imported with `backfill`
+  carry no skill evidence. Muse metadata can retain bounded logical installed
+  declaration IDs/scopes for skills sharing the same name and content hash; they
+  contain no package paths and do not establish eligibility or use.
 
   Change the mode in setup. The change limits subsequent uploads, including
   pending work rebuilt under the new mode, but does not remove copies already

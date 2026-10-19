@@ -56,6 +56,7 @@ const (
 	eventResourceUsageSampled             runtimeEvent = "resource_usage_sampled"
 	eventScheduled                        runtimeEvent = "scheduled"
 	eventSideEffectIntent                 runtimeEvent = "side_effect_intent"
+	eventSkillReadObserved                runtimeEvent = "skill_read_observed"
 	eventStarted                          runtimeEvent = "started"
 	eventStatus                           runtimeEvent = "status"
 	eventTaskStreamLinked                 runtimeEvent = "task_stream_linked"
@@ -83,6 +84,7 @@ const (
 	fieldPermissionEpoch         fieldName = "permission_epoch"
 	fieldEnvelopeSequence        fieldName = "envelope_sequence"
 	fieldSourceRunRecordSequence fieldName = "source_run_record_sequence"
+	fieldObservedAtSequence      fieldName = "observed_at_sequence"
 	fieldResume                  fieldName = "resume"
 )
 

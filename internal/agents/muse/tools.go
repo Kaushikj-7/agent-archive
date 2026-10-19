@@ -138,9 +138,10 @@ type toolObservations struct {
 
 // toolCallRef contains no native payload, arbitrary name, or argument data.
 type toolCallRef struct {
-	record     int
-	normalized int
-	nativeRead bool
+	record          int
+	normalized      int
+	nativeRead      bool
+	nativeBroadRead bool
 }
 
 func (t *toolObservations) registerCalls(r retained, index int, view *archive.NormalizedView, native map[string]any) error {
@@ -180,7 +181,7 @@ func (t *toolObservations) registerCalls(r retained, index int, view *archive.No
 			// Private names/actions never enter narrative listing.
 			view.ToolCalls = append(view.ToolCalls, archive.NormalizedToolCall{RecordIndex: index, CallID: id})
 		}
-		ref := toolCallRef{record: index, normalized: normalized, nativeRead: native != nil && str(object(private[i])["name"]) == "read_file"}
+		ref := toolCallRef{record: index, normalized: normalized, nativeRead: native != nil && str(object(private[i])["name"]) == "read_file", nativeBroadRead: native != nil && str(object(private[i])["name"]) == "read_skill"}
 		t.calls[call] = ref
 		batch.calls = append(batch.calls, ref.normalized)
 	}

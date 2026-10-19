@@ -81,7 +81,7 @@ func (s *Store) completedGenerationReceipt(home *local.RootedHome, id string) (c
 	if err := errors.Join(home.Check(), s.durableContext().Err()); err != nil {
 		return false, err
 	}
-	return decodeErr == nil && receipt.Version == 1 && receipt.Previous == id && safeFileComponent(receipt.Next) && receipt.Key.Validate() == nil && receipt.Complete && receipt.Registration == nil && receipt.Pending == nil && receipt.Request == nil, nil
+	return decodeErr == nil && validGenerationRecoveryVersion(receipt) && receipt.Previous == id && safeFileComponent(receipt.Next) && receipt.Key.Validate() == nil && receipt.Complete && receipt.Registration == nil && receipt.Pending == nil && receipt.Request == nil, nil
 }
 
 // Replay consumes only the cleared receipt proof, not unrelated pending content.

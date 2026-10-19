@@ -303,7 +303,7 @@ func TestObserveSkillsUsesAggregateSnapshotBudgetAndDistinctCodexScopes(t *testi
 	}
 }
 
-func TestObserveSkillsLabelsTruncatedInventory(t *testing.T) {
+func TestObserveSkillsRefusesOverflowInventory(t *testing.T) {
 	home := t.TempDir()
 	root := filepath.Join(home, ".agents", "skills")
 	for i := range maxSkillsPerRoot + 1 {
@@ -319,7 +319,13 @@ func TestObserveSkillsLabelsTruncatedInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) == 0 || got[0].Payload["truncated"] != true || got[0].Payload["inventory_complete"] != false || got[0].Payload["omitted_count"] != float64(1) {
+	if len(got) != 2 || got[0].Payload["root_status"] != "unreadable" || got[0].Payload["inventory_complete"] != false || len(got[0].Payload["skills"].([]any)) != 0 {
+		t.Fatalf("overflow root retained prefix: %#v", got)
+	}
+	if _, ok := got[0].Payload["omitted_count"]; ok {
+		t.Fatal("overflow root claimed an exact omitted total")
+	}
+	if _, ok := got[0].Payload["truncated"]; ok {
 		t.Fatalf("inventory=%#v", got)
 	}
 }
