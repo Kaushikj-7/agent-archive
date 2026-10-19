@@ -12,6 +12,39 @@ JSON output preserves its display-control escaping and returns a failure if
 the output writer rejects bytes or accepts only part of the document. Scripts
 should check the exit status before using redirected output.
 
+## Read-only local list and show
+
+`list --source local --harness muse --json` and
+`show NATIVE_ID --source local --harness muse --json` work before setup.
+They do not open storage, enable capture or write archive state. Their separate
+[local-read schema](../../schemas/local-read.schema.json) is version 1, with
+`source: "local"` and domain `local-read-list` or `local-read-show`. These documents
+do not use archive list version 4 or stored metadata IDs. `native_session_id` is
+the observed native identifier; it does not prove capture permission.
+
+List prints `sessions`, `coverage` and `preview_limited`. A row's `name`, `title`
+and `preview` describe bounded labels, not a complete conversation scan. Searches
+cover the first bounded preview batch (at most 50). `--limit 0` does not remove
+discovery or preview bounds. Unavailable labels can make word searches miss a
+session. `coverage.identity_complete` concerns identities and checkout scope in
+the declared native store layout; it does not establish child completeness.
+Muse's unqualified descendant coverage remains an explicit row gap.
+
+Show validates the entire selected confined source and prints `session`,
+`coverage`, `observability` and any `token_observations` from the shared Analysis.
+Only `--transcript` adds `view`, using the same turns, tool calls, tool results
+and hook finals projection as archive show. Unsupported evidence remains
+unavailable; recorded token observations do not establish billing or complete
+usage. Missing observability categories are unknown. There are no synthetic
+zero counts for unavailable compactions, files or Git activity.
+
+`--project` needs an existing directory; `--all-projects` broadens scope.
+Conflicting native identities refuse selection. Unknown formats, changed source
+snapshots and output that cannot fit an explicit `--max-bytes` limit fail before
+printing the transcript. Local reads never save a full-transcript artifact.
+Archive-specific filters, revisions and index mutation flags are rejected with
+`--source local`. The default source remains `archive`.
+
 ## `list --json`
 
 ```json

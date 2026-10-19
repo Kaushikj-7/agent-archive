@@ -31,14 +31,30 @@ var ErrNoTranscript = errors.New("the session's transcript is not available on t
 // own when Cursor is running, which is removed before it returns.
 func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegistration, capturedAt time.Time, cursorDatabase string, sources agentapi.SourcesLookup) (archive.SourceBundle, error) {
 	defer trace.Start("read local transcript").End()
+	if reg.NativeImport != nil {
+		if err := reg.ValidateNativeImport(); err != nil {
+			return archive.SourceBundle{}, err
+		}
+	}
 	store, closeRead := state.OpenReadOnly(home).WithReadBudget(ctx, nil)
 	defer closeRead()
-	if err := store.CheckDurableSessionRead(reg.ArchiveSessionID); err != nil {
-		return archive.SourceBundle{}, err
+	if reg.NativeImport == nil {
+		if err := store.CheckDurableSessionRead(reg.ArchiveSessionID); err != nil {
+			return archive.SourceBundle{}, err
+		}
 	}
 	published, publishedErr := store.LoadPublishedState(reg.ArchiveSessionID)
 	if errors.Is(publishedErr, state.ErrDurableStorageRecovery) {
 		return archive.SourceBundle{}, publishedErr
+	}
+	if reg.NativeImport != nil {
+		if publishedErr == nil && published.Summary().Published {
+			if err := published.ValidateNativeImportReadAuthority(reg); err != nil {
+				return archive.SourceBundle{}, err
+			}
+		} else if err := store.CheckDurableSessionRead(reg.ArchiveSessionID); err != nil {
+			return archive.SourceBundle{}, err
+		}
 	}
 	if reg.StagedImportSHA256 != "" && (publishedErr != nil || !published.Summary().Published) {
 		stage, found, err := store.LoadImportStage(ctx, reg)
@@ -54,22 +70,8 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 		}
 		return refilterBundleBounded(ctx, reg, adapter, stage.Bundle, agentapi.ReadLimits{FilteredBytes: DefaultMaxTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
 	}
-	if reg.HistoricalProject != nil {
-		if err := reg.ValidateHistoricalProject(); err != nil {
-			return archive.SourceBundle{}, err
-		}
-		if publishedErr != nil {
-			return archive.SourceBundle{}, publishedErr
-		}
-		bundle, _, found := published.LastPublished()
-		if !found {
-			return archive.SourceBundle{}, state.ErrDurableStorageRecovery
-		}
-		adapter, err := sourceAdapter(sources, reg.Harness.Name)
-		if err != nil {
-			return archive.SourceBundle{}, err
-		}
-		return refilterBundleBounded(ctx, reg, adapter, bundle, agentapi.ReadLimits{FilteredBytes: DefaultMaxTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
+	if reg.HistoricalProject != nil || reg.NativeImport != nil {
+		return readRetainedLocalBundle(ctx, reg, published, publishedErr, sources)
 	}
 	source, ok := newSourceReader(reg, Options{CursorDatabase: cursorDatabase, Sources: sources})
 	if !ok {
@@ -96,6 +98,26 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 		evidence = mergeSupplementalEvidence(evidence, req.HookEvidence)
 	}
 	return archive.NewSourceBundle(reg, adapter, filtered, capturedAt, evidence)
+}
+
+func readRetainedLocalBundle(ctx context.Context, reg archive.SessionRegistration, published *state.Published, publishedErr error, sources agentapi.SourcesLookup) (archive.SourceBundle, error) {
+	if reg.HistoricalProject != nil {
+		if err := reg.ValidateHistoricalProject(); err != nil {
+			return archive.SourceBundle{}, err
+		}
+	}
+	if publishedErr != nil {
+		return archive.SourceBundle{}, publishedErr
+	}
+	bundle, _, found := published.LastPublished()
+	if !found {
+		return archive.SourceBundle{}, state.ErrDurableStorageRecovery
+	}
+	adapter, err := sourceAdapter(sources, reg.Harness.Name)
+	if err != nil {
+		return archive.SourceBundle{}, err
+	}
+	return refilterBundleBounded(ctx, reg, adapter, bundle, agentapi.ReadLimits{FilteredBytes: DefaultMaxTranscriptBytes, RecordBytes: archive.MaxRecordBytes})
 }
 
 // LastActivity is when reg's source last changed: its transcript's
@@ -142,7 +164,12 @@ func lastActivities(ctx context.Context, regs []archive.SessionRegistration, dat
 	}
 	groups := map[sourcePassKey][]archive.SessionRegistration{}
 	for _, reg := range regs {
-		if reg.HistoricalProject != nil {
+		if reg.NativeImport != nil {
+			if err := reg.ValidateNativeImport(); err != nil {
+				return nil, err
+			}
+		}
+		if reg.HistoricalProject != nil || reg.NativeImport != nil {
 			out[reg.ArchiveSessionID] = reg.Admitted()
 			continue
 		}

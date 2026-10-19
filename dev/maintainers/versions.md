@@ -8,8 +8,8 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 30 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.30.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 31 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.31.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
@@ -19,15 +19,23 @@ affects.
 | Machine record | `machines.SchemaVersion` | `machines/<machine_id>.json` and `machines --json` | 1 | Informational registry format changes incompatibly; independent of session schemas and filtering. |
 | Configuration | `config.SchemaVersion` | `config.json` `schema_version` | 1 | `config.json` changes incompatibly. |
 | List JSON | `cli.listSchemaVersion` | `list --json` `schema_version` | 4 | The script-facing list document changes incompatibly. Version 3 removed `unavailable`; version 4 makes exact-count knowledge explicit. |
+| Local read JSON | `cli.localReadSchemaVersion` | `list/show --source local --json` `schema_version` | 1 | Independent `local-read-list` and `local-read-show` documents change incompatibly; native IDs and bounded coverage remain explicit. Archive list version 4 is unchanged. |
 | Status JSON | `statusView.Version` in `internal/cli/status.go` | `status --json` `schema_version` | 4 | Status output changes incompatibly; schema 4 separates discovery from actual hook evidence. |
 
-Muse uses its independent parser 0.6.0 and archive-native `muse-jsonl` mixed ordinary-v1/native-omission-v2
+Muse uses its independent parser 0.7.0 and archive-native `muse-jsonl` mixed ordinary-v1/native-omission-v2
 ([inner union schema](../../schemas/muse-retained-record.schema.json)). Explicit-file
 and bounded automatic local handoff are supported; this does not alter outer
 bundle schemas or
 registration authority. Handoff builders now prefer existing `NativeStartedAt`
 facts over first prompts/file observations, also correcting Codex handoff start.
-The original native-start correction did not change metadata derivation.
+The original native-start correction did not change metadata derivation. The
+unreleased filter 31 and global/Muse adapter 0.31.0 tuple additionally covers installed
+declaration identities and qualified positive native harness skill-read reports.
+The latter erase original-file digests. An actual authorized marker-free
+RedactText fixed-point observation can supply an optional content-only safe hash,
+without native/installed-name aliases or origin claims; other content stays
+hashless. General redacted-content hashes, origin, eligibility, activation and
+exact-thread identity remain unqualified.
 
 Claude uses the common parser version; Cursor uses parser 0.23.0.
 
@@ -150,6 +158,12 @@ Its underlying discovery and Codex policies retain their independent v2/v3
 floors and consent semantics. Every save and setup rollback keeps generation
 protection after it is enabled, including after content expires. Earlier
 writers refuse this fence rather than ignore frozen historical generations.
+
+New recovery journals and completed receipts use generation protocol version 2,
+with mandatory exact prior-metadata and complete-source-set SHA-256 digests.
+Version 1 retains its original replay semantics; it is never upgraded by
+inferring missing authority. Earlier binaries refuse version 2 in replay and
+completed-successor routing. This does not allocate another configuration floor.
 
 Recovery adds optional `previous_generation_id` provenance to source headers
 and metadata and a persistent `recovered_generation` coverage gap to successor
@@ -328,6 +342,30 @@ with journal fence version 1 / writer `native-authority-v16` / original boolean
 rollback recovery before config loading; adding an ignored journal field alone
 would not protect authority.
 
+Confirmed historical Muse import uses the private exact registration contract
+`native_import` / `muse-historical-import-v1`. Its closed creating-batch receipt
+binds the nonreused batch instance, resolved selection digest, selected raw
+checkpoint and attached or detached membership. The native16 wrapper adds
+`"import":"muse-historical-import"` with sticky `native_import_protection`;
+both setup-journal wire forms require the same exact member in `files_only`.
+The independent admission selector, lower base and owned-deletion18 wrapper
+remain intact. The distinct reservation prefix is `muse-import-reservation-v1:`.
+These strings grant only confirmed historical staging and retained maintenance;
+they establish no live capture window. No numeric version, filter, adapter,
+parser or uploaded schema allocation accompanies this private contract.
+
+Native replay classification protection is independently opt-in through sticky
+`native_replay_protection`. It requires admission protection and the exact
+native16 admission selector `muse-root-admission-replay`; both setup journal
+forms require that selector and preserve the flag across rollback snapshots.
+The independent historical import selector and lower/deletion floors compose
+unchanged. Ordinary protection does not enable this capability. Native owner
+classification distinguishes nil, an empty replay marker and an exact normalized
+run ID, and ordinary writers cannot relabel an owner. This extends existing
+registration provenance and `ApplyReplay` semantics without changing source
+filtering, parsing, Analysis or old-owner classification, so it allocates no
+filter, adapter, parser or numeric schema version.
+
 Muse parser 0.2.0 corrects unavailable tool/file/Git counts and full export file
 presence without losing qualified prompt/message counts. Cursor parser 0.22.0
 corrects unavailable tool-result counts and omits full export files for
@@ -407,6 +445,38 @@ ToolResults/ToolErrors remain unavailable. Ordinary unaffected rows, other-agent
 parsers, Source2/metadata1 and private writer formats do not change. This finite
 observation lane does not enable capture or qualify rich tool/status parity.
 
+The unreleased PR10 filter31/Muse adapter0.31.0 and Muse parser0.7.0 scope also
+validates exactly `{kind: broad_read}` and a separate closed omission-only
+`effect_join: committed_broad_read_v1` for qualified earlier own native
+`read_skill` starts. Native task/call/name/profile and prior/later approval
+absence are required before erasure. Retained proof independently validates
+the prior own committed call/materialized run and start/terminal task tuple;
+erased names/proposed-task facts cannot be reconstructed. The marker derives
+no skill-use/read-hash/eligibility facts, and does not satisfy the existing
+committed file-read class. Its previous file-read bytes and semantics stay
+unchanged. Older strict Muse schemas/readers refuse the new enum; Source2,
+Metadata1/history2 and other agent/default parser versions do not change.
+This is inside the exclusively allocated unpublished PR10 tuple, with no
+additional allocation. Frozen pending bytes preserve original provenance.
+
+The same exclusive unreleased31/global and Muse adapter0.31.0/Muse parser0.7.0
+tuple includes the closed own `skill_read_observed`/`read_skill_tool` event.
+Strict native digest validation precedes erasure; only native ID/run/source and
+self-source sequence survive. Existing `NativeSkillUses` derives positive
+`native_invocation` evidence independently of eligible inventory. The same
+exclusive unpublished tuple also permits a closed optional safe content hash
+joined only from an actual authorized observer's full marker-free RedactText
+fixed point, with native skill identity unchanged. The raw native digest is
+private to the leased operation and is erased; redacted/unmatched content stays
+hashless. Exact prior-event proof restores before activity; only the existing
+active observation gate adds new hashes. The optional companion and cache/view
+loans share existing ownership and budgets. Retained hashes preserve the existing
+producer-evidence trust boundary, not authentication against coherent forgery. It reports a native harness read, not tool-result success. Shared
+source/metadata/history versions and other/default parser versions do not
+change. Older strict Muse readers refuse the new variant. General redacted-content product
+read-hash association and full origin/runtime/trust/activation/eligibility acceptance
+remain open.
+
 Muse effect-body compatibility accepts the closed native `file_read` profile,
 `complete` task completion and `failed` outcome forms. Only validation of private
 omitted bodies changes: equivalent old and new bodies yield byte-identical
@@ -429,6 +499,35 @@ closed startup validation lane, shared by headers, raw startup facts, filtering,
 retained parsing and refiltering. Existing accepted inputs retain identical bytes
 and metadata; field projection and metadata derivation are unchanged. No filter,
 adapter, parser, published schema or private writer version changes.
+
+Muse supplemental skill inventories/snapshots allocate filter31 and global/Muse
+adapter0.31.0. Existing shared bounds, secret redaction, mode selection and
+installed-only interpretation apply. Native transcript invocation/eligibility
+semantics stay unchanged. Muse parser0.7.0 separately preserves optional installed declaration
+identities; default0.21.0 and other parsers/configuration/source/
+metadata schemas remain unchanged. Installation deduplicates the shared root.
+The same unreleased31/global0.31.0 allocation also covers the shared
+Claude/Codex/Cursor/Muse directory acquisition repair: a single257-entry sentinel
+read refuses oversized roots before body reads, replacing their old sorted
+256-entry prefix and exact tail count with the existing empty unreadable/
+incomplete inventory. Complete roots of at most256 entries are unchanged.
+This changes supplemental input retention, not parser derivation or schemas;
+all existing parser versions remain unchanged. Frozen pending objects keep
+actual producing bytes and versions.
+The same unreleased31 allocation includes exact qualified DataHome builtin
+inventory and bounded declared-file infrastructure for original PR10 installed
+plugin scope, including the qualified version1 native-local installed registry,
+raw manifest-hash join and finite package-confined declarations. Unknown wire
+versions/provenance remain incomplete; raw locator digests stay local.
+Each user observation and each project observation retains its separate4MiB
+allowance/cache, with no extra native process path and existing Body/Metadata/None
+policy. No derived eligibility or use is introduced. Muse-only installed declaration
+provenance adds optional installed_identities to each metadata skill content group:
+sorted unique bounded logical scope/id pairs, omitted on overflow with a fixed gap.
+Source2/Metadata1/history2 remain additive-compatible: old typed readers ignore the
+optional collection and keep one existing content row; old strict skill schemas
+refuse the new field. No private writer/configuration version changes.
+Installed application version inspection is local and creates no capture proof.
 
 Muse guarded root admission adds the closed `muse-root-admission` capability to
 native writer16's existing structural fence and journal fence1. The matching

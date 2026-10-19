@@ -95,7 +95,8 @@ func ReconcileMuseCapture(next, previous Config, at time.Time) (Config, error) {
 		floor = previous.MuseCapture.Since
 	}
 	next.MuseCaptureLastIssuedAt = floor
-	next.NativeAdmissionProtection = next.NativeAdmissionProtection || previous.NativeAdmissionProtection || previous.MuseCapture != nil || !floor.IsZero()
+	next.NativeReplayProtection = next.NativeReplayProtection || previous.NativeReplayProtection
+	next.NativeAdmissionProtection = next.NativeAdmissionProtection || next.NativeReplayProtection || previous.NativeAdmissionProtection || previous.MuseCapture != nil || !floor.IsZero()
 	if !museCaptureEnabled(next) {
 		next.MuseCapture = nil
 		return next, nil
@@ -183,4 +184,13 @@ func (p *MuseCaptureConfig) UnmarshalJSON(raw []byte) error {
 	}
 	*p = MuseCaptureConfig(next)
 	return nil
+}
+
+// MuseAdmissionWriterSelector names the exact native admission writer capability.
+// Replay protection is opt-in and does not open or renew a capture window.
+func MuseAdmissionWriterSelector(replay bool) string {
+	if replay {
+		return "muse-root-admission-replay"
+	}
+	return "muse-root-admission"
 }

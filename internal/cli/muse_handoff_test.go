@@ -1,0 +1,328 @@
+package cli
+
+import (
+	"context"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/platform"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
+)
+
+func TestMuseHandoffUsesPrivateFilteredContext(t *testing.T) {
+	t.Parallel()
+	f := newHandoffFixture(t, false)
+	f.env.Executable = func() (string, error) { return "/synthetic/agent-archive", nil }
+	f.env.LookPath = func(name string) (string, error) { return "/synthetic/bin/" + name, nil }
+	var launched launchSpec
+	f.env.LaunchHandoff = func(spec launchSpec, _ io.Reader, _, _ io.Writer) error {
+		launched = spec
+		return nil
+	}
+	out, stderr, code := runPicker(t, f.env, "", f.id, "--to", "muse")
+	if code != 0 || out != "" || !strings.Contains(stderr, "launching local muse") {
+		t.Fatalf("handoff exit %d, stdout %q, stderr %q", code, out, stderr)
+	}
+	path := handoffPathFromPrompt(t, launched)
+	want := []string{"--workspace", f.project, launched.Args[len(launched.Args)-1]}
+	if launched.Binary != "/synthetic/bin/muse" || !slices.Equal(launched.Args, want) || launched.HandoffFile != path {
+		t.Fatalf("unexpected launch %+v", launched)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(content), "Fix the flaky widget test.") || strings.Contains(string(content), "hunter2secret") {
+		t.Fatalf("unsafe or missing filtered context: %v", err)
+	}
+	for location, mode := range map[string]os.FileMode{path: 0o600, filepath.Dir(path): 0o700} {
+		info, err := os.Stat(location)
+		if err != nil || info.Mode().Perm() != mode {
+			t.Fatalf("private context permissions: %v %v", info, err)
+		}
+	}
+}
+
+func TestEachExistingAgentHandsOffToMuse(t *testing.T) {
+	t.Parallel()
+	for source, prompt := range map[string]string{
+		"claude": "Why does the widget test fail?",
+		"codex":  "Rename Widget.parts to Widget.pieces everywhere.",
+		"cursor": "Tighten the intro paragraph of the megafauna post.",
+	} {
+		t.Run(source, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join("..", "archive", "testdata", "handoff", source+".jsonl")
+			env := testEnv(t, filepath.Join(t.TempDir(), "not-configured"), time.Now())
+			env.Environ = func() []string { return nil }
+			env.LookPath = func(name string) (string, error) { return "/synthetic/bin/" + name, nil }
+			env.Executable = func() (string, error) { return "/synthetic/agent-archive", nil }
+			project := t.TempDir()
+			env.WorkingDir = func() (string, error) { return project, nil }
+			var opened termlaunch.Spec
+			env.OpenTerminal = func(spec termlaunch.Spec) (string, error) {
+				opened = spec
+				return "a synthetic terminal", nil
+			}
+			_, stderr, code := runHandoff(t, env, "--file", path, "--harness", source, "--to", "muse")
+			if code != 0 || len(opened.Argv) < 2 || opened.Argv[0] != "/synthetic/bin/muse" {
+				t.Fatalf("%s to Muse exit %d: %s", source, code, stderr)
+			}
+			artifact := handoffPathFromPrompt(t, launchSpec{Args: opened.Argv[1:]})
+			content, err := os.ReadFile(artifact)
+			if err != nil || !strings.Contains(string(content), prompt) || !strings.Contains(string(content), "historical context") || strings.Contains(string(content), "hunter2secret") {
+				t.Fatalf("%s to Muse has unsafe or missing context: %v", source, err)
+			}
+		})
+	}
+}
+
+func TestMuseExecFileHandoffUsesModeFirstLaunch(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	source := filepath.Join(root, "source λ's $(not-run) `literal`.jsonl")
+	raw, err := os.ReadFile(filepath.Join("..", "archive", "testdata", "handoff", "claude.jsonl"))
+	must(t, err)
+	must(t, os.WriteFile(source, raw, 0o600))
+	project := filepath.Join(root, "checkout λ's $(not-run) `literal`")
+	temp := filepath.Join(root, "tmp λ's $(not-run) `literal`")
+	must(t, os.Mkdir(project, 0o700))
+	must(t, os.Mkdir(temp, 0o700))
+	home := filepath.Join(root, "not-configured")
+	env := testEnv(t, home, time.Now())
+	env.Environ = func() []string { return nil }
+	env.LookPath = func(name string) (string, error) { return "/synthetic/bin/" + name, nil }
+	env.Executable = func() (string, error) { return "/synthetic/agent-archive", nil }
+	env.WorkingDir = func() (string, error) { return project, nil }
+	env.TempDir = func() string { return temp }
+	var launched launchSpec
+	launches := 0
+	env.LaunchHandoff = func(spec launchSpec, _ io.Reader, _, _ io.Writer) error {
+		launched = spec
+		launches++
+		return nil
+	}
+	env.OpenTerminal = func(termlaunch.Spec) (string, error) {
+		t.Fatal("explicit --here handoff opened another terminal")
+		return "", nil
+	}
+	_, stderr, code := runPicker(t, env, "", "--file", source, "--harness", "claude", "--to", "muse", "--here", "--",
+		"exec", "--provider", "meta", "--model", "archive-synthetic-model", "--disable-write", "--disable-shell", "--disable-reminders", "--no-foreign-personal-context", "--max-model-steps", "3")
+	if code != 0 || launches != 1 || launched.Binary != "/synthetic/bin/muse" || launched.Dir != project {
+		t.Fatalf("exec handoff exit %d, launches %d: %s; launch=%+v", code, launches, stderr, launched)
+	}
+	artifact := handoffPathFromPrompt(t, launched)
+	prompt := "Read the complete handoff document at " + strconv.Quote(artifact) + ", then continue the work in this checkout. Agent Archive is available if you need more context; its commands are explained in that document."
+	want := []string{"exec", "--workspace", project, "--provider", "meta", "--model", "archive-synthetic-model", "--disable-write", "--disable-shell", "--disable-reminders", "--no-foreign-personal-context", "--max-model-steps", "3", prompt}
+	if !slices.Equal(launched.Args, want) || launched.HandoffFile != artifact || filepath.Dir(filepath.Dir(artifact)) != temp {
+		t.Fatalf("exec argv or private artifact changed: %+v", launched)
+	}
+	content, err := os.ReadFile(artifact)
+	if err != nil || !strings.Contains(string(content), "Why does the widget test fail?") || strings.Contains(string(content), "hunter2secret") {
+		t.Fatalf("unsafe or missing exec handoff context: %v", err)
+	}
+	for location, mode := range map[string]os.FileMode{artifact: 0o600, filepath.Dir(artifact): 0o700} {
+		info, err := os.Stat(location)
+		if err != nil || info.Mode().Perm() != mode {
+			t.Fatalf("private exec context permissions: %v %v", info, err)
+		}
+	}
+	after, err := os.ReadFile(source)
+	if err != nil || !slices.Equal(raw, after) {
+		t.Fatalf("exec handoff changed source bytes: %v", err)
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Fatalf("exec handoff created archive state: %v", err)
+	}
+}
+
+func TestMuseHandoffUsesSharedTerminalLaunch(t *testing.T) {
+	t.Parallel()
+	f := newHandoffFixture(t, false)
+	f.env.Executable = func() (string, error) { return "/synthetic/agent-archive", nil }
+	f.env.LookPath = func(name string) (string, error) { return "/synthetic/bin/" + name, nil }
+	f.env.Environ = func() []string { return []string{archive.ReplayEnv + "=caller-replay", "MUSE_THREAD_ID=caller"} }
+	var opened termlaunch.Spec
+	f.env.OpenTerminal = func(spec termlaunch.Spec) (string, error) {
+		opened = spec
+		return "a synthetic terminal", nil
+	}
+	_, stderr, code := runPicker(t, f.env, "", f.id, "--to", "muse", "--new-window")
+	if code != 0 || !strings.Contains(stderr, "opened muse in a synthetic terminal") {
+		t.Fatalf("terminal handoff exit %d: %s", code, stderr)
+	}
+	if opened.Dir != f.project || len(opened.Argv) != 4 || opened.Argv[0] != "/synthetic/bin/muse" || !slices.Contains(opened.Unset, "MUSE_SESSION_ID") || !slices.Contains(opened.Unset, "MUSE_THREAD_ID") || !slices.Contains(opened.Unset, archive.ReplayEnv) {
+		t.Fatalf("terminal specification %+v", opened)
+	}
+}
+
+func TestOrdinaryHandoffDoesNotInheritReplayMarker(t *testing.T) {
+	t.Parallel()
+	for _, destination := range []handoffDestination{handoffDestinationClaude, handoffDestinationCodex, handoffDestinationCursor, handoffDestinationMuse} {
+		t.Run(string(destination), func(t *testing.T) {
+			t.Parallel()
+			env := testEnv(t, t.TempDir(), time.Now())
+			env.LookPath = func(name string) (string, error) { return "/synthetic/bin/" + name, nil }
+			kept := []string{"PATH=/bin", "UNRELATED=value", "AGENT_ARCHIVE_REPLAY_EXTRA=preserved"}
+			env.Environ = func() []string {
+				return append([]string{archive.ReplayEnv + "=caller-run", archive.ReplayEnv + "=duplicate", "MUSE_THREAD_ID=caller", "MUSE_SESSION_ID=root"}, kept...)
+			}
+			spec, err := buildLaunchSpec(destination, "Read context", "/private/handoff.md", "/project", nil, env)
+			if err != nil || !slices.Equal(spec.Env, kept) {
+				t.Fatalf("ordinary launch environment %q: %v", spec.Env, err)
+			}
+		})
+	}
+}
+
+func TestMuseSourceHandoffToEachAgentUsesFilteredArtifact(t *testing.T) {
+	t.Parallel()
+	for _, destination := range []string{"claude", "codex", "cursor", "muse"} {
+		t.Run(destination, func(t *testing.T) {
+			t.Parallel()
+			path := museLocalFixture(t, "synthetic-exec-conversation")
+			home := filepath.Join(t.TempDir(), "not-configured")
+			env := testEnv(t, home, time.Now())
+			env.LookPath = func(name string) (string, error) { return "/synthetic/bin/" + name, nil }
+			env.Environ = func() []string { return nil }
+			env.Executable = func() (string, error) { return "/synthetic/agent-archive", nil }
+			env.WorkingDir = func() (string, error) { return filepath.Dir(path), nil }
+			var opened termlaunch.Spec
+			env.OpenTerminal = func(spec termlaunch.Spec) (string, error) {
+				opened = spec
+				return "a synthetic terminal", nil
+			}
+			_, stderr, code := runHandoff(t, env, "--file", path, "--harness", "muse", "--to", destination)
+			if code != 0 || len(opened.Argv) < 2 {
+				t.Fatalf("destination %s exit %d: %s", destination, code, stderr)
+			}
+			artifact := handoffPathFromPrompt(t, launchSpec{Args: opened.Argv[1:]})
+			content, err := os.ReadFile(artifact)
+			if err != nil || !strings.Contains(string(content), "Explain the synthetic parser.") || !strings.Contains(string(content), "It validates bounded native records") || strings.Contains(string(content), "PRIVATE CONTEXT MUST NOT SURVIVE") {
+				t.Fatalf("destination %s lost safe normalized context: %v", destination, err)
+			}
+			if _, err := os.Stat(home); !os.IsNotExist(err) {
+				t.Fatalf("handoff created setup or capture state: %v", err)
+			}
+		})
+	}
+}
+
+func TestMuseFileHandoffKeepsRelativeSourceAcrossLaunchDirectory(t *testing.T) {
+	t.Parallel()
+	original := museLocalFixture(t, "synthetic-exec-conversation")
+	sourceDir := filepath.Join(t.TempDir(), "λ 'source' $(touch unexpected) `literal`")
+	must(t, os.Mkdir(sourceDir, 0o700))
+	source := filepath.Join(sourceDir, "conversation.jsonl")
+	raw, err := os.ReadFile(original)
+	must(t, err)
+	must(t, os.WriteFile(source, raw, 0o600))
+	cwd, err := os.Getwd()
+	must(t, err)
+	relative, err := filepath.Rel(cwd, source)
+	must(t, err)
+	if filepath.IsAbs(relative) {
+		t.Fatal("source argument is not relative")
+	}
+	project := filepath.Join(t.TempDir(), "λ 'checkout' $(touch unexpected) `literal`")
+	must(t, os.Mkdir(project, 0o700))
+	home := filepath.Join(t.TempDir(), "not-configured")
+	env := testEnv(t, home, time.Now())
+	env.LookPath = func(name string) (string, error) { return "/synthetic/bin/" + name, nil }
+	env.Environ = func() []string { return nil }
+	env.Executable = func() (string, error) { return "/synthetic/agent-archive", nil }
+	env.WorkingDir = func() (string, error) { return project, nil }
+	var opened termlaunch.Spec
+	env.OpenTerminal = func(spec termlaunch.Spec) (string, error) {
+		opened = spec
+		return "a synthetic terminal", nil
+	}
+	_, stderr, code := runHandoff(t, env, "--file", relative, "--harness", "muse", "--to", "muse")
+	if code != 0 || opened.Dir != project || len(opened.Argv) != 4 || opened.Argv[2] != project {
+		t.Fatalf("relative source launch %d: %s spec=%+v", code, stderr, opened)
+	}
+	artifact := handoffPathFromPrompt(t, launchSpec{Args: opened.Argv[1:]})
+	content, err := os.ReadFile(artifact)
+	if err != nil || !filepath.IsAbs(artifact) || !strings.Contains(string(content), "Explain the synthetic parser.") || strings.Contains(string(content), "PRIVATE CONTEXT MUST NOT SURVIVE") {
+		t.Fatalf("unsafe or missing absolute context artifact: %v", err)
+	}
+	const prefix = "For the complete filtered local record, run "
+	_, rest, ok := strings.Cut(string(content), prefix)
+	if !ok {
+		t.Fatal("missing retrieval instruction")
+	}
+	command, _, ok := strings.Cut(rest, ".\n\n")
+	if !ok {
+		t.Fatal("missing retrieval instruction terminator")
+	}
+	// Parse the actual instruction from the different destination directory;
+	// the source must remain absolute and every metacharacter must stay literal.
+	parse := exec.CommandContext(t.Context(), "/bin/sh", "-c", "set -- "+command+"; printf '%s\\0' \"$@\"")
+	parse.Dir, parse.Env = project, []string{"PATH=/usr/bin:/bin"}
+	parsed, err := parse.Output()
+	must(t, err)
+	want := []string{"agent-archive", "handoff", "--file", source, "--harness", "muse", "--max-bytes", "0"}
+	if string(parsed) != strings.Join(want, "\x00")+"\x00" {
+		t.Fatalf("retrieval changed the source after launch: %q", parsed)
+	}
+	if _, err := os.Stat(filepath.Join(project, "unexpected")); !os.IsNotExist(err) {
+		t.Fatalf("a source or directory metacharacter ran a command: %v", err)
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Fatalf("handoff created setup or capture state: %v", err)
+	}
+}
+
+func TestMuseTerminalCommandPreservesArgumentsAndReadsArtifact(t *testing.T) {
+	t.Parallel()
+	f := newHandoffFixture(t, false)
+	f.env.Executable = func() (string, error) { return "/synthetic/agent-archive", nil }
+	dir := filepath.Join(t.TempDir(), "λ 'quoted' $(touch unexpected)")
+	must(t, os.Mkdir(dir, 0o700))
+	binary := filepath.Join(dir, "synthetic muse")
+	argumentsPath := filepath.Join(dir, "arguments")
+	contextPath := filepath.Join(dir, "context")
+	f.env.LookPath = func(string) (string, error) { return binary, nil }
+	var launched []string
+	f.env.OpenTerminal = func(spec termlaunch.Spec) (string, error) {
+		launched = slices.Clone(spec.Argv)
+		artifact := handoffPathFromPrompt(t, launchSpec{Args: spec.Argv[1:]})
+		// This ordinary synthetic process reads the actual shared artifact.
+		// It proves shell/terminal transport, not native Muse permission policy.
+		stub := "#!/bin/sh\n" +
+			"test -z \"${AGENT_ARCHIVE_REPLAY+x}\" || exit 21\n" +
+			"test -z \"${MUSE_THREAD_ID+x}\" || exit 22\n" +
+			"printf '%s\\0' \"$@\" > " + shellQuote(argumentsPath) + "\n" +
+			"/bin/cat " + shellQuote(artifact) + " > " + shellQuote(contextPath) + "\n"
+		must(t, os.WriteFile(binary, []byte(stub), 0o700))
+		return termlaunch.Open(t.Context(), spec, termlaunch.Environment{
+			OS:        platform.Linux,
+			LookupEnv: agentEnv(map[string]string{"TMUX": "synthetic"}),
+			Run: func(ctx context.Context, name string, args ...string) error {
+				if name != "tmux" || len(args) != 4 || args[0] != "new-window" {
+					t.Fatalf("unexpected terminal command %s %q", name, args)
+				}
+				command := exec.CommandContext(ctx, "/bin/sh", "-c", args[3])
+				command.Env = []string{"PATH=/usr/bin:/bin", archive.ReplayEnv + "=calling-run", "MUSE_THREAD_ID=calling-session"}
+				return command.Run()
+			},
+		})
+	}
+	_, stderr, code := runPicker(t, f.env, "", f.id, "--to", "muse", "--new-window")
+	if code != 0 {
+		t.Fatalf("synthetic terminal handoff exit %d: %s", code, stderr)
+	}
+	arguments, err := os.ReadFile(argumentsPath)
+	if err != nil || string(arguments) != strings.Join(launched[1:], "\x00")+"\x00" {
+		t.Fatalf("terminal changed argv: %v", err)
+	}
+	content, err := os.ReadFile(contextPath)
+	if err != nil || !strings.Contains(string(content), "Fix the flaky widget test.") || strings.Contains(string(content), "hunter2secret") {
+		t.Fatalf("synthetic process could not read filtered context: %v", err)
+	}
+}

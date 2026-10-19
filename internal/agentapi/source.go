@@ -160,6 +160,22 @@ type LeasedTranscriptFilter interface {
 	FilterLeased(context.Context, NativeInput, FilterContext, *NativeReadBudget) (archive.FilteredTranscript, func(), error)
 }
 
+// SkillContentJoinFilter optionally retains private native read digests within
+// the existing output lease. Attestation must respect injected decorators.
+type SkillContentJoinFilter interface {
+	SkillContentJoinFor(archive.Adapter) bool
+	FilterSkillContentLeased(context.Context, NativeInput, FilterContext, *NativeReadBudget) (archive.FilteredTranscript, SkillContentJoin, func(), error)
+}
+
+// SkillContentJoin belongs to one fully validated raw source operation. Restore
+// runs before the activity probe; Finalize runs only after its borrowers retire.
+// Each transition invalidates the earlier borrowed transcript. The filter's
+// release clears private digests and terminates this operation idempotently.
+type SkillContentJoin interface {
+	Restore(context.Context, archive.SourceBundle) (archive.FilteredTranscript, error)
+	Finalize(context.Context, []SkillContentDigest) (archive.FilteredTranscript, error)
+}
+
 // LeasedTranscriptRefilter charges retained output incrementally and transfers
 // ownership of rows and graph metadata through the same pass ledger.
 type LeasedTranscriptRefilter interface {

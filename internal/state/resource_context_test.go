@@ -93,3 +93,55 @@ func TestDurableContextRejoinsNonComparableOriginal(t *testing.T) {
 		t.Fatal("rejoining revived the original owner", current.Err())
 	}
 }
+
+type durableValidationTestGate string
+
+const (
+	durableValidationRoots     durableValidationTestGate = "roots"
+	durableValidationSelecting durableValidationTestGate = "selecting"
+)
+
+func TestDurableValidationKeepsCallerAndCapturedCancellation(t *testing.T) {
+	t.Parallel()
+	for _, gate := range []durableValidationTestGate{durableValidationRoots, durableValidationSelecting} {
+		for _, captured := range []bool{false, true} {
+			t.Run(string(gate)+"/"+map[bool]string{false: "caller", true: "captured-owner"}[captured], func(t *testing.T) {
+				t.Parallel()
+				store := newTestStore(t)
+				owner, cancelOwner := context.WithCancel(t.Context())
+				t.Cleanup(cancelOwner)
+				caller, cancelCaller := context.WithCancel(t.Context())
+				t.Cleanup(cancelCaller)
+				budget := agentapi.NewNativeReadBudget(1 << 20)
+				scoped, closeScope := store.WithReadBudget(owner, budget)
+				t.Cleanup(closeScope)
+				reservation := scoped.readReservation()
+				if !reservation.Reserve(128) {
+					t.Fatal("original reservation refused")
+				}
+				defer reservation.Release(128)
+				if captured {
+					cancelOwner()
+				} else {
+					cancelCaller()
+				}
+				var err error
+				switch gate {
+				case durableValidationRoots:
+					_, err = scoped.inspectDurableReadRoots(caller)
+				case durableValidationSelecting:
+					err = scoped.validateSelectingPublishedBudgeted(caller, publishedState{})
+				}
+				if !errors.Is(err, context.Canceled) {
+					t.Fatal("validation discarded cancellation", err)
+				}
+				if used, _ := budget.Charged(); used != 128 {
+					t.Fatal("validation cleanup changed the original loan", used)
+				}
+				if scoped.resourceContext != owner {
+					t.Fatal("validation replaced the captured owner")
+				}
+			})
+		}
+	}
+}

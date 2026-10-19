@@ -54,26 +54,33 @@ Redrawing, filtering, and scrolling within the loaded rows inspect no
 additional transcripts. Word queries search only loaded previews and report their bounded
 coverage. A partial label falls back to the first filtered prompt or native ID.
 Discovery inspects at most 10,000 files, with a cumulative 64 MiB discovery and
-preview read budget per invocation. After header inspection finishes, unused
-header reservations become available for previews. If the budget is exhausted,
-the picker keeps remaining verified native IDs selectable, marks their labels
+preview read budget per invocation. Header inspection proceeds in deterministic
+batches; each completed batch releases unused reservations for remaining headers
+and then previews. If the budget is exhausted, the picker keeps remaining
+verified native IDs selectable, marks their labels
 uninspected, and disables older preview loading. Searching these rows can match
 IDs and checkout facts, but cannot match uninspected conversation text.
 
 Local `--latest` uses transcript file modification time. Copying or restoring
-files can change that ordering. It requires complete identity/checkout discovery
-and skips the exactly identified calling session. When discovery is incomplete,
-it refuses automatic selection and offers the terminal picker for an explicit
-choice. Scripts receive up to 20 known candidates with copyable, harness-qualified
+files can change that ordering. It skips the exactly identified calling session
+and checkouts confirmed to no longer exist. Enumeration must finish; unresolved
+histories can be ignored only when their verified modification times are strictly
+older than the selected session. Unknown timestamps, incomplete enumeration or
+read budgets, and unresolved sessions with equal or newer times still prevent
+automatic selection and offer the terminal picker for an explicit choice.
+Scripts receive up to 20 known candidates with copyable, harness-qualified
 local handoff commands. These candidates are not a claim about the newest
 session; even `--latest --to` requires an explicit choice after refusal.
 `--to` without a selector
 uses an exact available native identity, offers the terminal picker when one
 cannot be identified, or requires explicit selection inside an agent; it never
 substitutes latest. Automatic current identity depends on the app exposing a
-matching session variable. Disposable live Claude/Codex checks on both supported
-platforms remain unverified; synthetic home/launcher tests cover the command
-flow. Setup installs agent skills only when explicitly requested later.
+matching session variable. Disposable live macOS checks cover native IDs and
+`--latest --to` in both Claude/Codex directions, using existing native history
+and a separate unconfigured archive home. Linux, the interactive picker,
+new-window launching, and automatic current identity remain unverified live;
+synthetic home/launcher tests cover those command paths. Setup installs agent
+skills only when explicitly requested later.
 
 Rendering creates no archive. Launch files are private (directory 0700, file
 0600) under `agent-archive-local-handoffs-<uid>` in the temporary directory and survive
@@ -233,15 +240,23 @@ on a terminal; `AGENT_ARCHIVE_NONINTERACTIVE=0` turns asking back on. See
    (not macOS and not inside tmux), `handoff` exits 1 and prints the command
    to paste into a terminal; it never runs the agent without one.
 
-`--to` starts the installed `claude`, `codex`, or Cursor `agent` (else
+`--to` starts the installed `claude`, `codex`, `muse`, or Cursor `agent` (else
 `cursor-agent`) CLI in the current directory (or `--project DIR` with
 `--latest`, and before setup with any native selection). Codex gets that directory with `--cd` and Cursor with
-`--workspace`. Claude Code runs in it and is given only the handoff's folder
+`--workspace`; Muse also uses `--workspace`. Claude Code runs in it and is given only the handoff's folder
 with `--add-dir`, since it reads outside the project only from an added
 directory. The launched agent does not inherit the calling agent's session
-variables (such as `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`); your
+variables (such as `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`,
+`MUSE_THREAD_ID`, or `MUSE_SESSION_ID`) or a calling replay marker; your
 settings, such as `CLAUDE_CODE_USE_BEDROCK`, pass through. It never starts a
 remote agent.
+
+Muse starts a new conversation and receives the same private, filtered context
+artifact as the other destinations. It uses ordinary native permissions; approve
+any artifact read Muse requests. An exported Muse transcript is context, not a
+portable native resume. Dynamic replay forwarding in Muse remains unqualified
+across native launch modes and descendants, so this handoff does not advertise
+Muse replay support.
 
 ### Passing arguments to the agent
 
@@ -253,10 +268,18 @@ Arguments after `--` go to the agent, after any set for it in `config.json`'s
 agent-archive handoff SESSION_ID --to codex -- --model o3
 ```
 
+For Muse's headless command, make `exec` the first argument, including any
+configured Muse arguments. The launcher places `exec` before its workspace
+option:
+
+```sh
+agent-archive handoff SESSION_ID --to muse -- exec --model MODEL
+```
+
 Give every option its value (`--model o3` or `--model=o3`). The prompt comes
 right after these arguments, so an option left without its value at the end
 would take the launcher's `--` (Claude Code, Codex) or the prompt itself
-(Cursor) as its value.
+(Cursor, Muse) as its value.
 
 ## Working in a separate checkout (`--worktree`)
 
@@ -828,7 +851,7 @@ XDG value is trimmed; a relative value resolves against this command's working
 directory. An unset or whitespace-only value uses the qualified HOME's
 `.local/share/muse`. It does not combine stores or infer locations from hooks.
 For example, `agent-archive handoff --latest --harness muse --source local`
-selects only after complete bounded identity discovery. Folder dates and UUID
+selects only when bounded discovery proves that no unresolved history can be as recent. Folder dates and UUID
 ages are locator hints; validated permission records supply the creation time.
 
 Muse previews show safe recorded automatic names and activity, falling back to

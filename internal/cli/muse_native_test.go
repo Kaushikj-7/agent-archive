@@ -3,9 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,14 +23,11 @@ import (
 	"github.com/wangjohn/agent-archive/internal/nativesessions"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/termlaunch"
+	"github.com/wangjohn/agent-archive/internal/testutil/musefixture"
 	"github.com/wangjohn/agent-archive/internal/testutil/orbifold"
 )
 
 const museSyntheticID = "00000000-0000-7000-8000-000000000001"
-
-type museFrameKind string
-
-const musePermissionFrame museFrameKind = "session_permission_transaction"
 
 type museNativeMutation string
 
@@ -108,52 +102,7 @@ func museNativeFixtureBytes(tb testing.TB, name, id, workspace string) []byte {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	workspaceJSON, _ := json.Marshal(workspace)
-	raw = bytes.ReplaceAll(raw, []byte(museSyntheticID), []byte(id))
-	raw = bytes.ReplaceAll(raw, []byte(`"/work/synthetic-muse"`), workspaceJSON)
-	lines := bytes.Split(raw, []byte("\n"))
-	var frame struct {
-		Kind        museFrameKind `json:"retained_frame"`
-		Schema      int           `json:"frame_schema_version"`
-		Ordinal     int           `json:"outer_log_ordinal"`
-		Transaction string        `json:"transaction_id"`
-		Children    []struct {
-			Index  int    `json:"child_index"`
-			Record string `json:"record_json"`
-		} `json:"children"`
-		Hash string `json:"content_sha256"`
-	}
-	if err := json.Unmarshal(lines[0], &frame); err != nil {
-		tb.Fatal(err)
-	}
-	if frame.Kind != musePermissionFrame {
-		tb.Fatal("unexpected synthetic frame")
-	}
-	h := sha256.New()
-	h.Write([]byte("muse.session_permission_transaction.v1\x00"))
-	var buf [8]byte
-	binary.BigEndian.PutUint64(buf[:], 1)
-	h.Write(buf[:])
-	transaction, err := hex.DecodeString(strings.ReplaceAll(frame.Transaction, "-", ""))
-	if err != nil {
-		tb.Fatal(err)
-	}
-	h.Write(transaction)
-	binary.BigEndian.PutUint32(buf[:4], 2)
-	h.Write(buf[:4])
-	for i, child := range frame.Children {
-		binary.BigEndian.PutUint32(buf[:4], uint32(i))
-		h.Write(buf[:4])
-		binary.BigEndian.PutUint64(buf[:], uint64(len(child.Record)))
-		h.Write(buf[:])
-		h.Write([]byte(child.Record))
-	}
-	frame.Hash = "sha256:" + hex.EncodeToString(h.Sum(nil))
-	lines[0], err = json.Marshal(frame)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	return bytes.Join(lines, []byte("\n"))
+	return musefixture.Rewrite(tb, raw, id, workspace)
 }
 
 func museNativeEnv(t *testing.T) (Env, string, string, *museFilterCounter) {
@@ -544,23 +493,53 @@ func TestMuseSelectedSourceChangesCloseAllHandlesAndCreateNoArtifact(t *testing.
 	}
 }
 
-func TestMuseAutomaticHandoffSupportedDestinationAndMuseRefusal(t *testing.T) {
+func TestMuseAutomaticHandoffToSupportedDestinations(t *testing.T) {
 	t.Parallel()
-	env, data, workspace, counter := museNativeEnv(t)
-	writeMuseNative(t, data, museSyntheticID, museNativeBytes(t, "exec", museSyntheticID, workspace))
-	env.LookPath = func(name string) (string, error) { return "/opt/bin/" + name, nil }
-	env.Environ = func() []string { return nil }
-	env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
-	var spec termlaunch.Spec
-	var tmux []string
-	env.OpenTerminal = openInFakeTmux(&spec, &tmux)
-	_, errOut, code := runHandoff(t, env, museSyntheticID, "--harness", "muse", "--to", "codex")
-	if code != 0 || len(tmux) == 0 || counter.calls.Load() != 1 {
-		t.Fatalf("launch %d %s", code, errOut)
-	}
-	_, errOut, code = runHandoff(t, env, museSyntheticID, "--harness", "muse", "--to", "muse")
-	if code == 0 || counter.calls.Load() != 1 {
-		t.Fatalf("unsupported launch %d %s", code, errOut)
+	for _, destination := range []handoffDestination{handoffDestinationClaude, handoffDestinationCodex, handoffDestinationCursor, handoffDestinationMuse} {
+		t.Run(string(destination), func(t *testing.T) {
+			t.Parallel()
+			env, data, workspace, counter := museNativeEnv(t)
+			raw := museNativeBytes(t, "exec", museSyntheticID, workspace)
+			source := writeMuseNative(t, data, museSyntheticID, raw)
+			env.LookPath = func(name string) (string, error) { return "/opt/bin/" + name, nil }
+			env.Environ = func() []string { return nil }
+			env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
+			var spec termlaunch.Spec
+			var tmux []string
+			env.OpenTerminal = openInFakeTmux(&spec, &tmux)
+			_, errOut, code := runHandoff(t, env, museSyntheticID, "--harness", "muse", "--to", string(destination))
+			binary := string(destination)
+			if destination == handoffDestinationCursor {
+				binary = "agent"
+			}
+			if code != 0 || len(tmux) == 0 || counter.calls.Load() != 1 || len(spec.Argv) < 2 || spec.Argv[0] != "/opt/bin/"+binary || spec.Dir != workspace {
+				t.Fatalf("launch %d %s spec=%+v filters=%d", code, errOut, spec, counter.calls.Load())
+			}
+			artifact := handoffPathFromPrompt(t, launchSpec{Args: spec.Argv[1:]})
+			content, err := os.ReadFile(artifact)
+			if err != nil || !strings.Contains(string(content), "Explain the synthetic parser.") || !strings.Contains(string(content), "It validates bounded native records") || strings.Contains(string(content), "PRIVATE CONTEXT MUST NOT SURVIVE") {
+				t.Fatalf("unsafe or missing normalized Muse context: %v", err)
+			}
+			for path, mode := range map[string]os.FileMode{artifact: 0o600, filepath.Dir(artifact): 0o700} {
+				info, err := os.Stat(path)
+				if err != nil || info.Mode().Perm() != mode {
+					t.Fatalf("private context permissions: %v %v", info, err)
+				}
+			}
+			if destination == handoffDestinationClaude && (spec.Argv[1] != "--add-dir" || spec.Argv[2] != filepath.Dir(artifact)) {
+				t.Fatalf("Claude received a directory other than the artifact folder: %q", spec.Argv)
+			}
+			if destination == handoffDestinationMuse && (len(spec.Argv) != 4 || spec.Argv[1] != "--workspace" || spec.Argv[2] != workspace) {
+				t.Fatalf("Muse workspace arguments: %q", spec.Argv)
+			}
+			after, err := os.ReadFile(source)
+			if err != nil || !bytes.Equal(after, raw) {
+				t.Fatalf("handoff changed the native source: %v", err)
+			}
+			if _, err := os.Stat(museNativeArchiveHome(t, env)); !os.IsNotExist(err) {
+				t.Fatalf("handoff created setup or capture state: %v", err)
+			}
+		})
 	}
 }
 

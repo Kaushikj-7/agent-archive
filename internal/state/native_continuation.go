@@ -137,7 +137,7 @@ func nativeContinuationOwnerMatches(current, owner archive.SessionRegistration, 
 }
 
 func nativeContinuationConfigMatches(cfg config.Config, found bool, owner archive.SessionRegistration, i agentapi.AdmissionIntent) bool {
-	return found && cfg.NativeAdmissionProtection && cfg.NativeAuthorityProtection && !cfg.Paused && cfg.Archive.Enabled && slices.Contains(cfg.Harnesses, "muse") && cfg.PauseGeneration == i.PauseGeneration && cfg.MuseCapture != nil && cfg.MuseCapture.Generation == i.NativeWindowGeneration && cfg.DestinationID() == i.DestinationID && cfg.AcceptSession(owner)
+	return (owner.Replay == nil || cfg.NativeReplayProtection) && found && cfg.NativeAdmissionProtection && cfg.NativeAuthorityProtection && !cfg.Paused && cfg.Archive.Enabled && slices.Contains(cfg.Harnesses, "muse") && cfg.PauseGeneration == i.PauseGeneration && cfg.MuseCapture != nil && cfg.MuseCapture.Generation == i.NativeWindowGeneration && cfg.DestinationID() == i.DestinationID && cfg.AcceptSession(owner)
 }
 
 // CheckNativeContinuation checks current observation eligibility without returning

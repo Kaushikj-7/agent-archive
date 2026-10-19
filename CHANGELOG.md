@@ -6,12 +6,69 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.2]
+
+Candidate scope frozen on 2026-10-19 for the intended `v0.2.2` tag. This record
+establishes no release date or publication until the tag's signed candidate is
+promoted. Freeze the final code/documentation SHA and complete a fresh
+exact-commit campaign before tagging.
+Comparison links below name the intended tag and may not resolve before its
+authorized creation.
+Published installation examples remain pinned to v0.1.1 until the tested candidate
+is promoted. Production S3/R2 scoped catalog activation remains refused pending
+provider qualification and credential authority.
+
+Two failed candidate tags remain immutable:
+
+- `v0.2.0` points to `22267534cc85af61858dd53162a5020d90fc815b`.
+  Its [tagged build run](https://github.com/wangjohn/agent-archive/actions/runs/38593942465)
+  passed the unsigned macOS build; Linux attempt 2 passed full Go validation but
+  failed on missing purge prerequisites before building binaries. Publishing was
+  skipped and no release assets were signed or published. PR527 fixed the prerequisites.
+- `v0.2.1` points to `f29fcc98f9a4591aadc91f9ee3b38385c4895007`.
+  Its [tagged build run](https://github.com/wangjohn/agent-archive/actions/runs/38630441745)
+  attempt 1 passed Linux prerequisite setup, then stopped with a runner shutdown
+  and incomplete qualification. macOS passed the first Go invocation and ordinary
+  CLI tests, but 100k qualification remained incomplete; a permission error at a
+  time consistent with the shared deadline does not prove its underlying cause.
+  Neither job built binaries; publishing was skipped, with no signing or promotion.
+
+This candidate retains the original 0.2 scope and includes the Linux prerequisite
+fix and reviewed supervisor cleanup repair below. Neither failed tag may move;
+new source requires a new candidate campaign and tag. Earlier passing campaigns
+and the cleanup repair do not turn either failed tagged gate into a pass.
+
+### Latest development changes
+
 - `status` now shows a compact overview from a saved collection summary and
   bounded live background checks, without scanning session history. Detected
   coding agents show their observation age and archiving setting. Missing or
   stale summaries remain unknown until collection updates them. Use
   `status --issues` for failures and capture gaps; app, verbose and version-4
   JSON views retain their detailed evidence.
+
+- Muse installed versions use a bounded, update-disabled `--version` probe.
+  Skill installation shares `.agents/skills` with Codex and Cursor. Muse skill
+  evidence follows the existing `none`, `metadata` and `body` settings, with
+  filtered installed inventory, including the exact bundled Muse skill root
+  under the caller-qualified data home and declared files from the supported
+  native-local installed plugin registry. A qualified own native
+  `skill_read_observed` report can identify a harness skill read independently
+  of eligible inventory. Its original-file hash is erased. A content-only hash
+  may come from an actual authorized observation whose full bytes are unchanged
+  by credential redaction and contain no replacement marker; native and installed
+  display identities remain separate. Redacted-content hashes, origin,
+  eligibility and activation remain unqualified. Retained hashes use the existing
+  producer-evidence trust model, without authenticated-producer claims.
+  Metadata preserves distinct installed declaration identities even when skills
+  share a name and content hash. Exact runtime identity and public capture remain gated.
+
+- No-bucket handoff discovery reuses unused header-read reservations between
+  batches, so large Codex histories do not stop after reserving bytes they never
+  read. Removed checkouts no longer block selection. Local `--latest` can ignore
+  unresolved histories with verified modification times strictly older than the
+  selected session; incomplete enumeration, exhausted read budgets and potentially
+  newer unresolved histories still require explicit selection.
 
 - Confirmed backfill continues supported native preparation and staging across
   bounded lookup scopes. Foreground imports publish and verify owned groups
@@ -60,8 +117,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Backfill planning and dry runs continue supported Codex preparation and
   inspection across bounded lookup scopes, including histories needing more
   than five seconds of total lookup work. Native I/O timeouts and inventory
-  no-progress results stay specific. Incomplete inventory is reported while
-  independently verified sessions remain eligible. Shared native resource
+  no-progress results stay specific. Incomplete Codex inventory is reported while
+  independently verified Codex sessions remain eligible. Shared native resource
   exhaustion remains a failure. Source safety limits and
   scheduled background work are unchanged.
 
@@ -79,6 +136,25 @@ follow [Semantic Versioning](https://semver.org/).
   retry) from source byte/record limits and missing history evidence. Pending
   sessions keep their existing eligibility checks. Content-free traces count
   lookup scopes, native preparation/inspection attempts and unfinished candidates.
+
+- `eval replay-plan --harness muse` prepares bounded, versioned replay launch
+  artifacts through the production hook planner for an external runner. It
+  preserves observed settings and reports preparation only; native replay
+  forwarding remains unqualified.
+
+- `handoff --to muse` starts a new Muse conversation using the existing private,
+  filtered context artifact and normal permissions. Muse transcripts can also
+  hand off to Claude Code, Codex and Cursor. Ordinary handoffs clear a calling
+  replay marker so the new conversation is not mistaken for a replay. Native
+  Muse replay forwarding remains unqualified.
+
+- `handoff --to muse -- exec ...` places `exec` before the workspace option,
+  so Muse recognizes the headless command and its options.
+
+- `list --source local` and `show --source local` inspect bounded native sessions
+  before setup, including qualified Muse roots with `--harness muse`. Selected
+  sources receive complete privacy validation. These reads do not open storage,
+  enable capture or write archive state; partial discovery remains explicit.
 
 - Prepare guarded capture of newly started Muse sessions, with explicit home,
   project and capture-window checks before ownership. Public setup remains
@@ -222,7 +298,7 @@ follow [Semantic Versioning](https://semver.org/).
   as well as the archive's: `handoff 01a10e11 --harness codex` finds the
   Codex thread whose ID starts `01a10e11`.
 
-### Local native validation foundation
+#### Local native validation foundation
 
 - Muse's opt-in qualification endpoint accepts the observed exact model-catalog
   GET route and controlled tool-echo representation, with fixed, content-free
@@ -312,6 +388,9 @@ follow [Semantic Versioning](https://semver.org/).
   metadata and full evaluation exports while preserving prompt/message counts.
   Cursor tool calls without recorded results no longer claim zero results;
   unstructured exports omit unavailable edited-file lists.
+
+- Refuse generation recovery when its exact prior publication changed, and serialize
+  cached publication updates with recovery routing.
 
 - Recover complete historical source-set publications from exact private retained evidence,
   with one shared disk/memory budget and permanent source-set writer protection.
@@ -500,39 +579,6 @@ follow [Semantic Versioning](https://semver.org/).
   Planning can update a bounded private disposable cache, including with `--dry-run`;
   archive and configuration changes still require import confirmation.
 
-## [0.2.2]
-
-Candidate scope prepared on 2026-10-14 for the intended `v0.2.2` tag, which
-had not been created at that preparation snapshot. This record establishes no
-release date or publication. Freeze the final code/documentation SHA and complete
-a fresh exact-commit campaign before tagging.
-Comparison links below name the intended tag and may not resolve before its
-authorized creation.
-Published installation examples remain pinned to v0.1.1 until the tested candidate
-is promoted. Production S3/R2 scoped catalog activation remains refused pending
-provider qualification and credential authority.
-
-Two failed candidate tags remain immutable:
-
-- `v0.2.0` points to `22267534cc85af61858dd53162a5020d90fc815b`.
-  Its [tagged build run](https://github.com/wangjohn/agent-archive/actions/runs/38593942465)
-  passed the unsigned macOS build; Linux attempt 2 passed full Go validation but
-  failed on missing purge prerequisites before building binaries. Publishing was
-  skipped and no release assets were signed or published. PR527 fixed the prerequisites.
-- `v0.2.1` points to `f29fcc98f9a4591aadc91f9ee3b38385c4895007`.
-  Its [tagged build run](https://github.com/wangjohn/agent-archive/actions/runs/38630441745)
-  attempt 1 passed Linux prerequisite setup, then stopped with a runner shutdown
-  and incomplete qualification. macOS passed the first Go invocation and ordinary
-  CLI tests, but 100k qualification remained incomplete; a permission error at a
-  time consistent with the shared deadline does not prove its underlying cause.
-  Neither job built binaries; publishing was skipped, with no signing or promotion.
-
-This candidate retains the original 0.2 scope and includes the Linux prerequisite
-fix and reviewed supervisor cleanup repair below. Neither failed tag may move;
-new source requires a new candidate campaign and tag. Earlier passing campaigns
-and the cleanup repair do not turn either failed tagged gate into a pass.
-
-### Latest development changes
 
 - `show` gives when a session was last active as a weekday ("Mon") or date
   ("Oct 9", "2025-03-01") once it is before today, instead of a count of

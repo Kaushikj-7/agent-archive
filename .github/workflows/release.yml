@@ -271,8 +271,8 @@ jobs:
     # both cross-compile on one Linux runner with no C toolchain, and the
     # x86-64 one runs natively here for the version check.
     runs-on: ubuntu-24.04
-    # Headroom over the full tier's 2400-second deadline.
-    timeout-minutes: 60
+    # Headroom over the full Linux tier's 3300-second deadline.
+    timeout-minutes: 80
     permissions:
       contents: read
     env:
@@ -323,7 +323,7 @@ jobs:
           python3 -B scripts/run_ci_tier.py --plan --tier full --output release-tier-results/plan.json
           # Soft Go-managed memory target; race/native allocations also need headroom.
           export GOMEMLIMIT=3GiB
-          python3 -B scripts/run_ci_tier.py --tier full --suite linux --seconds 2400 --output release-tier-results
+          python3 -B scripts/run_ci_tier.py --tier full --suite linux --seconds 3300 --output release-tier-results
           python3 -B scripts/run_ci_tier.py --verify --tier full --suite linux --extra-plan release-tier-results/plan.json --output release-tier-results
           python3 scripts/test_release_signing.py
           python3 scripts/test_release_assets.py

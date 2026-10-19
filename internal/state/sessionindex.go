@@ -183,7 +183,7 @@ func (s *Store) legacySessionID(key agentmeta.SessionKey) (string, bool, error) 
 }
 
 func (s *Store) legacyCandidateRecovery(key agentmeta.SessionKey, id string) error {
-	candidate, found, err := readJSON[SubagentCandidate](s.subagentCandidatePath(id))
+	candidate, found, err := readJSON[SubagentCandidate](s, s.subagentCandidatePath(id))
 	if IsUndecodable(err) {
 		return ErrSessionIndexRecoveryRequired
 	}

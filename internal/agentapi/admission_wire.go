@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 // UnmarshalJSON closes the native private protocol before any queue owner can
@@ -47,6 +48,11 @@ func (i *AdmissionIntent) UnmarshalJSON(raw []byte) error {
 		var value json.RawMessage
 		if err := d.Decode(&value); err != nil {
 			return err
+		}
+		if peek.Version == 2 && key == "replay" {
+			if err := nativeIntentReplayWire(value); err != nil {
+				return err
+			}
 		}
 		if peek.Version == 2 && key == "effects" {
 			if err := nativeIntentEffectsWire(value); err != nil {
@@ -145,4 +151,17 @@ func nativeIntentObjectWire(raw []byte, names []string, nested func(string, json
 	}
 	_, err = d.Token()
 	return err
+}
+
+// nativeIntentReplayWire accepts only canonical normalized startup provenance.
+// An absent object is ordinary; {} intentionally represents malformed nonempty
+// input without recording it. A present run_id must be the existing bounded ID.
+func nativeIntentReplayWire(raw []byte) error {
+	return nativeIntentObjectWire(raw, []string{"run_id"}, func(_ string, value json.RawMessage) error {
+		var id string
+		if err := json.Unmarshal(value, &id); err != nil || !archive.IsReplayRunID(id) {
+			return errors.New("invalid native replay identifier")
+		}
+		return nil
+	})
 }

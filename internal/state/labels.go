@@ -63,6 +63,10 @@ func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64
 	if !safeFileComponent(id) {
 		return nil, 0, errors.New("invalid label state identity")
 	}
+	observedHome, err := os.Stat(s.home)
+	if err != nil {
+		return nil, 0, err
+	}
 	info, err := os.Lstat(s.publishedPath(id))
 	if err != nil || !info.Mode().IsRegular() || info.Size() > 8<<20 || info.Size() > budget {
 		return nil, 0, errors.New("label context read unavailable or over budget")
@@ -107,7 +111,11 @@ func (s *Store) LoadLabelPublication(id string, budget int64) (*Published, int64
 		return nil, int64(len(data)), errors.New("label context changed during read")
 	}
 	publishedStateLoads.Add(1)
-	p := &Published{store: s, id: id, found: true}
+	currentHome, e := os.Stat(s.home)
+	if e != nil || !os.SameFile(observedHome, currentHome) {
+		return nil, int64(len(data)), errors.Join(ErrDurableStorageRecovery, e)
+	}
+	p := &Published{store: s, id: id, found: true, observedWireSHA256: sha256.Sum256(data), observedHome: observedHome}
 	if err := s.decodePublicationOwned(s.durableContext(), data, &p.state); err != nil {
 		return nil, int64(len(data)), err
 	}

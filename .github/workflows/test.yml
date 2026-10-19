@@ -164,7 +164,7 @@ jobs:
     # PR extras are distinct from the exhaustive representative shards.
     # Focused protocol regressions exercise the real manager for scheduler PRs.
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -239,6 +239,7 @@ jobs:
       - run: python3 -B scripts/test_stage_release_vulnerability_scan.py
       - run: python3 scripts/test_measure_hook.py
       - run: python3 -B scripts/test_muse_qualification.py
+      - run: python3 -B scripts/test_muse_final_acceptance.py
       # Static and fake-Docker checks of the Linux live acceptance scripts;
       # the live run itself needs privileged Docker and is not run in CI.
       - run: python3 scripts/test_linux_acceptance.py
