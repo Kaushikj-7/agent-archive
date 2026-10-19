@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"hash"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -64,25 +65,46 @@ func (s *Store) readyDigest(ctx context.Context, value any) (string, error) {
 	if !reservation.Reserve(scratch) {
 		return "", errStateBudget
 	}
-	available := min(int64(maxPendingHistoryBytes)*2, reservation.Available())
-	limit := available / 2
+	limit := min(int64(maxPendingHistoryBytes), reservation.Available())
 	n, err := agentmeta.JSONWireBound(ctx, value, limit)
 	if errors.Is(err, agentmeta.ErrJSONWireLimit) {
-		reservation.Refuse(available + 2)
+		reservation.Refuse(limit + 1)
 	}
 	reservation.Release(scratch)
 	if err != nil {
 		return "", errors.Join(errStateBudget, err)
 	}
-	if !reservation.Reserve(n + n) {
+	// The encoder hashes its single buffer directly, without json.Marshal's
+	// second copy, so one encoded size is reserved.
+	if !reservation.Reserve(n) {
 		return "", errStateBudget
 	}
-	defer reservation.Release(n + n)
-	raw, err := json.Marshal(value)
-	if err != nil {
+	defer reservation.Release(n)
+	w := &readyDigestWriter{hash: sha256.New()}
+	if err := json.NewEncoder(w).Encode(value); err != nil {
 		return "", err
 	}
-	return readySHA(raw), nil
+	return hex.EncodeToString(w.hash.Sum(nil)), nil
+}
+
+// readyDigestWriter hashes encoder output except its final newline, so the
+// digest equals readySHA of json.Marshal for the same value.
+type readyDigestWriter struct {
+	hash    hash.Hash
+	held    byte
+	holding bool
+}
+
+func (w *readyDigestWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if w.holding {
+		_, _ = w.hash.Write([]byte{w.held})
+	}
+	_, _ = w.hash.Write(p[:len(p)-1])
+	w.held, w.holding = p[len(p)-1], true
+	return len(p), nil
 }
 
 func readyDigestValid(h string) bool {
