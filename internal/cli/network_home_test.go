@@ -230,7 +230,7 @@ func TestLinuxSetupAllowNetworkHomeIsRecordedAndStatusStillWarns(t *testing.T) {
 	if found != 2 {
 		t.Errorf("status --json has %d warnings of the network filesystem, want 2 (data and unit directory)", found)
 	}
-	if human := flat(statusOutput(t, l.env)); !strings.Contains(human, "The data directory ~/data is on a network filesystem (nfs4") || !strings.Contains(human, "The systemd unit directory ~/.config/systemd/user is on a network filesystem") {
+	if human := flat(statusOutput(t, l.env, "--verbose")); !strings.Contains(human, "The data directory ~/data is on a network filesystem (nfs4") || !strings.Contains(human, "The systemd unit directory ~/.config/systemd/user is on a network filesystem") {
 		t.Errorf("status says in words:\n%s", human)
 	}
 }

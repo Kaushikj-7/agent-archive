@@ -101,7 +101,7 @@ var screens = []screen{
 	},
 	{
 		name: "status-codex-all-projects-mixed-formats",
-		args: []string{"status"},
+		args: []string{"status", "--verbose"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex")
@@ -516,6 +516,9 @@ var screens = []screen{
 			must(t, err)
 			status.SetLastErrors("list registrations: AccessDenied: Access Denied")
 			must(t, store.SaveStatus(status))
+			cfg, _, err := config.Load(f.home)
+			must(t, err)
+			must(t, saveStatusSummary(f.home, cfg, f.env, f.env.now(), nil, false))
 		},
 	},
 	{

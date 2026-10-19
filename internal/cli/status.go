@@ -287,6 +287,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("status", stderr)
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document")
 	verbose := fs.Bool("verbose", false, "also print the codes, exact times and evidence behind each line")
+	issues := fs.Bool("issues", false, "inspect problems, missing captures and recovery details")
 	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
 	appArg, ok := fs.parseWithArgument(args)
 	if !ok {
@@ -298,6 +299,12 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	if app != "" && *jsonOut {
 		return fs.usageError("an app and --json can't be combined; status --json lists every app under applications")
+	}
+	if *issues && (app != "" || *jsonOut || *verbose) {
+		return fs.usageError("--issues cannot be combined with APP, --json or --verbose")
+	}
+	if app == "" && !*jsonOut && !*verbose && !*issues {
+		return runStatusOverview(stdout, stderr, env)
 	}
 	view, err := readStatus(env)
 	if err != nil {
@@ -311,6 +318,10 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	sc := statusScreen{style: styleFor(stdout), now: env.now(), home: view.userHome, verbose: *verbose}
 	code := 0
 	if err := withPager(context.Background(), stdout, stderr, env, *noPager, func(w io.Writer) error {
+		if *issues {
+			printStatusIssues(w, view, sc)
+			return nil
+		}
 		if app != "" {
 			code = printAppStatus(w, stderr, view, app, sc)
 			return nil
@@ -1756,17 +1767,7 @@ func (sc statusScreen) captureRows(view statusView) []statusRow {
 	for _, app := range view.importedApps {
 		rows = append(rows, sc.importedAppRow(app, uploadingRowsShown))
 	}
-	for _, diagnostic := range view.CaptureDiagnostics {
-		location := ""
-		if diagnostic.ProjectRoot != "" {
-			location = " in " + sc.path(diagnostic.ProjectRoot)
-		}
-		what := "skipped a session"
-		if capture.DiagnosticPartial(diagnostic.Code) {
-			what = "left out part of a session"
-		}
-		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{fmt.Sprintf("%s %s%s %s: %s", appName(diagnostic.Harness), what, location, relativeAge(sc.now, diagnostic.ObservedAt), capture.DiagnosticMessage(diagnostic.Code))}})
-	}
+	rows = append(rows, sc.diagnosticRows(view.CaptureDiagnostics)...)
 	if !sc.verbose {
 		return rows
 	}

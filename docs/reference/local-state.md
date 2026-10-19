@@ -29,7 +29,7 @@ S3 credentials stay in your AWS profile.
   Subagent candidates are written the same way under their own locks. `state.OwnedEntries()` lists every
   top-level entry it can create. It never reads transcripts or talks to storage.
 - **`internal/config`** owns `config.json`; **`internal/cli`** owns setup's
-  files, logs, diagnostics, the collector-lock record, and `handoffs/`;
+  files, logs, diagnostics, the collector-lock record, status summary/progress, and `handoffs/`;
   **`internal/backfill`** owns `imports/`; **`internal/reader`** owns
   `cache/`.
 
@@ -60,6 +60,8 @@ S3 credentials stay in your AWS profile.
 | `refresh-skips/<id>.json` | A session whose metadata this build can't refresh (`metadata_underivable`, or `source_unavailable` when the recorded source is gone), with the parser version and source key it applies to. It is not retried until either changes; `status` counts these as unrefreshable summaries. |
 | `forgotten/<hash>.json` | A record of each session retention or undo removed, so backfill doesn't import it again. |
 | `status.json` | The collector's last pass: scan and publish times, counts, errors. |
+| `status-summary.json` | Bounded [version-1 overview](../../schemas/status-summary.schema.json), written after ordinary collection under its lock. Bound to the capture configuration; not an authority for capture, publication or deletion. |
+| `status-progress.json` | Throttled [version-1 phase and counts](../../schemas/status-progress.schema.json) for the active collector. Removed at pass exit; trusted for display only with a matching live PID and collector lock. |
 
 **Pending sessions.** A session is *pending* when these files say the
 bucket doesn't have all of it yet: a request is queued, a scan was started

@@ -80,7 +80,7 @@ func TestStatusNamesPreSetupSessionsUntilImported(t *testing.T) {
 	status := func(args ...string) string {
 		t.Helper()
 		var out bytes.Buffer
-		if code := Run(append([]string{"status"}, args...), strings.NewReader(""), &out, &out, env); code != 0 {
+		if code := Run(append([]string{"status", "--verbose"}, args...), strings.NewReader(""), &out, &out, env); code != 0 {
 			t.Fatalf("status %v exit %d\n%s", args, code, &out)
 		}
 		return out.String()

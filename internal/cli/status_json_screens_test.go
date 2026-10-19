@@ -45,6 +45,10 @@ func TestStatusJSONUnchangedForStatusScreens(t *testing.T) {
 			}
 			want, err := os.ReadFile(path)
 			must(t, err)
+			// Text fixtures may move between overview and verbose views. The
+			// command-line heading is not part of the versioned JSON document.
+			_, got, _ = bytes.Cut(got, []byte("\n"))
+			_, want, _ = bytes.Cut(want, []byte("\n"))
 			if !bytes.Equal(got, want) {
 				t.Fatalf("status --json changed for %s:\ngot:\n%s\nwant:\n%s", sc.name, got, want)
 			}

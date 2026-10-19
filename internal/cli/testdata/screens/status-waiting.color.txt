@@ -1,23 +1,16 @@
 $ agent-archive status
-\e[1mAgent Archive\e[0m  \e[33m● Waiting for capture\e[0m
+\e[1mAgent Archive\e[0m  \e[1mStatus unavailable\e[0m
 
-  \e[33m!\e[0m Waiting for the first Codex session
-    Start a supported new Codex task in ~/src/web-app, then run \e[36magent-archive
-    sync\e[0m. Hook approval is optional for discovery.
+   Background   On · idle between checks
+   Last check   No saved check yet
+   Uploads      No saved upload yet
+   Queue        Unknown
 
-\e[1mCapture\e[0m
-  \e[33m!\e[0m Codex   capture status unknown; included projects   \e[2mno sessions yet\e[0m
-    \e[33m!\e[0m Discovery health is unknown or a source is unavailable. Restore source
-      access if needed, then run agent-archive sync for a current bounded scan.
-  \e[33m!\e[0m Identity recovery: unknown; run agent-archive sync for current bounded local
-    evidence.
+\e[1mDetected agents\e[0m
+   Codex   Archiving enabled   \e[2mdetection unavailable\e[0m
 
-\e[1mStorage\e[0m
-  \e[32m✓\e[0m s3://team-archive/agent-archive/   \e[2mreachable, checked by setup just now\e[0m
-  \e[32m✓\e[0m Background collector on            \e[2mno scan yet\e[0m
-  \e[33m!\e[0m Bucket privacy not verified
-    \e[2mthis storage can't be inspected; see
-    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
+No current summary; the next collection records one.
 
-\e[2mMore: agent-archive status --verbose · agent-archive status codex\e[0m
+\e[36magent-archive status --issues\e[0m
+\e[36magent-archive status --verbose\e[0m
 [exit 0]

@@ -75,7 +75,7 @@ func TestStatusExplainsWhyHookTrustIsUnknown(t *testing.T) {
 	_, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
 	setupYes(t, env, "", 0, "--yes", "--codex-discovery", "off")
 	var stdout, stderr bytes.Buffer
-	if code := runStatusCommand(nil, &stdout, &stderr, env); code != 0 {
+	if code := runStatusCommand([]string{"codex"}, &stdout, &stderr, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "  ! Codex   discovery off; included projects   no sessions yet\n    Approve the archive hooks with /hooks in Codex.\n") {

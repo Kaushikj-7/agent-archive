@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `status` now shows a compact overview from a saved collection summary and
+  bounded live background checks, without scanning session history. Detected
+  coding agents show their observation age and archiving setting. Missing or
+  stale summaries remain unknown until collection updates them. Use
+  `status --issues` for failures and capture gaps; app, verbose and version-4
+  JSON views retain their detailed evidence.
+
 - Confirmed backfill continues supported native preparation and staging across
   bounded lookup scopes. Foreground imports publish and verify owned groups
   before preparing more evidence under the shared 1 GiB quota. Rerunning the

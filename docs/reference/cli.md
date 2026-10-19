@@ -401,29 +401,33 @@ Self's active object key is deleted last. Sessions and downloaded data remain.
 Guide: [Reading status](../guides/troubleshooting.md#reading-status); `--json` fields in [JSON output](json-output.md).
 
 ```text
-Usage: agent-archive status [APP] [--verbose] [--json] [--no-pager]
+Usage: agent-archive status [APP] [--issues | --verbose | --json] [--no-pager]
 
-Show local capture evidence, background health, and a next step.
+Show a compact overview of collection, uploads, queue and detected agents.
+Uses the collector's saved summary and bounded live background checks.
+Missing or stale summaries stay unknown until collection records a new one.
+Detected agents show when setup observed them and whether archiving is enabled;
+detection alone does not prove capture. Default status does not scan sessions.
 No conversations are printed and no cloud request is made.
-Each app's line counts its sessions, imports and uploads, with at most
-five uploading sessions under it; the screen doesn't grow with projects.
-APP (claude, codex or cursor) shows that app in full: every uploading
-session and a table of its projects.
---verbose adds each project's progress, skill evidence, imports and
-every error, then a Details section with the codes, exact times, full
-paths and raw errors behind each line.
-On a terminal, status is paged through $PAGER unless --no-pager.
---json prints the same status as a versioned JSON document. In it,
+--issues opens recorded failures, capture gaps and recovery steps.
+APP (claude, codex or cursor) shows that app's sessions and projects.
+--verbose opens all capture evidence, project progress, skills, imports,
+codes, exact times, paths and raw errors. --issues cannot be combined
+with APP, --verbose or --json. Detailed views scan history and may take longer.
+Default status prints directly; detailed text uses $PAGER unless --no-pager.
+--json retains the detailed version-4 document. In it,
 storage_verified_at is when setup's storage check last passed, and
 storage_access_confirmed_at is the latest confirmation of access (by
 "setup" or the "collector", in storage_access_confirmed_by).
 Example: agent-archive status claude
+Example: agent-archive status --issues
 Example: agent-archive status --verbose
 Example: agent-archive status --json
 ```
 
 | Flag | Takes | Default |
 | --- | --- | --- |
+| `--issues` | no value | — |
 | `--json` | no value | — |
 | `--no-pager` | no value | — |
 | `--verbose` | no value | — |

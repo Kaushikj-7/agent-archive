@@ -1,4 +1,4 @@
-$ agent-archive status
+$ agent-archive status --verbose
 Agent Archive  ● Waiting for capture
 
   ! Waiting for the first Codex task
@@ -6,19 +6,55 @@ Agent Archive  ● Waiting for capture
     agent-archive sync. Hook approval is optional for discovery.
 
 Capture
-  ! Codex 0.121.0   capture check pending; all current and future Codex projects
+  ! Codex 0.121.0   discovery coverage pending; all current and future Codex projects
     no sessions yet
-    ! Last scan skipped 2 observations; run agent-archive status --verbose for
-      details.
+    · Last discovery attempt 1 minute ago; discovery/reconciliation pending;
+      sync advances bounded work, additional scans may be needed; 0 registered →
+      0 queued → 0 published → 0 read-back verified
+    ! Last scan skipped 2 unsupported, incomplete or malformed observations
+      (unsupported producer: 1, invalid metadata: 1). Update agent-archive for
+      format support; use hooks or deliberate backfill only where that source
+      format is supported.
+    · waiting for first session
   ! Identity recovery: unknown; run agent-archive sync for current bounded local
     evidence.
+  · Projects: none included
+  · Skill evidence: metadata
+  · Retention: 90 days
 
 Storage
   ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now
   ✓ Background collector on            no scan yet
-  ! Bucket privacy not verified
-    this storage can't be inspected; see
+  ! Bucket privacy not verified        this storage can't be inspected
+    Check public access:
     https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  · Last upload: never · 0 pending
 
-More: agent-archive status --verbose · agent-archive status codex
+Details
+  State:         Waiting for capture (awaiting_capture)
+  Storage:       s3 / team-archive / agent-archive/
+  Access:        confirmed 2026-09-25T12:00:00Z by setup's storage check (write, read, list, delete)
+  Bucket privacy not verified.
+    Checked: 2026-09-25T12:00:00Z; inspection_unavailable.
+    Review: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  Authentication: unknown (not checked yet)
+  Background:    loaded
+  Projects:      0 included
+  Pending:       0 session(s)
+  Last scan:     never
+  Last publish:  never
+  Skill evidence: metadata
+  Retention:     90 days
+  Codex: waiting for first session (awaiting_session; 0 session(s)); hooks installed
+    Automatic discovery coverage pending.
+    Last attempt: 2026-09-25T11:59:00Z; registered 0 in that scan.
+    Unsupported/incomplete/malformed observations: 2 (unsupported producer: 1, invalid metadata: 1); update agent-archive for source format support.
+    Hooks installed; execution not yet observed.
+    Hook approval is optional while automatic discovery is enabled.
+    Hook trust: unknown here; it is granted inside the app and is not observable from this machine's files.
+    Installed version: 0.121.0; support unverified (no session from this version has been published and read back yet).
+  /handoff:      ~/.agents/skills/handoff/SKILL.md
+  agent-archive: ~/.agents/skills/agent-archive/SKILL.md
+
+As JSON: agent-archive status --json
 [exit 0]

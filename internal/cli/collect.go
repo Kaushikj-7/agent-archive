@@ -160,6 +160,8 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 	if err != nil {
 		return collector.Result{}, err
 	}
+	statusProgress := beginStatusProgress(home, cfg, env)
+	defer func() { statusProgress.finish(cfg, resultErr, pass.importBatch == "") }()
 
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), collectHardDeadline)
@@ -171,22 +173,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		recordPreflightError(localStore, err)
 		return collector.Result{}, err
 	}
-	// Local identity recovery and admission must not depend on credentials or
-	// storage availability. Source observation retains its own short budget.
-	// The complete authority census precedes the application allowance. Give it
-	// part of the remaining pass budget so a census slower than four seconds
-	// does not consume every future slice before any owner can be applied.
-	recoveryBudget := max(time.Nanosecond, (collectSoftDeadline-time.Since(started))/2)
-	applicationBudget := min(state.SessionIndexRecoverySlice, recoveryBudget) * 3 / 4
-	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, recoveryBudget)
-	_, recoveryErr := localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, applicationBudget))
-	if errors.Is(recoveryErr, context.DeadlineExceeded) && state.SessionIndexRecoveryInterrupted(recoveryErr) && ctx.Err() == nil {
-		recoveryErr = nil
-	}
-	if recoveryErr != nil {
-		recordPreflightError(localStore, recoveryErr)
-	}
-	recoveryCancel()
+	recoveryErr := recoverPassSessionIndex(ctx, localStore, started)
 	rollouts, readHomes, err := collectorRollouts(ctx, localStore, cfg, env, pass)
 	if err != nil {
 		recordPreflightError(localStore, err)
@@ -221,6 +208,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 	if pass.importBatch != "" {
 		selectSession = func(reg archive.SessionRegistration) bool { return reg.InBatch(pass.importBatch) }
 	}
+	statusProgress.phase(statusCollecting)
 	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
 		CollectorGuard:           guard,
 		CatalogDestination:       config.DestinationID(cfg.Storage),
@@ -245,7 +233,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		HistoricalProjectLabel:   cfg.HistoricalProjectLabel,
 		Now:                      env.Now,
 		RequireSkillUse:          cfg.RequireSkillUse,
-		Progress:                 pass.progress,
+		Progress:                 statusProgress.observe(pass.progress),
 		Stop:                     stop,
 		CursorDatabase:           env.cursorDatabase(),
 		RepoKey:                  env.repoKey,
@@ -267,11 +255,13 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		return result, recordImportPass(home, cfg, env, localStore, quietOnBusy, result, previous)
 	}
 
+	statusProgress.phase(statusVerifying)
 	summary, verifyErr, err := verifyAndRecordPass(ctx, home, cfg, env, localStore, objectStore, quietOnBusy, result)
 	if err != nil {
 		return result, err
 	}
 
+	statusProgress.phase(statusFinishing)
 	return finishPassWithRetention(home, env, cfg, localStore, objectStore, previous.LastScanAt, result, summary, verifyErr)
 }
 
@@ -313,6 +303,27 @@ func recordImportPass(home string, cfg config.Config, env Env, store *state.Stor
 		}
 	}
 	return recordSelectedPassSessionIssues(store, result, previous)
+}
+
+// recoverPassSessionIndex bounds local identity repair independently of storage.
+func recoverPassSessionIndex(ctx context.Context, localStore *state.Store, started time.Time) error {
+	// Local identity recovery and admission must not depend on credentials or
+	// storage availability. Source observation retains its own short budget.
+	// The complete authority census precedes the application allowance. Give it
+	// part of the remaining pass budget so a census slower than four seconds
+	// does not consume every future slice before any owner can be applied.
+	recoveryBudget := max(time.Nanosecond, (collectSoftDeadline-time.Since(started))/2)
+	applicationBudget := min(state.SessionIndexRecoverySlice, recoveryBudget) * 3 / 4
+	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, recoveryBudget)
+	_, recoveryErr := localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, applicationBudget))
+	if errors.Is(recoveryErr, context.DeadlineExceeded) && state.SessionIndexRecoveryInterrupted(recoveryErr) && ctx.Err() == nil {
+		recoveryErr = nil
+	}
+	if recoveryErr != nil {
+		recordPreflightError(localStore, recoveryErr)
+	}
+	recoveryCancel()
+	return recoveryErr
 }
 
 func collectorNeedsGuard(cfg config.Config) bool {
