@@ -38,7 +38,7 @@ func TestNativeImportBatchOrdinaryWireUnchanged(t *testing.T) {
 	if string(raw) != want {
 		t.Fatalf("ordinary wire changed: %s", raw)
 	}
-	home := t.TempDir()
+	home := privateBatchHome(t)
 	if err := SaveBatch(home, b); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestNativeImportBatchOrdinaryWireUnchanged(t *testing.T) {
 
 func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
+	home := privateBatchHome(t)
 	b := confirmedNativeBatchFixture(t)
 	if err := SaveBatch(home, b); !errors.Is(err, archive.ErrUnsupportedNativeImport) {
 		t.Fatal("generic save minted confirmation", err)
@@ -86,7 +86,7 @@ func TestNativeImportBatchGenericSavePreservesAuthorityAndUndo(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			home := t.TempDir()
+			home := privateBatchHome(t)
 			b := confirmedNativeBatchFixture(t)
 			if err := local.Write(batchPath(home, b.ID), b); err != nil {
 				t.Fatal(err)
@@ -140,7 +140,7 @@ func TestNativeImportBatchUnreadableAuthorityPreventsFallback(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			home := t.TempDir()
+			home := privateBatchHome(t)
 			if err := os.MkdirAll(filepath.Join(home, "imports"), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -178,7 +178,7 @@ func TestNativeImportBatchOrdinarySelectorLikeStringsRemainOrdinary(t *testing.T
 	if decoded.NativeImport != nil || decoded.DestinationID != b.DestinationID {
 		t.Fatal("ordinary value changed")
 	}
-	home := t.TempDir()
+	home := privateBatchHome(t)
 	if err := SaveBatch(home, b); err != nil {
 		t.Fatal(err)
 	}
@@ -186,4 +186,14 @@ func TestNativeImportBatchOrdinarySelectorLikeStringsRemainOrdinary(t *testing.T
 	if err != nil || len(batches) != 1 || batches[0].NativeImport != nil {
 		t.Fatal("ordinary persisted batch changed domain", err)
 	}
+}
+
+// privateBatchHome returns an owner-only archive home, as setup creates.
+func privateBatchHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	if err := os.Chmod(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return home
 }
