@@ -516,7 +516,7 @@ func TestUnanticipatedRegistrationCannotBeRemovedWithoutMembershipFence(t *testi
 	if err := s.SaveRegistration(migrationRegistration(key, "owner")); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.removeRegistrationWithRevision(s.registrationPath("owner"), revision); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+	if err := s.removeRegistrationWithRevisionUsing(s.registrationPath("owner"), revision, os.Remove); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
 		t.Fatalf("unfenced removal: %v", err)
 	}
 	if _, found, err := s.LoadRegistration("owner"); err != nil || !found {

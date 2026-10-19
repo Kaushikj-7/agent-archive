@@ -148,7 +148,7 @@ func (s *liveRequestState) finishLocked() error {
 		return nil
 	}
 	if err := s.cleanup(); err != nil {
-		return err
+		return &LiveCaptureCleanupError{custody: &liveCleanupCustody{state: s, cause: err}}
 	}
 	s.cleaned = true
 	s.captured.Close()

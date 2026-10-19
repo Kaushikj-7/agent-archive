@@ -53,6 +53,40 @@ type LimitedGetter interface {
 	GetLimited(ctx context.Context, key string, limit int64) ([]byte, error)
 }
 
+// CheckedReadErrorBodyBytes bounds the SDK diagnostic body consumed by a
+// CheckedLimitedGetter, separately from the requested object's payload. Callers
+// must budget this fixed diagnostic allowance and one overflow byte as well as
+// their own payload/decode allowances. Oversized diagnostics remain errors.
+const CheckedReadErrorBodyBytes int64 = 64 << 10
+
+// CheckedReadScratchBytes is the conservative logical allowance callers must
+// reserve BEFORE GetLimitedChecked for bounded SDK diagnostic decoding and the
+// operation's wrappers. It includes the diagnostic/overflow buffer, growth,
+// two typed XML decoding passes (names, attributes, namespace/depth stacks and
+// copied error fields), scanner scratch and fixed response/capture bookkeeping.
+// This is separate from twice(payloadLimit+1), reserved for response-buffer
+// growth/overflow, and caller source-decoding reservations;
+// CheckedReadErrorBodyBytes alone is NOT the SDK's allocation allowance. It is
+// not a claim about total HTTP/TLS transport heap or measured process RSS.
+// Future state bridges must use their original captured owner for all allowances;
+// existing small synthetic draft probes do not qualify this SDK allocation.
+const CheckedReadScratchBytes int64 = 128*CheckedReadErrorBodyBytes + 64<<10
+
+// CheckedLimitedGetter performs an allocation-bounded read and preserves actual
+// response-body Close failures, including bodies consumed by a provider SDK.
+// Partial bytes remain evidence on failure. Returned payload prefixes retain
+// their full bounded backing capacity, even for short bodies: callers must keep
+// the entire capacity's charge until the returned slice dies, not only len(data).
+// Only exact ErrNotFound with no body
+// is canonical absence; wrapped or joined errors must remain failures. This
+// optional operation does not authenticate a provider or destination. SDK error
+// diagnostics are bounded separately by CheckedReadErrorBodyBytes plus one byte.
+// Implementations may decline retries and HTTP403 listing fallback to keep the
+// checked response lifetime bounded; generic LimitedGetter remains unchanged.
+type CheckedLimitedGetter interface {
+	GetLimitedChecked(ctx context.Context, key string, limit int64) ([]byte, error)
+}
+
 // PageLister lists one lexicographically ordered page. Continuation is an
 // opaque token supplied by the preceding page; an empty Next means done.
 // Keeping this as an extension lets older ObjectStore implementations retain

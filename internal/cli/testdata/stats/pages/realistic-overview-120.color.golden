@@ -14,9 +14,9 @@
 
 \e[1mWHERE IT WENT\e[0m
 \e[2mBy project\e[0m                                                    \e[2mBy model\e[0m
-agent-archive  \e[36m██████████████████████████████\e[0m  $1,862         opus    \e[35m██████████████████████████████\e[0m  $3,270
-levenshtein    \e[36m████████████\e[0m                      $751         fable   \e[91m████\e[0m                              $386
-styleprofile   \e[36m█████████\e[0m                         $586         sonnet  \e[36m███\e[0m                               $320
+agent-archive  \e[36m██████████████████████████████\e[0m  $1,862         opus-5    \e[35m██████████████████████████████\e[0m  $3,270
+levenshtein    \e[36m████████████\e[0m                      $751         fable-5   \e[91m████\e[0m                              $386
+styleprofile   \e[36m█████████\e[0m                         $586         sonnet-5  \e[36m███\e[0m                               $320
 family_books   \e[36m███████\e[0m                           $427         \e[2m+ 2 more\e[0m
 \e[2m+ 6 more\e[0m
 

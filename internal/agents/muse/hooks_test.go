@@ -1,0 +1,228 @@
+package muse
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+)
+
+func TestRootHookObservationsRequireExactQualifiedIdentity(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			payload := map[string]any{"hook_event_name": name, "session_id": "Opaque_root-12", "cwd": "/synthetic/work", "transcript_path": nil, "unknown_body": "PRIVATE"}
+			if name == "SessionStart" {
+				payload["source"] = "startup"
+			}
+			if name == "SessionEnd" {
+				payload["reason"] = "PRIVATE"
+			}
+			in := agentapi.HookInput{Payload: payload, Environment: map[string]string{"MUSE_SESSION_ID": "Opaque_root-12", "MUSE_THREAD_ID": "Opaque_root-12"}, ObservedAt: time.Now()}
+			events, err := Decoder().Decode(context.Background(), in)
+			if err != nil || len(events) != 1 {
+				t.Fatalf("qualified observation: %+v %v", events, err)
+			}
+			e := events[0]
+			if e.NativeHookContract != rootHookContract || e.Start.Kind != agentapi.FreshUnknown || e.Source.Path != "" || e.Locator != agentapi.LocatorNone || e.Deferred != agentapi.DeferredNone || len(e.Evidence) != 0 {
+				t.Fatalf("observation gained authority: %+v", e)
+			}
+			if strings.Contains(e.Reason, "PRIVATE") {
+				t.Fatal("raw reason escaped")
+			}
+			in.Environment["MUSE_THREAD_ID"] = "another"
+			events, err = Decoder().Decode(context.Background(), in)
+			if err != nil || len(events) != 0 {
+				t.Fatal("mismatched IDs accepted")
+			}
+		})
+	}
+	for _, id := range []string{"", "_root", "-root", "root/path", "root\n", "røot", strings.Repeat("a", 129)} {
+		input := agentapi.HookInput{Payload: map[string]any{"hook_event_name": "SessionStart", "session_id": id, "cwd": "/work", "transcript_path": nil, "source": "startup"}, Environment: map[string]string{"MUSE_SESSION_ID": id, "MUSE_THREAD_ID": id}}
+		events, err := Decoder().Decode(context.Background(), input)
+		if err != nil || len(events) != 0 {
+			t.Fatalf("unsupported ID accepted %q", id)
+		}
+	}
+}
+
+func TestRootHookSettingsPreserveForeignBytesAndExactSchema(t *testing.T) {
+	t.Parallel()
+	h := Hooks()
+	owner := agentapi.HookOwner{Executable: "/synthetic/bin/archive", DefaultDataHome: "/synthetic/data"}
+	foreign := `{ "matcher" : "*", "hooks" : [ { "type" : "command", "command" : "echo \\u003cforeign", "timeout" : 7 } ] }`
+	before := []byte("{\n  \"schema_version\" : 1,\n  \"private_setting\" : { \"raw\" : \"\\u003c\\u003e\" },\n  \"hooks\" : {\"Stop\": [" + foreign + "]}\n}\n")
+	request := agentapi.HookPlanRequest{Action: agentapi.HookInstall, Owner: owner, File: agentapi.HookFile{Path: "/synthetic/settings.json", Bytes: before, Present: true, Regular: true, Mode: 0600}}
+	changes, err := h.Plan(request)
+	if err != nil || len(changes) != 1 {
+		t.Fatalf("plan: %v %+v", err, changes)
+	}
+	after := changes[0].After
+	if !bytes.Contains(after, []byte(foreign)) || !bytes.Contains(after, []byte(`"private_setting" : { "raw" : "\u003c\u003e" }`)) {
+		t.Fatalf("foreign bytes rewritten: %s", after)
+	}
+	if bytes.Contains(after, []byte("statusMessage")) || bytes.Contains(after, []byte(`"version"`)) || !bytes.Contains(after, []byte("AGENT_ARCHIVE_HOME=")) {
+		t.Fatalf("unqualified generated settings: %s", after)
+	}
+	inspect, err := h.Inspect(agentapi.HookInspectionRequest{Owner: owner, File: agentapi.HookFile{Path: request.File.Path, Bytes: after, Present: true, Regular: true}})
+	if err != nil || !inspect.Installed {
+		t.Fatalf("generated settings unhealthy: %+v %v", inspect, err)
+	}
+	mutated := bytes.ReplaceAll(after, []byte(`"timeout":2`), []byte(`"timeout":9`))
+	inspect, err = h.Inspect(agentapi.HookInspectionRequest{Owner: owner, File: agentapi.HookFile{Path: request.File.Path, Bytes: mutated, Present: true, Regular: true}})
+	if err != nil || inspect.Installed {
+		t.Fatal("modified timeout was installed")
+	}
+	request.Action = agentapi.HookRemove
+	request.File.Bytes = after
+	changes, err = h.Plan(request)
+	if err != nil || len(changes) != 1 || !bytes.Contains(changes[0].After, []byte(foreign)) {
+		t.Fatalf("removal lost foreign handler: %v %+v", err, changes)
+	}
+	for _, raw := range []string{`{}`, `{"schema_version":null}`, `{"schema_version":"1"}`, `{"schema_version":2}`, `{"schema_version":1,"schema_version":1}`, `{"SCHEMA_VERSION":1}`, `{"schema_version":1,"SCHEMA_VERSION":1}`} {
+		request.Action = agentapi.HookInstall
+		request.File.Bytes = []byte(raw)
+		if _, err := h.Plan(request); err == nil {
+			t.Fatalf("ambiguous existing schema accepted: %s", raw)
+		}
+	}
+	unsupportedOwned := bytes.Replace(after, []byte(`"schema_version" : 1`), []byte(`"schema_version" : 2`), 1)
+	if bytes.Equal(unsupportedOwned, after) {
+		t.Fatal("schema mutation fixture did not change")
+	}
+	request.File.Bytes = unsupportedOwned
+	request.Action = agentapi.HookRemove
+	if _, err := h.Plan(request); err == nil {
+		t.Fatal("unsupported owned settings were removed")
+	}
+	if inspection, err := h.Inspect(agentapi.HookInspectionRequest{Owner: owner, File: request.File}); err == nil || inspection.Installed {
+		t.Fatal("unsupported owned settings were installed")
+	}
+	request.Action = agentapi.HookInstall
+	request.File.Present = false
+	request.File.Bytes = nil
+	changes, err = h.Plan(request)
+	var generated struct {
+		Schema int `json:"schema_version"`
+	}
+	if err == nil && len(changes) == 1 {
+		err = json.Unmarshal(changes[0].After, &generated)
+	}
+	if err != nil || len(changes) != 1 || generated.Schema != 1 {
+		t.Fatalf("new schema missing: %v %+v", err, changes)
+	}
+	if path := h.Location(agentapi.HookLocations{UserHome: "/synthetic/home", Environment: map[string]string{"XDG_CONFIG_HOME": "/custom/config"}}); path != "/custom/config/muse/settings.json" {
+		t.Fatal(path)
+	}
+	if path := h.Location(agentapi.HookLocations{UserHome: "/synthetic/home", WorkingDirectory: "/wrong", Environment: map[string]string{"XDG_CONFIG_HOME": "relative"}}); path != filepath.FromSlash("/synthetic/home/.config/muse/settings.json") {
+		t.Fatal(path)
+	}
+}
+
+func FuzzRootHookDecoder(f *testing.F) {
+	f.Add([]byte(`{"hook_event_name":"SessionStart","session_id":"opaque","cwd":"/work","transcript_path":null,"source":"startup"}`), "opaque", "opaque")
+	f.Fuzz(func(t *testing.T, raw []byte, session, thread string) {
+		if len(raw) > 16<<10 || len(session) > 256 || len(thread) > 256 {
+			return
+		}
+		var payload map[string]any
+		if json.Unmarshal(raw, &payload) != nil {
+			return
+		}
+		events, err := Decoder().Decode(t.Context(), agentapi.HookInput{Payload: payload, Environment: map[string]string{"MUSE_SESSION_ID": session, "MUSE_THREAD_ID": thread}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, event := range events {
+			if event.Start.Kind != agentapi.FreshUnknown || event.Source.Path != "" || len(event.Evidence) != 0 || !hookNativeID(event.Session.NativeID) {
+				t.Fatal("decoder manufactured capture authority")
+			}
+		}
+	})
+}
+
+func TestRootHookRemovalKeepsOtherInstallationExactBytes(t *testing.T) {
+	t.Parallel()
+	hooks := Hooks()
+	first := agentapi.HookOwner{Executable: "/synthetic/one/archive", DataHome: "/synthetic/one/data", DefaultDataHome: "/synthetic/default"}
+	second := agentapi.HookOwner{Executable: "/synthetic/two/archive", DataHome: "/synthetic/two/data", DefaultDataHome: "/synthetic/default"}
+	file := agentapi.HookFile{Path: "/synthetic/settings.json", Regular: true, Mode: 0600}
+	changes, err := hooks.Plan(agentapi.HookPlanRequest{Action: agentapi.HookInstall, Owner: first, File: file})
+	if err != nil || len(changes) != 1 {
+		t.Fatal(changes, err)
+	}
+	file.Present, file.Bytes = true, changes[0].After
+	// Force the second handler beside the first exactly as the legacy isolation
+	// regression does, then require removal to retain the other handler bytes.
+	var original map[string]json.RawMessage
+	if err := json.Unmarshal(file.Bytes, &original); err != nil {
+		t.Fatal(err)
+	}
+	firstRaw := file.Bytes
+	secondChanges, err := hooks.Plan(agentapi.HookPlanRequest{Action: agentapi.HookInstall, Owner: second, File: agentapi.HookFile{Path: file.Path, Regular: true, Mode: 0600}})
+	if err != nil || len(secondChanges) != 1 {
+		t.Fatal(secondChanges, err)
+	}
+	var secondDoc map[string]json.RawMessage
+	if err := json.Unmarshal(secondChanges[0].After, &secondDoc); err != nil {
+		t.Fatal(err)
+	}
+	var firstEvents, secondEvents map[string][]json.RawMessage
+	if err := json.Unmarshal(original["hooks"], &firstEvents); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(secondDoc["hooks"], &secondEvents); err != nil {
+		t.Fatal(err)
+	}
+	for event, entries := range secondEvents {
+		firstEvents[event] = append(firstEvents[event], entries...)
+	}
+	raw, err := json.Marshal(firstEvents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original["hooks"] = raw
+	file.Bytes, err = json.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Compare with the bytes actually supplied to removal, after the fixture's
+	// forced merge encoder has compacted its RawMessages.
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(file.Bytes, &merged); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(merged["hooks"], &firstEvents); err != nil {
+		t.Fatal(err)
+	}
+	for event, entries := range firstEvents {
+		secondEvents[event] = entries[len(entries)-1:]
+	}
+	changes, err = hooks.Plan(agentapi.HookPlanRequest{Action: agentapi.HookRemove, Owner: first, File: file})
+	if err != nil || len(changes) != 1 {
+		t.Fatal(changes, err)
+	}
+	for _, entries := range secondEvents {
+		for _, entry := range entries {
+			if !bytes.Contains(changes[0].After, entry) {
+				t.Fatalf("other handler bytes lost: %s", changes[0].After)
+			}
+		}
+	}
+	file.Bytes = changes[0].After
+	inspection, err := hooks.Inspect(agentapi.HookInspectionRequest{File: file, Owner: second})
+	if err != nil || !inspection.Installed || len(inspection.Others) != 0 {
+		t.Fatal(inspection, err)
+	}
+	file.Bytes = firstRaw
+	inspection, err = hooks.Inspect(agentapi.HookInspectionRequest{File: file, Owner: second})
+	if err != nil || inspection.Owned || len(inspection.Others) != 1 {
+		t.Fatal("foreign ownership not distinguished", inspection, err)
+	}
+}

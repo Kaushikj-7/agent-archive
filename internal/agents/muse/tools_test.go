@@ -570,7 +570,7 @@ func TestCommittedToolArraysReservePersistentExpansion(t *testing.T) {
 			run     string
 			call    string
 		}{}
-		lower := int64(reflect.TypeFor[archive.NormalizedToolCall]().Size()+reflect.TypeOf(key).Size()+reflect.TypeFor[bool]().Size()+reflect.TypeFor[int]().Size()) * int64(shape.batches*shape.items)
+		lower := int64(reflect.TypeFor[archive.NormalizedToolCall]().Size()+reflect.TypeOf(key).Size()+reflect.TypeFor[toolCallRef]().Size()+reflect.TypeFor[int]().Size()) * int64(shape.batches*shape.items)
 		if used <= previous || used < lower {
 			release()
 			t.Fatal("tool reservation failed scaling/lower bound", used, lower)

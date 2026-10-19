@@ -41,7 +41,7 @@ func (b *statsBrowser) helpLines(width int) []string {
 	entry("o", "overview: the headline numbers, and where they went")
 	entry("d", "detail: streaks, busiest day, token types, coverage and notes")
 	entry("p", "projects: up to 500 projects, by spend, with each one's share")
-	entry("m", "models: up to 500 model families, priced or not")
+	entry("m", "models: up to 500 models, priced or not")
 	entry("a", "agents: each agent side by side")
 	heading("Window")
 	entry("w", "cycle the window: "+strings.Join(windows, ", ")+" (the bar shows the next one). The numbers are counted again from what was already read, so it is instant.")

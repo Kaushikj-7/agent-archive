@@ -7,7 +7,8 @@ on:
 # repository, and only it can see the Apple signing secrets, which live in
 # the protected `release` environment.
 #
-# Read-only preflight, then `build` (macOS binaries), `build-linux` (Linux
+# Read-only preflight, the split native macOS validation (`macos-plan`,
+# `macos-workers`, `macos-obligations`), then `build` (macOS binaries), `build-linux` (Linux
 # binaries), and `publish`, which signs the macOS binaries and stages all four
 # as a prerelease. The Linux binaries are not signed: trust in them rests on SHA256SUMS and the build
 # provenance attestation. The two build jobs repeat the tag and toolchain
@@ -38,8 +39,122 @@ jobs:
         id: candidate
         run: python3 scripts/release_candidate.py preflight
 
-  build:
+  # The exhaustive native macOS race tier no longer fits one runner's
+  # deadline, so it runs as Extended's split: one plan, three workers and the
+  # plain obligations, each on its own host, reconciled by `build`. Keep these
+  # commands identical to extended.yml's.
+  macos-plan:
     needs: preflight
+    if: needs.preflight.outputs.exists == 'false'
+    runs-on: macos-14
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Same guard as the build job's.
+      - name: Require a vX.Y.Z tag on a commit in main
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release tags must be vX.Y.Z; got a tag that is not"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::the tagged commit is not on main; tag a commit that has been merged"
+            exit 1
+          fi
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require Go 1.27.2 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+      - name: Compile the exhaustive native catalog and assign three workers
+        run: python3 -B scripts/run_native_full.py plan --output native-plan
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: native-plan
+          path: native-plan
+          if-no-files-found: error
+
+  macos-workers:
+    needs: macos-plan
+    runs-on: macos-14
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require Go 1.27.2 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-plan
+          path: native-plan
+      - name: Run assigned complete native bodies on this independent host
+        env:
+          WORKER: ${{ matrix.worker }}
+        run: python3 -B scripts/run_native_full.py worker --worker "$WORKER" --plan native-plan --output "native-worker-$WORKER"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: native-worker-${{ matrix.worker }}
+          path: native-worker-${{ matrix.worker }}
+          if-no-files-found: error
+
+  macos-obligations:
+    needs: macos-plan
+    runs-on: macos-14
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Require Go 1.27.2 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-plan
+          path: native-plan
+      - name: Plain performance compilation, named bodies and pinned published writer
+        run: python3 -B scripts/run_native_full.py obligations --plan native-plan --output native-obligations
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: native-obligations
+          path: native-obligations
+          if-no-files-found: error
+
+  build:
+    needs: [preflight, macos-plan, macos-workers, macos-obligations]
     if: needs.preflight.outputs.exists == 'false'
     # The macOS binaries. Both Intel and ARM64 are cross-compiled from one macOS
     # runner: real Keychain access requires CGO_ENABLED=1 (see
@@ -87,18 +202,28 @@ jobs:
           go version
           go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
 
-      # Repeat the existing source-bound full tier on the exact tagged commit.
-      # Discovery and all invocations share its unchanged 40-minute deadline.
+      # Reconcile this run's native plan, workers and obligations on the exact
+      # tagged commit. Reconcile requires exactly those three jobs' results,
+      # so preflight's entry is dropped and everything else is passed through.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: native-*
+          path: release-native-results
+      - name: Reconcile exact-source native workers and plain obligations
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          native_needs="$(python3 -c 'import json,os; needs=json.loads(os.environ["NEEDS"]); needs.pop("preflight"); print(json.dumps(needs))')"
+          python3 -B scripts/run_native_full.py reconcile --output release-native-results --needs "$native_needs"
+
       - name: Test
         run: |
           go vet ./...
-          python3 -B scripts/run_ci_tier.py --plan --tier full --output release-tier-results/plan.json
-          python3 -B scripts/run_ci_tier.py --tier full --suite macos --seconds 2400 --output release-tier-results
-          python3 -B scripts/run_ci_tier.py --verify --tier full --suite macos --extra-plan release-tier-results/plan.json --output release-tier-results
           python3 scripts/test_release_signing.py
           python3 scripts/test_release_assets.py
           python3 scripts/test_release_candidate.py
           python3 scripts/test_install.py
+          python3 scripts/test_install_from_source.py
           python3 scripts/test_purge_recipe.py
 
       - name: Preserve source-bound release validation evidence
@@ -106,7 +231,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-validation-macos
-          path: release-tier-results
+          path: release-native-results
           if-no-files-found: error
           retention-days: 7
 
@@ -146,6 +271,8 @@ jobs:
     # both cross-compile on one Linux runner with no C toolchain, and the
     # x86-64 one runs natively here for the version check.
     runs-on: ubuntu-24.04
+    # Headroom over the full tier's 2400-second deadline.
+    timeout-minutes: 60
     permissions:
       contents: read
     env:

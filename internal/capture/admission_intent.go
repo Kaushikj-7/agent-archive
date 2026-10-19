@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
@@ -66,7 +67,12 @@ func ClearAdmissionIntents(home string) error {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		if err := os.Remove(filepath.Join(admissionIntentDir(home), entry.Name())); err != nil && !os.IsNotExist(err) {
+		path := filepath.Join(admissionIntentDir(home), entry.Name())
+		var intent admissionIntent
+		if local.Read(path, &intent) != nil || !RecognizedAdmissionIntent(intent) {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			failures = append(failures, err)
 		}
 	}
@@ -96,7 +102,10 @@ func PruneAdmissionIntents(home string, cfg config.Config) error {
 		path := filepath.Join(admissionIntentDir(home), entry.Name())
 		var intent admissionIntent
 		readErr := local.Read(path, &intent)
-		if readErr == nil && intent.DestinationID == cfg.DestinationID() && ((intent.CodexPolicyToken != "" && replayIntentEligible(cfg, intent, intent.ObservedAt)) || (intent.CodexPolicyToken == "" && intentProjectStillOwned(intent.ProjectRoot, cfg.Archive.Projects))) {
+		if readErr != nil || !RecognizedAdmissionIntent(intent) {
+			continue
+		}
+		if intent.DestinationID == cfg.DestinationID() && ((intent.CodexPolicyToken != "" && replayIntentEligible(cfg, intent, intent.ObservedAt)) || (intent.CodexPolicyToken == "" && intentProjectStillOwned(intent.ProjectRoot, cfg.Archive.Projects))) {
 			continue
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -287,6 +296,15 @@ func eventAdmissionIntent(home string, batch []agentapi.LifecycleEvent, now time
 // admissionIntentStillQueueable is the check made under the queue lock
 // before an intent goes in.
 func eventIntentStillQueueable(home string, intent admissionIntent) (bool, error) {
+	if !RecognizedAdmissionIntent(intent) {
+		return false, nil
+	}
+	if intent.Version == 2 {
+		if allowed, err := nativeIntentStillQueueable(home, intent); err != nil || !allowed {
+			return false, err
+		}
+	}
+
 	// A pause or setup may have committed while this hook waited for the
 	// queue lock. Recheck after taking it so a stale config cannot write a
 	// private retry record after the corresponding purge.
@@ -300,10 +318,10 @@ func eventIntentStillQueueable(home string, intent admissionIntent) (bool, error
 		}
 	}
 	current, owned := archive.ProjectActivation{}, false
-	if intent.CodexPolicyToken == "" {
+	if intent.Version != 2 && intent.CodexPolicyToken == "" {
 		current, owned = ConfiguredProjectActivationFor(cfg, intent.ProjectRoot)
 	}
-	if intent.CodexPolicyToken == "" && (!owned || !current.Included || current.Root != intent.ProjectRoot || cfg.DestinationID() != intent.DestinationID || cfg.PauseGeneration != intent.PauseGeneration || !cfg.Archive.Eligible(current.Root, intent.ObservedAt)) {
+	if intent.Version != 2 && intent.CodexPolicyToken == "" && (!owned || !current.Included || current.Root != intent.ProjectRoot || cfg.DestinationID() != intent.DestinationID || cfg.PauseGeneration != intent.PauseGeneration || !cfg.Archive.Eligible(current.Root, intent.ObservedAt)) {
 		return false, nil
 	}
 	entries, err := os.ReadDir(admissionIntentDir(home))
@@ -337,17 +355,15 @@ type deferredFollowup struct {
 	events []agentapi.LifecycleEvent
 }
 
-// ReplayAdmissionIntents runs before the collector reads registrations. The
-// current configuration and project activation are checked again; an intent
-// never revives an excluded project. Successfully handled and expired intents
-// are removed, while transient failures remain for the next pass. Hook
-// registration is idempotent by native session ID.
-func ReplayAdmissionIntents(home string, now time.Time, lookups ...agentapi.DecodersLookup) error {
+// ReplayAdmissionIntentsWithin preserves the collector caller's cancellation
+// for native continuation staging and final writes. Legacy callers retain the
+// context-free entry and their existing wire behavior.
+func ReplayAdmissionIntentsWithin(ctx context.Context, home string, now time.Time, lookups ...agentapi.DecodersLookup) error {
 	var lookup agentapi.DecodersLookup
 	if len(lookups) > 0 {
 		lookup = lookups[0]
 	}
-	return replayAdmissionIntents(home, now, lookup, nil)
+	return replayAdmissionIntentsWithin(ctx, home, now, lookup, nil)
 }
 
 type admissionReplayCursor struct {
@@ -376,6 +392,9 @@ func replayProjectPreflight(home string, now time.Time) (map[string]sourcefacts.
 		path := filepath.Join(admissionIntentDir(home), entry.Name())
 		var intent admissionIntent
 		if local.Read(path, &intent) == nil && intent.CodexPolicyToken != "" && len(intent.Effects) > 0 {
+			if !recognizedLegacyAdmissionIntent(intent) {
+				continue
+			}
 			if now.Sub(intent.ObservedAt) > maxAdmissionIntentAge || intent.ObservedAt.After(now.Add(time.Minute)) {
 				continue
 			}
@@ -395,9 +414,18 @@ func replayProjectPreflight(home string, now time.Time) (map[string]sourcefacts.
 	return preflight, admissionReplayCursor{After: lastAttempt}
 }
 
-func replayAdmissionIntents(home string, now time.Time, lookup agentapi.DecodersLookup, after func(effectName) error) error {
+func replayAdmissionIntentsWithin(ctx context.Context, home string, now time.Time, lookup agentapi.DecodersLookup, after func(effectName) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if setupjournal.TransactionPending(home) {
 		return nil
+	}
+	if err := replayMuseOwnerIntents(ctx, home, now, after); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	preflight, cursor := replayProjectPreflight(home, now)
 	unlock, err := local.NamedLockWait(home, "hooks.lock", 2*time.Second)
@@ -457,6 +485,9 @@ func replayAdmissionFile(home string, store *state.Store, cfg config.Config, pat
 	if err := local.Read(path, &intent); err != nil {
 		return nil, fmt.Errorf("read admission intent: %w", err)
 	}
+	if !recognizedLegacyAdmissionIntent(intent) {
+		return nil, nil
+	}
 	if !replayIntentEligible(cfg, intent, now) {
 		return nil, removeAdmissionIntent(path)
 	}
@@ -482,7 +513,7 @@ func replayAdmissionFile(home string, store *state.Store, cfg config.Config, pat
 		return nil, err
 	}
 	for _, event := range events {
-		if event.Session.NativeID != intent.NativeSessionID || string(event.Session.Agent) != archive.CanonicalHarness(intent.Harness) || event.ProjectRoot != intent.ProjectRoot {
+		if !replayEventIdentityMatches(event, intent) {
 			return nil, errors.New("admission intent effect ownership conflict")
 		}
 	}
@@ -591,25 +622,14 @@ func intentEvents(intent admissionIntent, lookup agentapi.DecodersLookup) ([]age
 }
 
 func replayEffects(home string, store *state.Store, cfg config.Config, intent admissionIntent, events []agentapi.LifecycleEvent, registered bool, after func(effectName) error) error {
-	prepared := make([]agentapi.LifecycleEvent, len(events))
-	copy(prepared, events)
-	for i, event := range prepared {
-		if event.Session.NativeID != intent.NativeSessionID || string(event.Session.Agent) != archive.CanonicalHarness(intent.Harness) || event.ProjectRoot != intent.ProjectRoot {
-			return errors.New("admission intent effect identity conflict")
-		}
-		event.Evidence = nil
-		if event.Kind == agentapi.EventStart || event.Kind == agentapi.EventStop {
-			event.Evidence = append(event.Evidence, minimalReplayEvidence(archive.EvidenceKindLifecycleHook, event, intent.ObservedAt))
-		}
-		if event.Kind == agentapi.EventStop || event.Kind == agentapi.EventResponse {
-			event.Evidence = append(event.Evidence, minimalReplayEvidence(archive.EvidenceKindFinalResponse, event, intent.ObservedAt))
-		}
-		prepared[i] = event
+	if !recognizedLegacyAdmissionIntent(intent) {
+		return errors.New("unsupported admission replay operation")
 	}
-	prepared, err := validateBatch(intent.Harness, prepared, intent.ObservedAt)
+	prepared, err := prepareReplayEvents(intent, events)
 	if err != nil {
 		return err
 	}
+
 	var waiting []agentapi.LifecycleEvent
 	for _, event := range prepared {
 		if event.Deferred == agentapi.DeferredFollowup {
@@ -681,6 +701,9 @@ func replayEffects(home string, store *state.Store, cfg config.Config, intent ad
 // Complete later native start observations after an interrupted registration
 // create, while preserving a newer live continuation and NewOnly semantics.
 func completeReplayStart(store *state.Store, cfg config.Config, intent admissionIntent, event agentapi.LifecycleEvent, reg archive.SessionRegistration, after func(effectName) error) (archive.SessionRegistration, error) {
+	if !recognizedLegacyAdmissionIntent(intent) || event.Session.Agent == agentmeta.Muse {
+		return reg, errors.New("native admission cannot complete through legacy replay")
+	}
 	if event.NewOnly || !sameReplayAdmission(reg, intent.ObservedAt) {
 		return reg, nil
 	}
@@ -762,6 +785,13 @@ func replayDeferredFollowup(store *state.Store, cfg config.Config, followup defe
 }
 
 func acknowledgeIntent(path string, after func(effectName) error) error {
+	var intent admissionIntent
+	if err := local.Read(path, &intent); err != nil {
+		return err
+	}
+	if !RecognizedAdmissionIntent(intent) {
+		return errors.New("unsupported admission intent acknowledgement")
+	}
 	if err := removeAdmissionIntent(path); err != nil {
 		return err
 	}
@@ -795,4 +825,44 @@ func replayProjectMatches(cfg config.Config, intent admissionIntent, reg archive
 		return len(intent.Effects) > 0 && codexContinuationAccepted(cfg, intent.Effects[0].Event, reg)
 	}
 	return cfg.AcceptSession(reg) && filepath.Clean(reg.ProjectRoot) == filepath.Clean(intent.ProjectRoot)
+}
+
+func recognizedLegacyAdmissionIntent(intent admissionIntent) bool {
+	return RecognizedAdmissionIntent(intent) && intent.Version != 2
+}
+
+func nativeIntentStillQueueable(home string, intent admissionIntent) (bool, error) {
+	cfg, found, err := config.Load(home)
+	if err != nil || !found || setupjournal.TransactionPending(home) {
+		return false, err
+	}
+	if intent.NativeMode == agentapi.NativeOwnerContinuation {
+		err := state.OpenReadOnly(home).CheckNativeContinuation(intent)
+		return err == nil, nil
+	}
+	return MuseIntentEligible(cfg, intent, intent.ObservedAt), nil
+}
+
+func replayEventIdentityMatches(event agentapi.LifecycleEvent, intent admissionIntent) bool {
+	return event.Session.NativeID == intent.NativeSessionID && string(event.Session.Agent) == archive.CanonicalHarness(intent.Harness) && event.ProjectRoot == intent.ProjectRoot
+}
+
+func prepareReplayEvents(intent admissionIntent, events []agentapi.LifecycleEvent) ([]agentapi.LifecycleEvent, error) {
+	prepared := make([]agentapi.LifecycleEvent, len(events))
+	copy(prepared, events)
+	for i, event := range prepared {
+		if event.Session.NativeID != intent.NativeSessionID || string(event.Session.Agent) != archive.CanonicalHarness(intent.Harness) || event.ProjectRoot != intent.ProjectRoot {
+			return nil, errors.New("admission intent effect identity conflict")
+		}
+		event.Evidence = nil
+		if event.Kind == agentapi.EventStart || event.Kind == agentapi.EventStop {
+			event.Evidence = append(event.Evidence, minimalReplayEvidence(archive.EvidenceKindLifecycleHook, event, intent.ObservedAt))
+		}
+		if event.Kind == agentapi.EventStop || event.Kind == agentapi.EventResponse {
+			event.Evidence = append(event.Evidence, minimalReplayEvidence(archive.EvidenceKindFinalResponse, event, intent.ObservedAt))
+		}
+		prepared[i] = event
+	}
+
+	return validateBatch(intent.Harness, prepared, intent.ObservedAt)
 }

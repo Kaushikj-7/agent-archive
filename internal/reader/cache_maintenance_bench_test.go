@@ -76,3 +76,39 @@ func BenchmarkCacheInventory(b *testing.B) {
 		}
 	}
 }
+
+// Each iteration populates a fresh cache with 50k synthetic sidecars. Directory
+// enumeration is observed independently of CPU profiles so filesystem wait time
+// cannot hide an accidental prune on the cold path.
+func BenchmarkCacheColdWrites(b *testing.B) {
+	const count = 50000
+	keys := make([]string, count)
+	for i := range count {
+		keys[i] = fmt.Sprintf("sessions/codex/%08d/metadata.json", i)
+	}
+	data := []byte(`{"version":1}`)
+	b.ReportAllocs()
+	for b.Loop() {
+		b.StopTimer()
+		cache, err := OpenMetadataCache(b.TempDir())
+		if err != nil {
+			b.Fatal(err)
+		}
+		cache.readDir = func(string) ([]os.DirEntry, error) {
+			b.Fatal("cold write enumerated a key directory")
+			return nil, nil
+		}
+		b.StartTimer()
+		for _, key := range keys {
+			cache.putVerified(key, "synthetic-revision", data)
+		}
+		b.StopTimer()
+		for _, key := range keys {
+			if _, ok := cache.get(key, "synthetic-revision"); !ok {
+				b.Fatalf("cold write did not cache %q", key)
+			}
+		}
+		b.StartTimer()
+	}
+	b.ReportMetric(count, "sidecars/op")
+}

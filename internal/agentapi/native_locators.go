@@ -17,9 +17,20 @@ type NativeLocatorLookup interface {
 	Check(context.Context, string, string) error
 }
 
+// LocatorPurpose distinguishes admitted owners from observation-only startup.
+type LocatorPurpose string
+
+const (
+	// LocatorAdmittedOwner preserves existing zero-valued admitted-owner callers.
+	LocatorAdmittedOwner LocatorPurpose = ""
+	// LocatorStartupCandidate supplies an explicitly guarded startup query.
+	LocatorStartupCandidate LocatorPurpose = "startup_candidate"
+)
+
 // LocatorRequest scopes lookup to the committed root. Observed only locates
 // candidates; it is never original creation evidence. Parent must be validated.
 type LocatorRequest struct {
+	Purpose  LocatorPurpose
 	NativeID string
 	Root     archive.NativeRoot
 	Parent   *SourceRef

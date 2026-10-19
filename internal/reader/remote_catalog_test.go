@@ -20,14 +20,22 @@ func (*syntheticCatalogStore) CatalogAtomicQualification() error { return nil }
 
 func remoteReaderFixture(t *testing.T, count int) (*catalog.Store, *storagetest.MemoryStore) {
 	t.Helper()
+	ids := make([]string, count)
+	for i := range count {
+		ids[i] = fmt.Sprintf("session-%04d", i)
+	}
+	return remoteReaderNamedFixture(t, ids)
+}
+
+func remoteReaderNamedFixture(t *testing.T, ids []string) (*catalog.Store, *storagetest.MemoryStore) {
+	t.Helper()
 	raw := &syntheticCatalogStore{storagetest.NewMemoryStore()}
 	legacy := storagetest.NewMemoryStore()
 	w, err := catalog.New(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := range count {
-		id := fmt.Sprintf("session-%04d", i)
+	for i, id := range ids {
 		source := []byte("synthetic source " + id)
 		sha := storage.SHA256Hex(source)
 		sourceKey := "sessions/claude/" + id + "/source." + sha + ".jsonl.gz"

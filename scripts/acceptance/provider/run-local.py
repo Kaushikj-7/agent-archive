@@ -37,6 +37,8 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run-disposable-provider', action='store_true', required=True)
+    parser.add_argument('--history-source-set', action='store_true',
+                        help='also run sourceSet5 retained history recovery against this candidate')
     parser.add_argument('--tools', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
@@ -109,8 +111,13 @@ def main():
                                 AA_PROVIDER_ACCESS=access, AA_PROVIDER_SECRET=secret,
                                 AA_PROVIDER_PEER_ACCESS=peer, AA_PROVIDER_PEER_SECRET=peer_secret)
                 (work / 'home').mkdir()
+                selected_tests = TESTS
+                packages = ['./internal/listingindex', './internal/collector']
+                if args.history_source_set:
+                    selected_tests = TESTS[:-2] + '|TestDisposableProviderHistoryRecoversAfterNativeAndLocalLoss)$'
+                    packages.append('./internal/cli')
                 command = ['go', 'test', '-json', '-race', '-p', '2', '-short', '-count=1',
-                           '-timeout', '20m', '-run', TESTS, './internal/listingindex', './internal/collector']
+                           '-timeout', '20m', '-run', selected_tests, *packages]
                 with (output / 'tests.jsonl').open('wb') as events:
                     tests = subprocess.Popen(command, cwd=root, env=test_env, stdout=events,
                                              stderr=subprocess.STDOUT, start_new_session=True)

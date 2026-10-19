@@ -72,34 +72,34 @@ func TestRealModelIDsThePriceTableKnows(t *testing.T) {
 		family string
 	}{
 		// Model ids seen in real Claude Code and Codex archives.
-		{"claude-opus-5-5", true, "opus"},
-		{"claude-opus-5-5[1m]", true, "opus"},
-		{"claude-opus-5", true, "opus"},
-		{"claude-opus-4-8", true, "opus"},
-		{"claude-fable-5-1", true, "fable"},
-		{"claude-sonnet-5-5", true, "sonnet"},
-		{"claude-sonnet-5", true, "sonnet"},
-		{"claude-haiku-4-5-20251001", true, "haiku"},
-		{"Claude-Haiku-4-5@20251001", true, "haiku"},
-		{"claude-opus-4-20250514", true, "opus"},
-		{"gpt-5.6-terra", true, "gpt-5.6"},
-		{"gpt-6-luna", true, "gpt-6"},
+		{"claude-opus-5-5", true, "opus-5.5"},
+		{"claude-opus-5-5[1m]", true, "opus-5.5"},
+		{"claude-opus-5", true, "opus-5"},
+		{"claude-opus-4-8", true, "opus-4.8"},
+		{"claude-fable-5-1", true, "fable-5.1"},
+		{"claude-sonnet-5-5", true, "sonnet-5.5"},
+		{"claude-sonnet-5", true, "sonnet-5"},
+		{"claude-haiku-4-5-20251001", true, "haiku-4.5"},
+		{"Claude-Haiku-4-5@20251001", true, "haiku-4.5"},
+		{"claude-opus-4-20250514", true, "opus-4"},
+		{"gpt-5.6-terra", true, "gpt-5.6-terra"},
+		{"gpt-6-luna", true, "gpt-6-luna"},
 		{"gpt-5", true, "gpt-5"},
 		{"gpt-5-2025-08-07", true, "gpt-5"},
 		{"gpt-5.5", true, "gpt-5.5"},
 		{"gpt-5.5-2026-04-23", true, "gpt-5.5"},
-		{"gpt-5.6", true, "gpt-5.6"}, // OpenAI's alias for gpt-5.6-sol
-		{"gpt-6.1-sol", true, "gpt-6"},
-		{"gpt-5.3-codex", true, "gpt-5"},
-		{"gpt-5.2-codex", true, "gpt-5.2"},
-		{"gpt-5.1-codex-mini", true, "gpt-5-mini"},
-		{"claude-mythos-5-1", true, "mythos"},
+		{"gpt-5.6", true, "gpt-5.6-sol"}, // OpenAI's alias for gpt-5.6-sol
+		{"gpt-6.1-sol", true, "gpt-6.1-sol"},
+		{"gpt-5.3-codex", true, "gpt-5.3-codex"},
+		{"gpt-5.2-codex", true, "gpt-5.2-codex"},
+		{"gpt-5.1-codex-mini", true, "gpt-5.1-codex-mini"},
+		{"claude-mythos-5-1", true, "mythos-5.1"},
 		// Ids a cloud platform gives the same models (Bedrock, Vertex).
-		{"anthropic.claude-opus-4-6-v1", true, "opus"},
-		{"global.anthropic.claude-opus-4-6-v1", true, "opus"},
-		{"us.anthropic.claude-sonnet-4-5-20250929-v1:0", true, "sonnet"},
-		{"anthropic.claude-sonnet-4-6", true, "sonnet"},
-		{"claude-opus-4@20250514", true, "opus"},
+		{"anthropic.claude-opus-4-6-v1", true, "opus-4.6"},
+		{"global.anthropic.claude-opus-4-6-v1", true, "opus-4.6"},
+		{"us.anthropic.claude-sonnet-4-5-20250929-v1:0", true, "sonnet-4.5"},
+		{"anthropic.claude-sonnet-4-6", true, "sonnet-4.6"},
+		{"claude-opus-4@20250514", true, "opus-4"},
 		// Not priced, never guessed.
 		{"codex-auto-review", false, ""},
 		{"unknown", false, ""},
@@ -319,9 +319,9 @@ func TestFamilyIsOnlyForListedModels(t *testing.T) {
 		family string
 		listed bool
 	}{
-		{"claude-opus-5", "opus", true},
-		{"  CLAUDE-OPUS-5-20250101 ", "opus", true},
-		{"claude-opus-5[1m]", "opus", true},
+		{"claude-opus-5", "opus-5", true},
+		{"  CLAUDE-OPUS-5-20250101 ", "opus-5", true},
+		{"claude-opus-5[1m]", "opus-5", true},
 		{"gpt-5", "gpt-5", true},
 		{"opus", "", false},
 		{"ft:gpt-4o:acme::abc", "", false},
@@ -347,6 +347,25 @@ func TestFamilyIsOnlyForListedModels(t *testing.T) {
 		if family, listed := custom.Family(model); family != want || listed != (want != "") {
 			t.Errorf("custom Family(%q) = %q, %v; want %q", model, family, listed, want)
 		}
+	}
+}
+
+// Each built-in model is its own row in cost by model, named for its exact
+// version: GPT-6.1 Sol is not lumped in with GPT-6 Luna, nor Opus 5.5 with Opus
+// 5. Only two names of one model share a label.
+func TestBuiltInModelsAreLabelledByExactVersion(t *testing.T) {
+	t.Parallel()
+	aliases := map[string]string{"gpt-5.6": "gpt-5.6-sol", "claude-3-5-haiku": "claude-haiku-3-5"}
+	owner := map[string]string{}
+	for _, m := range DefaultPriceTable().Models {
+		id := m.ID
+		if target, ok := aliases[id]; ok {
+			id = target
+		}
+		if prev, ok := owner[m.Family]; ok && prev != id {
+			t.Errorf("%s and %s share the label %q", prev, id, m.Family)
+		}
+		owner[m.Family] = id
 	}
 }
 

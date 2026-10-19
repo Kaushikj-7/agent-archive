@@ -61,9 +61,9 @@ Aug 31                                               Sep 29
 
 WHERE IT WENT
 By project                                By model
-agent-archive  ███████████████  $1,862    opus    ██████████████████████  $3,270
-levenshtein    ██████             $751    fable   ███                       $386
-styleprofile   █████              $586    sonnet  ██                        $320
+agent-archive  ███████████████  $1,862    opus-5    ████████████████████  $3,270
+levenshtein    ██████             $751    fable-5   ██                      $386
+styleprofile   █████              $586    sonnet-5  ██                      $320
 family_books   ███                $427    + 2 more
 + 6 more
 
@@ -115,7 +115,7 @@ Estimated at list price, not a bill.   --detail for more · --by project · --ht
   **Coverage**.
 
 The colors are the terminal's own 16 (so they follow your theme): Claude Code
-yellow, Cursor blue, Codex green; models by family (opus magenta, fable red,
+yellow, Cursor blue, Codex green; models colored by family (opus magenta, fable red,
 sonnet cyan, haiku yellow, GPT and Codex models green); projects and the
 daily chart cyan. Color is never the only cue: every legend names what it
 colors. `NO_COLOR` turns color off, and so does anything that is not a
@@ -177,7 +177,7 @@ Subagents  77% of tokens (7.7B) in 497 runs
 HIGHLIGHTS
 Streak          none now (best 1 day)
 Busiest day     Sep 27 (70 sessions)
-Favorite model  opus
+Favorite model  opus-5
 This month      the heaviest of the last 6 months, by tokens so far
 Tool errors     5.0% of 4,200 tool results flagged as errors, 70 sessions
                 measured (13 do not record them)
@@ -208,8 +208,10 @@ Estimated at list price, not a bill.   --view overview
 
 `--view projects` lists the projects (up to 500) with a bar, its sessions,
 tokens, spend and share of the spend (a project is the project's name only).
-`--view models` lists the model families (up to 500), with any model the price
-table does not list flagged `unpriced` and its tokens shown. `--view agents`
+`--view models` lists the models (up to 500), one row per exact version
+(`opus-5.5` and `opus-5`, `gpt-6.1-sol` and `gpt-6-luna` are separate rows),
+with any model the price table does not list flagged `unpriced` and its tokens
+shown. `--view agents`
 is the agents table, with each
 agent's share of sessions, tokens, spend and cache hit rate, and a note on
 what each agent does not record. `--by project` is `--view projects`.
@@ -235,12 +237,12 @@ Estimated at list price, not a bill.   --view overview
 ```text
 agent-archive stats · models · last 30 days · 3 agents
 
-MODELS (5)                     sessions  tokens  est. cost  share
-opus     ████████████████████        60      7B     $3,270    82%
-fable    ██                          20    1.5B       $386    10%
-sonnet   ██                          30    1.3B       $320     8%
-gpt-5.6  █                            1    100M      $7.00    <1%
-haiku    █                           10    100M      $6.00    <1%
+MODELS (5)                         sessions  tokens  est. cost  share
+opus-5       ████████████████████        60      7B     $3,270    82%
+fable-5      ██                          20    1.5B       $386    10%
+sonnet-5     ██                          30    1.3B       $320     8%
+gpt-5.6-sol  █                            1    100M      $7.00    <1%
+haiku-5      █                           10    100M      $6.00    <1%
 
 Estimated at list price, not a bill.   --view overview
 ```
@@ -302,9 +304,9 @@ Aug 31                                               Sep 29
 
 WHERE IT WENT
 By project                                By model
-agent-archive  ███████████████  $1,862    opus    ██████████████████████  $3,270
-levenshtein    ██████             $751    fable   ███                       $386
-styleprofile   █████              $586    sonnet  ██                        $320
+agent-archive  ███████████████  $1,862    opus-5    ████████████████████  $3,270
+levenshtein    ██████             $751    fable-5   ██                      $386
+styleprofile   █████              $586    sonnet-5  ██                      $320
 family_books   ███                $427    + 2 more
 + 6 more
 
@@ -467,7 +469,7 @@ spend it has, marked `+`), and says how many more there are;
   a stand-in, "project A", "project B" and so on, in the order the page lists
   them; skills, MCP servers and models get "skill A", "MCP server A" and
   "model A" the same way. A model keeps its name only when the built-in price
-  table lists it ("opus", "gpt-5"; so are the archive's own "unknown" and
+  table lists it ("opus-5.5", "gpt-6.1-sol"; so are the archive's own "unknown" and
   "other"); a fine-tune id, a custom deployment name or any other model the
   table does not list is a stand-in, in the heading's `--model` filter, the
   by-model table, the favorite model and the footer's note on unpriced
@@ -476,8 +478,8 @@ spend it has, marked `+`), and says how many more there are;
   is not listed either, and neither is the version of your own `--prices`
   file (the footer says only that the file was used). A `--model` filter
   written with a path, a vendor prefix or a bracketed suffix
-  (`acme/claude-opus-5`, `claude-opus-5[acme]`) is shown as the model's family, not
-  as typed. The project of the costliest session in "Heads up" is
+  (`acme/claude-opus-5`, `claude-opus-5[acme]`) is shown as the model's short name
+  (`opus-5`), not as typed. The project of the costliest session in "Heads up" is
   a stand-in like any other. The same name has the same letter throughout the
   page, but the letters follow the order the page first names them (the
   dearest project listed is "project A") and are not stable between runs. `--include-names` shows the real names of all four, for a page only
@@ -548,8 +550,8 @@ sessions counted, the previous period included. Sessions a replay tool ran
 (with `AGENT_ARCHIVE_REPLAY` set) are not counted unless you pass
 `--replays include` or `--replays only`. `--model` keeps a session that
 used the model, and counts all of that session's tokens, models included.
-Give the full model id (`claude-opus-5`), as `list` does, not the family the
-screen groups it under (`opus`).
+Give the full model id (`claude-opus-5`), as `list` does, not the short name
+the screen shows it under (`opus-5`).
 
 Own input/output observations use an optional `token_observations` object with
 `input`, `output`, bounded `models`, and explicit `observed`, `coverage`,

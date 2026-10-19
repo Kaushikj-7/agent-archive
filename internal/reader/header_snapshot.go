@@ -29,12 +29,12 @@ type HeaderSnapshot struct {
 	knownCanonical   []string
 }
 
-// discoverHeaders overlaps independent canonical and auxiliary listings. Only
-// canonical cache keys plan ranges; v2 must remain global for legacy coverage.
+// discoverHeaders overlaps independent canonical and auxiliary listings.
+// v2 remains global for legacy coverage; each prefix has independent hints.
 func discoverHeaders(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, cache *MetadataCache) (HeaderSnapshot, error) {
 	canonicalPrefix := listPrefixFor(prefix, filter.Harness)
 	known := cache.keys(canonicalPrefix)
-	groups, canonicalComplete, err := listHeaderGroups(ctx, store, canonicalPrefix, known, true, listPrefixFor(listingindex.V3Prefix, filter.Harness))
+	groups, canonicalComplete, err := listHeaderGroups(ctx, store, canonicalPrefix, known, true, listPrefixFor(listingindex.V3Prefix, filter.Harness), cache)
 	// Complete canonical headers prove absence independently of auxiliary
 	// discovery. Evict deleted cache entries even if an index listing failed.
 	if canonicalComplete && cache != nil {
@@ -77,7 +77,8 @@ hints:
 // those siblings subsequently report cancellation.
 // canonicalComplete distinguishes a successful empty listing from a partial
 // or failed canonical discovery, including when an auxiliary listing fails.
-func listHeaderGroups(ctx context.Context, store storage.ObjectStore, canonicalPrefix string, known []string, includeCanonical bool, v3Prefix string) ([3][]storage.Object, bool, error) {
+func listHeaderGroups(ctx context.Context, store storage.ObjectStore, canonicalPrefix string, known []string, includeCanonical bool, v3Prefix string, cache *MetadataCache) ([3][]storage.Object, bool, error) {
+	slots := make(chan struct{}, rangeConcurrency)
 	caller := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -91,13 +92,11 @@ func listHeaderGroups(ctx context.Context, store storage.ObjectStore, canonicalP
 			continue
 		}
 		wg.Go(func() {
-			var objects []storage.Object
-			var err error
+			var fallback []string
 			if i == 0 {
-				objects, err = listObjects(ctx, store, prefix, known)
-			} else {
-				objects, err = store.List(ctx, prefix)
+				fallback = known
 			}
+			objects, err := listObjectsWithSlots(ctx, store, prefix, fallback, cache, slots)
 			if err != nil {
 				failed.Do(func() {
 					failure = err

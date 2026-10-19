@@ -1,0 +1,2 @@
+go test fuzz v1
+string("Message Type: NEW_TASK\nTask name: 0000  0000")

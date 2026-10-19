@@ -186,6 +186,9 @@ func nativePath(s string) bool {
 
 // validateNativeBinding checks the private binding against its owning registration.
 func (r SessionRegistration) validateNativeBinding() error {
+	if r.NativeAdmission != nil && (r.NativeAdmission.Validate() != nil || r.Harness.Name != "muse" || r.NativeBinding == nil || r.NativeBinding.Version != 2) {
+		return errors.New("native admission requires complete Muse binding")
+	}
 	if r.NativeBinding != nil {
 		if r.CodexBinding != nil || !r.ReadsTranscriptFile() || r.NativeBinding.Agent != r.Harness.Name || r.NativeBinding.NativeID != r.NativeSessionID || r.TranscriptPath != r.NativeBinding.Path || r.ParentNativeSessionID != "" && r.ParentNativeSessionID != r.NativeBinding.ParentID || r.NativeRootSessionID != "" && r.NativeRootSessionID != r.NativeBinding.RootID {
 			return errors.New("native binding requires matching registration and locator")

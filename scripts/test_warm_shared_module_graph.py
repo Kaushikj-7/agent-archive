@@ -23,8 +23,8 @@ class GraphTests(unittest.TestCase):
     def test_repository_graph_includes_tidy_only_dependencies_without_widening_versions(self):
         data = (ROOT / 'go.sum').read_bytes()
         result = graph.module_graph(data)
-        self.assertIn('golang.org/x/tools@v0.49.0', result)
-        self.assertIn('modernc.org/ccgo/v4@v4.35.0', result)
+        self.assertIn('golang.org/x/tools@v0.50.0', result)
+        self.assertIn('modernc.org/ccgo/v4@v4.36.1', result)
         self.assertEqual(set(result), {line.split()[0] + '@' + line.split()[1]
                                       for line in data.decode().splitlines()
                                       if not line.split()[1].endswith('/go.mod')})

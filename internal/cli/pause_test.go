@@ -94,7 +94,7 @@ func TestPauseDiscardsQueuedStartsBeforeResume(t *testing.T) {
 	if code := runPauseCommand(&out, &errOut, env, false); code != 0 {
 		t.Fatalf("resume: code=%d stderr=%s", code, errOut.String())
 	}
-	if err := capture.ReplayAdmissionIntents(home, at.Add(2*time.Minute), productionAgents); err != nil {
+	if err := capture.ReplayAdmissionIntentsWithin(t.Context(), home, at.Add(2*time.Minute), productionAgents); err != nil {
 		t.Fatal(err)
 	}
 	regs, err := state.OpenReadOnly(home).LoadRegistrations()

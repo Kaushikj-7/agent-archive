@@ -45,7 +45,7 @@ func createDiscoveryCleanupState(t *testing.T) (string, Env) {
 	err = capture.HandleBatch(home, "codex", batch, now.Add(time.Second))
 	unlock()
 	must(t, err)
-	must(t, capture.ReplayAdmissionIntents(home, now.Add(2*time.Second), env.agentRegistry()))
+	must(t, capture.ReplayAdmissionIntentsWithin(t.Context(), home, now.Add(2*time.Second), env.agentRegistry()))
 	names := []string{"discovery-health.json", "discovery-catalog.lock", "admission-replay-cursor.json"}
 	for _, name := range names {
 		if _, err := os.Stat(filepath.Join(home, name)); err != nil {

@@ -25,8 +25,9 @@ type pagingS3 struct {
 	pageSize         int
 	ignoreStartAfter bool
 
-	mu       sync.Mutex
-	requests []string // start-after|continuation-token of each request
+	mu          sync.Mutex
+	requests    []string // start-after|continuation-token of each request
+	transferred int      // full-page keys, including discarded range suffixes
 }
 
 func (p *pagingS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -62,6 +63,9 @@ func (p *pagingS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		matched = matched[:p.pageSize]
 		truncated, next = true, matched[len(matched)-1]
 	}
+	p.mu.Lock()
+	p.transferred += len(matched)
+	p.mu.Unlock()
 	contents := make([]content, 0, len(matched))
 	for _, key := range matched {
 		contents = append(contents, content{Key: key, Size: 1})
@@ -200,5 +204,45 @@ func TestS3StoreListRangePropagatesErrors(t *testing.T) {
 	}
 	if _, err := store.ListRange(context.Background(), "sessions", "", ""); err == nil || !strings.Contains(err.Error(), strconv.Itoa(http.StatusForbidden)) {
 		t.Fatalf("ListRange error = %v, want the 403", err)
+	}
+}
+
+func TestS3StoreListRangePageBoundaryTransferCounts(t *testing.T) {
+	t.Parallel()
+	keys := make([]string, 3001)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("agent-archive/sessions/custom/k%05d", i)
+	}
+	for _, tc := range []struct {
+		name        string
+		after       string
+		through     string
+		returned    int
+		pages       int
+		transferred int
+	}{
+		{"exact first page", "", "sessions/custom/k00999", 1000, 1, 1000},
+		{"exact second page", "", "sessions/custom/k01999", 2000, 2, 2000},
+		{"absent boundary", "", "sessions/custom/k00999!", 1000, 2, 2000},
+		{"short range transfers full page", "", "sessions/custom/k00001", 2, 1, 1000},
+		{"middle exact page", "sessions/custom/k00999", "sessions/custom/k01999", 1000, 1, 1000},
+		{"final unbounded range", "sessions/custom/k01999", "", 1001, 2, 1001},
+		{"empty final range", "sessions/custom/k03000", "", 0, 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fake := &pagingS3{keys: keys, pageSize: 1000}
+			store := newPagingStore(t, fake)
+			got, err := store.ListRange(context.Background(), "sessions/", tc.after, tc.through)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fake.mu.Lock()
+			transferred := fake.transferred
+			fake.mu.Unlock()
+			if len(got) != tc.returned || len(fake.requestLog()) != tc.pages || transferred != tc.transferred {
+				t.Fatalf("returned %d pages %d transferred %d; want %d, %d, %d", len(got), len(fake.requestLog()), transferred, tc.returned, tc.pages, tc.transferred)
+			}
+		})
 	}
 }

@@ -101,8 +101,10 @@ func TestUndoRefusesProtectedRecoveryBeforeRemoteDeletion(t *testing.T) {
 				t.Fatal(err)
 			}
 			remote := &durableUndoRemote{MemoryStore: storagetest.NewMemoryStore()}
-			key := "sessions/claude/" + reg.ArchiveSessionID + "/original"
-			if err := remote.Put(t.Context(), key, []byte("remote-original")); err != nil {
+			remoteRaw := []byte("remote-original")
+			remoteSum := sha256.Sum256(remoteRaw)
+			key := "sessions/claude/" + reg.ArchiveSessionID + "/source." + hex.EncodeToString(remoteSum[:]) + ".jsonl.gz"
+			if err := remote.Put(t.Context(), key, remoteRaw); err != nil {
 				t.Fatal(err)
 			}
 			plan := UndoPlan{Sessions: []UndoSession{{Registration: reg, InCurrentDestination: true}}}

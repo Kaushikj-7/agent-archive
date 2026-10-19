@@ -122,7 +122,7 @@ func TestModelStandInsFollowTheRanking(t *testing.T) {
 	t.Parallel()
 	s := modelStats(t, modelSessions(), "", stats.GroupNone)
 	page := string(render(t, s, Options{}))
-	for _, shown := range []string{"opus", "gpt-5", archive.UnknownModel, archive.OtherModels} {
+	for _, shown := range []string{"opus-5", "gpt-5", archive.UnknownModel, archive.OtherModels} {
 		if !strings.Contains(page, ">"+shown+"</th>") {
 			t.Errorf("the table does not show %q", shown)
 		}
@@ -187,7 +187,7 @@ func TestModelFilterIsRedactedLikeTheTable(t *testing.T) {
 }
 
 // The engine finds a listed model behind a path or a cloud vendor's prefix, and
-// what it drops can name a client: the heading names the family, never the
+// what it drops can name a client: the heading names the model, never the
 // text as typed.
 func TestModelFilterWithAPrefixIsNotEchoed(t *testing.T) {
 	t.Parallel()
@@ -198,8 +198,8 @@ func TestModelFilterWithAPrefixIsNotEchoed(t *testing.T) {
 		if leaked := leakedMarkers(page); len(leaked) > 0 {
 			t.Errorf("filter %q: the page names %q", filter, leaked)
 		}
-		if !strings.Contains(page, "Filtered to model opus.") && !strings.Contains(page, "Filtered to model gpt-5.") {
-			t.Errorf("filter %q: the heading does not name the model's family", filter)
+		if !strings.Contains(page, "Filtered to model opus-5.") && !strings.Contains(page, "Filtered to model gpt-5.") {
+			t.Errorf("filter %q: the heading does not name the model", filter)
 		}
 	}
 }
@@ -297,15 +297,17 @@ func TestPublicRow(t *testing.T) {
 		row  stats.ModelRow
 		want bool
 	}{
-		{"built-in family", stats.ModelRow{Label: "opus", Models: []string{"claude-opus-5", "claude-opus-4-8"}}, true},
+		{"built-in model", stats.ModelRow{Label: "opus-5", Models: []string{"claude-opus-5"}}, true},
+		{"built-in alias", stats.ModelRow{Label: "gpt-5.6-sol", Models: []string{"gpt-5.6", "gpt-5.6-sol"}}, true},
+		{"two versions under one label", stats.ModelRow{Label: "opus-5", Models: []string{"claude-opus-5", "claude-opus-4-8"}}, false},
 		{"unlisted id", stats.ModelRow{Label: "codex-auto-review", Models: []string{"codex-auto-review"}}, false},
-		{"one unlisted id in a family", stats.ModelRow{Label: "opus", Models: []string{"claude-opus-5", fineTune}}, false},
-		{"label of another family", stats.ModelRow{Label: "sonnet", Models: []string{"claude-opus-5"}}, false},
-		{"own family of a built-in id", stats.ModelRow{Label: "zqcorp-gpt", Models: []string{"gpt-5"}}, false},
+		{"one unlisted id in a row", stats.ModelRow{Label: "opus-5", Models: []string{"claude-opus-5", fineTune}}, false},
+		{"label of another model", stats.ModelRow{Label: "sonnet-5", Models: []string{"claude-opus-5"}}, false},
+		{"own label of a built-in id", stats.ModelRow{Label: "zqcorp-gpt", Models: []string{"gpt-5"}}, false},
 		{"unknown", stats.ModelRow{Label: archive.UnknownModel, Models: []string{archive.UnknownModel}}, true},
 		{"other", stats.ModelRow{Label: archive.OtherModels, Models: []string{archive.OtherModels}}, true},
 		{"placeholder label over a custom id", stats.ModelRow{Label: archive.UnknownModel, Models: []string{fineTune}}, false},
-		{"no ids", stats.ModelRow{Label: "opus"}, false},
+		{"no ids", stats.ModelRow{Label: "opus-5"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

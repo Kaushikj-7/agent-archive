@@ -121,7 +121,12 @@ var destinationComparisonAllowed = map[string]bool{
 	// Discovery opens fresh-start permissions, not publication permission.
 	"config.ReconcileDiscovery":    true,
 	"config.ReconcileCodexCapture": true,
-	"backfill.CheckClock":          true,
+	// Muse window issuance and structural window validation compare the new
+	// permission clock, not a retained registration destination. Owner checks
+	// continue through NativeValidationInCurrentDestination.
+	"config.ReconcileMuseCapture": true,
+	"config.validateMuseCapture":  true,
+	"backfill.CheckClock":         true,
 }
 
 // destinationComparisons returns every comparison in file that mentions

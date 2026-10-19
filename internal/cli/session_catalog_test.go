@@ -216,8 +216,10 @@ func TestCatalogWarmShowQueryReadsOnlySelectedBodyAndMatchesFallback(t *testing.
 	a := newScopedArchive(t)
 	a.add(t, "mine0001", "Unique title ÉCOLE shared marker", a.label, linked(701))
 	a.add(t, "mine0002", "Another scoped task", a.label)
+	a.add(t, "mine0003", "Third scoped task", a.label)
 	a.add(t, "bill0001", "Shared marker outside", "billing")
 	a.add(t, "child001", "Child needle", a.label, subagentOf("mine0001"))
+	a.add(t, "child002", "Unrelated child task", a.label, subagentOf("mine0002"))
 	a.add(t, "replay01", "Replay hidden title", a.label, func(m *archive.Metadata) { m.Replay = &archive.Replay{RunID: "private-replay-run"} })
 	fullIDKey, err := archive.MetadataObjectKey("codex", a.id)
 	if err != nil {
@@ -247,7 +249,7 @@ func TestCatalogWarmShowQueryReadsOnlySelectedBodyAndMatchesFallback(t *testing.
 	}{
 		{"école", 0, 1, "mine0001"},
 		{"#701", 0, 1, "mine0001"},
-		{"mine000", 1, 0, "matches 2"},
+		{"mine000", 1, 0, "matches 3"},
 		{"shared marker", 0, 1, "mine0001"},
 		{"child needle", 0, 1, "child001"},
 		{"replay01", 0, 1, "private-replay-run"},
@@ -293,6 +295,15 @@ func TestCatalogWordCandidatesContainFinalMatcherMatches(t *testing.T) {
 	a := newScopedArchive(t)
 	a.add(t, "abcd1234", "needle 000000 0000021", "published", linked(21))
 	a.add(t, "000021ff", "other", "published", linked(212))
+	a.add(t, "native01", "ÉCOLE task", "published", func(m *archive.Metadata) { m.NativeSessionID = "distinct-native-1234" })
+	a.add(t, "native02", "another ÉCOLE task", "published", func(m *archive.Metadata) { m.NativeSessionID = "DISTINCT-native-5678"; m.NativeChild = true })
+	a.add(t, "native03", "child", "published", func(m *archive.Metadata) {
+		m.NativeSessionID = "parent:subagent:distinct"
+		m.ParentSessionID = "native01"
+	})
+	a.add(t, "native04", "replay ÉCOLE", "published", func(m *archive.Metadata) { m.NativeSessionID = "distinct-native-replay"; m.Replay = &archive.Replay{} })
+	a.add(t, "native05", "unlabeled task", "", func(m *archive.Metadata) { m.NativeSessionID = "unknown-native" })
+	a.add(t, "distinct-native-1234", "archive ID collision", "published")
 	home, err := a.env.Home()
 	if err != nil {
 		t.Fatal(err)
@@ -317,7 +328,7 @@ func TestCatalogWordCandidatesContainFinalMatcherMatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, words := range []string{"#0021", "000021", "#000021", "#000000", "000000", "0000021", "#0000021", "#0021 needle", "000021 other", "abcd1234"} {
+	for _, words := range []string{"#0021", "000021", "#000021", "#000000", "000000", "0000021", "#0000021", "#0021 needle", "000021 other", "abcd1234", "distinct", "distinct-native", "DISTINCT ÉCOLE", "distinct-native-1234", "parent", "configured", "unknown-native"} {
 		t.Run(words, func(t *testing.T) {
 			q := parseSessionQuery(words)
 			page, err := catalog.Query(t.Context(), reader.CatalogQuery{Words: q.words})
@@ -327,6 +338,28 @@ func TestCatalogWordCandidatesContainFinalMatcherMatches(t *testing.T) {
 			candidates := map[string]bool{}
 			for _, row := range page.Rows {
 				candidates[row.Summary.SessionID] = true
+			}
+			var projected []archive.Metadata
+			for _, row := range page.Rows {
+				projected = append(projected, row.Summary.Metadata())
+			}
+			for _, labels := range []map[string]string{nil, {archive.ProjectID("/elsewhere/"): "configured ÉCOLE"}} {
+				fields := func(m archive.Metadata) sessionFields { return fieldsOf(m, sessionProjectName(m, labels)) }
+				for _, scope := range []sessionScope{{}, {Label: "published", ProjectIDs: []string{archive.ProjectID("/elsewhere/published")}}} {
+					for _, search := range []func([]archive.Metadata, sessionQuery, sessionScope, func(archive.Metadata) sessionFields) sessionSearch{searchSessions, searchShowSessions} {
+						want, got := search(all, q, scope, fields), search(projected, q, scope, fields)
+						ids := func(result sessionSearch) []string {
+							var out []string
+							for _, m := range result.matches {
+								out = append(out, m.SessionID)
+							}
+							return out
+						}
+						if !reflect.DeepEqual(ids(want), ids(got)) || want.inScope != got.inScope || want.outside != got.outside || want.subagents != got.subagents {
+							t.Fatalf("query=%q scope=%+v got=%+v want=%+v", words, scope, got, want)
+						}
+					}
+				}
 			}
 			for _, m := range all {
 				fields := fieldsOf(m, sessionProjectName(m, nil))
@@ -384,5 +417,88 @@ func TestCatalogNativeChildListBrowseSearchAndSelectedBody(t *testing.T) {
 				t.Errorf("browser %s code=%d stderr=%s out=%s", command, code, errOut.String(), stdout.String())
 			}
 		}
+	}
+}
+
+func TestCatalogWarmHandoffPickerDecodesNoMetadataBodies(t *testing.T) {
+	f := newPickerFixture(t)
+	reads := 0
+	f.env.observeListBody = func(string, bool) { reads++ }
+	cold, coldErr, code := runPicker(t, f.env, "q\n")
+	if code != 0 {
+		t.Fatalf("cold code=%d stderr=%s", code, coldErr)
+	}
+	if reads != 2 {
+		t.Fatalf("cold decoded %d bodies", reads)
+	}
+	reads = 0
+	warm, warmErr, code := runPicker(t, f.env, "q\n")
+	if code != 0 || reads != 0 {
+		t.Fatalf("warm code=%d decoded=%d stderr=%s", code, reads, warmErr)
+	}
+	if cold != warm || coldErr != warmErr {
+		t.Fatalf("warm picker changed output: cold=%s/%s warm=%s/%s", cold, coldErr, warm, warmErr)
+	}
+	if strings.Contains(warm, f.noPrompt[:minShortSessionID]) {
+		t.Fatal("picker offered a session with no prompt")
+	}
+}
+
+func TestCatalogHandoffAmbiguityMatchesCompleteArchive(t *testing.T) {
+	a := newScopedArchive(t)
+	for _, id := range []string{"parent01", "parent02", "parent03"} {
+		a.add(t, id, "Shared query needle", a.label, func(m *archive.Metadata) { turns := 1; m.Counts.Turns = &turns })
+	}
+	a.add(t, "child001", "Unrelated child task", a.label, subagentOf("parent01"))
+	var out, stderr bytes.Buffer
+	args := []string{"handoff", "Shared query", "--source", "archive"}
+	code := Run(args, nil, &out, &stderr, a.env)
+	if code != 1 || !strings.Contains(stderr.String(), "matches 3") || !strings.Contains(stderr.String(), "1 subagent") {
+		t.Fatalf("code=%d out=%s stderr=%s", code, out.String(), stderr.String())
+	}
+	home, err := a.env.Home()
+	must(t, err)
+	path := filepath.Join(home, "cache", "catalog")
+	must(t, os.Rename(path, path+".fixture"))
+	must(t, os.WriteFile(path, []byte("unavailable catalog"), 0600))
+	var fallbackOut, fallbackErr bytes.Buffer
+	fallbackCode := Run(args, nil, &fallbackOut, &fallbackErr, a.env)
+	must(t, os.Remove(path))
+	must(t, os.Rename(path+".fixture", path))
+	if fallbackCode != code || fallbackOut.String() != out.String() || fallbackErr.String() != stderr.String() {
+		t.Fatalf("fallback differs: code=%d out=%s stderr=%s", fallbackCode, fallbackOut.String(), fallbackErr.String())
+	}
+	reads := 0
+	a.env.observeListBody = func(string, bool) { reads++ }
+	choices, errOut, code := runPicker(t, a.env, "q\n", "Shared query", "--source", "archive")
+	if code != 0 || reads != 0 {
+		t.Fatalf("picker code=%d decoded=%d stderr=%s", code, reads, errOut)
+	}
+	for _, id := range []string{"parent01", "parent02", "parent03"} {
+		if !strings.Contains(choices, id) {
+			t.Fatalf("picker omitted %s: %s", id, choices)
+		}
+	}
+}
+
+func TestCatalogModelFilterKeepsObservationOnlySessions(t *testing.T) {
+	a := newScopedArchive(t)
+	var observations archive.ObservationAccumulator
+	must(t, observations.Add("observed-only-model", 101, 12))
+	a.add(t, "observed", "Observed-only model task", a.label, func(m *archive.Metadata) { m.Models = nil; m.TokenObservations = observations.Summary() })
+	// Populate the summary catalog before selecting a model absent from it.
+	if _, stderr, code := a.runList(t, "--all-projects", "--limit", "0"); code != 0 {
+		t.Fatalf("warmup code=%d stderr=%s", code, stderr)
+	}
+	var previous string
+	for range 2 {
+		out, stderr, code := a.runList(t, "--all-projects", "--model", "observed-only-model")
+		if code != 0 || !strings.Contains(out, "Observed-only model task") || !strings.Contains(stderr, "query requires an exhaustive metadata scan") {
+			t.Fatalf("model list code=%d out=%s stderr=%s", code, out, stderr)
+		}
+		if previous != "" && previous != out {
+			t.Fatal("warm model filtering changed output")
+		}
+		previous = out
 	}
 }

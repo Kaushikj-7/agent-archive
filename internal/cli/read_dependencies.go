@@ -20,11 +20,6 @@ type readOnlyStoreDependencies interface {
 	openStore(config.Config) (storage.ObjectStore, error)
 }
 
-type browseReadDependencies interface {
-	metadataCacheDependencies
-	interrupts() (<-chan os.Signal, func())
-}
-
 type metadataCacheDependencies interface {
 	readHome() (string, error)
 }

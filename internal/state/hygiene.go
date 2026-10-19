@@ -67,6 +67,7 @@ const (
 // corruptionPolicies is the corruption policy of every entry OwnedEntries
 // names.
 var corruptionPolicies = map[string]corruption{
+	deletionDirectory:         readAsRecoveryRequired,
 	generationHeadsDir:        readAsRecoveryRequired,
 	generationNodesDir:        readAsRecoveryRequired,
 	generationRecoveryDir:     readAsRecoveryRequired,

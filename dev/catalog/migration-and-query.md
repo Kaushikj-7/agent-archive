@@ -39,7 +39,9 @@ uses a fresh request view.
 | All-session capture range including replays | O(log N + returned rows) | No canonical LIST |
 | Direct project-tree range | O(log N + returned rows) | No canonical LIST |
 | Supported scoped ordinary-root activity window, at most 32 disjoint ranges, optional exact harness (protocol 11) | Bounded typed picker page and continuation | No canonical LIST or first-page metadata body reads |
-| Original protocol-10 scope tiers; named/title/text/ID-prefix/complex predicates; date-filtered root child counts | Complete summary fallback | No canonical LIST |
+| Original protocol-10 scope tiers; named/title/text/ID-prefix/complex predicates | Verified delta refresh plus complete local summary query when a cache is available; complete tree fallback otherwise | No canonical LIST |
+| Model predicates requiring token-observation evidence | Complete tree-summary fallback; private search projections omit token observations | No canonical LIST |
+| Date-filtered root child counts | Existing complete summary reuse or lazy identity-tree fallback | No canonical LIST |
 
 Ordinary/replay immediate child counters use the existing harness+parent key.
 Writers derive them in the same CAS as child changes; the full metadata body and
@@ -50,6 +52,26 @@ range never becomes complete canonical listing evidence.
 The private summary cache checks the entire persisted row tuple before reuse.
 Immutable node/body cache reads verify the content hash and exact revision.
 Missing, corrupt, canceled or root-inconsistent reads fail closed.
+
+Cached complete-summary readers share `RefreshRemote` and `Query` with command
+candidate selection. An unchanged root skips remote identity-tree enumeration;
+changed roots reconcile verified deltas, while unknown prior roots and damaged
+or missing local rows retain the existing rebuild and repair rules. Complete
+matching, child accounting and scope fallback still see the full eligible local
+summary universe. Selected bodies are loaded against exact entries in the pinned
+identity tree and retain revision, SHA-256, identity and summary validation.
+Model filters retain complete tree entries because the private search projection
+omits token observations, which can carry the only matching model evidence.
+`--no-cache` and an unavailable disposable index use the complete in-memory tree
+fallback. A remote refresh failure never authorizes stale local summaries.
+
+This removes full remote enumeration on warm summary paths, but does not make
+the command sublinear: refresh validates and hashes O(N) persisted row tuples,
+inventories O(N) cache directory names, and complete matching may decode O(N)
+local summaries. Exact totals also retain their count work. Tree reconciliation,
+selected identity lookups and full-body validation are separate read costs.
+Production provider qualification, capability enablement and migration/cutover
+remain separate gates; reader reuse grants none of them.
 
 Maintenance uses the durable global admission coordinator plus any supplied
 complete external history barrier. `_catalog recover --owner OWNER` requires the

@@ -288,8 +288,8 @@ func (p *statsPrinter) projectRows(projects []stats.Project) []rankRow {
 	return rows
 }
 
-// modelRows are the model families as ranked rows, by spend, with the bar in
-// the family's color.
+// modelRows are the models as ranked rows, by spend, with the bar in its
+// family's color.
 func (p *statsPrinter) modelRows(models []stats.ModelRow) []rankRow {
 	top := 0.0
 	for _, m := range models {

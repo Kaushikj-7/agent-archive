@@ -44,7 +44,9 @@ func (p *pass) reconcileNativeLinks() {
 		parents[key] = reg
 	}
 	for i, reg := range p.registrations {
-		p.reconcileNativeLink(i, reg, parents, ambiguous)
+		if p.opts.selectsSession(reg) {
+			p.reconcileNativeLink(i, reg, parents, ambiguous)
+		}
 	}
 
 }
@@ -88,6 +90,13 @@ func (p *pass) markLegacyNativeComposite(parent, child archive.SessionRegistrati
 func (p *pass) reconcileNativeLink(i int, reg archive.SessionRegistration, parents map[nativeLinkKey]archive.SessionRegistration, ambiguous map[nativeLinkKey]bool) {
 
 	if !reg.NativeChild || reg.ParentSessionID != "" && reg.NativeLinkVersion >= 1 {
+		return
+	}
+	// An admitted deletion freezes the source and relationship owner until
+	// exact restoration/cleanup removes its intent. Linking first would make the
+	// current registration unable to resume its own removal.
+	if found, err := p.local.SessionDeletionPresent(p.ctx, reg.ArchiveSessionID); found || err != nil {
+		p.nativeLinkPending("session_removal_pending")
 		return
 	}
 	if reg.ParentNativeSessionID == "" {

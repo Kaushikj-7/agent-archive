@@ -61,7 +61,7 @@ func chooseHandoffSession(opts *handoffOptions, home string, interactive bool, i
 			return 2, true
 		}
 	}
-	id, harness, selected, code := selectHandoffSession(env, home, *opts, in, stdout, stderr)
+	id, harness, selected, code := selectHandoffSession(env, home, opts, in, stdout, stderr)
 	if code != 0 || !selected {
 		return code, true
 	}
@@ -110,8 +110,8 @@ func topLevelRegistration(reg archive.SessionRegistration) bool {
 // sessions, including ones not uploaded yet, with the archive's, newest
 // activity first. An archive that cannot be read leaves the local ones.
 // selected is false when nothing matches or the user quits.
-func selectHandoffSession(env handoffSelectDependencies, home string, opts handoffOptions, in *typedInput, stdout, stderr io.Writer) (sessionID, harness string, selected bool, code int) {
-	store, cfg, found, err := handoffPickerStore(env, opts)
+func selectHandoffSession(env handoffSelectDependencies, home string, opts *handoffOptions, in *typedInput, stdout, stderr io.Writer) (sessionID, harness string, selected bool, code int) {
+	store, cfg, found, err := handoffPickerStore(env, *opts)
 	if !found {
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
@@ -120,6 +120,8 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 		}
 		return "", "", false, 1
 	}
+	ctx, stopReads := handoffPickerReadContext(env, opts, store, err)
+	defer stopReads()
 	regs, regErr := state.OpenReadOnly(home).LoadRegistrations()
 	if regErr != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", regErr)
@@ -130,17 +132,10 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", scopeErr)
 		return "", "", false, 1
 	}
-	ctx := opts.readCtx
-	if ctx == nil {
-		var stopReads func()
-		ctx, stopReads = readCommandContext(env)
-		defer stopReads()
-		ctx = catalog.WithReadView(ctx)
-	}
 	boundedFormat := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByDay: true, Numbered: true,
 		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
 	stopBounded := startActivity(stdout, "Finding sessions…")
-	choices, model, used, boundedErr := handoffChoicesForStore(ctx, env, store, home, opts, scope, regs, boundedFormat, stderr, err)
+	choices, model, used, boundedErr := handoffChoicesForStore(ctx, env, store, home, *opts, scope, regs, boundedFormat, stderr, err)
 	stopBounded()
 	if used {
 		if boundedErr != nil {
@@ -149,7 +144,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 				return "", "", false, 1
 			}
 			terminal.Printf(stderr, "agent-archive: handoff: note: the archive could not be read, so only this machine's sessions are listed: %v\n", boundedErr)
-			choices, model, boundedErr = boundedLocalHandoffChoices(ctx, env, home, opts, scope, regs, boundedFormat, stderr)
+			choices, model, boundedErr = boundedLocalHandoffChoices(ctx, env, home, *opts, scope, regs, boundedFormat, stderr)
 			if boundedErr != nil {
 				terminal.Printf(stderr, "agent-archive: handoff: %v\n", boundedErr)
 				return "", "", false, 1
@@ -169,16 +164,17 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 		return row.SessionID, row.HarnessKey, selected, code
 	}
 	stop := startActivity(stdout, "Finding sessions…")
+	activity, activityRead := prepareHandoffActivity(ctx, env, regs, scope, opts.harness)
 	var archived []archive.Metadata
 	if err == nil {
-		archived, err = loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: opts.harness, Replays: reader.ReplaysHidden}}, stderr, "handoff")
+		archived, err = loadSessionsForBrowseContext(ctx, env, store, listOptions{filter: reader.Filter{Harness: opts.harness, Replays: reader.ReplaysHidden}}, stderr, "handoff")
 	}
 	if err != nil && (opts.source == "archive" || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 		stop()
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 		return "", "", false, 1
 	}
-	picker := handoffPicker{localLabels: make(map[localLabelKey]localLabelResult), ctx: ctx, env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
+	picker := handoffPicker{localLabels: make(map[localLabelKey]localLabelResult), ctx: ctx, env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil, activity: activity, activityRead: activityRead}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByDay: true, Numbered: true, Children: childCounts(archived),
 		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
 	choices = pagedHandoffChoices(scope, format, picker, regs, archived)
@@ -201,6 +197,40 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 	return row.SessionID, row.HarnessKey, selected, 0
 }
 
+// handoffPickerReadContext retains the invoking read view and the successfully
+// opened client while owning discovery and any picker-local signal subscription.
+func handoffPickerReadContext(env handoffSelectDependencies, opts *handoffOptions, store storage.ObjectStore, storeErr error) (context.Context, func()) {
+	ctx := opts.readCtx
+	stopReads := func() {}
+	if ctx == nil {
+		ctx, stopReads = readCommandContext(env)
+		ctx = catalog.WithReadView(ctx)
+	}
+	stopDiscovery := func() {}
+	if storeErr == nil {
+		opts.archiveStore = store
+		ctx, stopDiscovery = startReadDiscovery(ctx, env, store, false)
+	}
+	return ctx, func() { stopDiscovery(); stopReads() }
+}
+
+// prepareHandoffActivity reads only activity whose eligibility is independent
+// of the archive's scope facts. Narrowed views wait for those facts instead.
+func prepareHandoffActivity(ctx context.Context, env handoffSelectDependencies, regs []archive.SessionRegistration, scope sessionScope, harness string) (map[pickerIdentity]time.Time, map[pickerIdentity]bool) {
+	if scope.narrowed() {
+		return nil, nil
+	}
+	activityRegs := slices.DeleteFunc(slices.Clone(regs), func(reg archive.SessionRegistration) bool {
+		return !topLevelRegistration(reg) || reg.Replay != nil || (harness != "" && archive.CanonicalHarness(reg.Harness.Name) != harness)
+	})
+	activity := pickerActivities(ctx, env, activityRegs)
+	activityRead := make(map[pickerIdentity]bool, len(activityRegs))
+	for _, reg := range activityRegs {
+		activityRead[pickerID(reg.Harness.Name, reg.ArchiveSessionID)] = true
+	}
+	return activity, activityRead
+}
+
 // pagedHandoffChoices exposes older rows only after an explicit request. The
 // archive universe and search remain complete; local labels retain their existing
 // initial bound and are read farther only when the visible table expands.
@@ -209,6 +239,9 @@ func pagedHandoffChoices(scope sessionScope, format listFormatOptions, picker ha
 	choices := newScopeChoices(scope, format, false, func(s sessionScope) scopeView {
 		picker.scope = s
 		rows, total, truncated := picker.rows(regs, archived, limit)
+		// Preparation belongs to the first draw. Scope, older-page and search
+		// rebuilds retain their existing fresh observations of native activity.
+		picker.activity, picker.activityRead = nil, nil
 		return scopeView{rows: formatHandoffRows(rows, format), total: total, truncated: truncated, hidden: handoffHiddenSubagents(picker, s, archived),
 			search: handoffSearch(picker, s, regs, archived, format)}
 	})
@@ -300,6 +333,9 @@ type localLabelResult struct {
 }
 
 type handoffPicker struct {
+	// activity reuses the invocation's scoped local preparation.
+	activity     map[pickerIdentity]time.Time
+	activityRead map[pickerIdentity]bool
 	// searchLabelBudget bounds attempted uncached native reads in bounded search.
 	// Zero preserves the legacy accepted-row title limit.
 	searchLabelBudget int
@@ -438,6 +474,18 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 }
 
 func (p handoffPicker) activities(regs []archive.SessionRegistration) (map[pickerIdentity]time.Time, error) {
+	if p.activityRead != nil {
+		complete := true
+		for _, reg := range regs {
+			if !p.activityRead[pickerID(reg.Harness.Name, reg.ArchiveSessionID)] {
+				complete = false
+				break
+			}
+		}
+		if complete {
+			return p.activity, nil
+		}
+	}
 	if p.readError == nil {
 		return pickerActivities(p.ctx, p.env, regs), nil
 	}

@@ -127,6 +127,7 @@ var promptSites = classifiedCalls{
 	"setup_flags.go":      {"newPrompter": 1, "prompter{}": 1}, // setup --yes: only reads a secret, guarded in readR2Secret; the literal has no input, it only prints
 	"uninstall.go":        {"newPrompter": 1},                  // runUninstallCommand refuses unless env.interactive(stdin) or --yes
 	"backfill.go":         {"newPrompter": 1},                  // runBackfillCommand refuses unless env.interactive(stdin) or --yes
+	"backfill_review.go":  {"newPrompter": 1},                  // private review requires Env.interactive on both input and output; no noninteractive prompt/export route
 	"backfill_undo.go":    {"newPrompter": 1},                  // runBackfillUndo refuses unless env.interactive(stdin) or --yes
 	"list_browse.go":      {"newPrompter": 1},                  // selectArchivedSession: reached only after browseInteractive
 	"inspect.go":          {"newPrompter": 2},                  // list and show browsers: reached only after browseInteractive
@@ -153,8 +154,9 @@ var inputReads = classifiedCalls{
 	// itself, not through a reader: it is the agent's terminal, not a
 	// question, and runs only when browseInteractive.
 	"prompt.go": {"bufio.NewReader": 2},
-	// The hook payload the agent writes and closes; never a person.
-	"hook_command.go": {"json.NewDecoder": 1},
+	// The closed hook payload comes from the agent; the second decoder checks
+	// bounded JSON in memory for the optional strict native contract.
+	"hook_command.go": {"json.NewDecoder": 2, "io.ReadAll": 1},
 	// purge apply's typed digest: refused in runPurgeApply when the switch is
 	// on and --yes is not given.
 	// Files, not standard input.

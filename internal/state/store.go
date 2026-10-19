@@ -34,6 +34,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
@@ -52,6 +53,7 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
+	nativeContinuation  *nativeContinuation
 	summaryCache        *publishedSummaryCache
 	summaryBorrow       *publishedSummaryBorrow
 	publishedReadDigest *[32]byte
@@ -93,6 +95,8 @@ type Store struct {
 	onIndexSync func()
 	// publicationFileClose injects a checked actual descriptor close in private fixtures.
 	publicationFileClose func(*os.File) error
+	deletionFileOpen     func(*os.Root, string) (*os.File, error)
+	deletionRecordsSync  func(*os.Root) error
 	// publicationRootClose is confined to final owned migration-directory close.
 	publicationRootClose func(*os.Root) error
 	// publicationAfterSavedRoot is a nil-default fixture fault at the final composition callback boundary.
@@ -130,7 +134,7 @@ var storeDirs = []string{"registrations", "requests", "request-locks", "publishe
 
 // lazyStoreDirs are the directories the store creates under home on first
 // use rather than up front.
-var lazyStoreDirs = []string{generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir}
+var lazyStoreDirs = []string{generationHeadsDir, generationNodesDir, generationRecoveryDir, "superseded", "forgotten", refreshSkipDir, listingRepairDir, deletionDirectory}
 
 // OwnedEntries lists every top-level entry a Store can create under its
 // home: its directories, its status file, and the storage clock reading
@@ -165,6 +169,12 @@ func (s *Store) SaveRegistration(reg archive.SessionRegistration) error {
 	key, err := registrationKey(reg)
 	if err != nil {
 		return err
+	}
+	// Refuse protected native ownership before even reserving its index key.
+	if key.Agent == agentmeta.Muse {
+		if err := s.checkNativeRegistrationWrite(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
+			return err
+		}
 	}
 	entry, found, err := s.readQualifiedIndex(key)
 	if err != nil {
@@ -459,6 +469,10 @@ func (s *Store) registrationPath(archiveSessionID string) string {
 // LoadRegistrations returns every registered session, sorted by archive
 // session ID for deterministic scan order.
 func (s *Store) LoadRegistrations() ([]archive.SessionRegistration, error) {
+	return s.loadRegistrations(local.Read)
+}
+
+func (s *Store) loadRegistrations(read func(string, any) error) ([]archive.SessionRegistration, error) {
 	span := trace.Start("load registrations")
 	defer span.End()
 	dir := filepath.Join(s.home, "registrations")
@@ -469,20 +483,45 @@ func (s *Store) LoadRegistrations() ([]archive.SessionRegistration, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list registrations: %w", err)
 	}
-	out := make([]archive.SessionRegistration, 0, len(entries))
-	for _, entry := range entries {
+	// Keep results in directory order so simultaneous failures report the same
+	// first filename as the serial reader. Each worker owns its result slot.
+	// Compact this slice after joining rather than retaining two full inventories.
+	results := make([]archive.SessionRegistration, len(entries))
+	readErrors := make([]error, len(entries))
+	loaded := make([]bool, len(entries))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for range min(8, len(entries)) {
+		workers.Go(func() {
+			for i := range jobs {
+				err := read(filepath.Join(dir, entries[i].Name()), &results[i])
+				readErrors[i] = err
+				loaded[i] = err == nil
+			}
+		})
+	}
+	attempted := 0
+	for i, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		var reg archive.SessionRegistration
-		if err := local.Read(filepath.Join(dir, entry.Name()), &reg); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				// Forgotten between listing and reading.
-				continue
-			}
-			return nil, fmt.Errorf("read registration %q: %w", entry.Name(), err)
+		attempted++
+		jobs <- i
+	}
+	close(jobs)
+	workers.Wait()
+	span.Count("registration reads", attempted)
+	out := results[:0]
+	for i, err := range readErrors {
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		} // Forgotten during the scan.
+		if err != nil {
+			return nil, fmt.Errorf("read registration %q: %w", entries[i].Name(), err)
 		}
-		out = append(out, reg)
+		if loaded[i] {
+			out = append(out, results[i])
+		}
 	}
 	span.Count("registrations", len(out))
 	sort.Slice(out, func(i, j int) bool { return out[i].ArchiveSessionID < out[j].ArchiveSessionID })
@@ -945,7 +984,11 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 		return err
 	}
 	if pending.JournalVersion == 5 {
+		if pending.Preparation != nil && pending.Preparation.Retention != nil {
+			return config.WithDeletionProtection(s.home, func(g config.DurableStorageGuard) error { return s.savePublicationPendingGuard(g, id, pending) })
+		}
 		err := config.WithPublicationComposition(s.home, func(g config.PublicationCompositionGuard) error {
+
 			storage, err := g.Storage(s.home)
 			if err != nil {
 				return err

@@ -383,7 +383,9 @@ stored separately from the transcript. The table leaves subagent sessions
 out: the footer says how many, and a parent carries a `+N` (`· N subagents`
 in the plain table) hint. Words find one, as for `list "<words>"`, and its
 row reads `subagent of` its parent's short ID; a Claude Code subagent's name is the description its
-parent gave the task (see below). New and refreshed previews keep up to 128
+parent gave the task (see below). A Codex multi-agent subagent's task is
+encrypted, so it has no prompt: its name is the task name its parent gave it,
+with underscores as spaces (`/root/fix_upload_retry` reads "fix upload retry"). New and refreshed previews keep up to 128
 characters from parser `0.17.1`; older metadata keeps its shorter saved
 preview.
 

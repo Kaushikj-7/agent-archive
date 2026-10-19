@@ -52,23 +52,13 @@ type familyState struct {
 	effects      map[effectKey]effectIdentity
 	ended        map[effectKey]bool
 	tasks        map[taskKey]bool
+	readEffects  effectJoinIndex
+	pendingIndex effectJoinIndex
+	tools        *toolObservations
 }
 
-func validateNewFamilies(rows []retained) error {
-	s := familyState{runs: map[string]bool{}, pending: map[pendingKey]pendingIdentity{}, taskPending: map[taskCallKey]pendingKey{}, reviews: map[reviewKey]bool{}, completed: map[reviewKey]bool{}, reviewOwners: map[runIdentity]pendingKey{}, decisions: map[pendingKey]bool{}, waits: map[pendingKey]bool{}, terminals: map[pendingKey]bool{}, effects: map[effectKey]effectIdentity{}, ended: map[effectKey]bool{}, tasks: map[taskKey]bool{}}
-	for _, r := range rows {
-		run := str(r.Fields["run_id"])
-		if r.Type == payloadRuntimeUserIntentMaterialized {
-			s.runs[run] = true
-		}
-		if !newFamily(r) {
-			continue
-		}
-		if !s.runs[run] || s.observe(r) != nil {
-			return errFormat
-		}
-	}
-	return nil
+func newFamilyState(tools *toolObservations) familyState {
+	return familyState{tools: tools, runs: map[string]bool{}, pending: map[pendingKey]pendingIdentity{}, taskPending: map[taskCallKey]pendingKey{}, reviews: map[reviewKey]bool{}, completed: map[reviewKey]bool{}, reviewOwners: map[runIdentity]pendingKey{}, decisions: map[pendingKey]bool{}, waits: map[pendingKey]bool{}, terminals: map[pendingKey]bool{}, effects: map[effectKey]effectIdentity{}, ended: map[effectKey]bool{}, tasks: map[taskKey]bool{}}
 }
 
 func (s *familyState) observe(r retained) error {
@@ -82,7 +72,7 @@ func (s *familyState) observe(r retained) error {
 	case omittedWait:
 		return s.wait(pk, ek, f)
 	case omittedTool:
-		return s.effect(run, ek, f)
+		return s.effect(r, run, ek, f)
 	case omittedRun:
 		return nil
 	case omittedTask:
@@ -102,10 +92,14 @@ func (s *familyState) approval(pk pendingKey, ek string, f map[string]any) error
 			return errFormat
 		}
 		identity := pendingIdentity{str(f["task_id"]), str(f["tool_call_id"])}
+		if s.readEffects.overlaps(pk.run, identity.task, identity.call) {
+			return errFormat
+		}
 		key := taskCallKey{pk.run, identity.task, identity.call}
 		if _, duplicate := s.taskPending[key]; duplicate {
 			return errFormat
 		}
+		s.pendingIndex.add(pk.run, identity.task, identity.call)
 		s.pending[pk] = identity
 		s.taskPending[key] = pk
 	case approvalReviewStarted:
@@ -151,7 +145,7 @@ func (s *familyState) wait(pk pendingKey, ek string, f map[string]any) error {
 	return nil
 }
 
-func (s *familyState) effect(run, ek string, f map[string]any) error {
+func (s *familyState) effect(r retained, run, ek string, f map[string]any) error {
 	key := effectKey{run, str(f["effect_id"])}
 	identity := effectIdentity{str(f["task_id"]), str(f["tool_call_id"]), num(f["model_call_index"])}
 	if ek == "started" {
@@ -159,7 +153,16 @@ func (s *familyState) effect(run, ek string, f map[string]any) error {
 			return errFormat
 		}
 		pending, matched := s.taskPending[taskCallKey{run, identity.task, identity.call}]
-		if !matched || !s.terminals[pending] {
+		if _, marked := f["effect_join"]; marked {
+			if s.pendingIndex.overlaps(run, identity.task, identity.call) {
+				return errFormat
+			}
+			ref, exists := s.tools.calls[toolCallIdentity{r.Stream.ID, run, identity.call}]
+			if !exists || ref.record >= int(r.Sequence-1) {
+				return errFormat
+			}
+			s.readEffects.add(run, identity.task, identity.call)
+		} else if !matched || !s.terminals[pending] {
 			return errFormat
 		}
 		s.effects[key] = identity
@@ -184,6 +187,9 @@ type nativeBodyJoins struct {
 	firstMetadata map[string]any
 	sourceInvalid bool
 	hasNew        bool
+	tools         toolObservations
+	readEffects   effectJoinIndex
+	pendingIndex  effectJoinIndex
 }
 
 func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
@@ -208,6 +214,9 @@ func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
 	if s.hasNew && s.sourceInvalid {
 		return errFormat
 	}
+	if err := s.observeCalls(r, p); err != nil {
+		return err
+	}
 	if !nativeNewFamily(r, p) {
 		return nil
 	}
@@ -218,21 +227,33 @@ func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
 		return s.approval(run, ek, e)
 	}
 	if r.Type == payloadApprovalWaitStarted || r.Type == payloadToolBatchStarted {
-		rec := object(p["record"])
-		call := str(rec["tool_call_id"])
-		if r.Type == payloadToolBatchStarted {
-			call = str(rec["call_id"])
-		}
-		match := false
-		for key, request := range s.requested {
-			if key.run == run && request["task_id"] == rec["task_id"] && request["tool_call_id"] == call && request["tool_name"] == rec["tool_name"] {
-				if r.Type == payloadApprovalWaitStarted && key.pending != str(rec["pending_action_id"]) {
-					continue
-				}
-				match = true
+		return s.observeEffectStart(r, p, run)
+	}
+	return nil
+}
+
+func (s *nativeBodyJoins) observeEffectStart(r retained, p map[string]any, run string) error {
+	rec := object(p["record"])
+	call := str(rec["tool_call_id"])
+	if r.Type == payloadToolBatchStarted {
+		call = str(rec["call_id"])
+	}
+	// Approval-free reads use exact indexed absence before the legacy approved
+	// matcher; unrelated requests never cause a scan of their private bodies.
+	if r.Type == payloadToolBatchStarted && !s.pendingIndex.overlaps(run, str(rec["task_id"]), call) {
+		return s.readStart(r, p, rec)
+	}
+	match := false
+	for key, request := range s.requested {
+		if key.run == run && request["task_id"] == rec["task_id"] && request["tool_call_id"] == call && request["tool_name"] == rec["tool_name"] {
+			if r.Type == payloadApprovalWaitStarted && key.pending != str(rec["pending_action_id"]) {
+				continue
 			}
+			match = true
 		}
-		if !match {
+	}
+	if !match {
+		if r.Type != payloadToolBatchStarted || s.readStart(r, p, rec) != nil {
 			return errFormat
 		}
 	}
@@ -265,6 +286,10 @@ func (s *nativeBodyJoins) approval(run, ek string, e map[string]any) error {
 		if requested != nil {
 			return errFormat
 		}
+		if s.readEffects.overlaps(run, str(e["task_id"]), str(e["tool_call_id"])) {
+			return errFormat
+		}
+		s.pendingIndex.add(run, str(e["task_id"]), str(e["tool_call_id"]))
 		s.requested[pk] = e
 	case approvalReviewStarted:
 		if requested == nil {
@@ -336,4 +361,68 @@ func equalPendingCopy(requested, copyPending map[string]any) bool {
 		}
 	}
 	return true
+}
+
+const committedFileReadJoin = "committed_file_read_v1"
+
+// effectJoinIndex keeps task and call identity domains separate. Approval and
+// read overlap checks remain constant-time as unrelated families accumulate.
+type effectJoinIndex struct {
+	tasks map[taskKey]bool
+	calls map[runCallKey]bool
+}
+
+type runCallKey struct {
+	run  string
+	call string
+}
+
+func (s *effectJoinIndex) add(run, task, call string) {
+	if s.tasks == nil {
+		s.tasks = map[taskKey]bool{}
+		s.calls = map[runCallKey]bool{}
+	}
+	s.tasks[taskKey{run, task}] = true
+	s.calls[runCallKey{run, call}] = true
+}
+
+func (s *effectJoinIndex) overlaps(run, task, call string) bool {
+	return s.tasks[taskKey{run, task}] || s.calls[runCallKey{run, call}]
+}
+
+func (s *nativeBodyJoins) readStart(r retained, p, rec map[string]any) error {
+	run, task, call := str(p["run_id"]), str(rec["task_id"]), str(rec["call_id"])
+	if s.pendingIndex.overlaps(run, task, call) {
+		return errFormat
+	}
+	profile := object(rec["parallel_profile"])
+	ref, exists := s.tools.calls[toolCallIdentity{r.Stream.ID, run, call}]
+	if !s.taskIDs[taskKey{run, task}] || !exists || !ref.nativeRead || ref.record >= int(r.Sequence-1) || str(rec["tool_name"]) != "read_file" || !keys(profile, "kind", "subject") || str(profile["kind"]) != "file_read" || !stringFields(profile, "subject") {
+		return errFormat
+	}
+	s.readEffects.add(run, task, call)
+	// Fields is the projected map owned by this row, never the native payload.
+	r.Fields["effect_join"] = committedFileReadJoin
+	return nil
+}
+
+func (s *nativeBodyJoins) observeCalls(r retained, p map[string]any) error {
+	if enrichedTools(r.Fields) && str(r.Fields["event_kind"]) == string(eventAssistantToolCallsCommitted) {
+		return s.tools.registerCalls(r, int(r.Sequence-1), nil, p)
+	}
+	return nil
+}
+
+func (s *familyState) observeRow(r retained) error {
+	run := str(r.Fields["run_id"])
+	if r.Type == payloadRuntimeUserIntentMaterialized {
+		s.runs[run] = true
+	}
+	if !newFamily(r) {
+		return nil
+	}
+	if !s.runs[run] {
+		return errFormat
+	}
+	return s.observe(r)
 }

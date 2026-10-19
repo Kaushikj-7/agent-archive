@@ -8,12 +8,12 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 28 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.28.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 30 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.30.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
-| Codex parser | `codex.Parser.Version()` | metadata `parser.version` | 0.27.0 | Codex identity, ownership or metadata interpretation changes. |
+| Codex parser | `codex.Parser.Version()` | metadata `parser.version` | 0.28.0 | Codex identity, ownership or metadata interpretation changes. |
 | History source schema | `archive.HistorySourceSchemaVersion` | source header `schema_version` | 3 | The self-contained Codex history manifest or record envelopes change. Filter 26 lets it carry a `session_labels` item; a reader before filter 26 refuses such a source ("session label does not match its owning ordinary source"), so read continued Codex threads with a current build. |
 | History metadata schema | `archive.HistoryMetadataSchemaVersion` | metadata `schema_version` | 2 | Preserved native revision references change incompatibly. |
 | Machine record | `machines.SchemaVersion` | `machines/<machine_id>.json` and `machines --json` | 1 | Informational registry format changes incompatibly; independent of session schemas and filtering. |
@@ -21,7 +21,7 @@ affects.
 | List JSON | `cli.listSchemaVersion` | `list --json` `schema_version` | 4 | The script-facing list document changes incompatibly. Version 3 removed `unavailable`; version 4 makes exact-count knowledge explicit. |
 | Status JSON | `statusView.Version` in `internal/cli/status.go` | `status --json` `schema_version` | 4 | Status output changes incompatibly; schema 4 separates discovery from actual hook evidence. |
 
-Muse uses its independent parser 0.5.0 and archive-native `muse-jsonl` mixed ordinary-v1/native-omission-v2
+Muse uses its independent parser 0.6.0 and archive-native `muse-jsonl` mixed ordinary-v1/native-omission-v2
 ([inner union schema](../../schemas/muse-retained-record.schema.json)). Explicit-file
 and bounded automatic local handoff are supported; this does not alter outer
 bundle schemas or
@@ -43,7 +43,26 @@ Codex has its own parser version as recorded above.
 The per-version filter changes are in the
 [filter changelog](../specs/privacy-filter-changelog.md).
 
+Muse startup model availability uses the complete validated startup prefix,
+including the second metadata row in the qualified model-resolution lane.
+Filter 29 and global/Muse adapter 0.29.0 refresh the fixed availability gap
+without changing retained fields, parser interpretation or schemas. The version
+28 committed-tool evidence and Muse parser 0.5.0 remain in effect.
+
 ## What a bump does
+
+Trusted Codex native-home alias rebasing changes only private indexed locator
+handling. The same approved home identity, confined source and final native
+selection remain required. It neither rewrites durable bindings nor changes
+source bytes, metadata derivation, private proof formats or uploaded schemas;
+filter, adapter, parser and permanent writer versions are unchanged.
+
+Private recovery review/export reuses mapping-file schema 1 and existing exact
+configured/historical assignment semantics. Its opt-in grouped observations are
+not persisted in ordinary plan output, configuration, registrations or uploaded
+data; export is an explicitly authorized local file. It changes no filter,
+adapter, parser, published schema or permanent writer version. Existing mapping
+limits, strict decoding and canonical semantic identity are unchanged.
 
 The collector compares each session's last scan (its scan signature) with the
 running build's parser, filter, and adapter versions. When the filter or
@@ -55,6 +74,17 @@ exactly what was retained); a changed one is published as usual. Nothing
 is re-uploaded unless it changed.
 
 ## Rules for contributors
+
+Confirmed backfill continuation and group publication use the existing import
+stage, batch, pending-publication and readback formats. The fresh confirmed-stage
+policy check adds no durable fields or permission. Native selection, privacy
+filtering and metadata derivation are unchanged, so no filter, adapter, parser,
+schema or permanent writer version changes apply. Retrying an ordinary first
+import stage also reuses that validated stage's original capture instant through
+envelope construction, rather than assigning the later collector clock. This
+restores already-selected capture provenance without changing native filtering,
+adapter output, parser algorithms or persisted fields. Already frozen pending
+publication bytes and proofs are retried unchanged.
 
 - **Any change to filtered output** — a key kept or dropped, a redaction
   pattern, a new block type — bumps `FilterVersion` and adds a section to the
@@ -180,7 +210,10 @@ journals have no selecting commit; ready journals bind the complete source set.
 The same held root durably establishes the writer fence before emitting these
 records. Older configuration writers reject the new marker, and older journal
 readers reject the new outer version rather than interpreting its authority as
-legacy state. Unknown and mixed selecting protocols fail closed.
+legacy state. Unknown and mixed selecting protocols fail closed. Settled
+`publication_version: 5` state marks inline payloads `released` instead of
+storing their bytes; the digests it binds are unchanged, it still reads state
+that kept the bytes, and pending journals refuse `released`.
 
 This is a capability layer over existing configuration, preserving every lower
 consent, search, import and selection protection. It does not redefine ordinary
@@ -204,6 +237,16 @@ filter 15 or earlier source retained, so a leading open-page wrapper is neither
 a prompt nor the title, and the title falls through to the next real prompt.
 The bump makes existing sessions refresh their metadata from the retained
 source without a new source upload. Filter, adapter and other parsers are unchanged.
+
+Codex parser 0.28.0 names a multi-agent child thread from the task name in the
+NEW_TASK header its parent sent it (`Task name: /root/fix_upload_retry` becomes
+"fix upload retry"). The task itself is encrypted, so such a thread has no
+prompt and was listed only by its ID. Retained filter 18 and filter 28 sources
+were checked to hold the header (it is ordinary message text); the bump
+re-derives existing child metadata from the retained source without a new
+source upload. The last own header wins, so a forked child's inherited copy
+of its parent's header does not name it. Filter, adapter and other parsers
+are unchanged.
 
 Confirmed import staging uses the incompatible configuration fence
 `{version: 9, writer: import-staging-v9}` and sticky
@@ -350,6 +393,17 @@ leaves Source2/metadata1 and private configuration/state formats unchanged. Othe
 change. Parser refresh and full export rederive the summary from retained evidence
 after native loss. Real billing/cache/completeness gates remain unqualified.
 
+
+Owned deletion adds the sticky outer `{version: 18, writer: owned-deletion-v18,
+base: ...}` configuration capability. Its exact base remains independently
+validated (SourceSet17, and native/search/selection/catalog floors). The private
+canonical deletion journal is version 1, including its explicit pre-metadata
+`preparing` phase; ready restoration stays SourceSet5 with
+an immutable retention receipt and checksum-bound deletion stage namespace.
+Source/metadata schemas and filter/adapter/parser versions do not change: baseline
+restoration preserves the original selecting bytes. See
+[owned session deletion](../specs/owned-session-deletion.md) for phases, exact
+request ownership, local cleanup, budget and compatibility constraints.
 Muse committed call identity and retained result joins allocate filter28/global
 adapter0.28.0/Muse filter0.28.0 and Muse parser0.5.0. Legacy filter24 event-only
 tool rows remain readable with unavailable counts; exact older retained schemas
@@ -358,3 +412,68 @@ result facts, while normalized results and narrative tool objects stay omitted.
 ToolResults/ToolErrors remain unavailable. Ordinary unaffected rows, other-agent
 parsers, Source2/metadata1 and private writer formats do not change. This finite
 observation lane does not enable capture or qualify rich tool/status parity.
+
+Muse effect-body compatibility accepts the closed native `file_read` profile,
+`complete` task completion and `failed` outcome forms. Only validation of private
+omitted bodies changes: equivalent old and new bodies yield byte-identical
+retained rows and the same analysis. Subject/reason strings and outcome tags are
+not retained or interpreted as result/error facts. This validation-only change allocates no additional filter, adapter or parser
+version; inherited retained schemas and metadata algorithms do not change. No source recapture or richer metadata is implied.
+
+Muse approval-free committed file-read effects allocate filter30/global and Muse
+adapter0.30.0 and independent Muse parser0.6.0. Only started rows gain the fixed
+optional `effect_join: committed_file_read_v1`; terminals and old approved rows
+are unchanged. The raw names/profile are validated then erased, and a separate
+retained pass reconstructs prior own committed-call/materialized/source proof.
+Older strict schemas and prior production Muse Parser/Refilter refuse marked
+sources. Other parsers, Source2/Metadata1 and private writer/binding/inventory
+protocols remain unchanged.
+
+Muse single-metadata startup compatibility accepts exactly one existing schema-2
+route-facts row immediately before the original opening. It changes only the
+closed startup validation lane, shared by headers, raw startup facts, filtering,
+retained parsing and refiltering. Existing accepted inputs retain identical bytes
+and metadata; field projection and metadata derivation are unchanged. No filter,
+adapter, parser, published schema or private writer version changes.
+
+Muse guarded root admission adds the closed `muse-root-admission` capability to
+native writer16's existing structural fence and journal fence1. The matching
+`native_admission_protection` flag is sticky. A committed window carries a random
+32-character lowercase hexadecimal generation, issuance time, and exact policy
+fingerprint; `muse_capture_last_issued_at` survives inactive windows. Only issuing
+a strictly later window can advance that floor. Pre-fencing setup carries sticky
+capability flags without activating a tentative window or time floor. Expected-byte
+rollback restores the prior committed window/floor while retaining protection.
+
+Private admission intents use version2 only for Muse startup candidates and exact
+owner continuation. Continuation retains the immutable birth proof and separately
+captures its current window generation. Existing v0/v1 fields and non-Muse event
+names remain unchanged. Unknown contracts, selectors and modes refuse before
+owned queue mutation. Optional status-v4 `native_startup` reports a deduplicated
+pending count, latest observation, and completeness; it conveys no local capture,
+publication or readback proof. There is no filter/parser/upload schema bump.
+Public setup excludes Muse until separately reviewed root-scoped native command,
+TUI/exec/serve and platform acceptance unlocks it.
+
+The optional qualified-index `native_reservation` marker is a closed comparable
+`muse-root-reservation-v1:` plus64lowercasehex digest, exactly89bytes by the
+prefix/sha256 sizes. Existing index version1 and native/config/journal numeric
+floors are unchanged. The existing sticky admission capability fences older
+writers before mutation. The marker binds the full original candidate and
+concrete binding; it is never sufficient source/admission authority by itself.
+Only exact fresh concrete preparation may reuse a pending reservation. Supported
+cleanup requires a complete matching durable Muse owner/proof/binding; missing,
+mismatched and unsupported pending authority is preserved/refused.
+
+Local-origin-chain recovery changes private repository classification and renewed
+ownership evidence only. Its `local-origin-chain-v1` observer-scope discriminator
+invalidates earlier disposable cached observations, including positive identities
+that did not follow every local origin. The optional closed `Failure` in disposable
+recovery inventory carries only fixed outcomes; older readers may discard it and
+reobserve. Existing admitted ownership, configuration writer fences and published
+proof/source/metadata schemas are unchanged. Public RepoKey/ProjectKey annotation
+algorithms and retained content/metadata derivation are unchanged, so this change
+allocates no filter, adapter, parser or permanent writer version.
+Renewing incomplete entries in existing disposable inventory and recognizing
+unambiguous colon-containing filesystem origins add no persisted fields or
+authority formats; the same version assessment applies.

@@ -6,22 +6,170 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- No-bucket handoff discovery reuses unused header-read reservations between
+  batches, so large Codex histories do not stop after reserving bytes they never
+  read. Removed checkouts no longer block selection. Local `--latest` can ignore
+  unresolved histories with verified modification times strictly older than the
+  selected session; incomplete enumeration, exhausted read budgets and potentially
+  newer unresolved histories still require explicit selection.
+
+- Confirmed backfill continues supported native preparation and staging across
+  bounded lookup scopes. Foreground imports publish and verify owned groups
+  before preparing more evidence under the shared 1 GiB quota. Rerunning the
+  same options also publishes a retained interrupted import after its native
+  files disappear. Fresh staging renews repository/source observations and
+  current policy; an existing durable selection keeps its frozen provenance.
+  Linked subagent registration or publication failures remain pending and retry
+  with the same options instead of reporting a completed import. Temporary policy
+  holds preserve their validated retained continuation. Unreadable child
+  ownership reports unfinished publication, including when paused or interrupted.
+  Guarded policy refusal cleans cancellable legacy child payloads; protected
+  selections retain their evidence. A delayed first upload preserves the
+  retained evidence's original capture time. Scoped publication preserves unrelated
+  sessions' retry schedules, deferral clocks and actionable issues.
+
+- Codex backfill missing-task diagnostics distinguish a validated snapshot with
+  no own records from own records without task proof. Unknown tails, missing
+  boundaries and dependencies remain uncertain. Text, JSON and private project
+  review preserve the existing refusal and capture requirements.
+
+- `sync` and scheduled collection can publish supported protected legacy imports
+  from their frozen staged evidence after native deletion. They acquire the real
+  collector guard required for exact publication and recovery.
+
+- Codex backfill accepts indexed rollout paths through a verified alias of an
+  already trusted native home, including macOS temporary-folder aliases. Home
+  identity, source confinement and final native selection remain required.
+
+- `backfill review-projects --output FILE` offers a private terminal review of
+  observed missing original cwd groups, repository evidence, compatible exact
+  configured assignments and import-only historical destinations. Export requires
+  explicit confirmation, creates a new 0600 schema-1 mapping file and never
+  overwrites an existing file. Coverage is bounded and incomplete; counts describe
+  project recovery candidates, and native history/source refusals still apply.
+  Review/export changes no configuration, capture policy, stages or archive.
+  One decision covers all observed keys at an exact cwd; assignments also apply
+  to unlisted identities there under ordinary per-source import checks. Private
+  review safely quotes paths/labels and escapes terminal-active JSON characters.
+  Database-only Cursor chats participate in the same bounded review. Usable
+  configured-target observations are shared across conflicting recorded keys,
+  preserving the lookup allowance for later compatible groups.
+  Database-only chats use historical destinations; mixed-cwd configured choices
+  disclose the database-only candidates they leave unresolved.
+
+- Backfill planning and dry runs continue supported Codex preparation and
+  inspection across bounded lookup scopes, including histories needing more
+  than five seconds of total lookup work. Native I/O timeouts and inventory
+  no-progress results stay specific. Incomplete inventory is reported while
+  independently verified sessions remain eligible. Shared native resource
+  exhaustion remains a failure. Source safety limits and
+  scheduled background work are unchanged.
+
+- Deleted-worktree recovery resolves local Git origin chains consistently before
+  and after project configuration. Every origin and traversed dependency must
+  agree and remain current; physical clones remain distinct competitors. Cyclic,
+  missing, unreadable, conflicting or unresolved chains report specific reasons
+  and remain available for reviewed exact project assignments. Local paths and
+  configuration dependencies preserve symlink traversal before parent components.
+  Local file URLs accept ASCII `localhost` hostname case variants. Unambiguous
+  filesystem paths can contain colons. Resumed recovery sweeps renew earlier
+  incomplete origin observations without restarting their forward progress.
+
+- Backfill distinguishes exhausted Codex lookup work (`lookup_allowance_spent`,
+  retry) from source byte/record limits and missing history evidence. Pending
+  sessions keep their existing eligibility checks. Content-free traces count
+  lookup scopes, native preparation/inspection attempts and unfinished candidates.
+
+- Prepare guarded capture of newly started Muse sessions, with explicit home,
+  project and capture-window checks before ownership. Public setup remains
+  disabled pending native acceptance; existing Muse local reading is unchanged.
+
+- Muse explicit-file and local handoff support the qualified approval-free
+  committed file-read effect lane. A fixed start classification preserves its
+  retained validation; private names, file subjects and outcomes remain omitted.
+  Marked sources require an upgraded reader. This adds no result status, file
+  list, parallelism or capture support.
+
+- Muse local handoff recognizes the exact startup sequence with one route-facts
+  record between metadata and the original session opening. Workspace, ownership,
+  causation and complete-file validation remain required.
+
+- Pending Muse inventory queries recover when an unfinished date directory is
+  removed or renamed between passes, while retaining complete uniqueness checks.
+
+- Codex multi-agent subagents are named after the task their parent gave them
+  (`/root/fix_upload_retry` reads "fix upload retry") instead of showing only
+  their session ID. Their task text is encrypted, so they have no prompt to
+  preview. Existing ones are renamed when sync refreshes their metadata (Codex
+  parser 0.28.0); nothing is uploaded again.
+
+- `stats` names each model by its exact version: cost by model, the models
+  view, the favorite model, `--json` and `--html` show `opus-5.5`, `opus-5`,
+  `gpt-6.1-sol` and `gpt-6-luna` as separate rows instead of grouping them
+  under `opus` or `gpt-6`. Only two names of one model share a row (the
+  `gpt-5.6` alias with `gpt-5.6-sol`). Bar colors still follow the family. The
+  built-in price table is now version `2026-10.1`; its prices are unchanged.
+
+- `agent-archive handoff` names the session above `Continue in`: its title,
+  agent, when it was last active, and the handoff's size. When only one other
+  agent is installed, the question is yes or no (`Continue in Claude Code?
+  [Y/n]`) instead of a one-item list; `n` quits, and print, copy, and write
+  stay on the line below. With several agents, print, copy, write, and quit
+  share one line.
+
+- Read-path benchmarks now account for provider LIST pages and transferred
+  headers, including range overread. Content-free trace counts distinguish
+  local catalog validation and decoding from remote discovery costs.
+
+- Muse local handoff accepts the observed file-read effect profile and complete
+  or failed effect bodies. These private bodies are still omitted; they do not
+  establish tool success, errors or parallel execution.
+
 - Muse local handoff previews now read only their reserved head/tail windows,
   avoiding whole-file hashes while browsing large histories. Selected sessions
   retain complete filtering and independent content verification.
+
+- Caching a session for the first time skips a redundant directory scan.
+  Rewritten metadata still prunes old cache versions, and bounded maintenance
+  remains the backstop for concurrent writers.
+
+- Interrupted owned retention keeps the complete selecting source set and exact
+  metadata for recovery. A newer hook can restore that same baseline after native
+  files disappear; its new evidence stays queued. Explicit undo cannot restore
+  the removed session. Deletion preserves catalog snapshots and refuses changed
+  winners or unsafe local ownership.
+
+- Recover complete historical source-set publications from exact private retained evidence,
+  with one shared disk/memory budget and permanent source-set writer protection.
+  Stronger privacy replaces all selected revisions and retires obsolete private
+  proof bodies only after the full local selection is durable. Historical import
+  admission staging and additional native ancestor permission remain separate.
 
 - Interrupted history privacy preparation now reads each retained revision's
   original parent before applying a later resolved parent. Older pending
   journals can resume without replacing the original provenance.
 
+- Legacy archive discovery balances complete header listings with private
+  key-range hints for sessions and both listing indexes, under one 16-request
+  budget. S3 ranges stop at an exact page boundary without an extra request.
+
 - Pending-publication cleanup refuses malformed JSON inside records it scans
   without retaining, preserving damaged journals for recovery while keeping
   the bounded-memory checks used for large Codex histories.
+
+- Interactive legacy reads overlap fresh header discovery with independent
+  local preparation. Registration reads use eight workers, and handoff reuses
+  the picker's storage client. Scoped native-read rules remain unchanged.
 
 - When Codex discovery is unavailable but every published automatic session has
   recorded read-back verification, status says “discovery unknown; archive
   verified at recorded time”. Restore source access and run sync to check
   current capture health.
+
+- Warm handoff selection can use the private summary catalog. Show and handoff
+  queries retain distinct native-ID matches, complete ambiguity choices and
+  parent child-count hints. Older private projections rebuild automatically;
+  model filters retain complete metadata matching when summaries lack evidence.
 
 - A long Codex thread whose history spans more than one rollout needs far less
   read memory to capture, so it is captured at sizes that were recorded as too
@@ -34,6 +182,17 @@ follow [Semantic Versioning](https://semver.org/).
   current source is prepared from the candidate it was frozen from rather than
   decoded again. Capturing such a thread's growth needs about 5 times its
   filtered size in read memory instead of about 12.
+
+- Cached catalog-v4 complete-summary reads reuse verified root deltas and local
+  queries. No-cache and model-evidence fallbacks remain complete, and selected
+  metadata retains its pinned revision and hash checks. Provider activation
+  gates are unchanged.
+
+- Protected Cursor backfill can stage selected root chats from a live WAL using
+  a bounded private SQLite image. Scratch capacity is reserved before copying,
+  and cleanup must succeed before admission. Existing staged evidence can then
+  publish after the native source disappears. Live Cursor/platform qualification
+  remains unverified; unknown capabilities and exhausted budgets stay pending.
 
 - Archived Cursor sessions now carry the chat's name. Sessions captured from
   Cursor's agent transcripts, which record no name, read it from the chat's
@@ -69,6 +228,10 @@ follow [Semantic Versioning](https://semver.org/).
   GET route and controlled tool-echo representation, with fixed, content-free
   first-refusal diagnostics. Existing request bounds and call/result checks
   remain; this adds no native tool-status qualification.
+
+- Muse handoff no longer reports model identity as unavailable when the qualified
+  second startup metadata record supplies it. Retained refiltering also repairs
+  this warning (filter 29, adapter 0.29.0); complete usage and cost stay unavailable.
 
 - Muse retains own committed tool-call identities and validates exact prior
   result batch/index/call joins after native loss. Nonempty enriched sources

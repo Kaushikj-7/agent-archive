@@ -86,7 +86,7 @@ func TestClipboardUnavailableDoesNotOfferCopy(t *testing.T) {
 			t.Fatal("clipboard should be unavailable")
 		}
 		var out strings.Builder
-		choice, err := chooseDestination(newPrompter(strings.NewReader("c\ncopy\nw\n"), &out), nil, "", env.clipboardAvailable(), productionAgents.Catalog())
+		choice, err := chooseDestination(newPrompter(strings.NewReader("c\ncopy\nw\n"), &out), nil, "", env.clipboardAvailable(), productionAgents.Catalog(), nil)
 		if err != nil || choice.action != handoffWrite || strings.Contains(out.String(), "c) copy") || strings.Contains(out.String(), "Enter p, c") {
 			t.Fatalf("choice=%+v err=%v menu=%q", choice, err, out.String())
 		}

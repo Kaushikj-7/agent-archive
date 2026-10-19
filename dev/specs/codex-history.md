@@ -49,6 +49,85 @@ a child reset its counters. Independent own per-call usage remains useful.
 
 ## Shared native catalog
 
+### Foreground backfill work target
+
+**Approved target, 2026-10-17; not yet implemented.** The
+[large-backfill completion contract](backfill.md#large-backfill-completion-contract)
+requires an explicit foreground lookup policy, separate from background pass
+scheduling. The current five-second allowance and 256 header-probe window must
+not be a whole-import deadline or an unrecoverable source classification.
+Foreground preparation, inspection and admission need renewed bounded work
+scopes and continuations; a supported individual history needing over five
+seconds of cumulative lookup work must also be able to complete. Merely giving
+each whole source another five seconds is insufficient if it restarts forever.
+
+Preserve the charged shared ledger, per-operation cancellation, current-row
+revalidation, chain-local ownership, source confinement and semantic per-history
+limits. A scope boundary must not retain a stale selection token as authority,
+lose active native leases, reset outstanding charges, or substitute an incomplete
+inventory for a uniqueness proof. Facts may be reused only under their actual
+observation/selection checks. Cache eviction or a scheduler allowance says
+nothing about whether a source is complete or supported.
+
+Expose allowance exhaustion distinctly from history-depth, raw-byte, record,
+actual capacity, missing-dependency and own-task refusals. Foreground consumers
+continue pending work fairly and detect no progress; background collection keeps
+its independent responsiveness policy. The chain below remains the native
+history proof: this target does not reintroduce a global absence/coverage epoch
+before capture. Project witness completeness remains the separate backfill
+attribution obligation.
+
+Delivery, compatibility review and actual qualification are owned by the
+[completion plan](../proposals/large-backfill-completion.md). No native schema,
+format fence or per-source limit is changed by this specification edit.
+
+### Foreground lookup scheduling foundation
+
+The lookup constructor accepts an explicit `ForegroundLookup` scheduling policy;
+its omitted/zero policy retains background behavior. The backfill CLI selects
+foreground policy for preparation and inspection, including confirmation's
+preview and explicit confirmed staging. Read-only inventory retains its queue,
+validated observations and charged ledger across finite probe/entry slices;
+a slice that advances neither
+its cursor nor a completed batch ends with `lookup_no_progress`. Completed
+bounded directory batches commit their opaque cookie before yielding, so a
+changing prefix cannot keep rewinding that slice. Lower distinct cookies remain
+valid; fixed-memory cycle detection survives retained directory continuations.
+Unavailable-only inventory stops preparation once and reports a fixed incomplete
+lookup diagnostic; independently provable candidates remain eligible. Required
+native evidence is still checked per source, and genuine I/O, resource, cleanup
+and cancellation failures cannot be swallowed by that incomplete result.
+Requested thread identities are deduplicated. A failed bounded I/O unit returns
+immediately and is not retried by preparation. Foreground confirmed imports
+publish and verify owned groups under the existing durable staging quota;
+scheduled collection retains its bounded background policy.
+
+Maintained actual CLI synthetic tests cover small and 512-candidate cold/warm
+planning, spent preparation, one supported history over five simulated seconds,
+current-index change, cancellation and bounded no progress. Virtual clock tests
+advance context timers; they are correctness evidence, not physical I/O timings.
+Dry-run success does not establish whole-import completion.
+
+Foreground scheduling owns no selection or source authority. A successful bounded
+native read, verification chunk, private write, append page, directory batch or
+SQL stage advances the current composite operation. Its scheduling allowance may
+renew between completed units while the same coherent snapshot, descriptors and
+shared memory charges remain owned. Native-index generation/content checks,
+current-row revision validation and source-provider final checks still decide
+whether that evidence can be used. No validation slice is automatically renewed.
+
+Each individual foreground I/O/SQL unit keeps a five-second timeout and caller
+cancellation. Regular-file syscalls remain synchronous; their bounded reads and
+writes check cancellation/time before and after the syscall and create no detached
+worker. A timed-out unit reports `lookup_io_timeout` as unavailable, separately
+from background `lookup_allowance_spent`, source size/record/graph limits and real
+I/O errors. Failed units are not automatically retried. Native/source/cache charges
+are never reset by scheduling renewal. Optional trace totals count completed
+`codex_lookup_work_units` and initial/renewed `codex_lookup_scopes`; these describe
+work, not imported or published logical sessions.
+
+### Current lookup and lineage
+
 `discovery.CodexRolloutLookup` owns the pass's native current projection,
 observed rollout facts, rollout directory listings and optional full metadata
 epoch. Ordinary collection and generation preview use the lookup directly.
@@ -62,6 +141,18 @@ Physical candidates count before header validity; filesystem fingerprints includ
 subdirectories and unrelated entries and retain a separate18432-entry traversal
 ceiling. Aliases of one canonical home share acquisition while every approved
 home spelling remains fenced.
+
+Targeted current lookup also accepts a clean absolute index locator beneath an
+originally supplied alias of an already approved home. It captures that alias's
+physical root identity at construction, charges its retained mapping to the same
+native ledger within the existing 16MiB metadata allowance, and rechecks the
+original spelling and root identity before operations, including cached selections
+and final current-row validation. Only
+the home prefix is rebased; descendant paths retain the existing source opener's
+confinement checks. Unapproved aliases, wrong homes, traversal, unavailable or
+retargeted aliases and replaced roots supply no authority. Ordinary physical
+homes need no additional retained alias mapping. This changes no native binding,
+retained source, metadata, privacy filter, adapter or parser format/version.
 
 A thread's lineage is a chain, and the chain is its own proof. The tip is the
 rollout Codex's thread index names (`threads.rollout_path` in
@@ -257,7 +348,10 @@ Private pending state retains legacy active-source fields and adds a versioned
 commit identity plus up to 65 exact source payload references: one current and
 64 preserved revisions. The revision-reference limit is independent of the
 64 physical graph-span limit. Inline compressed replay payload descriptors are capped at
-128 MiB in aggregate; the active payload is stored once. The collector preserves
+128 MiB in aggregate; the active payload is stored once. Once a commit settles,
+published state keeps no inline bytes: each inline payload is marked `released`
+and bound by its reference's digest and size, so commit and preparation digests
+are unchanged; journals refuse `released` payloads. The collector preserves
 its existing 32 MiB compressed-object producer, resolver and retained-reader
 ceiling, independently of the 128 MiB filtered-data ceiling. Generic ref-only
 state/storage descriptors can exceed that aggregate and retain a 128 MiB
@@ -381,6 +475,18 @@ first tasks remain rejected until their source observation changes; missing or
 partial tasks and unavailable, canceled or budget-limited reads remain retryable.
 All qualified history imports establish the permanent writer protection before
 registration, including forks whose public native-child flag is absent.
+
+Backfill's optional missing-task diagnostic residual uses only the existing
+validated snapshot spans after final source/current-selection checks.
+`no_own_records_in_snapshot` requires an explicit native own boundary at committed
+EOF with no uncommitted leaf tail; a retained-only boundary is insufficient.
+`own_records_without_task` establishes own-side record presence, including control
+and unknown records, without interpreting independent activity. Missing bounds,
+clipped tails, unavailable spans and failed checks remain unknown. These are
+captured-snapshot observations, not permanent thread emptiness: captured-prefix
+currentness still permits later appends. The existing `own_task_missing` primary
+refusal/action, first-invalid-task precedence, admission and retained outputs are
+unchanged. The ephemeral observation is excluded from serialized source proof.
 
 Each native child carries its own origin, admission, destination and import batch.
 Missing parent links do not prevent independently admissible capture. Relationship

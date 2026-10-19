@@ -73,11 +73,11 @@ func realisticStats() stats.Stats {
 			},
 		},
 		Models: []stats.ModelRow{
-			{Label: "opus", Models: []string{"claude-opus-5"}, Sessions: 60, Tokens: 7_000_000_000, Priced: true, Cost: usd(3270), CostShare: f64(3270.0 / 3989)},
-			{Label: "fable", Models: []string{"claude-fable-5"}, Sessions: 20, Tokens: 1_500_000_000, Priced: true, Cost: usd(386), CostShare: f64(386.0 / 3989)},
-			{Label: "sonnet", Models: []string{"claude-sonnet-5"}, Sessions: 30, Tokens: 1_300_000_000, Priced: true, Cost: usd(320), CostShare: f64(320.0 / 3989)},
-			{Label: "gpt-5.6", Models: []string{"gpt-5.6"}, Sessions: 1, Tokens: 100_000_000, Priced: true, Cost: usd(7), CostShare: f64(7.0 / 3989)},
-			{Label: "haiku", Models: []string{"claude-haiku-5"}, Sessions: 10, Tokens: 100_000_000, Priced: true, Cost: usd(6), CostShare: f64(6.0 / 3989)},
+			{Label: "opus-5", Models: []string{"claude-opus-5"}, Sessions: 60, Tokens: 7_000_000_000, Priced: true, Cost: usd(3270), CostShare: f64(3270.0 / 3989)},
+			{Label: "fable-5", Models: []string{"claude-fable-5"}, Sessions: 20, Tokens: 1_500_000_000, Priced: true, Cost: usd(386), CostShare: f64(386.0 / 3989)},
+			{Label: "sonnet-5", Models: []string{"claude-sonnet-5"}, Sessions: 30, Tokens: 1_300_000_000, Priced: true, Cost: usd(320), CostShare: f64(320.0 / 3989)},
+			{Label: "gpt-5.6-sol", Models: []string{"gpt-5.6"}, Sessions: 1, Tokens: 100_000_000, Priced: true, Cost: usd(7), CostShare: f64(7.0 / 3989)},
+			{Label: "haiku-5", Models: []string{"claude-haiku-5"}, Sessions: 10, Tokens: 100_000_000, Priced: true, Cost: usd(6), CostShare: f64(6.0 / 3989)},
 		},
 		Projects: []stats.Project{
 			{Name: "agent-archive", Sessions: 31, Tokens: i64(4_600_000_000), Cost: usd(1862)},
@@ -113,7 +113,7 @@ func realisticStats() stats.Stats {
 		}},
 		Highlights: stats.Highlights{
 			BusiestDay:       &stats.BusiestDay{Date: "2026-09-27", Sessions: 70},
-			FavoriteModel:    &stats.FavoriteModel{Label: "opus", By: "cost"},
+			FavoriteModel:    &stats.FavoriteModel{Label: "opus-5", By: "cost"},
 			CostliestSession: &stats.CostliestSession{SessionID: "abc", Harness: "claude", Project: "styleprofile", Cost: usd(564), Subagents: 38, Drivers: []string{stats.DriverLongContext, stats.DriverSubagents}},
 			ToolErrors:       &stats.ToolErrors{Errors: 210, Results: 4200, Rate: 0.05, Sessions: 70, UnknownSessions: 13},
 			MonthRank:        &stats.MonthRank{Month: "2026-09", Rank: 1, Of: 6, Tokens: 10_000_000_000},

@@ -155,7 +155,7 @@ func TestHarnessHeaderDiscoveryIgnoresOtherV3Harnesses(t *testing.T) {
 func TestHeaderDiscoveryUsesCompleteCachePlannedRanges(t *testing.T) {
 	t.Parallel()
 	store := &rangeRecorder{MemoryStore: storagetest.NewMemoryStore()}
-	for i := range 2 * rangeSidecars {
+	for i := range 600 {
 		putSession(t, store, "codex", strconv.Itoa(i), baseTime)
 	}
 	cache, err := OpenMetadataCache(t.TempDir())

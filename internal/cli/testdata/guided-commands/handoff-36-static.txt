@@ -4,9 +4,7 @@
   1) Codex (default)
   2) Claude Code
 
-  [p] print
-  [c] copy to the clipboard
-  [w] write to a file
+  [p] print  [c] copy  [w] write
   [q] quit
 
 > Choose [1]: w

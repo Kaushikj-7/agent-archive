@@ -206,6 +206,9 @@
               "writer": "search-lifecycle-v16"
             }
           ]
+        },
+        "admission": {
+          "const": "muse-root-admission"
         }
       }
     },
@@ -226,6 +229,9 @@
         },
         "value": {
           "type": "boolean"
+        },
+        "admission": {
+          "const": "muse-root-admission"
         }
       }
     },
@@ -259,7 +265,61 @@
           "pattern": "^[0-9a-f]{64}$"
         }
       }
+    },
+    "admission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "root_fingerprint",
+        "window_generation",
+        "policy_fingerprint",
+        "hook_contract"
+      ],
+      "properties": {
+        "contract": {
+          "const": "muse-root-admission"
+        },
+        "root_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "window_generation": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "policy_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "hook_contract": {
+          "const": "muse-root-hooks-v1"
+        }
+      }
+    },
+    "admissionWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generation",
+        "since",
+        "policy_fingerprint"
+      ],
+      "properties": {
+        "generation": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "since": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "policy_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
     }
   },
-  "description": "Go additionally checks canonical agents, clean absolute paths, exact supported base version/writer pairs and all lower permission/storage floors. The outer fence requires native_authority_protection=true on its configuration. No capture operations are enabled by this schema."
+  "description": "Go additionally checks canonical agents, clean absolute paths, exact supported base version/writer pairs and all lower permission/storage floors. The outer fence requires native_authority_protection=true on its configuration. No capture operations are enabled by this schema. Admission-protected configurations and journals require admission=muse-root-admission on the existing structural fence. Go enforces the sticky issuance floor, exact active-window equality, immutable first-owner admission proof and same current captured authority. These private additions do not enable public Muse setup."
 }

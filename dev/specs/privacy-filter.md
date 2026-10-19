@@ -467,9 +467,21 @@ Registered capture, backfill and Muse launch stay unavailable. Explicit files an
 
 The [production local v1 field policy](../qualification/muse/retained-allowlist-local-v1.json) is the exact current retained projection. The original `retained-allowlist.json` and derived corpus remain byte-frozen historical Q0 evidence; their broader metrics ceiling is not a production promise.
 
+The qualified single-metadata startup also permits exactly one schema-2
+`runtime.session.route_facts` record immediately before the original
+`session.opened.observed` record. Metadata, route facts and opening all require
+nil causation; the route cwd must equal the metadata workspace. The permission
+frame remains the sole native birth authority. Header corroboration and raw
+startup facts use the same fixed prefix within their existing bounds; complete
+source validation remains mandatory. This changes validation only, with no new
+retained fields or metadata interpretation.
+
 Muse startup metadata may omit the optional model label. The local projection
 retains it only when present as a string, never infers a provider default, and
-reports `model_identity_unavailable` when the initial metadata has no model.
+reports `model_identity_unavailable` only when the complete validated startup
+prefix has no nonempty model label. In the qualified two-metadata startup lane,
+the second row supplies the resolved model. Metadata after the initial opening
+does not fill this startup fact. Retained refiltering reconstructs this gap.
 Original owner, reserved start and workspace validation remain required.
 
 Muse retains the shared privacy gap codes for redaction, hidden-context omission
@@ -499,6 +511,43 @@ position and participates in shared stream/identity uniqueness, contiguous logic
 sequence, physical position and exact prefix comparison, but contributes no time,
 run/task, activity, turn, pending response, tool or accounting fact. It cannot
 interrupt required startup blocks. Existing v1 row bytes are unchanged.
+
+The tool-batch started profile additionally accepts exactly
+`{kind: file_read, subject: string}` alongside `{kind: ineligible}`. A completed
+outcome accepts `task_completion: {kind: complete}` alongside the existing
+`{kind: terminal, terminal: {kind: completed}}`, with the same nonnegative exact
+`output_ref_count`. The other accepted outcome is exactly
+`{kind: failed, reason: string}`. Unknown keys, tags and types refuse. Subject,
+reason, completion and profile tags are discarded without inferring parallelism,
+success, tool-error attribution or cancellation. For previously valid approved effects, these input forms use the
+unchanged omission projection and all existing identity, causality, join and
+resource bounds.
+
+
+Filter 30 adds only the optional archive-only start classification
+`effect_join: committed_file_read_v1`. Raw input cannot supply it. Both the
+private committed and effect tool names must be exactly `read_file`, the profile
+exactly `{kind: file_read, subject: string}`, and an earlier unique committed
+call must belong to the same session and materialized run. Raw validation also
+requires the existing prior task observation. Any approval request sharing the
+run/task or run/call identity, before or after the read, excludes this lane.
+The unmarked approved lane preserves its previous request/name checks and does
+not acquire a prior committed-call requirement.
+
+Retained parsing/refiltering independently rebuilds the prior own call and
+materialized/source graph and checks the fixed marker and exact start/terminal
+stream/effect/task/call/model-index tuple. The earlier native proposed-task ID
+was erased; retained validation proves the tuple and existing task-output family
+joins, not that private earlier task ID. `model_call_index` is only an exact
+bounded nonnegative integer with start/terminal equality; it is independent of
+the committed batch slot. Terminal fields remain unchanged. Multiple effects
+may reference one committed call; effects establish no result count, status,
+output, file, Git, MCP or parallel fact. Every private leaf stays discarded.
+
+Old unmarked approved rows remain readable without reclassification. New marked
+sources require an upgraded reader; old strict schemas and Muse executables
+refuse the new field. Previously erased names/profiles cannot be recovered from
+retained rows. No capture, execution permission or full native parity is enabled.
 
 Only minimal new-family identities survive: run/source record for reasoning;
 run/pending/task/call for requests and wait starts; run/pending/review for review

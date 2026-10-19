@@ -18,6 +18,14 @@ import (
 // database only to fail the same way.
 func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request) (done bool) {
 	id := reg.ArchiveSessionID
+	// Removal/recovery owns retained input before any native signature probe.
+	// It may restore an exact baseline even when the native files disappeared.
+	if deletion, found, err := p.local.LoadSessionDeletion(reg); err != nil {
+		p.fail(id, err)
+		return true
+	} else if found && deletion.Phase != state.DeletionRestored && deletion.Phase != state.DeletionCancelled {
+		return false
+	}
 	var unchanged bool
 	var signature state.ScanSignature
 	var err error

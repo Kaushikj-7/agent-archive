@@ -30,7 +30,7 @@ Subagents  77% of tokens (7.7B) in 497 runs
 HIGHLIGHTS
 Streak          none now (best 1 day)
 Busiest day     Sep 27 (70 sessions)
-Favorite model  opus
+Favorite model  opus-5
 This month      the heaviest of the last 6 months, by tokens so far
 Tool errors     5.0% of 4,200 tool results flagged as errors, 70 sessions
                 measured (13 do not record them)

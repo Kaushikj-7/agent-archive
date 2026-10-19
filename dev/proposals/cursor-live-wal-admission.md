@@ -1,9 +1,9 @@
 # Bounded Cursor live-WAL admission
 
-Status: backend, durable owner and distinct sealed producer under review against
-`d338beef`; production caller integration remains pending. This does not
-enable live database admission. The current [backfill contract](../specs/backfill.md)
-continues to require settled evidence; live WAL frames remain pending.
+Status: runtime review candidate composed with foundation `3ff31e35`. Protected
+selected root-chat admission includes the bounded live operation below. Ordinary
+[backfill recovery](../specs/backfill.md) still requires settled evidence. This is
+not a merged or platform-qualified release.
 
 ## Remaining capture gap
 
@@ -16,8 +16,7 @@ not be restored.
 
 ## Preparatory implementation
 
-`internal/cursorstore/admission*.go` contains a bounded backend with no production
-caller. It reuses the pinned online-backup/VFS design from #359, adapted to a
+`internal/cursorstore/admission*.go` contains a bounded backend used only by the fixed live-admission producer. It reuses the pinned online-backup/VFS design from #359, adapted to a
 private rooted scratch-reservation contract. It refuses ordinary settled paths;
 those retain their existing read-only capture path. The copy holds one actual
 source transaction before observing page geometry, caps the image at 128 MiB,
@@ -29,9 +28,9 @@ held rooted descriptor even if an ancestor path changes.
 
 Native reads refuse unknown Unix VFS ABIs and root execution, enforce read-only
 native opens, retain checked database/WAL/SHM identities and reject a writable
-process-wide shared-memory node before mapping. Failed copies leave partial
-scratch with their owner, rather than claiming successful cleanup or releasing
-its quota. These are synthetic implementation checks, not actual Cursor or
+process-wide shared-memory node before mapping. Failed copies retain partial
+scratch with their owner until verified cleanup succeeds; failed cleanup never
+releases its durable quota. These are synthetic implementation checks, not actual Cursor or
 macOS acceptance evidence.
 
 ## Integration gates
@@ -54,10 +53,19 @@ macOS acceptance evidence.
    requires synchronous scratch cleanup before minting separate `LiveProof`, and
    retains its original request scope through proof use. A generic filesystem path
    cannot satisfy `CaptureSettledCursor` or create settled proof. Synthetic tests
-   cover first staging after the native database disappears. This path still needs
-   independent whole-source/lifetime review before runtime wiring.
-3. Compose the sealed result with existing staged3/Cursor4 ownership and recovery
-   controls. Do not require or weaken the separate source-set publication protocol.
+   cover first staging after the native database disappears. A failed cleanup returns an opaque retry error retaining the same owner and
+   original captured scope; copies share terminal cleanup. Registration error
+   wrappers preserve that custody, and the CLI retries cleanup before its terminal
+   rendering boundary. If cleanup remains blocked, its durable receipt and owner
+   lock remain held until retry succeeds or the process exits; later recovery
+   refuses unknown contents. Runtime wiring remains subject to independent review.
+3. The runtime candidate tries the existing settled operation first and invokes
+   the distinct live operation only for a locked source. It recovers only validated
+   abandoned scratch before issuing a new owner, then saves actual live evidence
+   through existing staged3/Cursor4 ownership and recovery controls. Synthetic
+   public import/restart tests publish staged bytes after native source deletion;
+   cleanup-failure tests require no admission until cleanup is resolved. Do not
+   require or weaken the separate source-set publication protocol.
    Preserve catalog compatibility, stage quotas, finalizer ordering and the
    behavior of ordinary settled reads. Persisted-format changes need their own
    compatibility review before assigning versions.

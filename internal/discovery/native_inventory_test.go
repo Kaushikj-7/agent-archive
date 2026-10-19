@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agents/muse"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 const inventoryOwner = "00000000-0000-7000-8000-000000000001"
@@ -482,4 +483,243 @@ func TestNativeInventoryCohortScopeRevisionAndSchedulingMarker(t *testing.T) {
 	if r := inventoryLocate(t, revised, inventoryOwner); r.Status != agentapi.LocatorFound || revised.Counts().Names != 4 {
 		t.Fatal("revision did not independently enumerate", r, revised.Counts())
 	}
+}
+
+// Seed a genuine pre-EOF checkpoint using the shared pass name allowance.
+func inventoryQueuedDay(t *testing.T, home string, root archive.NativeRoot, ids ...string) string {
+	t.Helper()
+	crowded := filepath.Join(root.Canonical, "2026", "10", "14")
+	if err := os.MkdirAll(crowded, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2300 {
+		if err := os.WriteFile(filepath.Join(crowded, fmt.Sprintf("unrelated-%05d", i)), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l := inventoryOpen(t, home, root, ids...)
+	if r := inventoryLocate(t, l, ids[0]); r.Status != agentapi.LocatorPending {
+		t.Fatal(r)
+	}
+	queued := false
+	for _, d := range l.progress.Directories {
+		if d.Path == "2026/10/14" && len(d.Pages) > 0 && !completeNative(d) {
+			queued = true
+		}
+	}
+	if !queued || l.Counts().Names > 2048 {
+		t.Fatal("fixture did not retain partial day", l.progress, l.Counts())
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return crowded
+}
+
+func inventoryBoundedCounts(t *testing.T, l *NativeInventory) {
+	t.Helper()
+	c := l.Counts()
+	if c.Names > 2048 || c.Probes > HeaderProbes || c.Stats+c.Opens > int64(maxDirectories*16) || c.Stats != c.AcquireStats+c.SweepStats+c.CandidateStats || c.Opens != c.AcquireOpens+c.SweepOpens+c.CandidateOpens {
+		t.Fatal("unbounded or unaccounted inventory work", c)
+	}
+}
+
+func TestNativeInventoryQueuedDirectoryChangesRecoverAcrossRestarts(t *testing.T) {
+	t.Parallel()
+	type directoryChange string
+	const (
+		deleted           directoryChange = "deleted"
+		renamed           directoryChange = "renamed"
+		missingAncestor   directoryChange = "missing-ancestor"
+		replacedDirectory directoryChange = "replaced-directory"
+		replacedFile      directoryChange = "replaced-file"
+		replacedSymlink   directoryChange = "replaced-symlink"
+	)
+	for _, change := range []directoryChange{deleted, renamed, missingAncestor, replacedDirectory, replacedFile, replacedSymlink} {
+		t.Run(string(change), func(t *testing.T) {
+			t.Parallel()
+			home, root, raw := inventoryFixture(t)
+			later := "00000000-0000-7000-8000-000000000002"
+			day := "2026/10/16"
+			if change == missingAncestor {
+				day = "2026/11/16"
+			}
+			inventoryFile(t, root, day, inventoryOwner, raw)
+			inventoryFile(t, root, day, later, inventoryMeasurementRaw(t, raw, later))
+			crowded := inventoryQueuedDay(t, home, root, inventoryOwner, later)
+			moved := filepath.Join(t.TempDir(), "old-day")
+			if err := os.Rename(crowded, moved); err != nil {
+				t.Fatal(err)
+			}
+			switch change {
+			case deleted:
+				// The old path is already absent.
+			case missingAncestor:
+				if err := os.Remove(filepath.Dir(crowded)); err != nil {
+					t.Fatal(err)
+				}
+			case renamed:
+				if err := os.Rename(moved, filepath.Join(filepath.Dir(crowded), "13")); err != nil {
+					t.Fatal(err)
+				}
+			case replacedDirectory:
+				if err := os.Mkdir(crowded, 0700); err != nil {
+					t.Fatal(err)
+				}
+			case replacedFile:
+				if err := os.WriteFile(crowded, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			case replacedSymlink:
+				if err := os.Symlink(t.TempDir(), crowded); err != nil {
+					t.Fatal(err)
+				}
+			}
+			recovered := false
+			for pass := range 4 {
+				l := inventoryOpen(t, home, root, inventoryOwner, later)
+				r := inventoryLocate(t, l, inventoryOwner)
+				inventoryBoundedCounts(t, l)
+				if (change == replacedFile || change == replacedSymlink) && pass < 2 {
+					if r.Status != agentapi.LocatorPending || len(l.tokens) != 0 {
+						t.Fatal("unsupported queued path authorized selection", r)
+					}
+					if pass == 1 {
+						if err := os.Remove(crowded); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if r.Status == agentapi.LocatorFound {
+					if inventoryLocate(t, l, later).Status != agentapi.LocatorFound {
+						t.Fatal("later cohort owner starved")
+					}
+					if err := l.Check(t.Context(), inventoryOwner, r.Revision); err != nil {
+						t.Fatal(err)
+					}
+					inventoryBoundedCounts(t, l)
+					recovered = true
+				}
+				if err := l.Close(); err != nil {
+					t.Fatal(err)
+				}
+				if recovered {
+					break
+				}
+			}
+			if !recovered {
+				t.Fatal("valid pending owners blocked by stale queued directory")
+			}
+		})
+	}
+}
+
+func TestNativeInventoryCompletedDirectoryDeletionRecovers(t *testing.T) {
+	t.Parallel()
+	home, root, raw := inventoryFixture(t)
+	inventoryFile(t, root, "2026/10/16", inventoryOwner, raw)
+	old := filepath.Join(root.Canonical, "2026", "10", "14")
+	if err := os.MkdirAll(old, 0700); err != nil {
+		t.Fatal(err)
+	}
+	l := inventoryOpen(t, home, root, inventoryOwner)
+	if r := inventoryLocate(t, l, inventoryOwner); r.Status != agentapi.LocatorFound {
+		t.Fatal(r)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(old); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		next := inventoryOpen(t, home, root, inventoryOwner)
+		r, err := next.Locate(t.Context(), agentapi.LocatorRequest{Root: root, NativeID: inventoryOwner})
+		// The first currentness sweep detects the changed completed parent.
+		if err != nil && !errors.Is(err, transcriptio.ErrChanged) {
+			t.Fatal(err)
+		}
+		inventoryBoundedCounts(t, next)
+		if err := next.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if r.Status == agentapi.LocatorFound {
+			return
+		}
+	}
+	t.Fatal("completed day deletion blocked recovery")
+}
+
+func TestNativeInventoryTransientDirectoryPermissionRetainsProgress(t *testing.T) {
+	t.Parallel()
+	home, root, raw := inventoryFixture(t)
+	inventoryFile(t, root, "2026/10/16", inventoryOwner, raw)
+	crowded := inventoryQueuedDay(t, home, root, inventoryOwner)
+	blocked := inventoryOpen(t, home, root, inventoryOwner)
+	before, err := json.Marshal(blocked.progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	denied := 0
+	if err := blocked.acquire(t.Context(), func(path string) (*os.File, nativeGeneration, error) {
+		if strings.HasPrefix(path, "2026/10/") {
+			denied++
+			return nil, nativeGeneration{}, &os.PathError{Op: "open", Path: crowded, Err: os.ErrPermission}
+		}
+		return blocked.directory(path)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := json.Marshal(blocked.progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if denied == 0 || string(before) != string(after) || len(blocked.tokens) != 0 {
+		t.Fatal("temporary denial changed coverage or selected", denied, blocked.Counts())
+	}
+	inventoryBoundedCounts(t, blocked)
+	if err := blocked.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range 4 {
+		next := inventoryOpen(t, home, root, inventoryOwner)
+		r, err := next.Locate(t.Context(), agentapi.LocatorRequest{Root: root, NativeID: inventoryOwner})
+		if err != nil && !errors.Is(err, transcriptio.ErrChanged) {
+			t.Fatal(err)
+		}
+		inventoryBoundedCounts(t, next)
+		if err := next.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if r.Status == agentapi.LocatorFound {
+			return
+		}
+	}
+	t.Fatal("temporary denial blocked stable progress after restoration")
+}
+
+func TestNativeInventoryReplacementDirectoryKeepsDuplicateAmbiguous(t *testing.T) {
+	t.Parallel()
+	home, root, raw := inventoryFixture(t)
+	inventoryFile(t, root, "2026/10/16", inventoryOwner, raw)
+	crowded := inventoryQueuedDay(t, home, root, inventoryOwner)
+	if err := os.Rename(crowded, filepath.Join(t.TempDir(), "old-day")); err != nil {
+		t.Fatal(err)
+	}
+	inventoryFile(t, root, "2026/10/14", inventoryOwner, raw)
+	for range 3 {
+		next := inventoryOpen(t, home, root, inventoryOwner)
+		r := inventoryLocate(t, next, inventoryOwner)
+		if r.Status == agentapi.LocatorFound || len(next.tokens) != 0 {
+			t.Fatal("replacement bypassed uniqueness", r)
+		}
+		inventoryBoundedCounts(t, next)
+		if err := next.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if r.Status == agentapi.LocatorAmbiguous {
+			return
+		}
+	}
+	t.Fatal("replacement duplicate was not classified")
 }

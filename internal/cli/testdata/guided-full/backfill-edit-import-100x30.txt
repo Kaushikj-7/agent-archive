@@ -96,6 +96,7 @@ If you continue:
 › Choose [2]: yes
 \e[8A\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[2K\e[1B\e[8A✓ Import these sessions
 
+Freed staging capacity after remotely verifying 8 sessions; continuing admission.
 Added 4 projects. Registered 12 sessions and 2 subagent transcripts as import 2026-09-23-1.
 
 Uploaded 12 sessions (8 KB).

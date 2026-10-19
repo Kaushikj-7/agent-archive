@@ -298,10 +298,7 @@ func newFieldShape(r retained) (int64, []string, bool) {
 			return 0, nil, false
 		}
 	case payloadToolBatchStarted, payloadToolBatchTerminal:
-		if kind != "tool_batch_effect" || r.Type == payloadToolBatchStarted && ek != "started" || r.Type == payloadToolBatchTerminal && ek != "terminal" || !integer(f["model_call_index"], 0) {
-			return 0, nil, false
-		}
-		names = append(names, "effect_id", "task_id", "tool_call_id", "model_call_index")
+		return effectFieldShape(r)
 	default:
 		return 0, nil, false
 	}
@@ -346,14 +343,12 @@ func projectToolEffect(r retained, p, e, f map[string]any) (map[string]any, erro
 	names := []string{"kind", "effect_id", "task_stream", "task_id", "call_id", "model_call_index"}
 	if r.Type == payloadToolBatchStarted {
 		names = append(names, "tool_name", "parallel_profile")
-		if k != "started" || !stringFields(e, "tool_name") || !tagged(e["parallel_profile"], "ineligible") {
+		if k != "started" || !stringFields(e, "tool_name") || !toolParallelProfile(e["parallel_profile"]) {
 			return nil, errFormat
 		}
 	} else {
 		names = append(names, "outcome")
-		o := object(e["outcome"])
-		t := object(o["task_completion"])
-		if k != "terminal" || !keys(o, "kind", "output_ref_count", "task_completion") || str(o["kind"]) != "completed" || !integer(o["output_ref_count"], 0) || !keys(t, "kind", "terminal") || str(t["kind"]) != "terminal" || !tagged(t["terminal"], "completed") {
+		if k != "terminal" || !toolEffectOutcome(e["outcome"]) {
 			return nil, errFormat
 		}
 	}
@@ -363,4 +358,39 @@ func projectToolEffect(r retained, p, e, f map[string]any) (map[string]any, erro
 	copyFields(f, e, "effect_id", "task_id", "model_call_index")
 	f["tool_call_id"] = e["call_id"]
 	return f, nil
+}
+
+// These private bodies are validated only; neither their tags nor leaf strings
+// contribute retained tool results, error attribution or parallelism facts.
+func toolParallelProfile(v any) bool {
+	m := object(v)
+	return tagged(v, "ineligible") || keys(m, "kind", "subject") && str(m["kind"]) == "file_read" && stringFields(m, "subject")
+}
+
+func toolEffectOutcome(v any) bool {
+	m := object(v)
+	switch str(m["kind"]) {
+	case "failed":
+		return keys(m, "kind", "reason") && stringFields(m, "reason")
+	case "completed":
+		t := object(m["task_completion"])
+		return keys(m, "kind", "task_completion", "output_ref_count") && integer(m["output_ref_count"], 0) && (tagged(t, "complete") || keys(t, "kind", "terminal") && str(t["kind"]) == "terminal" && tagged(t["terminal"], "completed"))
+	}
+	return false
+}
+
+func effectFieldShape(r retained) (int64, []string, bool) {
+	f := r.Fields
+	kind, event := str(f["kind"]), str(f["event_kind"])
+	if kind != "tool_batch_effect" || r.Type == payloadToolBatchStarted && event != "started" || r.Type == payloadToolBatchTerminal && event != "terminal" || !integer(f["model_call_index"], 0) || !identifier(f["run_id"]) || !identifier(f["task_id"]) || !identifier(f["effect_id"]) || str(f["tool_call_id"]) == "" {
+		return 0, nil, false
+	}
+	names := []string{"kind", "event_kind", "run_id", "effect_id", "task_id", "tool_call_id", "model_call_index"}
+	if value, present := f["effect_join"]; present {
+		if r.Type != payloadToolBatchStarted || value != committedFileReadJoin {
+			return 0, nil, false
+		}
+		names = append(names, "effect_join")
+	}
+	return 1, names, true
 }

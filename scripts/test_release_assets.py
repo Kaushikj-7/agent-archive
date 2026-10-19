@@ -5,6 +5,7 @@ written the same way with sha256sum (Linux) or shasum (macOS), and that every
 place the workflow names the released files names the same ones.
 """
 import hashlib
+import json
 import os
 from pathlib import Path
 import platform
@@ -21,6 +22,7 @@ ROOT = SCRIPTS.parent
 WRITE_CHECKSUMS = SCRIPTS / 'write-checksums.sh'
 RELEASE_YML = ROOT / '.github' / 'workflows' / 'release.yml'
 BASH = shutil.which('bash')
+NATIVE_JOBS = ('macos-plan', 'macos-workers', 'macos-obligations')
 
 BINARIES = [
     'agent-archive-darwin-amd64',
@@ -522,31 +524,117 @@ class ReleaseWorkflowTest(unittest.TestCase):
             produced += block_lines(job_text(self.workflow, job), 'path: |')
         self.assertEqual(sorted(produced), sorted(self.dist))
 
-    def test_builds_require_verified_full_tag_coverage_before_build_and_retain_raw_evidence(self):
-        for job, suite in [('build', 'macos'), ('build-linux', 'linux')]:
+    def evidence_step(self, bodies, suite, path):
+        evidence = next(body for body in bodies if 'name: Preserve source-bound release validation evidence' in body)
+        self.assertIn('if: always()', evidence)
+        self.assertIn(f'name: release-validation-{suite}', evidence)
+        self.assertIn(f'path: {path}', evidence)
+        self.assertIn('if-no-files-found: error', evidence)
+        return evidence
+
+    def test_linux_build_requires_verified_full_tag_coverage_before_build_and_retains_raw_evidence(self):
+        text = job_text(self.workflow, 'build-linux')
+        bodies = steps(text)
+        test = next(body for body in bodies if 'name: Test\n' in body)
+        plan = 'python3 -B scripts/run_ci_tier.py --plan --tier full --output release-tier-results/plan.json'
+        run = 'python3 -B scripts/run_ci_tier.py --tier full --suite linux --seconds 2400 --output release-tier-results'
+        verify = 'python3 -B scripts/run_ci_tier.py --verify --tier full --suite linux --extra-plan release-tier-results/plan.json --output release-tier-results'
+        self.assertLess(test.index(plan), test.index(run))
+        self.assertLess(test.index(run), test.index(verify))
+        self.assertIn('go vet ./...', test)
+        self.assertNotIn('go test ', test)
+        for script in ('release_signing', 'release_assets', 'release_candidate', 'install', 'purge_recipe'):
+            self.assertIn(f'python3 scripts/test_{script}.py', test)
+        evidence = self.evidence_step(bodies, 'linux', 'release-tier-results')
+        build = next(body for body in bodies if 'name: Build\n' in body)
+        self.assertLess(bodies.index(test), bodies.index(evidence))
+        self.assertLess(bodies.index(evidence), bodies.index(build))
+        # The job outlives the tier's 40-minute deadline with room for setup,
+        # vet, scripts and the build.
+        self.assertRegex(text, r'(?m)^    timeout-minutes: 60$')
+
+    def native_runs(self, workflow, job):
+        found = []
+        for body in run_texts(job_text(workflow, job)):
+            found += [line.strip() for line in body.splitlines() if 'scripts/run_native_full.py' in line]
+        return found
+
+    def test_macos_native_split_runs_extendeds_commands_on_separate_hosts(self):
+        extended = (ROOT / '.github' / 'workflows' / 'extended.yml').read_text()
+        for job in ('macos-plan', 'macos-workers', 'macos-obligations'):
             with self.subTest(job=job):
                 text = job_text(self.workflow, job)
-                bodies = steps(text)
-                test = next(body for body in bodies if 'name: Test\n' in body)
-                plan = 'python3 -B scripts/run_ci_tier.py --plan --tier full --output release-tier-results/plan.json'
-                run = f'python3 -B scripts/run_ci_tier.py --tier full --suite {suite} --seconds 2400 --output release-tier-results'
-                verify = f'python3 -B scripts/run_ci_tier.py --verify --tier full --suite {suite} --extra-plan release-tier-results/plan.json --output release-tier-results'
-                self.assertLess(test.index(plan), test.index(run))
-                self.assertLess(test.index(run), test.index(verify))
-                self.assertIn('go vet ./...', test)
-                self.assertNotIn('go test ', test)
-                for script in ('release_signing', 'release_assets', 'release_candidate', 'install', 'purge_recipe'):
-                    self.assertIn(f'python3 scripts/test_{script}.py', test)
-                evidence = next(body for body in bodies if 'name: Preserve source-bound release validation evidence' in body)
-                self.assertIn('if: always()', evidence)
-                self.assertIn(f'name: release-validation-{suite}', evidence)
-                self.assertIn('path: release-tier-results', evidence)
-                self.assertIn('if-no-files-found: error', evidence)
-                build = next(body for body in bodies if 'name: Build\n' in body)
-                self.assertLess(bodies.index(test), bodies.index(evidence))
-                self.assertLess(bodies.index(evidence), bodies.index(build))
-                # Retain the existing default job bound rather than increasing it.
-                self.assertNotIn('timeout-minutes:', text)
+                self.assertRegex(text, r'(?m)^    runs-on: macos-14$')
+                self.assertRegex(text, r'(?m)^    timeout-minutes: 45$')
+                # Release scripts may not expand expressions, so the worker
+                # index arrives through the environment instead.
+                expected = [line.replace('${{ matrix.worker }}', '$WORKER')
+                            for line in self.native_runs(extended, job)]
+                actual = [line.replace('"', '') for line in self.native_runs(self.workflow, job)]
+                self.assertEqual(len(expected), 1)
+                self.assertEqual(actual, expected)
+        self.assertRegex(job_text(self.workflow, 'macos-plan'), r'(?m)^    needs: preflight$')
+        self.assertIn("if: needs.preflight.outputs.exists == 'false'", job_text(self.workflow, 'macos-plan'))
+        workers = job_text(self.workflow, 'macos-workers')
+        self.assertIn('fail-fast: false', workers)
+        self.assertIn('worker: [0, 1, 2]', workers)
+        self.assertIn('WORKER: ${{ matrix.worker }}', workers)
+        uploads = {}
+        for job in ('macos-plan', 'macos-workers', 'macos-obligations'):
+            text = job_text(self.workflow, job)
+            if job != 'macos-plan':
+                self.assertRegex(text, r'(?m)^    needs: macos-plan$')
+            upload = next(body for body in steps(text) if 'upload-artifact@' in body)
+            self.assertIn('if: always()', upload)
+            uploads[job] = re.search(r'name: (.+)', upload).group(1)
+        self.assertEqual(uploads, {'macos-plan': 'native-plan', 'macos-workers': 'native-worker-${{ matrix.worker }}',
+                                   'macos-obligations': 'native-obligations'})
+        self.assertNotIn('run_ci_tier.py', '\n'.join(job_text(self.workflow, job) for job in
+                                                     ('macos-plan', 'macos-workers', 'macos-obligations', 'build')))
+
+    def test_macos_build_reconciles_exactly_the_native_jobs_before_build_and_retains_raw_evidence(self):
+        text = job_text(self.workflow, 'build')
+        self.assertRegex(text, r'(?m)^    needs: \[preflight, macos-plan, macos-workers, macos-obligations\]$')
+        bodies = steps(text)
+        download = next(body for body in bodies if 'download-artifact@' in body)
+        self.assertIn('pattern: native-*', download)
+        self.assertIn('path: release-native-results', download)
+        reconcile = next(body for body in bodies if 'run_native_full.py reconcile' in body)
+        self.assertIn('NEEDS: ${{ toJSON(needs) }}', reconcile)
+        self.assertNotRegex(reconcile, r'(?m)^        if:')
+        # Reconcile requires exactly the three native jobs: only preflight is
+        # dropped from the needs context, through the real step script.
+        script = run_texts(reconcile)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            calls = root / 'calls'
+            shim = root / 'python3'
+            shim.write_text(f'#!/bin/sh\nif [ "$1" = -c ]; then exec {shutil.which("python3")} "$@"; fi\n'
+                            'printf "%s\\n" "$@" > "$CALLS"\n')
+            shim.chmod(0o755)
+            native = {name: {'result': 'success', 'outputs': {}}
+                      for name in ('macos-plan', 'macos-workers', 'macos-obligations')}
+            needs = dict(native, preflight={'result': 'success', 'outputs': {'exists': 'false'}})
+            result = subprocess.run([BASH, '-e', '-o', 'pipefail', '-c', script], capture_output=True, text=True,
+                                    env={'PATH': f'{root}:/usr/bin:/bin', 'CALLS': str(calls), 'NEEDS': json.dumps(needs)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            argv = calls.read_text().splitlines()
+            self.assertEqual(argv[:5], ['-B', 'scripts/run_native_full.py', 'reconcile', '--output', 'release-native-results'])
+            self.assertEqual(argv[5], '--needs')
+            self.assertEqual(json.loads('\n'.join(argv[6:])), native)
+        test = next(body for body in bodies if 'name: Test\n' in body)
+        self.assertIn('go vet ./...', test)
+        self.assertNotIn('go test ', test)
+        for script in ('release_signing', 'release_assets', 'release_candidate', 'install',
+                       'install_from_source', 'purge_recipe'):
+            self.assertIn(f'python3 scripts/test_{script}.py', test)
+        evidence = self.evidence_step(bodies, 'macos', 'release-native-results')
+        build = next(body for body in bodies if 'name: Build\n' in body)
+        self.assertLess(bodies.index(download), bodies.index(reconcile))
+        self.assertLess(bodies.index(reconcile), bodies.index(build))
+        self.assertLess(bodies.index(evidence), bodies.index(build))
+        # The build job only reconciles and builds; keep its default bound.
+        self.assertNotIn('timeout-minutes:', text)
 
     def linux_prerequisites(self):
         bodies = steps(job_text(self.workflow, 'build-linux'))
@@ -612,7 +700,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertRegex(self.publish, r'name: linux\n\s+path: dist')
 
     def test_every_build_job_keeps_the_tag_and_main_guard(self):
-        for job in ('build', 'build-linux'):
+        for job in ('macos-plan', 'build', 'build-linux'):
             with self.subTest(job=job):
                 text = job_text(self.workflow, job)
                 self.assertIn(r'^v[0-9]+\.[0-9]+\.[0-9]+$', text)
@@ -629,6 +717,8 @@ class ReleaseWorkflowTest(unittest.TestCase):
         read = {'contents': 'read'}
         self.assertEqual(job_permissions(job_text(self.workflow, 'build')), read)
         self.assertEqual(job_permissions(job_text(self.workflow, 'build-linux')), read)
+        for job in NATIVE_JOBS:
+            self.assertEqual(job_permissions(job_text(self.workflow, job)), read)
         self.assertEqual(
             job_permissions(self.publish),
             {'contents': 'write', 'id-token': 'write', 'attestations': 'write'},
@@ -665,20 +755,20 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 self.assertRegex(action, r'@[0-9a-f]{40}$')
 
     def test_checkouts_keep_no_credentials_and_go_has_no_module_cache(self):
-        for job in ('build', 'build-linux', 'publish'):
+        for job in ('build', 'build-linux', 'publish', *NATIVE_JOBS):
             with self.subTest(job=job):
                 text = job_text(self.workflow, job)
                 self.assertEqual(text.count('actions/checkout@'), 1)
                 self.assertEqual(text.count('persist-credentials: false'), 1)
                 self.assertNotIn('persist-credentials: true', text)
-        for job in ('build', 'build-linux'):
+        for job in ('build', 'build-linux', *NATIVE_JOBS):
             with self.subTest(job=job):
                 text = job_text(self.workflow, job)
                 self.assertIn('cache: false', text)
                 self.assertNotIn('cache: true', text)
 
     def test_build_jobs_see_no_secrets_or_variables(self):
-        for job in ('build', 'build-linux'):
+        for job in ('build', 'build-linux', *NATIVE_JOBS):
             with self.subTest(job=job):
                 text = code_lines(job_text(self.workflow, job))
                 self.assertNotRegex(text, r'\bsecrets\b')
@@ -745,17 +835,22 @@ class ReleaseWorkflowTest(unittest.TestCase):
 
     def test_the_workflow_has_preflight_and_the_three_build_publish_jobs(self):
         jobs = re.findall(r'(?m)^  ([\w-]+):$', self.workflow[self.workflow.index('\njobs:\n'):])
-        self.assertEqual(jobs, ['preflight', 'build', 'build-linux', 'publish'])
+        self.assertEqual(jobs, ['preflight', 'macos-plan', 'macos-workers', 'macos-obligations',
+                                'build', 'build-linux', 'publish'])
 
     def test_release_critical_steps_are_not_skippable_or_allowed_to_fail(self):
         self.assertNotIn('continue-on-error', self.workflow)
         # Conditional steps only clean up or retain diagnostic evidence.
-        for job in ('build', 'build-linux', 'publish'):
+        for job in ('build', 'build-linux', 'publish', *NATIVE_JOBS):
             for text in steps(job_text(self.workflow, job)):
                 if re.search(r'(?m)^        if:', text):
                     with self.subTest(job=job):
                         if job == 'publish':
                             self.assertIn('name: Clean up signing keychain', text)
+                        elif job in NATIVE_JOBS:
+                            self.assertIn('actions/upload-artifact@', text)
+                            self.assertIn('if: always()', text)
+                            self.assertNotIn('run:', text)
                         else:
                             self.assertIn('name: Preserve source-bound release validation evidence', text)
                             self.assertIn('if: always()', text)
@@ -781,7 +876,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 self.assertNotIn('GITHUB_ENV', body)
 
     def test_checkouts_use_the_tagged_commit(self):
-        for job in ('build', 'build-linux', 'publish'):
+        for job in ('build', 'build-linux', 'publish', *NATIVE_JOBS):
             with self.subTest(job=job):
                 checkout = [t for t in steps(job_text(self.workflow, job)) if 'actions/checkout@' in t]
                 self.assertEqual(len(checkout), 1)
@@ -799,7 +894,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 'actions/attest-build-provenance',
             },
         )
-        for job in ('build', 'build-linux'):
+        for job in ('build', 'build-linux', *NATIVE_JOBS):
             with self.subTest(job=job):
                 self.assertNotIn('actions/cache', job_text(self.workflow, job))
 

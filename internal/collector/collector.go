@@ -33,6 +33,7 @@ import (
 // local.Lock(home) around Run; Run itself does not acquire it, so it stays
 // simple to call directly from tests.
 type Options struct {
+	preparedStartup    *preparedStartupReader
 	CollectorGuard     *local.CollectorGuard
 	CatalogDestination string
 	// HistoricalSourceAllowed vetoes explicitly excluded native dependencies at staging.
@@ -75,6 +76,12 @@ type Options struct {
 	// ParserVersion identifies metadata derivation independently of source capture.
 	ParserVersion string
 	AcceptSession func(archive.SessionRegistration) bool
+	// SelectSession optionally restricts this pass to existing owners. It is a
+	// scheduling choice, never admission policy: unselected work stays pending.
+	SelectSession func(archive.SessionRegistration) bool
+	// PendingOnly executes existing outstanding work without reopening settled
+	// sources. Selected parent relationships still govern child materialization.
+	PendingOnly bool
 	// MachineID identifies this machine in published metadata. Required.
 	MachineID string
 	// Now returns the current time. Defaults to time.Now; tests override it
@@ -351,7 +358,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if state.SessionIndexRecoveryInterrupted(recoveryErr) {
 		recoveryErr = nil
 	}
-	replayErr := capture.ReplayAdmissionIntents(local.Home(), now, opts.Decoders)
+	replayErr := replayPassAdmissions(ctx, local, now, opts)
 	// The caller holds the collector lock, so this pass is the only writer
 	// of the files it owns and may move a corrupt one aside.
 	local = local.ForCollectorPass()
@@ -364,7 +371,13 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// Establish one lazy source scope before child admission borrows its ledger.
 	closeCursorPass := openCursorPass(nil, &opts)
 	var closeNativeInventory func() error
-	defer func() { runErr = errors.Join(runErr, closeSourceAndNative(closeCursorPass, closeNativeInventory)) }()
+	var closeStartupCandidates func()
+	defer func() {
+		runErr = errors.Join(runErr, closeSourceAndNative(closeCursorPass, closeNativeInventory))
+		if closeStartupCandidates != nil {
+			closeStartupCandidates()
+		}
+	}()
 	local, closeAccounting := local.WithPublicationAccounting(ctx, (&sessionScan{opts: opts}).readBudget())
 	defer closeAccounting()
 
@@ -380,20 +393,13 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		result:             Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
 		expiredSubagents:   subagents.expired,
 	}
+	closeStartupCandidates = p.releaseStartupCandidates
 	defer p.releaseLabelResources()
-	if generationRecoveryErr != nil {
-		p.result.Errors["generation-recovery"] = generationRecoveryErr
-	}
-	if recoveryErr != nil {
-		p.result.Errors["session-index"] = recoveryErr
-	}
-	if replayErr != nil {
-		p.result.Errors["admission-intents"] = replayErr
-	}
+	p.recordInitialErrors(generationRecoveryErr, recoveryErr, replayErr)
 	// A loadWork failure returns before saveStatus, so this pass's expired
 	// subagents never reach status.json's list. That is accepted: the list
 	// is informational, and each parent's capture gap is already saved.
-	if err := p.loadWork(); err != nil {
+	if err := p.loadCaptureWork(); err != nil {
 		return Result{}, err
 	}
 	var inventoryErr error
@@ -402,6 +408,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		return Result{}, inventoryErr
 	}
 
+	p.admitStartupCandidates()
 	p.loadDeferredSince()
 	p.reconcileNativeLinks()
 	p.observeLabels(ctx)
@@ -416,7 +423,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 			p.leaveForNextPass(registrations[i:])
 			break
 		}
-		if p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
+		if !p.opts.selectsSession(reg) || p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg) {
 			continue
 		}
 		if p.leaveUnopenedForLookupAllowance(reg) {
@@ -429,6 +436,13 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		return p.result, err
 	}
 	return p.result, p.saveStatus()
+}
+
+func replayPassAdmissions(ctx context.Context, local *state.Store, now time.Time, opts Options) error {
+	if opts.SelectSession != nil {
+		return nil
+	}
+	return capture.ReplayAdmissionIntentsWithin(ctx, local.Home(), now, opts.Decoders)
 }
 
 func resumeImportAdmissionsForPass(ctx context.Context, local *state.Store, opts Options) error {
@@ -450,15 +464,27 @@ func (p *pass) orderedExecutionRegistrations() []archive.SessionRegistration {
 // The full registration census remains available for diagnostics and maintenance.
 func (p *pass) executionRegistrations() []archive.SessionRegistration {
 	registrations := p.registrations
-	if p.opts.AcceptSession != nil {
+	if p.opts.AcceptSession != nil || p.opts.SelectSession != nil || p.opts.PendingOnly {
 		registrations = make([]archive.SessionRegistration, 0, len(p.registrations))
 		for _, reg := range p.registrations {
-			if p.opts.AcceptSession(reg) {
+			if p.opts.selectsSession(reg) && (p.opts.AcceptSession == nil || p.opts.AcceptSession(reg)) {
+				if p.opts.PendingOnly {
+					owed, err := p.local.Outstanding(reg, p.requests[reg.ArchiveSessionID].Token != "")
+					// Unreadable obligations stay eligible for the existing
+					// per-owner scan error and retry handling.
+					if err == nil && !owed.Pending() {
+						continue
+					}
+				}
 				registrations = append(registrations, reg)
 			}
 		}
 	}
 	return registrations
+}
+
+func (o Options) selectsSession(reg archive.SessionRegistration) bool {
+	return o.SelectSession == nil || o.SelectSession(reg)
 }
 
 // resumeStagedReleasesIfActive skips fresh work after ordinary recovery ends.
@@ -474,7 +500,7 @@ func (p *pass) resumeStagedReleasesIfActive(ctx context.Context, local *state.St
 func (p *pass) resumeStagedReleases(ctx context.Context, local *state.Store, store storage.ObjectStore, opts Options) error {
 	if remote, ok := store.(state.StagedReadback); ok {
 		scoped, closeSchedule := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
-		holds, closeDiagnostics, err := scoped.ResumeStagedReleases(ctx, remote, opts.CollectorGuard)
+		holds, closeDiagnostics, err := scoped.ResumeSelectedStagedReleases(ctx, remote, opts.CollectorGuard, opts.SelectSession)
 		if closeDiagnostics != nil {
 			p.result.stagedDiagnostics = &stagedDiagnosticResult{close: closeDiagnostics}
 		}
@@ -499,6 +525,9 @@ func generationRecoveryStopsPass(err error) bool {
 
 // pass is one Run: its inputs, what it has found so far, and its result.
 type pass struct {
+	startupCandidates   []startupCandidate
+	startupCharge       *agentapi.NativeReadReservation
+	startupChargeBytes  int64
 	labelLocal          *state.Store
 	closeLabelResources func()
 	labelStates         map[string]*state.Published
@@ -754,7 +783,9 @@ func (p *pass) scan(ctx context.Context, reg archive.SessionRegistration) {
 	// Everything the session's scan charges counts against its own ceiling
 	// too, so one large session cannot leave the others without room, and
 	// its own excess is told from pressure others put on the ledger.
-	defer budget.BeginScope(sessionReadCeiling)()
+	if p.opts.preparedStartup == nil {
+		defer budget.BeginScope(sessionReadCeiling)()
+	}
 	scopedLocal, closeLocal := p.local.WithReadBudget(ctx, budget)
 	p.local = scopedLocal
 	defer func() { closeLocal(); p.local = priorLocal }()
@@ -930,6 +961,9 @@ func (p *pass) saveStatus() error {
 		ExpiredSubagents: state.CarryExpiredSubagents(previous.ExpiredSubagents, p.expiredSubagents, p.now),
 	}
 	status.SetLastErrors(problems...)
+	if p.opts.SelectSession != nil {
+		status = p.selectedStatus(previous, status)
+	}
 	if err := p.local.SaveStatus(status); err != nil {
 		return fmt.Errorf("save status: %w", err)
 	}
@@ -1109,6 +1143,9 @@ func (p *pass) repairListingIndex() {
 			p.result.Errors["listing-maintenance"] = err
 			continue
 		}
+		if p.opts.SelectSession != nil && (!found || !p.opts.selectsSession(reg)) {
+			continue
+		}
 		if !found || reg.DestinationID != repair.DestinationID {
 			_ = p.local.RemoveListingRepair(id)
 			continue
@@ -1158,4 +1195,27 @@ func (r Result) CloseStagedResults() {
 	if r.stagedDiagnostics != nil {
 		r.stagedDiagnostics.close()
 	}
+}
+
+func (p *pass) recordInitialErrors(generation, recovery, replay error) {
+	if generation != nil {
+		p.result.Errors["generation-recovery"] = generation
+	}
+	if recovery != nil {
+		p.result.Errors["session-index"] = recovery
+	}
+	// Pure pass interruption leaves queued work pending. Joined local failures
+	// must still reach diagnostics even when they also wrap cancellation.
+	_, joined := replay.(interface{ Unwrap() []error })
+	interrupted := !joined && errors.Unwrap(replay) == nil && (errors.Is(replay, context.Canceled) || errors.Is(replay, context.DeadlineExceeded))
+	if replay != nil && !interrupted {
+		p.result.Errors["admission-intents"] = replay
+	}
+}
+
+func (p *pass) loadCaptureWork() error {
+	if err := p.loadWork(); err != nil {
+		return err
+	}
+	return p.loadStartupCandidates()
 }
