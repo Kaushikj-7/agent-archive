@@ -157,7 +157,10 @@ func TestSearchDeclineSavesWithoutStorageAndOffersOverInterruptedIndex(t *testin
 	must(t, os.MkdirAll(dir, 0o700))
 	must(t, os.WriteFile(filepath.Join(dir, "content.sqlite"), nil, 0o600))
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
-		t.Error("declining opened storage")
+		// After the No is saved, the search reads the bucket directly.
+		if saved, _, e := config.Load(home); e != nil || !saved.SearchIndexingDeclined {
+			t.Error("declining opened storage")
+		}
 		return nil, errors.New("offline")
 	}
 	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "2\nchecksum\n", "search")

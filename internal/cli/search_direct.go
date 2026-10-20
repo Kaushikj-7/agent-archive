@@ -35,12 +35,13 @@ func (e Env) directSearchBudget() time.Duration {
 	return directSearchPause
 }
 
-// wantsDirectSearch reports whether a query with no local index reads the
-// bucket directly: on a terminal (startInteractiveSearch left its prompter),
-// after the indexing offer was declined. JSON, piped output, refresh and
-// cursors keep reporting the missing index.
-func wantsDirectSearch(cfg config.Config, opts contentSearchOptions) bool {
-	return searchIndexingDeclined(cfg) && opts.prompt != nil && opts.hasQuery && !opts.json && !opts.refresh && opts.query.Cursor == ""
+// wantsDirectSearch reports whether a query reads the bucket directly: on a
+// terminal (startInteractiveSearch left its prompter), after the indexing
+// offer was declined, with no usable local index in dir (none, or one whose
+// first creation was interrupted, as searchIndexMissing decides). JSON, piped
+// output, refresh and cursors keep reporting the missing index.
+func wantsDirectSearch(cfg config.Config, opts contentSearchOptions, dir, namespace string) bool {
+	return searchIndexingDeclined(cfg) && opts.prompt != nil && opts.hasQuery && !opts.json && !opts.refresh && opts.query.Cursor == "" && searchIndexMissing(dir, namespace)
 }
 
 // directSearchCandidate applies the query's scope and filters to a session's

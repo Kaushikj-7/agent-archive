@@ -97,7 +97,7 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 		queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		index, e := search.OpenRead(queryCtx, dir, namespace)
-		if os.IsNotExist(e) && wantsDirectSearch(cfg, opts) {
+		if e != nil && wantsDirectSearch(cfg, opts, dir, namespace) {
 			found, code := runDirectSearch(ctx, cfg, namespace, scope, opts, stdout, stderr, env)
 			if found == nil {
 				return code

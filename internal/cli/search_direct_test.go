@@ -242,6 +242,24 @@ func TestDirectSearchNeverRunsForJSONOrWithAnIndex(t *testing.T) {
 	}
 }
 
+// An index whose first creation was interrupted (a schema-zero file) is no
+// index: the search still reads the bucket.
+func TestDirectSearchOverAnInterruptedIndex(t *testing.T) {
+	t.Parallel()
+	env, _, ids, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}})
+	home, err := env.readHome()
+	must(t, err)
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	_, dir := contentSearchLocation(home, cfg)
+	must(t, os.MkdirAll(dir, 0o700))
+	must(t, os.WriteFile(filepath.Join(dir, "content.sqlite"), nil, 0o600))
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 0 || !strings.Contains(out, "Without an index") || !strings.Contains(out, shortSessionID(ids[0])+"  1 match") {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+}
+
 // A machine that turned indexing on and later off has lifecycle protection
 // but no declined flag; that earlier off still means search the bucket.
 func TestDirectSearchAfterIndexingWasTurnedOff(t *testing.T) {
