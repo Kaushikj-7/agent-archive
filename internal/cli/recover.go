@@ -144,14 +144,17 @@ func loadGenerationPreview(store *state.Store, cfg config.Config, id string, env
 	} else if outstanding.Upload {
 		return generationPreview{}, errors.New("settle pending publication with agent-archive sync before recovery")
 	}
-	if err := store.CheckGenerationStage(context.Background(), reg); err != nil {
-		return generationPreview{}, err
-	}
 	closeLocal() // retained authority validation has no remaining data consumer
 	opts := collector.Options{CodexRollouts: lookup, ConfiguredCodexHomes: homes, NativeRoots: cfg.NativeRoots, Sources: registryFor(env), Parsers: parsersFor(env), MachineID: cfg.MachineID, SkillEvidence: cfg.EffectiveSkillEvidence(), RequireSkillUse: cfg.RequireSkillUse, RepoKey: env.repoKey}
 	at := env.now().UTC()
 	builder, closeData, err := collector.PrepareGenerationRecovery(context.Background(), reg, at, opts)
 	if err != nil {
+		return generationPreview{}, err
+	}
+	// Source-shape refusals come first; a supported session then reports an
+	// unsettled import stage before confirmation.
+	if err := state.OpenReadOnly(store.Home()).CheckGenerationStage(context.Background(), reg); err != nil {
+		closeData()
 		return generationPreview{}, err
 	}
 	keep = true
