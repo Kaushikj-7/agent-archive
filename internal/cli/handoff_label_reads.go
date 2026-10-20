@@ -57,6 +57,13 @@ func newLabelReads(ctx context.Context, read labelReadFunc) *labelReads {
 	return &labelReads{parent: ctx, read: read, started: map[localLabelKey]*labelRead{}, taken: map[localLabelKey]bool{}}
 }
 
+// concurrentLabel reports whether reg's label may be read beside others. A
+// Cursor database chat is read through its own snapshot of the whole
+// database, so those are left to the row loop, one at a time.
+func concurrentLabel(reg archive.SessionRegistration) bool {
+	return reg.ReadsTranscriptFile()
+}
+
 // ensure starts, in order, each of wants not already started or taken, on at
 // most handoffLabelReaders workers.
 func (r *labelReads) ensure(wants []labelWant) {
@@ -76,7 +83,8 @@ func (r *labelReads) ensure(wants []labelWant) {
 		r.started[w.key] = result
 		r.queue = append(r.queue, labelJob{want: w, result: result})
 	}
-	for r.workers < handoffLabelReaders && r.workers < len(r.queue) {
+	// Busy workers take queued jobs when they finish; idle slots start now.
+	for range min(handoffLabelReaders-r.workers, len(r.queue)) {
 		r.workers++
 		r.wg.Go(r.work)
 	}

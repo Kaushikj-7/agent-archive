@@ -486,13 +486,14 @@ func (m *pickerModel) materializeLocal(ctx context.Context, st *pickerScopeState
 // remain unread, the order is unknown and nothing more is planned.
 func (m *pickerModel) labelWants(st *pickerScopeState, need, budget int) []labelWant {
 	var wants []labelWant
+	planned := 0
 	buffer := st.buffer
 	for _, c := range st.locals[st.localPos:] {
 		for len(buffer) > 0 && need > 0 && !pickerCandidateBefore(c, pickerCandidate{row: handoffPickerRow{active: buffer[0].Row.Activity}, item: &buffer[0]}) {
 			buffer = buffer[1:]
 			need--
 		}
-		if need <= 0 || len(wants) >= budget || (len(buffer) == 0 && !st.remoteDone) {
+		if need <= 0 || planned >= budget || (len(buffer) == 0 && !st.remoteDone) {
 			break
 		}
 		if c.row.unbuilt == nil {
@@ -506,7 +507,10 @@ func (m *pickerModel) labelWants(st *pickerScopeState, need, budget int) []label
 			}
 			continue
 		}
-		wants = append(wants, labelWant{key: key, reg: *c.row.unbuilt, active: c.row.active})
+		planned++
+		if concurrentLabel(*c.row.unbuilt) {
+			wants = append(wants, labelWant{key: key, reg: *c.row.unbuilt, active: c.row.active})
+		}
 		need--
 	}
 	return wants

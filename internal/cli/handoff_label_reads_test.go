@@ -132,3 +132,70 @@ func TestPickerModelLabelWantsStopsWhereArchiveOrderIsUnknown(t *testing.T) {
 		}
 	}
 }
+
+// A later ensure fills every idle slot, even while earlier reads still run.
+func TestLabelReadsFillIdleWorkersAfterMorePlanned(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var mu sync.Mutex
+		inFlight, peak := 0, 0
+		release := make(chan struct{})
+		r := newLabelReads(t.Context(), func(ctx context.Context, reg archive.SessionRegistration, _ time.Time) (archive.Metadata, bool, error) {
+			mu.Lock()
+			inFlight++
+			peak = max(peak, inFlight)
+			mu.Unlock()
+			<-release
+			mu.Lock()
+			inFlight--
+			mu.Unlock()
+			return archive.Metadata{}, true, nil
+		})
+		want := func(ids ...string) (out []labelWant) {
+			for _, id := range ids {
+				reg := archive.SessionRegistration{ArchiveSessionID: id, Harness: archive.Harness{Name: "codex"}}
+				out = append(out, labelWant{key: pickerLocalLabelKey(reg, time.Time{}, "auto"), reg: reg})
+			}
+			return out
+		}
+		r.ensure(want("a", "b", "c"))
+		synctest.Wait()
+		r.ensure(want("d", "e"))
+		synctest.Wait()
+		mu.Lock()
+		got := peak
+		mu.Unlock()
+		close(release)
+		r.stop()
+		if got != handoffLabelReaders {
+			t.Fatalf("peak reads in flight %d, want %d", got, handoffLabelReaders)
+		}
+	})
+}
+
+// A Cursor database chat is read through a snapshot of the whole database, so
+// the plans leave it for the row loop to read by itself, in turn.
+func TestLabelWantsLeaveCursorChatsToTheRowLoop(t *testing.T) {
+	cursor := &archive.SessionRegistration{ArchiveSessionID: "cursor", Harness: archive.Harness{Name: "cursor"}, SourceKind: archive.SourceKindCursorSQLite, SourceKey: "composer"}
+	file := &archive.SessionRegistration{ArchiveSessionID: "file", Harness: archive.Harness{Name: "codex"}}
+	rows := []handoffPickerRow{{active: time.Unix(900, 0), unbuilt: cursor}, {active: time.Unix(800, 0), unbuilt: file}}
+	ids := func(wants []labelWant) (out []string) {
+		for _, w := range wants {
+			out = append(out, w.reg.ArchiveSessionID)
+		}
+		return out
+	}
+	if got := ids((handoffPicker{source: "auto"}).labelWants(rows, 10, 0, 0)); !slices.Equal(got, []string{"file"}) {
+		t.Errorf("rows plan %q", got)
+	}
+	if got := ids((handoffPicker{source: "auto", searchLabelBudget: 1}).labelWants(rows, 10, 0, 0)); len(got) != 0 {
+		t.Errorf("the Cursor read still spends the search budget: %q", got)
+	}
+	st := &pickerScopeState{locals: []pickerCandidate{{row: rows[0]}, {row: rows[1]}}, remoteDone: true}
+	m := &pickerModel{source: "auto", labels: map[localLabelKey]localLabelResult{}}
+	if got := ids(m.labelWants(st, 10, 10)); !slices.Equal(got, []string{"file"}) {
+		t.Errorf("model plan %q", got)
+	}
+	if got := ids(m.labelWants(st, 10, 1)); len(got) != 0 {
+		t.Errorf("the Cursor read still spends the model budget: %q", got)
+	}
+}

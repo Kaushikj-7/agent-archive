@@ -528,6 +528,7 @@ func (p handoffPicker) admitLocalLabel(reg archive.SessionRegistration, active t
 // reads had a prompt, in the order it would read them.
 func (p handoffPicker) labelWants(all []handoffPickerRow, limit, accepted, attempts int) []labelWant {
 	var wants []labelWant
+	planned := 0
 	for _, row := range all {
 		if accepted == limit {
 			break
@@ -546,10 +547,13 @@ func (p handoffPicker) labelWants(all []handoffPickerRow, limit, accepted, attem
 			}
 			continue
 		}
-		if p.searchLabelBudget > 0 && attempts+len(wants) >= p.searchLabelBudget {
+		if p.searchLabelBudget > 0 && attempts+planned >= p.searchLabelBudget {
 			break
 		}
-		wants = append(wants, labelWant{key: key, reg: *row.unbuilt, active: row.active})
+		planned++
+		if concurrentLabel(*row.unbuilt) {
+			wants = append(wants, labelWant{key: key, reg: *row.unbuilt, active: row.active})
+		}
 		accepted++
 	}
 	return wants
