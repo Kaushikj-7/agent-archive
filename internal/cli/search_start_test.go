@@ -2,13 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 func TestBareSearchOnTerminalAsksForQueryThenBrowses(t *testing.T) {
@@ -139,5 +142,30 @@ func TestMissingIndexWhilePausedAsksForRefresh(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "background indexing is building it") || !strings.Contains(out.String(), "Run search --refresh") {
 		t.Fatalf("paused indexing reported as running: %s", out.String())
+	}
+}
+
+func TestSearchDeclineSavesWithoutStorageAndOffersOverInterruptedIndex(t *testing.T) {
+	t.Parallel()
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "synthetic", "--aws-profile", "test", "--region", "us-east-1", "--apps", "claude", "--project", project)
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	// An index whose first creation was interrupted: a schema-zero file.
+	_, dir := contentSearchLocation(home, cfg)
+	must(t, os.MkdirAll(dir, 0o700))
+	must(t, os.WriteFile(filepath.Join(dir, "content.sqlite"), nil, 0o600))
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		t.Error("declining opened storage")
+		return nil, errors.New("offline")
+	}
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "2\nchecksum\n", "search")
+	if !strings.Contains(out, "Build the search index in the background?") {
+		t.Fatalf("interrupted index skipped the offer: %d %s %s", code, errOut, out)
+	}
+	cfg, _, err = config.Load(home)
+	if err != nil || !cfg.SearchIndexingDeclined || cfg.SearchIndexing {
+		t.Fatalf("decline not saved: %+v %v\n%s", cfg.SearchIndexingDeclined, err, out)
 	}
 }
