@@ -18,22 +18,22 @@
       "evidence": ""
     },
     "signed-install-darwin-arm64": {
-      "result": "pending",
-      "tester": "",
-      "utc": "",
-      "evidence": ""
+      "result": "passed",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-20T07:57:09Z",
+      "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6286244378"
     },
     "install-linux-amd64": {
-      "result": "pending",
-      "tester": "",
-      "utc": "",
-      "evidence": ""
+      "result": "passed",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-20T07:56:53Z",
+      "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6286244378"
     },
     "install-linux-arm64": {
-      "result": "pending",
-      "tester": "",
-      "utc": "",
-      "evidence": ""
+      "result": "passed",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-20T07:48:15Z",
+      "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6286244378"
     },
     "clean-user": {
       "result": "pending",
