@@ -8,6 +8,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The `handoff` picker appears sooner when many recent sessions are not
+  uploaded yet. It now reads up to four of their transcripts at once to title
+  them, instead of one after another.
 - Transcript recovery of a session imported through a typed stage starts its new
   generation without that stage link, which stays with the frozen original. If
   the stage's release is unfinished, `recover` asks you to run `agent-archive sync`

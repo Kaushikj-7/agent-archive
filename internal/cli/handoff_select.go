@@ -359,6 +359,8 @@ type handoffPicker struct {
 	// be read into (its transcript read to title it): past it, such a
 	// session is left out, as a limit would leave it out. 0 for no bound.
 	readLimit int
+	// reads holds the label reads rows started ahead of its row loop.
+	reads *labelReads
 }
 
 // withContext preserves picker policy while using the current operation's context.
@@ -437,6 +439,11 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 		return (p.source == "local" && !row.registered) || (row.noPrompt && row.unbuilt == nil)
 	})
 	sort.SliceStable(all, func(i, j int) bool { return all[i].active.After(all[j].active) })
+	reader := p
+	p.reads = startLabelReads(p.ctx, func(ctx context.Context, reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool, error) {
+		return reader.withContext(ctx).readLocalMetadata(reg, active)
+	}, p.labelWants(all, limit))
+	defer p.reads.stop()
 	rows = make([]handoffPickerRow, 0, min(limit, len(all)))
 	attempts, unknown := 0, false
 	for i, row := range all {
@@ -513,6 +520,39 @@ func (p handoffPicker) admitLocalLabel(reg archive.SessionRegistration, active t
 	return true, false
 }
 
+// labelWants is the labels rows would read if every session it reads had a
+// prompt, in the order it would read them: the most it can need, and the
+// first ones it needs.
+func (p handoffPicker) labelWants(all []handoffPickerRow, limit int) []labelWant {
+	var wants []labelWant
+	accepted := 0
+	for _, row := range all {
+		if accepted == limit {
+			break
+		}
+		if row.unbuilt == nil {
+			accepted++
+			continue
+		}
+		if p.labelLimitReached(accepted) {
+			continue
+		}
+		key := pickerLocalLabelKey(*row.unbuilt, row.active, p.source)
+		if result, cached := p.localLabels[key]; cached {
+			if result.hasPrompt {
+				accepted++
+			}
+			continue
+		}
+		if p.searchLabelBudget > 0 && len(wants) >= p.searchLabelBudget {
+			break
+		}
+		wants = append(wants, labelWant{key: key, reg: *row.unbuilt, active: row.active})
+		accepted++
+	}
+	return wants
+}
+
 func (p handoffPicker) labelLimitReached(rows int) bool {
 	return p.readLimit > 0 && rows >= p.readLimit
 }
@@ -565,7 +605,18 @@ func (p handoffPicker) buildLocalMetadata(reg archive.SessionRegistration, activ
 	return metadata, ok
 }
 
+// buildLocalMetadataResult takes the read rows started for reg, if any, and
+// reads its transcript otherwise.
 func (p handoffPicker) buildLocalMetadataResult(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool, error) {
+	if p.reads != nil {
+		if metadata, ok, err, started := p.reads.take(pickerLocalLabelKey(reg, active, p.source)); started {
+			return metadata, ok, err
+		}
+	}
+	return p.readLocalMetadata(reg, active)
+}
+
+func (p handoffPicker) readLocalMetadata(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool, error) {
 	bundle, err := collector.ReadLocalBundle(p.ctx, p.home, reg, p.env.now().UTC(), p.env.cursorDatabase(), registryFor(p.env))
 	if err != nil {
 		return archive.Metadata{}, false, err
