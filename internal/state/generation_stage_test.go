@@ -171,7 +171,11 @@ func TestGenerationRecoveryRefusesUnsettledStageBeforeBuilding(t *testing.T) {
 			t.Parallel()
 			s, reg, at := settledStageGenerationFixture(t)
 			unsettle(t, s, reg)
-			assertStageRecoveryRefused(t, s, reg.ArchiveSessionID, at)
+			err := assertStageRecoveryRefused(t, s, reg.ArchiveSessionID, at)
+			// A rewritten registration fails its own integrity check first.
+			if name != "mismatched link" && !errors.Is(err, ErrGenerationStageUnsettled) {
+				t.Fatalf("refusal does not name the unsettled stage: %v", err)
+			}
 		})
 	}
 	t.Run("orphan link without typed proof", func(t *testing.T) {
@@ -184,11 +188,13 @@ func TestGenerationRecoveryRefusesUnsettledStageBeforeBuilding(t *testing.T) {
 		if err := config.WithPublicationComposition(s.Home(), func(config.PublicationCompositionGuard) error { return nil }); err != nil {
 			t.Fatal(err)
 		}
-		assertStageRecoveryRefused(t, s, reg.ArchiveSessionID, at)
+		if err := assertStageRecoveryRefused(t, s, reg.ArchiveSessionID, at); !errors.Is(err, ErrGenerationStageUnsettled) {
+			t.Fatalf("refusal does not name the unsettled stage: %v", err)
+		}
 	})
 }
 
-func assertStageRecoveryRefused(t *testing.T, s *Store, id string, at time.Time) {
+func assertStageRecoveryRefused(t *testing.T, s *Store, id string, at time.Time) error {
 	t.Helper()
 	before := stagedGenerationInventory(t, s.Home())
 	built := false
@@ -203,6 +209,7 @@ func assertStageRecoveryRefused(t *testing.T, s *Store, id string, at time.Time)
 	if after := stagedGenerationInventory(t, s.Home()); !reflect.DeepEqual(before, after) {
 		t.Fatalf("refused recovery changed durable state:\n%v\n%v", before, after)
 	}
+	return err
 }
 
 func setStagedReleasePhase(t *testing.T, s *Store, id string, phase stagedReleasePhase) {
@@ -349,5 +356,21 @@ func TestGenerationRecoveryReplaysEarlierJournalKeepingStageLink(t *testing.T) {
 	setStagedReleasePhase(t, s, reg.ArchiveSessionID, stagedReleaseLocalComplete)
 	if err := s.validateGenerationRecoveryReplay(t.Context(), reg.ArchiveSessionID, journal); err != nil {
 		t.Fatalf("earlier journal refused: %v", err)
+	}
+}
+
+// A cleared stage link relies on version 2's exact prior-selection digests.
+func TestGenerationRecoveryRefusesClearedStageInVersionOneJournal(t *testing.T) {
+	t.Parallel()
+	s, reg, at := settledStageGenerationFixture(t)
+	interruptStageGenerationAtJournal(t, s, reg, at)
+	journal := assertSettledStageJournal(t, s, reg)
+	journal.Version, journal.PriorMetadataSHA256, journal.PriorSourceSetSHA256 = 1, "", ""
+	if err := s.validateGenerationRecoveryReplay(t.Context(), reg.ArchiveSessionID, journal); !errors.Is(err, ErrSessionIndexRecoveryRequired) {
+		t.Fatalf("version 1 journal cleared a stage link: %v", err)
+	}
+	journal.Registration.StagedImportSHA256 = reg.StagedImportSHA256
+	if err := s.validateGenerationRecoveryReplay(t.Context(), reg.ArchiveSessionID, journal); err != nil {
+		t.Fatalf("version 1 journal keeping the link refused: %v", err)
 	}
 }

@@ -1051,6 +1051,11 @@ func (s *Store) validateGenerationRecoveryReplay(ctx context.Context, id string,
 	if err != nil || key != r.Key {
 		return ErrSessionIndexRecoveryRequired
 	}
+	// Only version 2 binds the exact prior selection that a cleared stage
+	// link relies on; version 1 keeps its original exact-admission replay.
+	if r.Version != 2 && old.StagedImportSHA256 != "" && r.Registration.StagedImportSHA256 == "" {
+		return ErrSessionIndexRecoveryRequired
+	}
 	validationErr := validateGenerationSuccessor(old, *r.Registration, *r.Pending, r.Next, r.Request.RequestedAt, s.resourceBudget, ctx)
 	if generationReadRefusal(validationErr) {
 		return validationErr
@@ -1077,8 +1082,15 @@ func (s *Store) validateGenerationRecoveryReplay(ctx context.Context, id string,
 	return nil
 }
 
-// errGenerationStageUnsettled keeps a predecessor's stage authority owed.
-var errGenerationStageUnsettled = fmt.Errorf("settle the predecessor's import stage with agent-archive sync before recovery: %w", ErrReadySelectionFrozen)
+// ErrGenerationStageUnsettled keeps a predecessor's stage authority owed;
+// agent-archive sync settles a releasable stage before recovery.
+var ErrGenerationStageUnsettled = fmt.Errorf("the session's import stage has not settled: %w", ErrReadySelectionFrozen)
+
+// CheckGenerationStage reports ErrGenerationStageUnsettled before recovery is
+// confirmed when the registration's stage link could not leave its successor.
+func (s *Store) CheckGenerationStage(ctx context.Context, reg archive.SessionRegistration) error {
+	return s.generationStageSettled(ctx, reg)
+}
 
 // generationStageSettled permits a successor without the predecessor's stage
 // link only when the committed typed selection names that exact stage and its
@@ -1089,7 +1101,7 @@ func (s *Store) generationStageSettled(ctx context.Context, old archive.SessionR
 		return nil
 	}
 	if old.HistoricalProject != nil || old.NativeImport != nil {
-		return errGenerationStageUnsettled
+		return ErrGenerationStageUnsettled
 	}
 	read, ctx, closeContext := s.withDurableContext(ctx)
 	defer closeContext()
@@ -1100,11 +1112,11 @@ func (s *Store) generationStageSettled(ctx context.Context, old archive.SessionR
 		return err
 	}
 	if published.state.LastPublished == nil || published.state.LastPublished.StagedProof() == nil {
-		return errGenerationStageUnsettled
+		return ErrGenerationStageUnsettled
 	}
 	proof := published.state.LastPublished.StagedProof()
 	if proof.StageSHA256 != old.StagedImportSHA256 {
-		return errGenerationStageUnsettled
+		return ErrGenerationStageUnsettled
 	}
 	var receipt stagedReleaseReceipt
 	var progress stagedReleaseProgress
@@ -1115,16 +1127,16 @@ func (s *Store) generationStageSettled(ctx context.Context, old archive.SessionR
 		if err := s.readStagedControl(id, control.name, control.value); generationReadRefusal(err) {
 			return err
 		} else if err != nil {
-			return errors.Join(errGenerationStageUnsettled, err)
+			return errors.Join(ErrGenerationStageUnsettled, err)
 		}
 	}
 	if !sameStagedSelection(receipt.Selection, *proof) || progress.Version != receipt.Version || progress.ReceiptSHA256 != receipt.SHA256 || progress.Phase != stagedReleaseReleased {
-		return errGenerationStageUnsettled
+		return ErrGenerationStageUnsettled
 	}
 	if _, present, err := s.loadPreparedImportStage(ctx, id); generationReadRefusal(err) {
 		return err
 	} else if err != nil || present {
-		return errors.Join(errGenerationStageUnsettled, err)
+		return errors.Join(ErrGenerationStageUnsettled, err)
 	}
 	return nil
 }

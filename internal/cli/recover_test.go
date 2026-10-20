@@ -503,3 +503,22 @@ func TestRecoverRefusesPauseDestinationAndSubagent(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoverUnsettledImportStagePrintsSyncCommand(t *testing.T) {
+	t.Parallel()
+	env, home, _, id := recoverFixture(t)
+	reg, _ := onlyRegistration(t, home)
+	reg.StagedImportSHA256 = strings.Repeat("a", 64)
+	data, err := json.Marshal(reg)
+	must(t, err)
+	must(t, os.WriteFile(filepath.Join(home, "registrations", id+".json"), data, 0600))
+	for _, args := range [][]string{{"recover", id}, {"recover", id, "--confirm"}} {
+		var out, errOut bytes.Buffer
+		if code := Run(args, nil, &out, &errOut, env); code != 1 || errOut.String() != "agent-archive: recover: the session's import stage has not settled. Run:\n  agent-archive sync\n" {
+			t.Fatalf("%v: %d %q", args, code, errOut.String())
+		}
+	}
+	if _, found, err := state.OpenReadOnly(home).GenerationSuccessor(id); err != nil || found {
+		t.Fatalf("unsettled stage started recovery: %v %v", found, err)
+	}
+}
