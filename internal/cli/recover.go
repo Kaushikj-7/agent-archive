@@ -26,14 +26,7 @@ func runRecoverCommand(args []string, stdout, stderr io.Writer, env Env) (code i
 	if id == "" {
 		return fs.usageError("a full local SESSION_ID is required")
 	}
-	fail := func(err error) int {
-		if errors.Is(err, state.ErrGenerationStageUnsettled) {
-			terminal.Printf(stderr, "agent-archive: recover: the session's import stage has not settled. Run:\n  agent-archive sync\n")
-			return 1
-		}
-		terminal.Printf(stderr, "agent-archive: recover: %v\n", err)
-		return 1
-	}
+	fail := func(err error) int { terminal.Print(stderr, recoverFailure(err)); return 1 }
 	home, err := env.readHome()
 	if err != nil {
 		return fail(err)
@@ -214,4 +207,12 @@ func confirmGenerationRecovery(home string, reg archive.SessionRegistration, cfg
 		return "", err
 	}
 	return next, nil
+}
+
+// recoverFailure puts the command that settles an import stage on its own line.
+func recoverFailure(err error) string {
+	if errors.Is(err, state.ErrGenerationStageUnsettled) {
+		return "agent-archive: recover: the session's import stage has not settled. Run:\n  agent-archive sync\n"
+	}
+	return fmt.Sprintf("agent-archive: recover: %v\n", err)
 }
