@@ -148,6 +148,9 @@ func (s *Store) beginGenerationRecoveryGuard(g config.DurableStorageGuard, id st
 			return "", err
 		}
 	}
+	if err := s.CheckGenerationStage(s.generationReadContext(), old); err != nil {
+		return "", err
+	}
 	next, err := local.ID()
 	if err != nil {
 		return "", err
@@ -155,6 +158,9 @@ func (s *Store) beginGenerationRecoveryGuard(g config.DurableStorageGuard, id st
 	reg, pending, err := build(old, next)
 	if err != nil {
 		return "", err
+	}
+	if old.StagedImportSHA256 != "" && reg.StagedImportSHA256 != "" {
+		return "", errors.New("recovery successor cannot inherit its predecessor's settled import stage")
 	}
 	if err := validateGenerationSuccessor(old, reg, pending, next, at, s.resourceBudget, s.generationReadContext()); err != nil {
 		return "", err
@@ -180,6 +186,9 @@ func (s *Store) beginGenerationRecoveryGuard(g config.DurableStorageGuard, id st
 	return next, s.resumeGenerationRecovery(g, s.generationReadContext(), id)
 }
 
+// validateGenerationSuccessor compares the successor with its original
+// admission. A successor may leave a stage link with its predecessor; callers
+// prove that stage settled. Earlier journals that kept the link still replay.
 func validateGenerationSuccessor(old, reg archive.SessionRegistration, pending PendingPublication, next string, at time.Time, budget *agentapi.NativeReadBudget, ctx context.Context) error {
 	if reg.ArchiveSessionID != next || reg.PreviousGenerationID != old.ArchiveSessionID || reg.CaptureFrozen || reg.Validate() != nil || pending.Bundle.ArchiveSessionID != next || pending.Bundle.PreviousGenerationID != old.ArchiveSessionID || !pending.Bundle.Capture.CapturedAt.Equal(at) {
 		return errors.New("invalid recovery successor")
@@ -187,6 +196,9 @@ func validateGenerationSuccessor(old, reg archive.SessionRegistration, pending P
 	preserved := reg
 	preserved.ArchiveSessionID = old.ArchiveSessionID
 	preserved.PreviousGenerationID = old.PreviousGenerationID
+	if reg.StagedImportSHA256 == "" {
+		preserved.StagedImportSHA256 = old.StagedImportSHA256
+	}
 	if !reflect.DeepEqual(preserved, old) {
 		return errors.New("recovery cannot alter original admission or provenance")
 	}
@@ -997,11 +1009,16 @@ func validGenerationRecoveryVersion(r generationRecovery) bool {
 func (s *Store) generationCommittedAuthority(ctx context.Context, reg archive.SessionRegistration) (string, string, error) {
 	read, ctx, closeContext := s.withDurableContext(ctx)
 	defer closeContext()
-	s = read
-	published, err := s.LoadPublishedStateContext(ctx, reg.ArchiveSessionID)
+	published, err := read.LoadPublishedStateContext(ctx, reg.ArchiveSessionID)
 	if err != nil {
 		return "", "", err
 	}
+	return read.generationPublishedAuthority(ctx, published)
+}
+
+// generationPublishedAuthority digests the exact prior selection of an
+// already loaded publication. The caller owns the durable read context.
+func (s *Store) generationPublishedAuthority(ctx context.Context, published *Published) (string, string, error) {
 	prior := published.PublicationPredecessor()
 	if prior.State != PredecessorPresent {
 		return "", "", errors.New("generation recovery requires exact prior publication authority")
@@ -1039,6 +1056,11 @@ func (s *Store) validateGenerationRecoveryReplay(ctx context.Context, id string,
 	if err != nil || key != r.Key {
 		return ErrSessionIndexRecoveryRequired
 	}
+	// Only version 2 binds the exact prior selection that a cleared stage
+	// link relies on; version 1 keeps its original exact-admission replay.
+	if r.Version != 2 && old.StagedImportSHA256 != "" && r.Registration.StagedImportSHA256 == "" {
+		return ErrSessionIndexRecoveryRequired
+	}
 	validationErr := validateGenerationSuccessor(old, *r.Registration, *r.Pending, r.Next, r.Request.RequestedAt, s.resourceBudget, ctx)
 	if generationReadRefusal(validationErr) {
 		return validationErr
@@ -1046,14 +1068,98 @@ func (s *Store) validateGenerationRecoveryReplay(ctx context.Context, id string,
 	if validationErr != nil {
 		return ErrSessionIndexRecoveryRequired
 	}
+	return s.validateGenerationPredecessorAuthority(ctx, id, old, r)
+}
+
+// validateGenerationPredecessorAuthority rechecks the predecessor's exact prior
+// selection (version 2) and a cleared stage link's release from one read of
+// its publication.
+func (s *Store) validateGenerationPredecessorAuthority(ctx context.Context, id string, old archive.SessionRegistration, r generationRecovery) error {
+	clearsStage := old.StagedImportSHA256 != "" && r.Registration.StagedImportSHA256 == ""
+	if r.Version != 2 && !clearsStage {
+		return nil
+	}
+	read, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
+	published, err := read.LoadPublishedStateContext(ctx, id)
+	if generationReadRefusal(err) {
+		return err
+	}
+	if err != nil {
+		return ErrSessionIndexRecoveryRequired
+	}
+	if clearsStage {
+		if err := read.generationStageSettled(ctx, old, published); generationReadRefusal(err) {
+			return err
+		} else if err != nil {
+			return ErrSessionIndexRecoveryRequired
+		}
+	}
 	if r.Version == 2 {
-		priorMetadata, priorSources, err := s.generationCommittedAuthority(ctx, old)
+		priorMetadata, priorSources, err := read.generationPublishedAuthority(ctx, published)
 		if generationReadRefusal(err) {
 			return err
 		}
 		if err != nil || priorMetadata != r.PriorMetadataSHA256 || priorSources != r.PriorSourceSetSHA256 {
 			return ErrSessionIndexRecoveryRequired
 		}
+	}
+	return nil
+}
+
+// ErrGenerationStageUnsettled reports a typed import stage whose release is
+// still owed; agent-archive sync completes it before recovery.
+var ErrGenerationStageUnsettled = errors.New("the session's import stage has not settled")
+
+// ErrGenerationStageUnsupported reports a stage link that no release can
+// settle: an untyped, mismatched, historical or native-import stage.
+var ErrGenerationStageUnsupported = errors.New("this session's import stage can never be released, so recovery does not support it; start a new session to continue")
+
+// CheckGenerationStage reports whether the registration's stage link could
+// leave a recovery successor. Callers check it before confirmation and again
+// under the recovery lock.
+func (s *Store) CheckGenerationStage(ctx context.Context, reg archive.SessionRegistration) error {
+	if reg.StagedImportSHA256 == "" {
+		return nil
+	}
+	read, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
+	published, err := read.LoadPublishedStateContext(ctx, reg.ArchiveSessionID)
+	if err != nil {
+		return err
+	}
+	return read.generationStageSettled(ctx, reg, published)
+}
+
+// generationStageSettled permits a successor without the predecessor's stage
+// link only when the committed typed selection names that exact stage and its
+// release durably completed. An unfinished release is owed; a link no release
+// can settle is unsupported; unreadable or inconsistent controls keep their
+// own error. Every refusal leaves the stage authority with the predecessor.
+func (s *Store) generationStageSettled(ctx context.Context, old archive.SessionRegistration, published *Published) error {
+	if old.StagedImportSHA256 == "" {
+		return nil
+	}
+	if old.HistoricalProject != nil || old.NativeImport != nil {
+		return ErrGenerationStageUnsupported
+	}
+	if published.state.LastPublished == nil || published.state.LastPublished.StagedProof() == nil {
+		return ErrGenerationStageUnsupported
+	}
+	release := stagedReleaseState{selection: published.state.LastPublished.StagedProof()}
+	if release.selection.StageSHA256 != old.StagedImportSHA256 {
+		return ErrGenerationStageUnsupported
+	}
+	if err := s.readStagedReleaseControls(old.ArchiveSessionID, &release); err != nil {
+		return err
+	}
+	if !release.progressFound || release.progress.Phase != stagedReleaseReleased {
+		return ErrGenerationStageUnsettled // Release has not begun or finished.
+	}
+	if _, present, err := s.loadPreparedImportStage(ctx, old.ArchiveSessionID); err != nil {
+		return err
+	} else if present {
+		return ErrGenerationStageUnsettled
 	}
 	return nil
 }

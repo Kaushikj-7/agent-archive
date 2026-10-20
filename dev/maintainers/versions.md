@@ -164,6 +164,13 @@ with mandatory exact prior-metadata and complete-source-set SHA-256 digests.
 Version 1 retains its original replay semantics; it is never upgraded by
 inferring missing authority. Earlier binaries refuse version 2 in replay and
 completed-successor routing. This does not allocate another configuration floor.
+A version 2 successor omits `staged_import_sha256` only when the predecessor's
+committed typed staged selection names that stage and its release progress is
+`released` with no prepared stage left; replay rechecks that release. Any other
+stage link refuses before a journal: an unfinished release as owed, and an
+untyped, mismatched, historical or native-import link as unsupported. Journals that kept the link replay
+unchanged, so the journal format and version do not change; earlier binaries
+refuse to replay a successor without the link.
 
 Recovery adds optional `previous_generation_id` provenance to source headers
 and metadata and a persistent `recovered_generation` coverage gap to successor

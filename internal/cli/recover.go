@@ -26,7 +26,7 @@ func runRecoverCommand(args []string, stdout, stderr io.Writer, env Env) (code i
 	if id == "" {
 		return fs.usageError("a full local SESSION_ID is required")
 	}
-	fail := func(err error) int { terminal.Printf(stderr, "agent-archive: recover: %v\n", err); return 1 }
+	fail := func(err error) int { terminal.Print(stderr, recoverFailure(err)); return 1 }
 	home, err := env.readHome()
 	if err != nil {
 		return fail(err)
@@ -144,8 +144,16 @@ func loadGenerationPreview(store *state.Store, cfg config.Config, id string, env
 	} else if outstanding.Upload {
 		return generationPreview{}, errors.New("settle pending publication with agent-archive sync before recovery")
 	}
-	closeLocal() // retained authority validation has no remaining data consumer
 	opts := collector.Options{CodexRollouts: lookup, ConfiguredCodexHomes: homes, NativeRoots: cfg.NativeRoots, Sources: registryFor(env), Parsers: parsersFor(env), MachineID: cfg.MachineID, SkillEvidence: cfg.EffectiveSkillEvidence(), RequireSkillUse: cfg.RequireSkillUse, RepoKey: env.repoKey}
+	// Refuse an unsupported source, then an unsettled import stage, before
+	// reading and filtering the native transcript.
+	if err := collector.CheckGenerationRecoverySource(reg, opts); err != nil {
+		return generationPreview{}, err
+	}
+	if err := store.CheckGenerationStage(context.Background(), reg); err != nil {
+		return generationPreview{}, err
+	}
+	closeLocal() // retained authority validation has no remaining data consumer
 	at := env.now().UTC()
 	builder, closeData, err := collector.PrepareGenerationRecovery(context.Background(), reg, at, opts)
 	if err != nil {
@@ -170,6 +178,10 @@ func confirmGenerationRecovery(home string, reg archive.SessionRegistration, cfg
 	}
 	store, closeLocal := store.WithReadBudget(context.Background(), budget)
 	defer closeLocal()
+	// Refuse a stage that changed since preview before saving any setting.
+	if err := store.CheckGenerationStage(context.Background(), reg); err != nil {
+		return "", err
+	}
 	// Fence downgrade writers before committing any generation transition. Setup
 	// writes use hooks.lock too; revalidation inside the builder closes the gap
 	// between this fence and state.BeginGenerationRecovery's own short hold.
@@ -204,4 +216,12 @@ func confirmGenerationRecovery(home string, reg archive.SessionRegistration, cfg
 		return "", err
 	}
 	return next, nil
+}
+
+// recoverFailure puts the command that settles an import stage on its own line.
+func recoverFailure(err error) string {
+	if errors.Is(err, state.ErrGenerationStageUnsettled) {
+		return "agent-archive: recover: the session's import stage has not settled. Run:\n  agent-archive sync\n"
+	}
+	return fmt.Sprintf("agent-archive: recover: %v\n", err)
 }
