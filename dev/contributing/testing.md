@@ -827,12 +827,13 @@ each check):
 - Capture: a synthetic Claude Code session through the hook command setup
   installed, published by the **timer's** collector (not `sync`) and read back
   with `list` and `show`; a hand-made Cursor database written the way a running
-  Cursor leaves it, imported by `backfill` through a copy under
-  `$XDG_CACHE_HOME/agent-archive/cursor-snapshots` (mode, `CACHEDIR.TAG`, the
-  copy removed, nothing under `/tmp` or the default cache).
+  Cursor leaves it, with a chat older than setup's 7-day import, imported by
+  `backfill` through a copy under `$XDG_CACHE_HOME/agent-archive/cursor-snapshots`
+  (mode, `CACHEDIR.TAG`, the copy removed, nothing under `/tmp` or the default
+  cache).
 - `status`: the XDG-drift warnings, and the machine-ID clone warning (quiet on
-  the original; after `/etc/machine-id` changes it warns in `status`, `--json`
-  and `setup`, and `setup` keeps the recorded `host_id`; a machine ID
+  the original; after `/etc/machine-id` changes it warns in `status --issues`,
+  `--json` and `setup`, and `setup` keeps the recorded `host_id`; a machine ID
   bind-mounted over `/etc/machine-id` is not read, so it stays quiet).
 - `setup --refresh` after the binary moved, and `uninstall`.
 - The enable link on every path that removes a job: `uninstall`;
@@ -893,6 +894,17 @@ commit, systemd, architecture, result):
   Local evidence (not committed):
   `/private/tmp/agent-archive-linux-acceptance-20261001-61d068b-retry.log` and
   `/private/tmp/agent-archive-linux-acceptance-20261001-61d068b-summary.txt`.
+- 2026-10-20, v0.2.2 product (`8764d745`) with the harness updated for the
+  product's changes since 2026-10-01 (compact `config.json`, the `status`
+  overview with warnings under `--issues` and app rows under `--verbose`, the
+  new `list` layout, and setup's 7-day import, which now took the Cursor chat
+  before `backfill` could), Ubuntu 24.04.5 LTS, systemd 255
+  (255.4-1ubuntu8.18), linux/arm64 (Docker in the colima `levenshtein` VM):
+  **93 passed, 0 failed**, 167 seconds. Before the update the same product
+  failed 12 checks, all of them the harness's; none was a product defect. The
+  compact `config.json` had also made section 6's kept-`host_id` check pass
+  on an empty match; it now checks the ID was read (one of the two new checks;
+  the other names the project `list` shows).
 
 When a check fails, read it from the top (later sections build on earlier ones),
 and diagnose before changing a check: a failure is a finding about the product
