@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/catalog"
 )
 
 // Each label read filters a whole transcript, so the picker reads several at
@@ -86,7 +87,46 @@ func TestHandoffPickerLabelWantsStopsWhereRowsWould(t *testing.T) {
 		{"read limit", handoffPicker{source: "auto", readLimit: 2}, 10, []string{"a"}},
 		{"search budget", handoffPicker{source: "auto", searchLabelBudget: 2}, 10, []string{"a", "cached"}},
 	} {
-		if got := ids(tc.picker.labelWants(all, tc.limit)); !slices.Equal(got, tc.want) {
+		if got := ids(tc.picker.labelWants(all, tc.limit, 0, 0)); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: wants %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	// After "a" turns out to have no prompt, rows plans again from the next
+	// row, with nothing accepted and one search attempt spent.
+	if got := ids((handoffPicker{source: "auto"}).labelWants(all[1:], 2, 0, 1)); !slices.Equal(got, []string{"cached"}) {
+		t.Errorf("replan after a promptless row: %q", got)
+	}
+	if got := ids((handoffPicker{source: "auto", searchLabelBudget: 2}).labelWants(all[1:], 10, 0, 1)); !slices.Equal(got, []string{"cached"}) {
+		t.Errorf("replan within the search budget: %q", got)
+	}
+}
+
+func TestPickerModelLabelWantsStopsWhereArchiveOrderIsUnknown(t *testing.T) {
+	local := func(id string, at int64) pickerCandidate {
+		reg := &archive.SessionRegistration{ArchiveSessionID: id, Harness: archive.Harness{Name: "codex"}}
+		return pickerCandidate{row: handoffPickerRow{active: time.Unix(at, 0), unbuilt: reg}}
+	}
+	remote := catalog.PickerItem{Row: catalog.PickerRow{Harness: "codex", SessionID: "remote", Activity: time.Unix(850, 0)}}
+	ids := func(wants []labelWant) (out []string) {
+		for _, w := range wants {
+			out = append(out, w.reg.ArchiveSessionID)
+		}
+		return out
+	}
+	m := &pickerModel{source: "auto", labels: map[localLabelKey]localLabelResult{}}
+	for _, tc := range []struct {
+		name         string
+		remoteDone   bool
+		need, budget int
+		want         []string
+	}{
+		{"next archive page unread", false, 10, 10, []string{"new"}},
+		{"archive read to the end", true, 10, 10, []string{"new", "mid", "old"}},
+		{"budget", true, 10, 2, []string{"new", "mid"}},
+		{"buffered row fills the page", true, 2, 10, []string{"new"}},
+	} {
+		st := &pickerScopeState{locals: []pickerCandidate{local("new", 900), local("mid", 800), local("old", 600)}, buffer: []catalog.PickerItem{remote}, remoteDone: tc.remoteDone}
+		if got := ids(m.labelWants(st, tc.need, tc.budget)); !slices.Equal(got, tc.want) {
 			t.Errorf("%s: wants %q, want %q", tc.name, got, tc.want)
 		}
 	}

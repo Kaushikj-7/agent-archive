@@ -74,8 +74,10 @@ type pickerModel struct {
 	pageSize        int
 	labelBudget     int
 	states          map[string]*pickerScopeState
-	// reads holds the label reads Older started ahead of its row loop.
-	reads *labelReads
+	// reads holds the label reads Older started ahead of its row loop, and
+	// readTarget the rows that Older is filling.
+	reads      *labelReads
+	readTarget int
 }
 
 func pickerScopeQuery(s sessionScope, harness string, limit int) (catalog.PickerQuery, error) {
@@ -291,8 +293,7 @@ func (m *pickerModel) Older(ctx context.Context, s sessionScope) (modelPickerVie
 	st.view.Incomplete = false
 	target := len(st.view.Rows) + m.pageSize
 	attempts, pages := 0, 0
-	// One more than the page: proveMore looks one accepted row ahead.
-	m.reads = startLabelReads(ctx, m.label, m.labelWants(st, target-len(st.view.Rows)+1))
+	m.reads, m.readTarget = newLabelReads(ctx, m.label), target
 	defer func() {
 		m.reads.stop()
 		m.reads = nil
@@ -445,6 +446,8 @@ func (m *pickerModel) materializeLocal(ctx context.Context, st *pickerScopeState
 			st.view.Incomplete = true
 			return c, false, nil
 		}
+		// One more than the target: proveMore looks one accepted row ahead.
+		m.reads.ensure(m.labelWants(st, m.readTarget-len(st.view.Rows)+1, m.labelBudget-*attempts))
 		*attempts++
 		st.view.LabelAttempts++
 		var labelErr error
@@ -476,10 +479,12 @@ func (m *pickerModel) materializeLocal(ctx context.Context, st *pickerScopeState
 	return c, true, nil
 }
 
-// labelWants is the labels Older would read for need more rows if every
-// session it reads had a prompt, in the order it would read them. Archived
-// rows already buffered fill the page where they sort first.
-func (m *pickerModel) labelWants(st *pickerScopeState, need int) []labelWant {
+// labelWants is the labels Older would read, from the next local candidate
+// on, for need more rows within budget reads, if every session it reads had
+// a prompt, in the order it would read them. Archived rows already buffered
+// fill the page where they sort first; past them, while more archive pages
+// remain unread, the order is unknown and nothing more is planned.
+func (m *pickerModel) labelWants(st *pickerScopeState, need, budget int) []labelWant {
 	var wants []labelWant
 	buffer := st.buffer
 	for _, c := range st.locals[st.localPos:] {
@@ -487,7 +492,7 @@ func (m *pickerModel) labelWants(st *pickerScopeState, need int) []labelWant {
 			buffer = buffer[1:]
 			need--
 		}
-		if need <= 0 || len(wants) >= m.labelBudget {
+		if need <= 0 || len(wants) >= budget || (len(buffer) == 0 && !st.remoteDone) {
 			break
 		}
 		if c.row.unbuilt == nil {

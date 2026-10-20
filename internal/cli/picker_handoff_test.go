@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -274,12 +275,10 @@ func TestBoundedHandoffSearchPreservesArchiveMatchesWhenLocalLabelsFail(t *testi
 	}
 	now := f.env.now()
 	env := f.env
-	removed := false
+	// Label reads run concurrently, so the first clock reading removes the file once.
+	var remove sync.Once
 	env.Now = func() time.Time {
-		if !removed {
-			must(t, os.Remove(path))
-			removed = true
-		}
+		remove.Do(func() { must(t, os.Remove(path)) })
 		return now
 	}
 	var readErr error

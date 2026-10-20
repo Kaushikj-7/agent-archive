@@ -440,12 +440,13 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 	})
 	sort.SliceStable(all, func(i, j int) bool { return all[i].active.After(all[j].active) })
 	reader := p
-	p.reads = startLabelReads(p.ctx, func(ctx context.Context, reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool, error) {
+	p.reads = newLabelReads(p.ctx, func(ctx context.Context, reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool, error) {
 		return reader.withContext(ctx).readLocalMetadata(reg, active)
-	}, p.labelWants(all, limit))
+	})
 	defer p.reads.stop()
 	rows = make([]handoffPickerRow, 0, min(limit, len(all)))
 	attempts, unknown := 0, false
+	p.reads.ensure(p.labelWants(all, limit, 0, 0))
 	for i, row := range all {
 		if len(rows) == limit {
 			// Every archived session left over can be offered; one not
@@ -468,6 +469,8 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 			}
 			unknown = unknown || labelUnknown
 			if !result.hasPrompt {
+				// This row is not shown, so one more past the planned reads is needed.
+				p.reads.ensure(p.labelWants(all[i+1:], limit, len(rows), attempts))
 				continue
 			}
 			row.metadata, row.unbuilt = result.metadata, nil
@@ -520,12 +523,11 @@ func (p handoffPicker) admitLocalLabel(reg archive.SessionRegistration, active t
 	return true, false
 }
 
-// labelWants is the labels rows would read if every session it reads had a
-// prompt, in the order it would read them: the most it can need, and the
-// first ones it needs.
-func (p handoffPicker) labelWants(all []handoffPickerRow, limit int) []labelWant {
+// labelWants is the labels rows would read from all, with accepted rows
+// already taken and attempts of the search budget spent, if every session it
+// reads had a prompt, in the order it would read them.
+func (p handoffPicker) labelWants(all []handoffPickerRow, limit, accepted, attempts int) []labelWant {
 	var wants []labelWant
-	accepted := 0
 	for _, row := range all {
 		if accepted == limit {
 			break
@@ -544,7 +546,7 @@ func (p handoffPicker) labelWants(all []handoffPickerRow, limit int) []labelWant
 			}
 			continue
 		}
-		if p.searchLabelBudget > 0 && len(wants) >= p.searchLabelBudget {
+		if p.searchLabelBudget > 0 && attempts+len(wants) >= p.searchLabelBudget {
 			break
 		}
 		wants = append(wants, labelWant{key: key, reg: *row.unbuilt, active: row.active})

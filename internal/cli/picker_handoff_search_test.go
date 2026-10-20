@@ -145,8 +145,12 @@ func TestBoundedHandoffAsyncSearchKeepsUnknownLabelsAndReportsActivityErrors(t *
 	}
 	env := f.env
 	now := env.now()
+	// Label reads run concurrently, so each one's clock reading is counted under a lock.
+	var mu sync.Mutex
 	attempts := 0
 	env.Now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
 		attempts++
 		if attempts == 1 {
 			must(t, os.Remove(filepath.Join(f.project, "native-new.jsonl")))
