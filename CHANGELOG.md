@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Uploads no longer stop for good after about 500 sessions. Each session's
+  local record of its last upload counted against the 1 GiB limit on pending
+  local work, so once those records filled it every later session failed with
+  "durable publication capacity exhausted" and `list` showed nothing newer.
+  The records now count only for uploaded source bytes they still keep, and
+  sessions stuck this way upload on the next pass.
 - Transcript recovery of a session imported through a typed stage starts its new
   generation without that stage link, which stays with the frozen original. If
   the stage's release is unfinished, `recover` asks you to run `agent-archive sync`

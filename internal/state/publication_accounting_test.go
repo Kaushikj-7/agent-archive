@@ -185,7 +185,7 @@ func TestPublicationAccountingDetectsSameStampMutation(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		mode, e := q.publishedProtocol(t.Context(), filepath.Join("published", p.Bundle.ArchiveSessionID+".json"), info)
+		mode, _, e := q.publishedProtocol(t.Context(), filepath.Join("published", p.Bundle.ArchiveSessionID+".json"), info)
 		if mode != 0 || !errors.Is(e, ErrDurableStorageRecovery) {
 			t.Fatalf("changed bytes reused: %d %v", mode, e)
 		}
@@ -338,7 +338,7 @@ func TestPublicationAccountingConfigBytesAndReplacementInvalidateReuse(t *testin
 				if err != nil {
 					return err
 				}
-				mode, reused, err := q.accountingClassification(path, info)
+				mode, _, reused, err := q.accountingClassification(path, info)
 				if err != nil || reused || mode != 0 {
 					t.Fatal("changed observation reused accounting", mode, reused, err)
 				}
@@ -535,7 +535,7 @@ func TestPublicationAccountingRootReplacementInvalidatesReuse(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		mode, reused, err := q.accountingClassification(path, info)
+		mode, _, reused, err := q.accountingClassification(path, info)
 		if err != nil || mode != 0 || reused {
 			t.Fatal("replaced root reused fact", mode, reused, err)
 		}
