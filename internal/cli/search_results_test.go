@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -68,6 +69,12 @@ func searchProjectsFixture(t *testing.T) Env {
 		verified, e := archive.BuildMetadataWithAnalysis(bundle, analysis, parseErr, "synthetic", m.CapturedAt, m.CapturedAt, archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}, archive.ParserInfo{Version: parser.Version()})
 		must(t, e)
 		verified.Name, verified.ProjectName, verified.RepoKey = m.Name, m.ProjectName, m.RepoKey
+		// Published too, so a passage reads from its exact source.
+		metadataKey, e := archive.MetadataObjectKey(verified.Harness.Name, verified.SessionID)
+		must(t, e)
+		encoded, e := json.Marshal(verified)
+		must(t, e)
+		must(t, objects.Put(t.Context(), metadataKey, encoded))
 		must(t, index.Observe(t.Context(), verified, parsersFor(env), env.now(), 0))
 		progress, e := index.Run(t.Context(), objects, parsersFor(env), env.now(), search.Budget{})
 		if e != nil || progress.Committed != 1 {
@@ -295,5 +302,59 @@ func TestSearchPassageWindowShowsTheFirstMatch(t *testing.T) {
 	}
 	if long := passageWindow("x", strings.Repeat("界", 40), 10, 3, textStyle{}); len(long) != 3 || visibleWidth(long[0]) > 10 {
 		t.Fatalf("long word not split to the width: %q", long)
+	}
+}
+
+func TestSearchPassageWindowKeepsAMatchThatEndsItsLastLine(t *testing.T) {
+	// The match ends the third line exactly and the passage goes on, so the
+	// "…" that marks the cut would take its place.
+	style := textStyle{color: true}
+	text := strings.Repeat("1 ", 26) + "go on and on"
+	lines := passageWindow("go", text, 18, 3, style)
+	if !strings.Contains(strings.Join(lines, "\n"), style.match("go")) {
+		t.Fatalf("window hides the match: %q", lines)
+	}
+	for _, line := range lines {
+		if visibleWidth(line) > 18 {
+			t.Fatalf("line wider than 18: %q", line)
+		}
+	}
+}
+
+func TestSearchResultRowsEscapeTheirTitles(t *testing.T) {
+	hit := search.Hit{SessionID: "0a13656b25d0", Harness: "claude", Title: "Fix \x1b[2Jthe \u202ebug\u009b31m now", Role: "user", Snippet: "the bug"}
+	s := &contentSearchBrowser{opts: contentSearchOptions{query: search.Query{Text: "bug"}}, hits: []search.Hit{hit}, pages: 1, choices: rowChoices(nil, listFormatOptions{})}
+	s.installRows()
+	rows := s.choices.shown().rows
+	// With and without keys: the key browser's rows, and the rows read by
+	// lines with their passages under them.
+	for _, cursor := range []bool{true, false} {
+		format := listFormatOptions{Search: true, Numbered: true, Cursor: cursor, Width: 100}
+		var out strings.Builder
+		must(t, printSessionGroups(&out, sessionTableGroups(rows, format), format))
+		if strings.ContainsAny(out.String(), "\x1b\u202e\u009b") || !strings.Contains(out.String(), "Fix [2Jthe bug31m now") {
+			t.Fatalf("cursor %v: unsafe title row: %q", cursor, out.String())
+		}
+	}
+}
+
+func TestSearchEnterOpensTheMatchTheStripShows(t *testing.T) {
+	env := searchProjectsFixture(t)
+	screens := searchScreens(t, env, newFakeKeys("\x1b[B", "n", "\r", "b", "q"), "", "read performance")
+	passage := lastScreenWith(t, screens, "Reference: message")
+	if !strings.Contains(passage, "Reference: message 4 ") || !strings.Contains(passage, "[selected · assistant]\nDone: read performance notes are in dev/bench.") {
+		t.Fatalf("Enter did not open the strip's second match:\n%s", passage)
+	}
+}
+
+func TestSearchHeadingCountsAPartialRanking(t *testing.T) {
+	hits := []search.Hit{{SessionID: "a", Harness: "codex"}, {SessionID: "b", Harness: "codex"}}
+	s := &contentSearchBrowser{opts: contentSearchOptions{query: search.Query{Text: "needle"}}, hits: hits, page: search.Page{Next: "more"}, pages: 1}
+	if heading := s.heading(true); !strings.HasPrefix(heading, `All projects · "needle" · 2+ sessions, best match first`) {
+		t.Fatalf("heading: %q", heading)
+	}
+	s.page.Next = ""
+	if heading := s.heading(true); !strings.HasPrefix(heading, `All projects · "needle" · 2 sessions, best match first`) {
+		t.Fatalf("heading: %q", heading)
 	}
 }

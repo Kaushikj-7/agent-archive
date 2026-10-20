@@ -172,7 +172,8 @@ func renderCells(cells []passageCell, style textStyle) string {
 // passageWindow is at most lines lines of text, as one paragraph wrapped to
 // width, that show its first matched term: from the start when it is that
 // close, else from the line before it, led by "…". A window that stops before
-// the end of the text ends with "…".
+// the end of the text ends with "…"; when that would cover the match, the
+// window starts at the match's line instead.
 func passageWindow(query, text string, width, lines int, style textStyle) []string {
 	if lines <= 0 {
 		return nil
@@ -189,15 +190,27 @@ func passageWindow(query, text string, width, lines int, style textStyle) []stri
 			break
 		}
 	}
+	from := 0
 	if first >= lines {
-		from := wrapped[first-1].start
+		from = first - 1
+	}
+	out, shown := windowFrom(cells, wrapped, from, width, lines, style)
+	if !shown && from < first {
+		out, _ = windowFrom(cells, wrapped, first, width, lines, style)
+	}
+	return out
+}
+
+// windowFrom is passageWindow's lines starting at the wrapped line from, led
+// by "…" past the first, and whether they show a matched cell.
+func windowFrom(cells []passageCell, wrapped []cellRange, from, width, lines int, style textStyle) (out []string, shown bool) {
+	if from > 0 {
 		lead := []passageCell{{text: "…", width: 1}, {text: " ", width: 1, space: true}}
-		cells = append(lead, cells[from:]...)
+		cells = append(lead, cells[wrapped[from].start:]...)
 		wrapped = wrapCells(cells, width)
 	}
 	cut := len(wrapped) > lines
 	wrapped = wrapped[:min(len(wrapped), lines)]
-	var out []string
 	for i, l := range wrapped {
 		line := cells[l.start:l.end]
 		if cut && i == len(wrapped)-1 {
@@ -205,15 +218,16 @@ func passageWindow(query, text string, width, lines int, style textStyle) []stri
 			for _, c := range line {
 				used += c.width
 			}
-			for len(line) > 0 && used+2 > width {
+			for len(line) > 0 && (used+2 > width || line[len(line)-1].space) {
 				used -= line[len(line)-1].width
 				line = line[:len(line)-1]
 			}
 			line = append(append([]passageCell{}, line...), passageCell{text: " ", width: 1, space: true}, passageCell{text: "…", width: 1})
 		}
+		shown = shown || hasHit(line)
 		out = append(out, renderCells(line, style))
 	}
-	return out
+	return out, shown
 }
 
 func hasHit(cells []passageCell) bool {
