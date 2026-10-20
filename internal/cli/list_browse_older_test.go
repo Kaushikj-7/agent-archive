@@ -292,11 +292,12 @@ func TestKeyPickerContentSearchLoadsNextResultsPastTheEnd(t *testing.T) {
 		}
 		return true, err
 	}
+	// Its heading and matching passage leave fewer lines for rows.
 	positions, rows, screens := olderScreens(t, &sessionPicker{contentSearch: cs}, table.choices, "\x1b[F", "\x1b[B", "\x1b[F", "\x1b[B", "q")
 	checkOlderScreens(t, positions, rows,
-		[]string{"1–12 of 20+", "9–20 of 20+", "10–21 of 30", "19–30 of 30", "19–30 of 30"},
+		[]string{"1–7 of 20+", "14–20 of 20+", "15–21 of 30", "24–30 of 30", "24–30 of 30"},
 		[]int{1, 20, 21, 30, 30}, screens)
-	if table.loads != 1 || !strings.Contains(statusLine(screens[0]), "r rerun") || strings.Contains(screens[0], "o next results") {
+	if table.loads != 1 || !strings.Contains(statusLine(screens[0]), "n/p match") || strings.Contains(screens[0], "o next results") {
 		t.Fatalf("%d loads:\n%s", table.loads, screens[0])
 	}
 	// A load that brings no next results says so.

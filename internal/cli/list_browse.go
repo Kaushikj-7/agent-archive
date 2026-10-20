@@ -976,7 +976,7 @@ func (l *sessionPicker) tableLines(groups []sessionTableGroup, format listFormat
 	l.rendered += pg.end - pg.start
 	page := pageSessionGroups(groups, pg)
 	// A search result read by lines has its passage under it.
-	if width > 0 && !format.Verbose && !(format.Search && !format.Cursor) {
+	if width > 0 && !format.Verbose && (!format.Search || format.Cursor) {
 		return sessionLines(page)
 	}
 	var buf bytes.Buffer

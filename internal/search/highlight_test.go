@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 	"testing"
@@ -50,8 +51,9 @@ func spanTexts(text string, spans []Span) []string {
 
 func TestMatchSpansFollowIndexTokens(t *testing.T) {
 	for _, tc := range []struct {
-		query, text string
-		want        []string
+		query string
+		text  string
+		want  []string
 	}{
 		{"read performance", "Improve the READ performance; reading is slow.", []string{"READ", "performance"}},
 		{"perf*", "Performance, perfect, and superperf.", []string{"Performance", "perfect"}},
@@ -84,30 +86,31 @@ func TestMatchSpansJoinOverlaps(t *testing.T) {
 // tests compare MatchSpans with what the index itself matches. ok is false
 // when the index refuses the expression (a NUL ends SQLite's text early),
 // which a search reports as an error rather than highlighting anything.
-func ftsMatches(t testing.TB) func(query, text string) (matched, ok bool) {
-	t.Helper()
+func ftsMatches(tb testing.TB) func(query, text string) (matched, ok bool) {
+	tb.Helper()
+	ctx := context.Background()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = db.Close() })
-	if _, err = db.Exec("CREATE VIRTUAL TABLE f USING fts5(body,tokenize='unicode61 remove_diacritics 0')"); err != nil {
-		t.Fatal(err)
+	tb.Cleanup(func() { _ = db.Close() })
+	if _, err = db.ExecContext(ctx, "CREATE VIRTUAL TABLE f USING fts5(body,tokenize='unicode61 remove_diacritics 0')"); err != nil {
+		tb.Fatal(err)
 	}
 	return func(query, text string) (bool, bool) {
 		expression, err := MatchExpression(query)
 		if err != nil {
 			return false, true
 		}
-		if _, err = db.Exec("DELETE FROM f"); err != nil {
+		if _, err = db.ExecContext(ctx, "DELETE FROM f"); err != nil {
 			return false, false
 		}
-		if _, err = db.Exec("INSERT INTO f(rowid,body) VALUES(1,?)", text); err != nil {
+		if _, err = db.ExecContext(ctx, "INSERT INTO f(rowid,body) VALUES(1,?)", text); err != nil {
 			return false, false
 		}
 		var n int
-		if err = db.QueryRow("SELECT count(*) FROM f WHERE f MATCH ?", expression).Scan(&n); err != nil {
+		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM f WHERE f MATCH ?", expression).Scan(&n); err != nil {
 			return false, false
 		}
 		return n > 0, true
@@ -116,7 +119,7 @@ func ftsMatches(t testing.TB) func(query, text string) (matched, ok bool) {
 
 // everyTermSpans reports whether each term of query has a span of its own in
 // text: what an ANDed index match of the whole query needs.
-func everyTermSpans(t testing.TB, query, text string) bool {
+func everyTermSpans(query, text string) bool {
 	terms, err := parseTerms(query)
 	if err != nil {
 		return false
@@ -152,7 +155,7 @@ func TestMatchSpansAgreeWithTheIndex(t *testing.T) {
 			if !ok {
 				t.Fatalf("index refused %q", query)
 			}
-			if got := everyTermSpans(t, query, text); got != want {
+			if got := everyTermSpans(query, text); got != want {
 				t.Errorf("query %q text %q: spans %v, index %v", query, text, got, want)
 			}
 		}
@@ -173,10 +176,10 @@ func TestTokenCharactersMatchTheIndex(t *testing.T) {
 	}
 	db.SetMaxOpenConns(1)
 	defer func() { _ = db.Close() }()
-	if _, err = db.Exec("CREATE VIRTUAL TABLE f USING fts5(body,tokenize='unicode61 remove_diacritics 0')"); err != nil {
+	if _, err = db.ExecContext(t.Context(), "CREATE VIRTUAL TABLE f USING fts5(body,tokenize='unicode61 remove_diacritics 0')"); err != nil {
 		t.Fatal(err)
 	}
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,17 +190,18 @@ func TestTokenCharactersMatchTheIndex(t *testing.T) {
 		}
 		runes = append(runes, r)
 		// "qz" alone matches only where r separates two tokens.
-		if _, err = tx.Exec("INSERT INTO f(rowid,body) VALUES(?,?)", int64(r), "qz"+string(r)+"qz"); err != nil {
+		if _, err = tx.ExecContext(t.Context(), "INSERT INTO f(rowid,body) VALUES(?,?)", int64(r), "qz"+string(r)+"qz"); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := db.Query("SELECT rowid FROM f WHERE f MATCH 'qz'")
+	rows, err := db.QueryContext(t.Context(), "SELECT rowid FROM f WHERE f MATCH 'qz'")
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = rows.Close() }()
 	separates := map[rune]bool{}
 	for rows.Next() {
 		var id int64
@@ -241,7 +245,7 @@ func FuzzMatchSpansAgreeWithTheIndex(f *testing.F) {
 		if !ok {
 			return
 		}
-		if got := everyTermSpans(t, query, text); got != want {
+		if got := everyTermSpans(query, text); got != want {
 			t.Fatalf("query %q text %q: spans %v, index %v", query, text, got, want)
 		}
 	})

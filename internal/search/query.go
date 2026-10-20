@@ -245,8 +245,9 @@ func phraseAt(words, want []token, prefix bool) bool {
 // token is one token of a text as the index's unicode61 tokenizer splits it:
 // its bytes [start, end) and its case-folded form.
 type token struct {
-	start, end int
-	folded     string
+	start  int
+	end    int
+	folded string
 }
 
 // tokenize splits text into the index's tokens: maximal runs of token
