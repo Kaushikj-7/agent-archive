@@ -19,17 +19,27 @@ func (s textStyle) match(text string) string { return s.paint("1;33", text) }
 // "you" for the person, the agent's short name ("claude") for its replies,
 // and "title" for a match in the session's title.
 func searchRole(role, harness string) string {
-	switch role {
-	case "user":
+	switch passageRole(role) {
+	case passageUser:
 		return "you"
-	case "assistant":
+	case passageAssistant:
 		_, name := agentLabel(harness)
 		return strings.ToLower(name)
-	case "":
+	case passageTitle:
 		return "title"
 	}
 	return archive.DisplayLine(role)
 }
+
+// passageRole is the role the index records for a passage.
+type passageRole string
+
+const (
+	passageUser      passageRole = "user"
+	passageAssistant passageRole = "assistant"
+	// passageTitle is a title match's: it has no message.
+	passageTitle passageRole = ""
+)
 
 // passageCell is one character of a passage as a terminal shows it: made
 // safe to print (archive.DisplayLine), its width, and whether it is part of a
@@ -83,7 +93,10 @@ func passageCells(text string, spans []search.Span, keepLines bool) []passageCel
 }
 
 // cellRange is the cells [start, end) of one wrapped line.
-type cellRange struct{ start, end int }
+type cellRange struct {
+	start int
+	end   int
+}
 
 // wrapCells breaks cells into lines at most width columns wide: at spaces,
 // which a break drops, at line breaks, and inside a word too long for a line
@@ -92,7 +105,7 @@ func wrapCells(cells []passageCell, width int) []cellRange {
 	var lines []cellRange
 	start, used := 0, 0
 	lastSpace := -1
-	for i := 0; i < len(cells); i++ {
+	for i := range cells {
 		c := cells[i]
 		switch {
 		case c.newline:

@@ -156,16 +156,16 @@ When stdin and stdout are terminals, a content query opens the same session
 browser as `list` and `show`. JSON and piped output stay bounded ordinary output.
 
 ```text
-All projects · "read performance" · 2 sessions, best match first · Tab agent-archive only
+All projects · "read performance" · 2 sessions, best match first · Tab webapp only
 Indexed 105 of 211 · catching up
 
-▸ 1  ●  docs: propose sublinear read paths for list/show/handoff   agent-archive   Oct 16
+▸ 1  ●  docs: propose sublinear read paths for list/show/handoff   webapp          Oct 16
   2  ●  Picker slowness on large buckets                           monitoring-cli  Oct 10
 ────────────────────────────────────────────────────────────────────────────────
 you › match 1 of 3 in this session
 The list and show commands feel slow on the big bucket. Can you check the read
 performance of our archive commands?
-● Claude Code · agent-archive · Oct 16, 09:12 · id 0a13656b
+● Claude Code · webapp · Oct 16, 09:12 · id 0a13656b
 ────────────────────────────────────────────────────────────────────────────────
 ↑↓ move   Enter read   n/p match   / new search   Tab scope   h hand off   q quit   1–2 of 2
 ```
