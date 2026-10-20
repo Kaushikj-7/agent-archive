@@ -13,8 +13,11 @@ import (
 // relevance order. Cursors are tied to its generation and qualified session.
 type MatchPage struct {
 	References []Reference
-	Next       string
-	Previous   string
+	// Passages are the references' indexed passages, in the same order: the
+	// role and the text that matched, read from the index alone.
+	Passages []Passage
+	Next     string
+	Previous string
 }
 
 type matchCursor struct {
@@ -31,7 +34,7 @@ type matchCursor struct {
 // archive objects. Title matches are deliberately excluded. A generation change
 // requires an explicit search restart, including for the first match page.
 func (s *Store) Matches(ctx context.Context, q Query, harness, session string, generation int64, cursor string) (MatchPage, error) {
-	page := MatchPage{References: []Reference{}}
+	page := MatchPage{References: []Reference{}, Passages: []Passage{}}
 	expression, err := MatchExpression(q.Text)
 	if err != nil {
 		return page, err
@@ -96,7 +99,8 @@ func (s *Store) Matches(ctx context.Context, q Query, harness, session string, g
 	}
 	for _, v := range selectedRows {
 		var data []byte
-		if err = tx.QueryRowContext(ctx, "SELECT reference FROM search_passages WHERE id=?", v.pid).Scan(&data); err != nil {
+		var role, text string
+		if err = tx.QueryRowContext(ctx, "SELECT p.reference,p.role,f.body FROM search_passages p JOIN search_fts f ON f.rowid=p.id WHERE p.id=?", v.pid).Scan(&data, &role, &text); err != nil {
 			return page, err
 		}
 		var ref Reference
@@ -104,6 +108,7 @@ func (s *Store) Matches(ctx context.Context, q Query, harness, session string, g
 			return page, err
 		}
 		page.References = append(page.References, ref)
+		page.Passages = append(page.Passages, Passage{Reference: ref, Role: role, Text: text})
 	}
 	encode := func(v selected, reverse bool) string {
 		b, _ := json.Marshal(matchCursor{generation, identity, key, v.score, v.role, v.pid, reverse})

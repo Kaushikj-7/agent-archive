@@ -152,11 +152,39 @@ as `setup --yes --search-indexing on|off`, so search does not ask again; change
 it later with that command. Turning indexing on runs one bounded pass before
 the query. Declining prints the manual refresh command.
 
-When stdin and stdout are terminals, a content query opens the shared session
-browser. JSON and piped output stay bounded ordinary output. The original FTS
-query remains fixed, including phrase spacing. Metadata `/` filtering is disabled
-in this mode. Results preserve engine relevance and the requested scope; no
-project regrouping or automatic scope widening occurs.
+When stdin and stdout are terminals, a content query opens the same session
+browser as `list` and `show`. JSON and piped output stay bounded ordinary output.
+
+```text
+All projects · "read performance" · 2 sessions, best match first · Tab agent-archive only
+Indexed 105 of 211 · catching up
+
+▸ 1  ●  docs: propose sublinear read paths for list/show/handoff   agent-archive   Oct 16
+  2  ●  Picker slowness on large buckets                           monitoring-cli  Oct 10
+────────────────────────────────────────────────────────────────────────────────
+you › match 1 of 3 in this session
+The list and show commands feel slow on the big bucket. Can you check the read
+performance of our archive commands?
+● Claude Code · agent-archive · Oct 16, 09:12 · id 0a13656b
+────────────────────────────────────────────────────────────────────────────────
+↑↓ move   Enter read   n/p match   / new search   Tab scope   h hand off   q quit   1–2 of 2
+```
+
+The heading names the scope, the query and how many sessions match, and the
+line under it sums up the index's coverage; `--json` has the full counts.
+Results keep the engine's relevance order and the requested scope; there are no
+day groups and the scope never widens by itself. Each row shows its agent's
+colored dot, its title, its project and when it was captured. Under the list,
+the highlighted session's matching passage is quoted as indexed, with who wrote
+it and every matched query word highlighted. Highlighting reads words as the
+index does: case-insensitive, split at punctuation, and a trailing `*` matches
+a word's start. Characters Unicode added after version 6.1 (newer emoji, say)
+can split words differently from the index. `n`/`p` show the session's next or
+previous match; a title match comes first.
+
+`/` asks for a new query in place and runs it in the scope shown. `Tab` switches
+between all projects and the current repository and reruns the same query; it
+is offered only inside a known project, or with `--project`.
 
 Common-word queries can be expensive even with a small --limit; prefer more
 selective terms and project scope. Match navigation can also cost more when a
@@ -164,22 +192,23 @@ session's indexed membership is spread across older revisions. Small retained
 pages and the finite query timeout do not imply work proportional to the 20
 references retained for navigation.
 
-Each row shows the best snippet and any known other indexed title/body matches.
-These are indexed passages, including overlap, rather than text occurrences.
-The shared highlight and detail strip follow the arrow, page, Home and End keys;
-Enter opens the highlighted hit. A listed number or unique short ID also opens
-its exact source-bound context.
+Match counts are indexed passages, including overlap, rather than text
+occurrences. The highlight and the passage under the list follow the arrow,
+page, Home and End keys; Enter opens the passage shown. A listed number or
+unique short ID also opens its exact source-bound context.
 The number resolves the full harness/session identity even when short IDs collide.
 A title match has no body reference and explains that instead of opening an
 unrelated transcript. In details, `n`/`p` navigate matching **body** passages,
 `m` follows the displayed raw-byte continuation in the current message, arrows
 and page keys scroll the current bounded text, `b` returns, and `q` exits.
-The line fallback accepts the same letter actions and pgup/pgdn, up/down,
-home/end to scroll the current text. Long unbroken Unicode text wraps into
+Without keys (the line fallback), each result's passage is printed under it,
+`a` switches scope, `/` asks for a new query, and the same letter actions plus
+pgup/pgdn, up/down and home/end scroll the current text. Long unbroken Unicode text wraps into
 physical rows so its tail remains reachable on narrow terminals.
 
-The list's `n`/`p` or page keys page already loaded results. `o` requests the next
-local indexed result page; `r` explicitly reruns the original query. At most
+The list's page keys page already loaded results. Moving past the last result
+(or `o` without keys) requests the next local indexed result page; `r`
+explicitly reruns the query. At most
 three result pages (each bounded by --limit, up to 100) are retained. Match
 navigation retains one page of at most 20 references and uses forward/reverse
 keyset cursors. Context retains only the current bounded selected/neighbor text.
@@ -191,7 +220,7 @@ selects the first hit when that identity is absent.
 Changed, deleted or unavailable exact sources leave an explanatory notice and
 the usable result list.
 
-`h` is labelled **Hand off current session**. It closes browser reads and restores
+`h`, in the list or the passage, hands off the session. It closes browser reads and restores
 the terminal before invoking the ordinary handoff command with the selected
 full harness/session ID and archive source. Existing repository, destination and
 launch gates apply. It hands off the authorized current session, which may differ

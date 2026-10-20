@@ -93,6 +93,10 @@ func (l *sessionPicker) loadOlderContext(ctx context.Context, p *prompter, stdou
 	if loader.LoadContext == nil {
 		return loader.Load()
 	}
+	message := "Loading " + loader.Label + "… Esc cancels"
+	if l.contentSearch != nil && l.contentSearch.rerun {
+		message = "Searching… Esc cancels"
+	}
 	go runBrowserRead(done, func() browserOperationResult {
 		more, err := loader.LoadContext(ctx)
 		return browserOperationResult{more: more, err: err}
@@ -106,7 +110,6 @@ func (l *sessionPicker) loadOlderContext(ctx context.Context, p *prompter, stdou
 		}
 	}()
 	typedAhead := l.keys != nil && l.keys.buffered() || l.keys == nil && p.in.Buffered() > 0
-	message := "Loading " + loader.Label + "… Esc cancels"
 	if redraw != nil && l.keys != nil {
 		// Reading keys, the list is drawn again with the message as its
 		// footer line, rather than under the prompt, which scrolls it.
@@ -404,7 +407,7 @@ func (l *sessionPicker) loadInput(p *prompter) (bool, error) {
 	case keyEndOfInput:
 		l.operationQuit = true
 		return true, nil
-	case keyEnter, keyBackspace, keyUp, keyDown, keyLeft, keyRight, keyPageUp, keyPageDown, keyHome, keyEnd, keyResize:
+	case keyEnter, keyBackspace, keyUp, keyDown, keyLeft, keyRight, keyPageUp, keyPageDown, keyHome, keyEnd, keyResize, keyTab:
 		// These keys do not cancel an operation.
 	case keyRune:
 		switch k.r {

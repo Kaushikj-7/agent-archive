@@ -1,6 +1,7 @@
 package search
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -8,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -63,6 +65,11 @@ type Hit struct {
 	MatchCount int        `json:"MatchCount"`
 	CapturedAt time.Time  `json:"CapturedAt"`
 	Gaps       []Gap      `json:"Gaps"`
+	// Project is the session's project name, empty when it has none.
+	Project string `json:"Project"`
+	// Passage is the indexed text that matched: the body passage Reference
+	// addresses, or the title for a title match.
+	Passage string `json:"Passage"`
 }
 
 // Page is bounded output from one short read transaction. Cursors expire on an
@@ -95,10 +102,33 @@ type pageCursor struct {
 // quoted data. Unicode61 splits punctuation (foo_bar.go is three adjacent tokens)
 // and does not stem or fold accents. At most 512 query bytes bounds phrase overlap.
 func MatchExpression(text string) (string, error) {
-	if len(text) > 512 || !utf8.ValidString(text) {
-		return "", errors.New("search query must be valid UTF-8 and at most 512 bytes")
+	terms, err := parseTerms(text)
+	if err != nil {
+		return "", err
 	}
-	var parts []string
+	parts := make([]string, len(terms))
+	for i, t := range terms {
+		parts[i] = "\"" + t.text + "\""
+		if t.prefix {
+			parts[i] += "*"
+		}
+	}
+	return strings.Join(parts, " AND "), nil
+}
+
+// queryTerm is one term or quoted phrase of a query, and whether a trailing *
+// made its last token a prefix.
+type queryTerm struct {
+	text   string
+	prefix bool
+}
+
+// parseTerms reads a query as MatchExpression documents it.
+func parseTerms(text string) ([]queryTerm, error) {
+	if len(text) > 512 || !utf8.ValidString(text) {
+		return nil, errors.New("search query must be valid UTF-8 and at most 512 bytes")
+	}
+	var terms []queryTerm
 	for rest := strings.TrimSpace(text); rest != ""; rest = strings.TrimSpace(rest) {
 		phrase := false
 		var term string
@@ -107,7 +137,7 @@ func MatchExpression(text string) (string, error) {
 			rest = rest[1:]
 			end := strings.IndexByte(rest, '"')
 			if end < 0 {
-				return "", errors.New("unterminated search phrase")
+				return nil, errors.New("unterminated search phrase")
 			}
 			term = rest[:end]
 			rest = rest[end+1:]
@@ -128,7 +158,7 @@ func MatchExpression(text string) (string, error) {
 			if rest != "" {
 				r, _ := utf8.DecodeRuneInString(rest)
 				if !unicode.IsSpace(r) {
-					return "", errors.New("search phrases must be separated by whitespace")
+					return nil, errors.New("search phrases must be separated by whitespace")
 				}
 			}
 		} else if strings.HasSuffix(term, "*") {
@@ -136,25 +166,148 @@ func MatchExpression(text string) (string, error) {
 			term = strings.TrimSuffix(term, "*")
 		}
 		if strings.ContainsAny(term, "*\"") {
-			return "", errors.New("search wildcard is allowed only at the end of a term or phrase")
+			return nil, errors.New("search wildcard is allowed only at the end of a term or phrase")
 		}
 		if !strings.ContainsFunc(term, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsNumber(r) }) {
-			return "", errors.New("search term must contain a letter or number")
+			return nil, errors.New("search term must contain a letter or number")
 		}
-		quoted := "\"" + term + "\""
-		if prefix {
-			quoted += "*"
-		}
-		parts = append(parts, quoted)
-		if len(parts) > 32 {
-			return "", errors.New("search accepts at most 32 terms")
+		terms = append(terms, queryTerm{term, prefix})
+		if len(terms) > 32 {
+			return nil, errors.New("search accepts at most 32 terms")
 		}
 	}
-	if len(parts) == 0 {
-		return "", errors.New("search query is empty")
+	if len(terms) == 0 {
+		return nil, errors.New("search query is empty")
 	}
-	return strings.Join(parts, " AND "), nil
+	return terms, nil
 }
+
+// Span is the bytes [Start, End) of a text.
+type Span struct {
+	Start int
+	End   int
+}
+
+// MatchSpans is where the terms of query occur in text, read as the index's
+// tokenizer reads both: tokens are runs of letters, numbers and private-use
+// characters, compared case-insensitively, so punctuation splits a term
+// (foo_bar.go matches the adjacent tokens foo, bar and go) and a phrase's
+// tokens must be adjacent. A trailing * makes a term's last token a prefix,
+// and the whole token it starts is the span. Every occurrence of every term is
+// returned, sorted, with overlapping spans joined; a query MatchExpression
+// refuses has none.
+func MatchSpans(query, text string) []Span {
+	terms, err := parseTerms(query)
+	if err != nil {
+		return nil
+	}
+	words := tokenize(text)
+	var spans []Span
+	for _, t := range terms {
+		want := tokenize(t.text)
+		if len(want) == 0 {
+			continue
+		}
+		for i := 0; i+len(want) <= len(words); i++ {
+			if phraseAt(words[i:i+len(want)], want, t.prefix) {
+				spans = append(spans, Span{words[i].start, words[i+len(want)-1].end})
+			}
+		}
+	}
+	slices.SortFunc(spans, func(a, b Span) int { return cmp.Or(cmp.Compare(a.Start, b.Start), cmp.Compare(a.End, b.End)) })
+	var joined []Span
+	for _, s := range spans {
+		if n := len(joined); n > 0 && s.Start <= joined[n-1].End {
+			joined[n-1].End = max(joined[n-1].End, s.End)
+			continue
+		}
+		joined = append(joined, s)
+	}
+	return joined
+}
+
+// phraseAt reports whether the tokens words are the phrase want, its last
+// token a prefix when prefix is set.
+func phraseAt(words, want []token, prefix bool) bool {
+	last := len(want) - 1
+	for j := range want {
+		if j == last && prefix {
+			if !strings.HasPrefix(words[j].folded, want[j].folded) {
+				return false
+			}
+		} else if words[j].folded != want[j].folded {
+			return false
+		}
+	}
+	return true
+}
+
+// token is one token of a text as the index's unicode61 tokenizer splits it:
+// its bytes [start, end) and its case-folded form.
+type token struct {
+	start, end int
+	folded     string
+}
+
+// tokenize splits text into the index's tokens: maximal runs of token
+// characters (isTokenRune); everything else separates.
+func tokenize(text string) []token {
+	var out []token
+	start := -1
+	for i, r := range text {
+		// A diacritic continues a token but does not start one.
+		if isTokenRune(r) && (start >= 0 || !latinDiacritic(r)) {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		if start >= 0 {
+			out = append(out, token{start, i, foldToken(text[start:i])})
+			start = -1
+		}
+	}
+	if start >= 0 {
+		out = append(out, token{start, len(text), foldToken(text[start:])})
+	}
+	return out
+}
+
+// isTokenRune reports whether unicode61 reads r as part of a token: a letter,
+// a number or a private-use character (its default categories L*, N* and Co),
+// one of the Latin combining diacritics it knows (after another token
+// character only: tokenize), or a character its Unicode
+// 6.1 tables do not classify, which they give no category to separate by. Go's
+// tables are newer, so a character Unicode assigned after 6.1 (an emoji added
+// since, say) is read as a separator here and as a token by the index.
+func isTokenRune(r rune) bool {
+	switch {
+	case r == utf8.RuneError || r == 0xFFFE || r == 0xFFFF:
+		return false
+	case unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.Is(unicode.Co, r):
+		return true
+	case r >= 0x300 && r <= 0x331:
+		return latinDiacritic(r)
+	}
+	return !unicode.In(r, unicode.M, unicode.P, unicode.S, unicode.Z, unicode.Cc, unicode.Cf, unicode.Cs)
+}
+
+// latinDiacritic reports whether r, in U+0300 to U+0331, is a combining mark
+// unicode61 can remove from a Latin letter, which it keeps in the token even
+// with remove_diacritics 0.
+func latinDiacritic(r rune) bool {
+	switch {
+	case r < 0x300 || r > 0x331:
+		return false
+	case r <= 0x304, r >= 0x306 && r <= 0x30C, r == 0x30F, r == 0x311, r == 0x31B, r >= 0x323 && r <= 0x328, r == 0x32D, r == 0x32E, r == 0x330, r == 0x331:
+		return true
+	}
+	return false
+}
+
+// foldToken compares tokens as the index does, without case: each character
+// as the smallest of its simple case folds (S, s and ſ alike).
+func foldToken(s string) string { return foldProjectName(s) }
 
 const matchingQuery = `WITH matching AS MATERIALIZED (
  SELECT search_fts.rowid AS pid,p.session,p.title_hit,CASE p.role WHEN 'user' THEN 0 ELSE 1 END AS role_rank,
@@ -267,10 +420,14 @@ func (s *Store) Search(ctx context.Context, q Query) (Page, error) {
 		hit := Hit{MatchCount: v.matches, CapturedAt: time.Unix(0, v.captured).UTC()}
 		var ref, gaps []byte
 		// Only selected session hits invoke snippet(), never all FTS candidates.
-		err = tx.QueryRowContext(ctx, `SELECT s.session_id,s.harness,s.title,p.reference,p.role,s.gaps,snippet(search_fts,?,'','',' … ',32) FROM search_fts JOIN search_passages p ON p.id=search_fts.rowid JOIN search_sessions s ON s.id=p.session WHERE search_fts MATCH ? AND search_fts.rowid=?`, 1-v.titleHit, expression, v.pid).Scan(&hit.SessionID, &hit.Harness, &hit.Title, &ref, &hit.Role, &gaps, &hit.Snippet)
+		// search_sessions keeps the project's name folded for matching; the
+		// name shown is the observed metadata's.
+		var observed []byte
+		err = tx.QueryRowContext(ctx, `SELECT s.session_id,s.harness,s.title,p.reference,p.role,s.gaps,snippet(search_fts,?,'','',' … ',32),CASE p.title_hit WHEN 1 THEN search_fts.title ELSE search_fts.body END,(SELECT w.metadata FROM search_work w WHERE w.id=p.session) FROM search_fts JOIN search_passages p ON p.id=search_fts.rowid JOIN search_sessions s ON s.id=p.session WHERE search_fts MATCH ? AND search_fts.rowid=?`, 1-v.titleHit, expression, v.pid).Scan(&hit.SessionID, &hit.Harness, &hit.Title, &ref, &hit.Role, &gaps, &hit.Snippet, &hit.Passage, &observed)
 		if err != nil {
 			return page, err
 		}
+		hit.Project = projectNameOf(observed)
 		if len(ref) > 0 {
 			hit.Reference = new(Reference)
 			if err = json.Unmarshal(ref, hit.Reference); err != nil {
@@ -293,6 +450,18 @@ func (s *Store) Search(ctx context.Context, q Query) (Page, error) {
 		page.Next = base64.RawURLEncoding.EncodeToString(b)
 	}
 	return page, tx.Commit()
+}
+
+// projectNameOf is the project name in a session's observed metadata (JSON),
+// made safe for one line; empty when there is none.
+func projectNameOf(metadata []byte) string {
+	var named struct {
+		ProjectName string `json:"project_name"`
+	}
+	if len(metadata) == 0 || json.Unmarshal(metadata, &named) != nil {
+		return ""
+	}
+	return archive.DisplayLine(named.ProjectName)
 }
 
 func queryArgs(expression string, q Query) []any {

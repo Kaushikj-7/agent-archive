@@ -45,7 +45,7 @@ func TestSearchBrowserOnARealTerminal(t *testing.T) {
 }
 
 const searchBrowserPTYScript = ptyKeysHarness + `try:
-    wait_for(b'Content query:')
+    wait_for(b'All projects \xc2\xb7')
     wait_until(keys_on, 'key mode not on in search')
     if mode == 'interrupt':
         os.write(master, b'\x03')
@@ -82,7 +82,7 @@ const searchBrowserPTYScript = ptyKeysHarness + `try:
                 wait_for(b'no further matching body passage', start)
             start = len(output)
             os.write(master, b'b')
-            wait_for(b'Content query:', start)
+            wait_for(b'All projects \xc2\xb7', start)
             os.write(master, b'q')
             finish(0)
     assert restored(), ('search terminal modes not restored', hex(before[3]), hex(termios.tcgetattr(slave)[3]))

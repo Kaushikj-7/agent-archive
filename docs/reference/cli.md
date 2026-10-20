@@ -656,11 +656,12 @@ Punctuation splits words; this is keyword search, not substring/semantic search.
 References bind exact source revisions. Reads print escaped, quoted text.
 On an interactive terminal, search without a query asks for one. Before the
 first local index exists, search asks once whether to index in the background.
-Browse ranked snippets and exact bounded context.
-Scrolling past the last result loads the next results. Use n/p for matching
-body passages, r to rerun the fixed query, and h to hand off the current
-session through existing gates. Metadata / filtering is
-disabled. JSON and piped output remain bounded documents.
+Results open in the session browser, best match first, with the highlighted
+session's matching passage under the list and its matched words highlighted.
+Use n/p for the session's other matches, Enter to read the passage, / for a
+new query, Tab to switch between all projects and the current one, r to rerun,
+and h to hand off the session through existing gates. Scrolling past the last
+result loads the next results. JSON and piped output remain bounded documents.
   --json              Print one versioned bounded JSON document
   --refresh           Run a bounded verified archive refresh
   --session SESSION_ID  Exact refresh target; requires --harness

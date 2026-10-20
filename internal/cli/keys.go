@@ -35,6 +35,8 @@ const (
 	// keyResize is not a key: the window changed size, so the screen is
 	// drawn again.
 	keyResize
+	// keyTab is Tab (Ctrl-I).
+	keyTab
 )
 
 // scrollMove is how a key scrolls a screen: a line, a screen, or to the
@@ -255,7 +257,7 @@ func (k *keyInput) unused() []byte {
 				_, size := utf8.DecodeLastRune(text)
 				text = text[:n-size]
 			}
-		case keyEscape, keyUp, keyDown, keyLeft, keyRight, keyPageUp, keyPageDown, keyHome, keyEnd, keyEndOfInput, keyResize:
+		case keyEscape, keyUp, keyDown, keyLeft, keyRight, keyPageUp, keyPageDown, keyHome, keyEnd, keyEndOfInput, keyResize, keyTab:
 			// Not typed text.
 		}
 	}
@@ -518,6 +520,8 @@ func decodeKeys(data []byte) []key {
 			keys = append(keys, key{kind: keyBackspace})
 		case b == 0x04:
 			keys = append(keys, key{kind: keyEndOfInput})
+		case b == '\t':
+			keys = append(keys, key{kind: keyTab})
 		case b < 0x20:
 			// Another control character: ignored.
 		default:
