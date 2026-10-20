@@ -11,6 +11,12 @@ follow [Semantic Versioning](https://semver.org/).
 - The `handoff` picker appears sooner when many recent sessions are not
   uploaded yet. It now reads up to four of their transcripts at once to title
   them, instead of one after another.
+- Uploads no longer stop for good after about 500 sessions. Each session's
+  local record of its last upload counted against the 1 GiB limit on pending
+  local work, so once those records filled it every later session failed with
+  "durable publication capacity exhausted" and `list` showed nothing newer.
+  The records now count only for uploaded source bytes they still keep, and
+  sessions stuck this way upload on the next pass.
 - Transcript recovery of a session imported through a typed stage starts its new
   generation without that stage link, which stays with the frozen original. If
   the stage's release is unfinished, `recover` asks you to run `agent-archive sync`

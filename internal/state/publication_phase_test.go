@@ -77,8 +77,10 @@ func TestPublicationV2SinglePayloadAndSettledCharge(t *testing.T) {
 			}
 		}()
 		u, e := q.usageContext(t.Context())
-		if e == nil && u.charged != 2*int64(len(raw)) {
-			t.Fatalf("settled file not exactly charged: %d vs %d", u.charged, 2*len(raw))
+		// A settled state released its inline bytes: what is left is
+		// published cache, present on disk but outside the quota.
+		if e == nil && (u.charged != 0 || u.physical != int64(len(raw))) {
+			t.Fatalf("settled file charged %d of %d physical; want 0 of %d", u.charged, u.physical, len(raw))
 		}
 		return e
 	}); err != nil {
