@@ -167,3 +167,11 @@ func TestSearchDeclineSavesWithoutStorageAndOffersOverInterruptedIndex(t *testin
 		t.Fatalf("decline not saved: %+v %v\n%s", cfg.SearchIndexingDeclined, err, out)
 	}
 }
+
+func TestSearchProjectDotScopesToTheCurrentRepository(t *testing.T) {
+	env, _, _ := publishedFixture(t)
+	code, doc, diag := searchJSONRun(t, env, "visible", "--project", ".")
+	if code != 0 || doc.Scope == nil || doc.Scope.All || doc.Scope.Repo == "" && len(doc.Scope.Projects) == 0 {
+		t.Fatalf("--project . did not scope: %d %+v %s", code, doc.Scope, diag)
+	}
+}
