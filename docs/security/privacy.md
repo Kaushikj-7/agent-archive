@@ -239,7 +239,11 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
 
   Change the mode in setup. The change limits subsequent uploads, including
   pending work rebuilt under the new mode, but does not remove copies already
-  on disk or in the bucket. Older source objects can remain after replacement;
+  on disk or in the bucket. Pending work that has not been uploaded keeps the
+  evidence its oldest unuploaded capture was allowed: narrowing and then
+  widening the mode again before upload restores that evidence, never more
+  than the mode it was captured under. Once a narrower upload completes, the
+  removed evidence is not restored from older pending copies. Older source objects can remain after replacement;
   [bucket layout](../reference/bucket-layout.md) describes their lifetime.
 - **Metadata**: the machine ID of the machine that captured it (random, made at
   setup), a project ID (a hash of the project's path, not the path itself),

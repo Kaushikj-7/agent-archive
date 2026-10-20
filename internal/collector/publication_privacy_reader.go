@@ -18,6 +18,11 @@ func (r publicationPrivacyReader) ReadPublicationPrivacySource(ctx context.Conte
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
+	// Inline bytes belong to the Store-owned journal that supplied input; the
+	// factory verifies them against the exact reference before decoding.
+	if input.Payload.Kind == state.PublicationInline && len(input.Payload.Inline) > 0 {
+		return input.Payload.Inline, func() {}, nil
+	}
 	s := r.scan
 	mark := len(s.retainedReleases)
 	end := mark

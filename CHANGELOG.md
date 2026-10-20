@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Narrowing and then widening the skill evidence mode before pending work is
+  uploaded now restores the skill evidence its oldest unuploaded capture was
+  allowed, instead of keeping the narrower copy. A narrower upload that already
+  completed is not undone. Filter 32 and adapter 0.32.0 record this.
+
 ## [0.2.2]
 
 Candidate scope frozen on 2026-10-19 for the intended `v0.2.2` tag. This record
