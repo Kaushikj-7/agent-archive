@@ -2,12 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/search"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -35,7 +38,9 @@ func (e Env) setSearchIndexing(on bool, out io.Writer) bool {
 // It reports whether indexing was turned on now.
 func offerSearchIndexing(p *prompter, dir string, cfg config.Config, env searchCommandDependencies) (bool, error) {
 	stdout := p.out
-	if cfg.SearchIndexing || cfg.SearchIndexingDeclined || !cfg.Archive.Enabled || cfg.Paused {
+	// Lifecycle protection without indexing is an earlier explicit off.
+	declined := cfg.SearchIndexingDeclined || cfg.SearchLifecycleProtection
+	if cfg.SearchIndexing || declined || !cfg.Archive.Enabled || cfg.Paused {
 		return false, nil
 	}
 	if _, err := os.Lstat(filepath.Join(dir, "content.sqlite")); !errors.Is(err, os.ErrNotExist) {
@@ -60,30 +65,35 @@ func offerSearchIndexing(p *prompter, dir string, cfg config.Config, env searchC
 	return on, nil
 }
 
-// indexFirstPass runs one bounded refresh right after indexing is turned on,
-// so the first search finds something. A busy or failed pass is left to the
-// background job.
-func indexFirstPass(home string, cfg config.Config, opts contentSearchOptions, p *prompter, env searchCommandDependencies) {
+// indexFirstPass indexes for up to 30 seconds right after indexing is turned
+// on, so the first search finds something. The new background job may start
+// at once and hold the index; the wait retries until it lets go. An interrupt
+// ends the command; any other failure is left to the background job.
+func indexFirstPass(home string, cfg config.Config, opts contentSearchOptions, p *prompter, env searchCommandDependencies) error {
 	stdout := p.out
 	ctx, stop := readCommandContext(env)
 	defer stop()
 	spin := p.style.spin(stdout, "Indexing your first sessions")
 	pass := opts
-	pass.refresh, pass.wait, pass.session = true, 0, ""
+	pass.refresh, pass.wait, pass.session = true, 30*time.Second, ""
 	_, coverage, err := refreshContentSearch(ctx, home, cfg, env, pass)
 	spin.stop()
-	if err == nil && coverage != nil && coverage.Known > 0 {
+	if errors.Is(err, context.Canceled) {
+		return errors.New("interrupted")
+	}
+	if coverage != nil && coverage.Known > 0 {
 		terminal.Printf(stdout, "%s Background indexing is on. %d of %d known sessions indexed so far; the rest fill in over the next few minutes.\n", p.style.okMark(), coverage.Indexed, coverage.Known)
-		return
+		return nil
 	}
 	terminal.Printf(stdout, "%s Background indexing is on. Results fill in over the next few minutes.\n", p.style.okMark())
+	return nil
 }
 
 // promptSearchQuery asks for the words bare search runs on a terminal.
 func promptSearchQuery(p *prompter, opts contentSearchOptions) (string, error) {
 	scope := "Searching all projects."
 	if opts.project != "" {
-		scope = "Searching project " + opts.project + "."
+		scope = "Searching project " + archive.DisplayLine(opts.project) + "."
 	}
 	return p.guidedText(promptModel{Question: "Search for:", Label: "Search", Helpers: []string{`All words must match; "quotes" match a phrase and a trailing * matches a prefix.`, scope}, Validate: func(value string) error {
 		if value == "" {
@@ -111,7 +121,9 @@ func startInteractiveSearch(home, dir string, cfg *config.Config, opts *contentS
 		*cfg = reloaded
 	}
 	if enabled {
-		indexFirstPass(home, *cfg, *opts, p, env)
+		if err := indexFirstPass(home, *cfg, *opts, p, env); err != nil {
+			return searchCommandError(stderr, err)
+		}
 	}
 	if !opts.ask {
 		return 0

@@ -647,8 +647,9 @@ Usage: agent-archive search ["QUERY"] [options]
        agent-archive search --read REF [--offset N] [--max-bytes N]
 
 Search visible conversation messages and titles in the private local index.
-Queries never read storage. Search covers every project unless --project names
-one; an empty scoped result never broadens. Coverage describes a past local
+Cached queries never read storage; only a Yes to the one-time indexing question
+first runs a refresh. Search covers every project unless --project names one; an
+empty scoped result never broadens. Coverage describes a past local
 observation, not current remote contents. Refresh is namespace-wide unless a
 session is named. It does not install or enable automatic indexing.
 Words are ANDed, quotes match phrases, and a trailing * enables prefix matching.
