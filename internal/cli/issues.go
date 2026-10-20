@@ -373,10 +373,11 @@ type issueGroup struct {
 	code   string
 	reason string
 	ids    []string
+	tally  issueTally
 }
 
-// text words a group: its count, what happened, its reason, and the next
-// step.
+// text words a group: its count (sessions and subagents apart, as in the
+// last error's summary), what happened, its reason, and the next step.
 func (g issueGroup) text() string {
 	label, ok := issueLabels[g.code]
 	if !ok {
@@ -386,7 +387,16 @@ func (g issueGroup) text() string {
 	if reason == "" {
 		reason = "error not recognized"
 	}
-	return fmt.Sprintf("%s %s: %s — %s", plural(len(g.ids), "session"), label.what, reason, label.next)
+	return fmt.Sprintf("%s %s: %s — %s", g.tally, label.what, reason, label.next)
+}
+
+// actionable reports whether the group needs something from the user: a
+// storage kind, or a kind with a headline of its own. The others (a
+// subagent that could not be captured, a transcript over the size limit)
+// have nothing to do.
+func (g issueGroup) actionable() bool {
+	label, ok := issueLabels[g.code]
+	return !ok || storageIssues[g.code] || label.headline != ""
 }
 
 // examples names up to issueGroupExamples of the group's sessions.
@@ -401,8 +411,9 @@ func (g issueGroup) examples() string {
 
 // issueGroups groups the last pass's failed sessions by code and reason,
 // the largest group first, then in issueCodes order, so hundreds of
-// sessions that failed alike read as one line.
-func issueGroups(status state.Status) []issueGroup {
+// sessions that failed alike read as one line. isSubagent reports whether a
+// session is a subagent, which the group counts apart.
+func issueGroups(status state.Status, isSubagent func(string) bool) []issueGroup {
 	type key struct {
 		code   string
 		reason string
@@ -416,6 +427,11 @@ func issueGroups(status state.Status) []issueGroup {
 			byKey[k] = group
 		}
 		group.ids = append(group.ids, id)
+		if isSubagent(id) {
+			group.tally.subagents++
+		} else {
+			group.tally.sessions++
+		}
 	}
 	groups := make([]issueGroup, 0, len(byKey))
 	for _, group := range byKey {

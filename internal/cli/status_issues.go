@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/capture"
-	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -22,7 +21,7 @@ func printStatusIssues(out io.Writer, view statusView, sc statusScreen) {
 	for _, problem := range lastErrorRows(view.Collector) {
 		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{problem}})
 	}
-	rows = append(rows, sc.issueGroupRows(view.Collector)...)
+	rows = append(rows, sc.issueGroupRows(view)...)
 	for _, app := range slices.Concat(view.Apps, view.importedApps) {
 		rows = append(rows, sc.discoveryIssueRows(app)...)
 		for _, gap := range app.CaptureGaps {
@@ -63,11 +62,16 @@ func printStatusIssues(out io.Writer, view statusView, sc statusScreen) {
 }
 
 // issueGroupRows are the last pass's failed sessions, one row per kind of
-// failure and reason, each naming a few of its sessions.
-func (sc statusScreen) issueGroupRows(status state.Status) []statusRow {
+// failure and reason, each naming a few of its sessions. A kind with
+// nothing to do is information, not a warning.
+func (sc statusScreen) issueGroupRows(view statusView) []statusRow {
 	var rows []statusRow
-	for _, group := range issueGroups(status) {
-		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{group.text()}, notes: []statusNote{{text: group.examples()}}})
+	for _, group := range issueGroups(view.Collector, func(id string) bool { return view.subagentIssues[id] }) {
+		mark := sc.info()
+		if group.actionable() {
+			mark = sc.style.warnMark()
+		}
+		rows = append(rows, statusRow{mark: mark, cells: []string{group.text()}, notes: []statusNote{{text: group.examples()}}})
 	}
 	return rows
 }

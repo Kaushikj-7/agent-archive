@@ -278,6 +278,9 @@ type statusView struct {
 	// them.
 	lastErrorProblem string
 	lastErrorByIssue bool
+	// subagentIssues are the subagents among the collector's SessionIssues,
+	// by their registrations, which status counts apart from sessions.
+	subagentIssues map[string]bool
 	// importedApps are apps whose sessions were imported without hooks
 	// (config.ImportedHarnesses), with their import counts.
 	importedApps []appStatus
@@ -643,6 +646,14 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	}
 	regs, reqs, stateWarnings := statusState(home, store)
 	view.Warnings = append(view.Warnings, stateWarnings...)
+	for _, reg := range regs {
+		if _, failed := view.Collector.SessionIssues[reg.ArchiveSessionID]; failed && reg.ParentSessionID != "" {
+			if view.subagentIssues == nil {
+				view.subagentIssues = map[string]bool{}
+			}
+			view.subagentIssues[reg.ArchiveSessionID] = true
+		}
+	}
 	// A session whose own files cannot be read is left out of every count
 	// below, with one warning naming it.
 	skipped := map[string]bool{}
@@ -2185,7 +2196,7 @@ func (sc statusScreen) storageRows(view statusView) []statusRow {
 		rows = append(rows, statusRow{mark: mark, cells: []string{text}})
 	}
 	if sc.verbose {
-		rows = append(rows, sc.issueGroupRows(view.Collector)...)
+		rows = append(rows, sc.issueGroupRows(view)...)
 		uploads := fmt.Sprintf("Last upload: %s · %d pending", sc.ago(view.Collector.LastPublishedAt), view.Collector.PendingCount)
 		rows = append(rows, statusRow{mark: sc.info(), cells: []string{uploads}})
 	}

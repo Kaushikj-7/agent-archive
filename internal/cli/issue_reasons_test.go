@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -116,5 +117,33 @@ func TestStatusIssuesGroupsFailedSessionsByReason(t *testing.T) {
 	must(t, json.Unmarshal([]byte(statusOutput(t, env, "--json")), &fields))
 	if len(fields.Collector.Reasons) != 268 || fields.Collector.Reasons["synthetic-000"] != state.ErrDurableStorageCapacity.Error() {
 		t.Errorf("status --json reasons: %d entries", len(fields.Collector.Reasons))
+	}
+}
+
+// A group counts subagents apart from sessions, as the last error's summary
+// does, and a kind with nothing to do is information, not a warning.
+func TestStatusIssueGroupsCountSubagentsAndKeepNoActionKindsQuiet(t *testing.T) {
+	t.Parallel()
+	home, env, _, _ := overviewFixture(t)
+	store, err := state.Open(home)
+	must(t, err)
+	registration := filepath.Join(home, "registrations", "synthetic-child.json")
+	must(t, os.MkdirAll(filepath.Dir(registration), 0o700))
+	must(t, os.WriteFile(registration, []byte(`{"archive_session_id":"synthetic-child","parent_session_id":"synthetic-parent"}`), 0o600))
+	_, err = recordSessionIssues(store, map[string]error{"synthetic-child": fmt.Errorf("x: %w", collector.ErrSubagentNotCaptured)}, subagentLookup(store), "")
+	must(t, err)
+
+	group := "1 subagent " + issueLabels[issueSubagentNotCaptured].what
+	for _, args := range [][]string{{"--issues"}, {"--verbose"}} {
+		out := statusOutput(t, env, args...)
+		line := ""
+		for l := range strings.SplitSeq(out, "\n") {
+			if strings.Contains(l, group) {
+				line = l
+			}
+		}
+		if line == "" || strings.Contains(line, "!") {
+			t.Errorf("status %v group line %q, want an informational %q:\n%s", args, line, group, out)
+		}
 	}
 }
