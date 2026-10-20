@@ -113,7 +113,7 @@ func (s *contentSearchBrowser) installRows() {
 		}
 		// Indexed hits carry capture time, not current session activity. Do not
 		// invent Active or let ordinary activity-day grouping change relevance.
-		rows = append(rows, listRow{selectionKey: key, Index: i + 1, SessionID: h.SessionID, ShortID: shorts[i], HarnessKey: h.Harness, Harness: archive.DisplayLine(h.Harness), Title: title, ListTitle: listTitle(h.Title), When: s.longWhen(h.CapturedAt), WhenShort: shortWhen(s.now, h.CapturedAt), Project: project, searchSnippet: snippet})
+		rows = append(rows, listRow{selectionKey: key, Index: i + 1, SessionID: h.SessionID, ShortID: shorts[i], HarnessKey: h.Harness, Harness: archive.DisplayLine(h.Harness), Title: title, ListTitle: listTitle(archive.DisplayLine(h.Title)), When: s.longWhen(h.CapturedAt), WhenShort: shortWhen(s.now, h.CapturedAt), Project: project, searchSnippet: snippet})
 	}
 	total, truncated := len(rows), s.page.Next != "" || s.opts.query.Cursor != ""
 	if truncated {
