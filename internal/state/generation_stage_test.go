@@ -52,11 +52,7 @@ func settledStageGenerationFixture(t *testing.T) (*Store, archive.SessionRegistr
 
 // stageClearingBuilder is the successor shape the collector builder renders.
 func stageClearingBuilder(at time.Time) func(archive.SessionRegistration, string) (archive.SessionRegistration, PendingPublication, error) {
-	build := generationBuilder(at)
-	return func(reg archive.SessionRegistration, id string) (archive.SessionRegistration, PendingPublication, error) {
-		reg.StagedImportSHA256 = ""
-		return build(reg, id)
-	}
+	return selectableGenerationBuilder(at, true)
 }
 
 func stagedGenerationInventory(t *testing.T, home string) map[string]string {

@@ -541,3 +541,34 @@ func TestRecoverFailurePutsSyncOnItsOwnLineOnlyForOwedStages(t *testing.T) {
 		t.Fatalf("storage failure lost its cause: %q", cause)
 	}
 }
+
+func TestRecoverSuccessorRefusalsSayWhatToDo(t *testing.T) {
+	t.Parallel()
+	for err, want := range map[error]string{
+		fmt.Errorf("generation recovery %q remains pending: %w", "session", state.ErrGenerationRecoveryConfigChanged): "agent-archive: recover: the archive configuration changed during an interrupted recovery. Restore the skill evidence, destination and capture settings it started with, then run:\n  agent-archive sync\n",
+		state.ErrGenerationHistorySuccessor:      "agent-archive: recover: sessions with retained history alternatives cannot be recovered on this archive home; the session keeps its current publication.\n",
+		state.ErrGenerationSuccessorUnselectable: "agent-archive: recover: the recovered transcript cannot be published under the current archive configuration; the session keeps its current publication.\n",
+	} {
+		if got := recoverFailure(err); got != want {
+			t.Fatalf("%v:\n%q\n%q", err, got, want)
+		}
+	}
+}
+
+func TestRecoverDoesNotResumeRecordedRecoveryWhilePaused(t *testing.T) {
+	t.Parallel()
+	env, home, _, id := recoverFixture(t)
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"recover", id, "--confirm"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("recover: %d %s", code, errOut.String())
+	}
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	cfg.Paused = true
+	must(t, config.Save(home, cfg))
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"recover", id, "--confirm"}, nil, &out, &errOut, env); code != 1 || !strings.Contains(errOut.String(), "collection is paused") {
+		t.Fatalf("paused resume: %d %q %q", code, out.String(), errOut.String())
+	}
+}

@@ -171,6 +171,9 @@ func (s *Store) beginGenerationRecoveryGuard(g config.DurableStorageGuard, id st
 	}
 	request := Request{ArchiveSessionID: next, Token: token, Reasons: []string{"generation-recovery"}, RequestedAt: at}
 	pending.RequestToken = token
+	if _, err := s.generationSuccessorPending(s.generationReadContext(), reg, pending); err != nil {
+		return "", err
+	}
 	wirePending := publicationWire(pending)
 	priorMetadata, priorSources, err := s.generationCommittedAuthority(s.generationReadContext(), old)
 	if err != nil {
@@ -407,16 +410,161 @@ func (s *Store) resumeGenerationRecovery(g config.DurableStorageGuard, ctx conte
 	if err := s.validateGenerationRecoveryReplay(ctx, id, r); err != nil {
 		return err
 	}
+	pending, saved, err := s.generationSavedPending(ctx, r)
+	if err != nil {
+		return err
+	}
+	if !saved {
+		pending, err = s.generationSuccessorPending(ctx, *r.Registration, *r.Pending)
+		if errors.Is(err, ErrGenerationSuccessorUnselectable) {
+			return ErrGenerationRecoveryConfigChanged
+		}
+		if err != nil {
+			return err
+		}
+	}
+	r.Pending = &pending
 	if err := s.freezeGenerationRecovery(r); err != nil {
 		return fmt.Errorf("freeze recovery predecessor: %w", err)
 	}
-	if err := s.registerGenerationRecovery(ctx, g, r); err != nil {
+	if err := s.registerGenerationRecovery(ctx, g, r, saved); err != nil {
 		return fmt.Errorf("register recovery successor: %w", err)
 	}
 	if err := s.activateGenerationRecovery(ctx, g, r); err != nil {
 		return fmt.Errorf("activate recovery successor: %w", err)
 	}
 	return nil
+}
+
+// ErrGenerationSuccessorUnselectable refuses, before any journal, a recovery
+// whose successor this archive home could not publish.
+var ErrGenerationSuccessorUnselectable = fmt.Errorf("the recovered transcript cannot be published under the current archive configuration: %w", ErrReadySelectionFrozen)
+
+// ErrGenerationHistorySuccessor refuses a successor with retained history
+// alternatives, which has no ordinary selection on a composition-protected home.
+var ErrGenerationHistorySuccessor = fmt.Errorf("a session with retained history alternatives cannot be recovered on this archive home: %w", ErrReadySelectionFrozen)
+
+// ErrGenerationRecoveryConfigChanged keeps a journaled recovery owed when the
+// configuration changed before its successor's publication was saved.
+var ErrGenerationRecoveryConfigChanged = fmt.Errorf("the archive configuration changed during an interrupted transcript recovery: %w", ErrReadySelectionFrozen)
+
+// generationSuccessorPending returns the successor publication this home
+// accepts. A composition-protected home admits a new pending only with exact
+// selecting authority, so the successor gets an ordinary ready selection. It is
+// derived from the journaled registration and publication, never stored in the
+// journal, so replays under one configuration save identical bytes. Its
+// metadata key belongs to a newly allocated ID; publication still rechecks that
+// predecessor absence before any source effect. Retained history alternatives
+// have no ordinary selection on such a home.
+func (s *Store) generationSuccessorPending(ctx context.Context, reg archive.SessionRegistration, pending PendingPublication) (PendingPublication, error) {
+	cfg, err := s.inspectDurableReadRoots(ctx)
+	if err != nil {
+		return pending, err
+	}
+	if !cfg.PublicationCompositionProtection {
+		return pending, nil
+	}
+	if pending.JournalVersion == 5 || pending.History != nil || pending.Bundle.History != nil {
+		return pending, ErrGenerationHistorySuccessor
+	}
+	if cfg.RequireSkillUse {
+		declined, err := s.generationSkillUseDeclined(ctx, pending)
+		if err != nil {
+			return pending, err
+		}
+		if declined {
+			return pending, ErrGenerationSuccessorUnselectable
+		}
+	}
+	selected, err := s.freezeReadySelection(ctx, reg.ArchiveSessionID, &reg, pending, ReadyPredecessorAbsent, nil)
+	if errors.Is(err, ErrReadySelectionFrozen) {
+		return pending, ErrGenerationSuccessorUnselectable
+	}
+	if err != nil {
+		return pending, fmt.Errorf("select recovery successor publication: %w", err)
+	}
+	return selected, nil
+}
+
+// generationSkillUseDeclined applies the collector's skill-use capture rule to
+// the rendered successor: a parsed transcript with no skill use is not captured
+// while require_skill_use is set. The selection binds neither that setting
+// nor skill use, so a setting enabled after the journal is checked here.
+func (s *Store) generationSkillUseDeclined(ctx context.Context, pending PendingPublication) (bool, error) {
+	var metadata archive.Metadata
+	scratch, closeScratch := s.WithReadBudget(ctx, s.resourceBudget)
+	defer closeScratch()
+	if err := scratch.unmarshalOwned(pending.MetadataBytes, &metadata); err != nil {
+		return false, err
+	}
+	return metadata.Parser.Status != archive.ParserStatusFailed && len(metadata.SkillsUsed) == 0, nil
+}
+
+// generationSavedPending returns the successor pending an earlier replay saved
+// for this journal. Once saved, it is the successor's publication: the
+// transition completes from it, and ordinary publication owns any refusal
+// under a later configuration, as it does for every other selected pending.
+// The exact file is read without current-policy validation, which would
+// refuse it under that later configuration; it must bind the journaled bytes.
+func (s *Store) generationSavedPending(ctx context.Context, r generationRecovery) (PendingPublication, bool, error) {
+	read, closeRead := s.WithReadBudget(ctx, s.resourceBudget)
+	defer closeRead()
+	saved, found, err := read.catalogPendingForFence(r.Next)
+	if err != nil || !found || saved.Selection == nil {
+		return PendingPublication{}, false, err
+	}
+	if err := read.validateSavedGenerationSelection(ctx, *r.Registration, saved); err != nil {
+		return PendingPublication{}, false, err
+	}
+	before, err := read.readyBinding(ctx, *r.Pending)
+	if err != nil {
+		return PendingPublication{}, false, err
+	}
+	after, err := read.readyBinding(ctx, saved)
+	if err != nil || before != after {
+		return PendingPublication{}, false, errors.Join(ErrDurableStorageRecovery, err)
+	}
+	return saved, true, nil
+}
+
+// validateSavedGenerationSelection checks every configuration-independent
+// field of a saved successor proof against the journaled successor: the
+// recovery-required absent predecessor, its admission and destination (the
+// configured one for a legacy owner that records none), and
+// the bundle, metadata, binding and source set it selects. Only the current
+// configuration's policy checks are left to ordinary publication.
+func (s *Store) validateSavedGenerationSelection(ctx context.Context, reg archive.SessionRegistration, saved PendingPublication) error {
+	q := saved.Selection
+	if err := saved.validateReadySelectionShape(); err != nil {
+		return err
+	}
+	if q.Predecessor != ReadyPredecessorAbsent || reg.DestinationID != "" && q.DestinationID != reg.DestinationID || !readySelectionOwnerMatches(reg, saved.Bundle) {
+		return ErrDurableStorageRecovery
+	}
+	if reg.DestinationID == "" {
+		// A legacy owner records no destination; the configured one selected it.
+		cfg, err := s.inspectDurableReadRoots(ctx)
+		if err != nil {
+			return err
+		}
+		if q.DestinationID != cfg.DestinationID() {
+			return ErrGenerationRecoveryConfigChanged
+		}
+	}
+	if err := validateNativeImportSelectionAuthority(reg, *q); err != nil {
+		return err
+	}
+	admission, err := s.readyDigest(ctx, reg)
+	if err != nil || admission != q.AdmissionContext {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	if err := validateReadySourceKeys(saved); err != nil {
+		return err
+	}
+	if err := s.validateReadyDigests(ctx, saved); err != nil {
+		return err
+	}
+	return s.validateReadyReference(ctx, saved)
 }
 
 func (s *Store) freezeGenerationRecovery(r generationRecovery) error {
@@ -469,7 +617,7 @@ func (s *Store) freezeGenerationRecovery(r generationRecovery) error {
 	return nil
 }
 
-func (s *Store) registerGenerationRecovery(ctx context.Context, g config.DurableStorageGuard, r generationRecovery) error {
+func (s *Store) registerGenerationRecovery(ctx context.Context, g config.DurableStorageGuard, r generationRecovery, pendingSaved bool) error {
 	s, ctx, closeContext := s.withDurableContext(ctx)
 	defer closeContext()
 	reg := *r.Registration
@@ -488,8 +636,10 @@ func (s *Store) registerGenerationRecovery(ctx context.Context, g config.Durable
 	if err := s.indexStep("generation-registration"); err != nil {
 		return err
 	}
-	if err := s.savePendingGuard(ctx, g, r.Next, *r.Pending); err != nil {
-		return err
+	if !pendingSaved {
+		if err := s.savePendingGuard(ctx, g, r.Next, *r.Pending); err != nil {
+			return err
+		}
 	}
 	if err := s.indexStep("generation-pending"); err != nil {
 		return err
