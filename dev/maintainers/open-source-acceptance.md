@@ -116,10 +116,14 @@ substitute a broader policy or a local build.
 
 ## Decision
 
-For every row, replace `pending —` with **pass**, **fail**, or **pending**,
-followed by UTC time, sanitized evidence location, and the tester. A failure
-needs a linked issue or fix commit and a repeat on a **new candidate tag** if it
-changes release-bound code or docs. A pending live check is not a pass. The
+Acceptance is best effort. For every row, replace `pending —` with **pass**,
+**skip**, **fail**, or **pending**, followed by UTC time, sanitized evidence
+location (optional for a skip), and the tester; a skip also needs its reason.
+Skipped rows may be promoted with their gaps named; the protected
+`release-promotion` reviewer still inspects the evidence and reasons. A failure
+blocks promotion and needs a linked issue or fix commit and a repeat on a **new
+candidate tag** if it changes release-bound code or docs. A pending live check
+is not a pass or a skip and blocks promotion. The
 test shows only the provider, policy, app versions, architecture, and account
 configuration recorded above; preserve the AWS/R2 caveat for any path not
 actually exercised. The primary maintainer records a final go/no-go with
