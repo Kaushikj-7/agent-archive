@@ -18,10 +18,17 @@ const testPreviewWindow = 64 << 10
 
 var testPreviewLimits = PreviewLimits{HeadBytes: testPreviewWindow, TailBytes: testPreviewWindow, RecordBytes: testPreviewWindow}
 
+// largeTranscriptTail is a name, a pull-request link and a branch.
+var largeTranscriptTail = []string{
+	`{"type":"custom-title","customTitle":"Widget repair","sessionId":"native-large"}`,
+	`{"type":"pr-link","sessionId":"native-large","prNumber":"213","prRepository":"example-org/widget-tools","prUrl":"https://github.com/example-org/widget-tools/pull/213"}`,
+	`{"type":"assistant","sessionId":"native-large","timestamp":"2026-01-02T01:00:00Z","gitBranch":"widget-fix","message":{"role":"assistant","content":"Done"}}`,
+}
+
 // writeLargeClaudeTranscript writes a synthetic Claude transcript of about
-// size bytes: a prompt holding a secret, filler replies, and then a name,
-// a pull-request link and a branch in its last records.
-func writeLargeClaudeTranscript(t *testing.T, size int) string {
+// size bytes: a prompt holding a secret on branch main, filler replies, and
+// then tail (largeTranscriptTail when nil).
+func writeLargeClaudeTranscript(t *testing.T, size int, tail ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "native-large.jsonl")
 	var b strings.Builder
@@ -34,9 +41,12 @@ func writeLargeClaudeTranscript(t *testing.T, size int) string {
 		b.Write(reply)
 		b.WriteString("\n")
 	}
-	b.WriteString(`{"type":"custom-title","customTitle":"Widget repair","sessionId":"native-large"}` + "\n")
-	b.WriteString(`{"type":"pr-link","sessionId":"native-large","prNumber":"213","prRepository":"example-org/widget-tools","prUrl":"https://github.com/example-org/widget-tools/pull/213"}` + "\n")
-	b.WriteString(`{"type":"assistant","sessionId":"native-large","timestamp":"2026-01-02T01:00:00Z","gitBranch":"widget-fix","message":{"role":"assistant","content":"Done"}}` + "\n")
+	if tail == nil {
+		tail = largeTranscriptTail
+	}
+	for _, line := range tail {
+		b.WriteString(line + "\n")
+	}
 	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -48,14 +58,42 @@ func writeLargeClaudeTranscript(t *testing.T, size int) string {
 func TestLocalPreviewReadsOnlyTheWindowsOfALargeTranscript(t *testing.T) {
 	t.Parallel()
 	home := newTestStore(t).Home()
-	reg := archive.SessionRegistration{ArchiveSessionID: "large", NativeSessionID: "native-large", ProjectID: "project", ProjectRoot: "/synthetic/project", SessionStartedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), RegisteredAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Harness: archive.Harness{Name: "claude"}, TranscriptPath: writeLargeClaudeTranscript(t, 2<<20)}
+	reg := largeRegistration(t)
 	preview, err := PreviewLocalTranscript(t.Context(), home, reg, "", testSources, testParsers, 1<<20, testPreviewLimits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if preview.Bytes > 2*testPreviewWindow+1 || strings.Contains(preview.Title, "sk-abcdefghijklmnopqrstuv") || !strings.Contains(preview.Title, "[REDACTED]") {
-		t.Fatalf("preview read %d bytes, title %q", preview.Bytes, preview.Title)
+	if preview.Bytes > 2*testPreviewWindow+1 || strings.Contains(preview.Title, "sk-abcdefghijklmnopqrstuv") || !strings.Contains(preview.Title, "[REDACTED]") || len(preview.PullRequests) != 1 || preview.Branch != "widget-fix" {
+		t.Fatalf("preview read %d bytes: %+v", preview.Bytes, preview)
 	}
+	requirePreviewMatchesFullRead(t, home, reg, preview)
+}
+
+// The preview takes a branch and pull requests from the records a full parse
+// takes them from: a sidechain record's too, and the last branch recorded,
+// so a HEAD there clears an earlier branch.
+func TestLocalPreviewLabelsMatchTheFullReadAtTheEdges(t *testing.T) {
+	t.Parallel()
+	home := newTestStore(t).Home()
+	reg := largeRegistration(t, `{"type":"pr-link","isSidechain":true,"sessionId":"native-large","prNumber":"214","prRepository":"example-org/widget-tools"}`,
+		`{"type":"assistant","sessionId":"native-large","timestamp":"2026-01-02T01:00:00Z","gitBranch":"HEAD","message":{"role":"assistant","content":"Detached"}}`)
+	preview, err := PreviewLocalTranscript(t.Context(), home, reg, "", testSources, testParsers, 1<<20, testPreviewLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Branch != "" || len(preview.PullRequests) != 1 || preview.PullRequests[0].Number != 214 {
+		t.Fatalf("preview %+v", preview)
+	}
+	requirePreviewMatchesFullRead(t, home, reg, preview)
+}
+
+func largeRegistration(t *testing.T, tail ...string) archive.SessionRegistration {
+	t.Helper()
+	return archive.SessionRegistration{ArchiveSessionID: "large", NativeSessionID: "native-large", ProjectID: "project", ProjectRoot: "/synthetic/project", SessionStartedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), RegisteredAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Harness: archive.Harness{Name: "claude"}, TranscriptPath: writeLargeClaudeTranscript(t, 2<<20, tail...)}
+}
+
+func requirePreviewMatchesFullRead(t *testing.T, home string, reg archive.SessionRegistration, preview TranscriptPreview) {
+	t.Helper()
 	bundle, err := ReadLocalBundle(t.Context(), home, reg, time.Now(), "", testSources)
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +105,7 @@ func TestLocalPreviewReadsOnlyTheWindowsOfALargeTranscript(t *testing.T) {
 	}
 	full, hasPrompt := archive.LabelsFromAnalysis(analysis)
 	got := archive.Labels{Name: preview.Name, Title: preview.Title, Branch: preview.Branch, PullRequests: preview.PullRequests}
-	if !hasPrompt || got.Name != full.Name || got.Title != full.Title || got.Branch != full.Branch || !slices.Equal(got.PullRequests, full.PullRequests) || len(got.PullRequests) != 1 {
+	if !hasPrompt || got.Name != full.Name || got.Title != full.Title || got.Branch != full.Branch || !slices.Equal(got.PullRequests, full.PullRequests) {
 		t.Fatalf("preview labels %+v, full read %+v", got, full)
 	}
 }
@@ -86,6 +124,7 @@ func TestLocalPreviewLeavesOtherSourcesToTheFullRead(t *testing.T) {
 		{name: "cursor database chat", edit: func(r *archive.SessionRegistration) {
 			*r = archive.SessionRegistration{ArchiveSessionID: "chat", NativeSessionID: "composer", SourceKind: archive.SourceKindCursorSQLite, SourceKey: "composer", Harness: archive.Harness{Name: "cursor"}}
 		}},
+		{name: "subagent", edit: func(r *archive.SessionRegistration) { r.ParentSessionID = "parent" }},
 		{name: "no record previewer", edit: func(r *archive.SessionRegistration) { r.Harness.Name = "cursor" }},
 		{name: "staged import", edit: func(r *archive.SessionRegistration) { r.StagedImportSHA256 = strings.Repeat("a", 64) }},
 		{name: "historical project", edit: func(r *archive.SessionRegistration) { r.HistoricalProject = &archive.HistoricalProjectProof{} }},

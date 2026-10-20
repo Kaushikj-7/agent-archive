@@ -148,7 +148,8 @@ type providerReader struct {
 	// localRead is set only by the explicit unregistered source entry point.
 	localRead bool
 	// preview opens the provider's bounded preview pass, when it has one,
-	// for a label preview that reads no content beyond its windows.
+	// for a label preview that filters only its windows. A provider without
+	// one opens its ordinary pass, which may still hash the whole source.
 	preview                 bool
 	countInspection         bool
 	inspectionCache         *inspectioncache.Cache

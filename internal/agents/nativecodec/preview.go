@@ -26,19 +26,22 @@ func Preview(ctx context.Context, adapter interface {
 		if err := json.Unmarshal(encoded, &safe); err != nil {
 			return archive.RecordPreview{}, err
 		}
-		if isSidechainRecord(safe) {
-			continue
-		}
 		if isClaudeTitleRecord(safe) {
-			facts := claudeTitlePreview(safe)
-			out.Name, out.NameNativeID, out.NameSource = facts.Name, facts.NameNativeID, facts.NameSource
+			if !isSidechainRecord(safe) {
+				facts := claudeTitlePreview(safe)
+				out.Name, out.NameNativeID, out.NameSource = facts.Name, facts.NameNativeID, facts.NameSource
+			}
 			continue
 		}
+		// As the parser collects them, from sidechain records too.
 		if link, ok := pullRequestLink(safe); ok {
 			out.PullRequest = link
 		}
-		if branch := archive.ValidBranch(firstStringDeep(safe, "gitBranch")); branch != "HEAD" {
+		if branch := firstStringDeep(safe, "gitBranch"); branch != "" {
 			out.Branch = branch
+		}
+		if isSidechainRecord(safe) {
+			continue
 		}
 		out.Activity = parseNativeTimestamp(safe)
 		_, text, kind, ok := visibleMessage(safe)

@@ -24,13 +24,14 @@ var ErrPreviewUnavailable = errors.New("the session's transcript cannot be previ
 //
 // It is ErrPreviewUnavailable for a session a preview cannot stand in for:
 // one not read from a single transcript file (a Cursor database chat, Codex
-// related history), a native or staged import, a historical project, a
+// related history), a subagent or child session, whose full read names it
+// from its metadata or spawn record, a native or staged import, a historical project, a
 // harness with no record previewer, a session whose retained or pending
 // evidence carries a session label, and a transcript shorter than minBytes,
 // which a full read handles about as quickly.
 func PreviewLocalTranscript(ctx context.Context, home string, reg archive.SessionRegistration, cursorDatabase string, sources agentapi.SourcesLookup, previews agentapi.PreviewsLookup, minBytes int64, limits PreviewLimits) (TranscriptPreview, error) {
 	defer trace.Start("preview local transcript").End()
-	if reg.NativeImport != nil || reg.HistoricalProject != nil || reg.StagedImportSHA256 != "" || !reg.ReadsTranscriptFile() || previews == nil {
+	if reg.NativeImport != nil || reg.HistoricalProject != nil || reg.StagedImportSHA256 != "" || !reg.ReadsTranscriptFile() || reg.IsChild() || reg.SubagentID != "" || previews == nil {
 		return TranscriptPreview{}, ErrPreviewUnavailable
 	}
 	previewer, ok := previews.LookupPreview(reg.Harness.Name)
