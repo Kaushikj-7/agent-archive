@@ -1,12 +1,17 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/search"
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 // passageScreens opens the second result (outside's best match, the third of
@@ -171,5 +176,103 @@ func TestHighlightedLinesKeepLineBreaksAndSafeText(t *testing.T) {
 	}
 	if strings.Count(strings.Join(lines, "\n"), style.match("visible")) != 2 || strings.Contains(strings.Join(lines, ""), "\u202e") {
 		t.Fatalf("highlight or sanitizing lost: %q", lines)
+	}
+}
+
+// firstReadWaits is a store whose first bounded read waits until it is
+// cancelled; later reads go through.
+type firstReadWaits struct {
+	storage.ObjectStore
+	reads *atomic.Int32
+}
+
+func (s firstReadWaits) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if s.reads.Add(1) == 1 {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	if limited, ok := s.ObjectStore.(storage.LimitedGetter); ok {
+		return limited.GetLimited(ctx, key, limit)
+	}
+	return s.Get(ctx, key)
+}
+
+func TestSearchPassageKeyTypedDuringALeftReadDoesNotFollow(t *testing.T) {
+	env := searchProjectsFixture(t)
+	open, reads := env.OpenStore, &atomic.Int32{}
+	env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+		objects, err := open(cfg)
+		return firstReadWaits{ObjectStore: objects, reads: reads}, err
+	}
+	// t while the first passage loads, then b leaves it before it is read;
+	// the next passage opened must not open the transcript.
+	screens := searchScreens(t, env, newFakeKeys("\x1b[B", "\r", later(time.Millisecond, "t"), later(time.Millisecond, "b"), "\r", "b", "q"), "", "read performance")
+	if reads.Load() < 2 {
+		t.Fatalf("the second passage was not read")
+	}
+	for _, screen := range screens {
+		if strings.Contains(screen, "── You ─") {
+			t.Fatalf("t typed into a passage that was left opened the transcript of the next:\n%s", screen)
+		}
+	}
+	lastScreenWith(t, screens, "  codex › Done: read performance notes are in dev/bench.")
+}
+
+func TestSearchPassageWrapsColoredLinesOnANarrowTerminal(t *testing.T) {
+	style := textStyle{color: true}
+	s := &contentSearchBrowser{opts: contentSearchOptions{query: search.Query{Text: "read performance"}}, style: style, now: time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)}
+	hit := search.Hit{SessionID: "0a13656b", Harness: "claude", Title: "Sublinear reads", MatchCount: 1}
+	st := &searchMatchState{ordinal: 1, ref: &search.Reference{End: 60}, role: "user"}
+	out := search.Surrounding{Role: "user", Selected: search.Context{Text: "Can you improve the read performance of every read performance path?", End: 60}}
+	lines, _ := s.passageLines(hit, st, out, 24, passageView{})
+	escape := regexp.MustCompile("\x1b\\[[0-9;]*m")
+	wrapped := 0
+	for _, line := range lines {
+		rows := splitColumns(line, 24)
+		for i, row := range rows {
+			// Color codes take no columns, and a row is cut only at the
+			// terminal's edge, never inside a code.
+			if visibleWidth(row) > 24 || i < len(rows)-1 && visibleWidth(row) != 24 || strings.Contains(escape.ReplaceAllString(row, ""), "\x1b") {
+				t.Fatalf("row %q of %q", row, rows)
+			}
+		}
+		wrapped += len(rows) - 1
+	}
+	if wrapped == 0 {
+		t.Fatalf("no line was wider than 24: %q", lines)
+	}
+}
+
+func TestSearchPassageEscapesEveryFieldAndHighlightsOnlyTheMatch(t *testing.T) {
+	style := textStyle{color: true}
+	s := &contentSearchBrowser{opts: contentSearchOptions{query: search.Query{Text: "read"}}, style: style, now: time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)}
+	hit := search.Hit{SessionID: "0a13656b\x1b[2J", Harness: "claude", Title: "Sublinear \x1b]0;x\x07reads\u202e", Project: "agent\x1b[2J-archive", MatchCount: 2,
+		Gaps: []search.Gap{{RevisionID: "rev\x1b[2J", Reason: "gone\u009b31m"}}}
+	ref := &search.Reference{Record: 2, End: 20, Source: search.Source{RevisionID: "rev\x1b[2J"}}
+	st := &searchMatchState{ordinal: 1, ref: ref, role: "user"}
+	out := search.Surrounding{Role: "user\x1b[2J",
+		Selected: search.Context{Text: "please read\x1b[2J this", End: 20},
+		Before:   []search.ContextSlice{{Role: "assistant", Context: search.Context{Text: "I read it\u202e already"}}},
+	}
+	lines, _ := s.passageLines(hit, st, out, 80, passageView{details: true})
+	text := strings.Join(lines, "\n")
+	plain := regexp.MustCompile("\x1b\\[[0-9;]*m").ReplaceAllString(text, "")
+	if strings.ContainsAny(plain, "\x1b\x07\u202e\u009b") {
+		t.Fatalf("unsafe passage: %q", plain)
+	}
+	if strings.Count(text, style.match("read")) != 1 {
+		t.Fatalf("a neighbor's words are highlighted, or the match's are not: %q", text)
+	}
+}
+
+func TestSearchPassageMShowsCutNeighborsWhole(t *testing.T) {
+	s := &contentSearchBrowser{}
+	p := &openPassage{b: &sessionBrowser{search: s}, state: &searchMatchState{ordinal: 1}, cut: true}
+	if _, done, err := p.apply(t.Context(), searchActionMore, &detailsScreen{}); done || err != nil || !p.view.expanded {
+		t.Fatalf("m did not expand: done %v err %v view %+v", done, err, p.view)
+	}
+	p.cut = false
+	if _, _, err := p.apply(t.Context(), searchActionMore, &detailsScreen{}); err != nil || p.notice == "" {
+		t.Fatalf("m with nothing more said nothing: %v %q", err, p.notice)
 	}
 }

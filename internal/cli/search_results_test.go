@@ -341,8 +341,8 @@ func TestSearchResultRowsEscapeTheirTitles(t *testing.T) {
 func TestSearchEnterOpensTheMatchTheStripShows(t *testing.T) {
 	env := searchProjectsFixture(t)
 	screens := searchScreens(t, env, newFakeKeys("\x1b[B", "n", "\r", "b", "q"), "", "read performance")
-	passage := lastScreenWith(t, screens, "Reference: message")
-	if !strings.Contains(passage, "Reference: message 4 ") || !strings.Contains(passage, "[selected · assistant]\nDone: read performance notes are in dev/bench.") {
+	passage := lastScreenWith(t, screens, searchMatchFooter)
+	if !strings.Contains(passage, "match 2 of 3\n") || !strings.Contains(passage, "  codex › Done: read performance notes are in dev/bench.") {
 		t.Fatalf("Enter did not open the strip's second match:\n%s", passage)
 	}
 }

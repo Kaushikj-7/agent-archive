@@ -227,6 +227,9 @@ func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browse
 	if !ok {
 		return browseBack, nil
 	}
+	// An i or t typed while a passage loaded is for that passage only.
+	s.afterRead = searchActionNone
+	defer func() { s.afterRead = searchActionNone }()
 	p := &openPassage{b: b, row: row, hit: hit, state: s.matchState(hit)}
 	if p.state.ref != nil {
 		p.read(ctx, p.state.ref.Start)
