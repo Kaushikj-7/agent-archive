@@ -162,7 +162,8 @@ the query. Declining makes terminal searches read the bucket directly.
 
 After you decline indexing, a search on a terminal with no local index reads
 the bucket itself. It first warns that it downloads sessions from your R2 or S3
-bucket, keeps nothing on this machine, pauses after 2 minutes, and roughly how
+bucket, keeps no conversation text on this machine (session titles are cached
+as for `list`), pauses after 2 minutes, and roughly how
 long a full search of the sessions in scope takes (at about 50 sessions a
 minute). It prints the command that makes the next search instant:
 

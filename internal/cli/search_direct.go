@@ -348,7 +348,8 @@ func printDirectSearchWarning(p *prompter, cfg config.Config, scan *directScan) 
 	if strings.EqualFold(strings.TrimSpace(cfg.Storage.Provider), credentials.ProviderS3) {
 		provider = "S3"
 	}
-	terminal.Printf(p.out, "%s Without an index, search downloads sessions from your %s bucket, newest first. Nothing is kept on this machine.\n", p.style.warnMark(), provider)
+	terminal.Printf(p.out, "%s Without an index, search downloads sessions from your %s bucket, newest first.\n", p.style.warnMark(), provider)
+	terminal.Println(p.out, "  No conversation text is kept on this machine; session titles are cached, as for list.")
 	minutes := (scan.total + directSearchRate - 1) / directSearchRate
 	terminal.Printf(p.out, "  It pauses after %s; across all %s a full search takes %s.\n", durationText(scan.budget), sessionsText(scan.total), aboutMinutes(minutes))
 	terminal.Println(p.out, "  To search instantly next time, run:")
