@@ -278,6 +278,9 @@ type statusView struct {
 	// them.
 	lastErrorProblem string
 	lastErrorByIssue bool
+	// subagentIssues are the subagents among the collector's SessionIssues,
+	// by their registrations, which status counts apart from sessions.
+	subagentIssues map[string]bool
 	// importedApps are apps whose sessions were imported without hooks
 	// (config.ImportedHarnesses), with their import counts.
 	importedApps []appStatus
@@ -627,6 +630,9 @@ type statusSessions struct {
 	// nextRetry is when each session on the Codex lookup allowance's
 	// backoff schedule is next attempted (state.Status.NextRetryAt).
 	nextRetry map[string]time.Time
+	// issueReasons is each failed session's recognized reason
+	// (state.Status.SessionIssueReasons).
+	issueReasons map[string]string
 }
 
 // readSessionStatus reads the collector's status, the pending count, and the
@@ -640,6 +646,14 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	}
 	regs, reqs, stateWarnings := statusState(home, store)
 	view.Warnings = append(view.Warnings, stateWarnings...)
+	for _, reg := range regs {
+		if _, failed := view.Collector.SessionIssues[reg.ArchiveSessionID]; failed && reg.ParentSessionID != "" {
+			if view.subagentIssues == nil {
+				view.subagentIssues = map[string]bool{}
+			}
+			view.subagentIssues[reg.ArchiveSessionID] = true
+		}
+	}
 	// A session whose own files cannot be read is left out of every count
 	// below, with one warning naming it.
 	skipped := map[string]bool{}
@@ -719,7 +733,7 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	if len(batches) > 0 {
 		view.LastImport = batches[len(batches)-1].ID
 	}
-	return statusSessions{store: store, regs: regs, skip: skip, owed: owed, deferred: view.Collector.DeferredSessions, unreached: view.Collector.UnreachedSessions, nextRetry: view.Collector.NextRetryAt}
+	return statusSessions{store: store, regs: regs, skip: skip, owed: owed, deferred: view.Collector.DeferredSessions, unreached: view.Collector.UnreachedSessions, nextRetry: view.Collector.NextRetryAt, issueReasons: view.Collector.SessionIssueReasons}
 }
 
 // appStatus is one configured app's capture evidence: its sessions, per
@@ -932,7 +946,7 @@ func (s statusSessions) addSession(app *appStatus, pair *projectCaptureStatus, r
 		pair.HookObserved = true
 	}
 	if issue := issues[reg.ArchiveSessionID]; issue != "" {
-		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: issue, Detail: issueGapDetail(issue)})
+		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: issue, Detail: issueGapDetail(issue, s.issueReasons[reg.ArchiveSessionID])})
 	}
 	if reg.Harness.Version != "" && !containsString(app.HarnessVersions, reg.Harness.Version) {
 		app.HarnessVersions = append(app.HarnessVersions, reg.Harness.Version)
@@ -2182,6 +2196,7 @@ func (sc statusScreen) storageRows(view statusView) []statusRow {
 		rows = append(rows, statusRow{mark: mark, cells: []string{text}})
 	}
 	if sc.verbose {
+		rows = append(rows, sc.issueGroupRows(view)...)
 		uploads := fmt.Sprintf("Last upload: %s · %d pending", sc.ago(view.Collector.LastPublishedAt), view.Collector.PendingCount)
 		rows = append(rows, statusRow{mark: sc.info(), cells: []string{uploads}})
 	}

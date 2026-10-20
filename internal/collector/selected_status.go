@@ -46,6 +46,7 @@ func (p *pass) selectedStatus(previous, current state.Status) state.Status {
 	current.NextRetryAt = preserveUnselected(previous.NextRetryAt, current.NextRetryAt, selected)
 	current.UnreachedSessions = preserveUnselected(previous.UnreachedSessions, current.UnreachedSessions, selected)
 	current.SessionIssues = preserveUnselected(previous.SessionIssues, current.SessionIssues, selected)
+	current.SessionIssueReasons = preserveUnselected(previous.SessionIssueReasons, current.SessionIssueReasons, selected)
 	for _, code := range current.SessionIssues {
 		if current.IssueCounts == nil {
 			current.IssueCounts = map[string]int{}

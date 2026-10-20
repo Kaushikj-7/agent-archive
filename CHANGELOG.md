@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `status --issues` and `status --verbose` say why sessions failed in the last
+  pass, grouped: one line per kind of failure and error with its count and a
+  few session IDs, such as "268 sessions failed to capture or upload: durable
+  publication capacity exhausted; …", instead of one line per session. Only
+  errors from a fixed set are named, so no paths or transcript text are shown
+  or stored; any other error reads "error not recognized" and `agent-archive
+  sync` still prints it. `status --json` adds `collector.session_issue_reasons`.
+
 ### Fixed
 
 - Uploads no longer stop for good after about 500 sessions. Each session's
