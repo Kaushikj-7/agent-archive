@@ -60,12 +60,11 @@ func TestPickerModelReadsLabelsConcurrently(t *testing.T) {
 
 func TestHandoffPickerLabelWantsStopsWhereRowsWould(t *testing.T) {
 	row := func(id string, unbuilt bool) handoffPickerRow {
-		r := handoffPickerRow{active: time.Unix(1000, 0)}
+		var reg *archive.SessionRegistration
 		if unbuilt {
-			reg := archive.SessionRegistration{ArchiveSessionID: id, Harness: archive.Harness{Name: "codex"}}
-			r.unbuilt = &reg
+			reg = &archive.SessionRegistration{ArchiveSessionID: id, Harness: archive.Harness{Name: "codex"}}
 		}
-		return r
+		return handoffPickerRow{active: time.Unix(1000, 0), unbuilt: reg}
 	}
 	all := []handoffPickerRow{row("a", true), row("archived", false), row("cached", true), row("b", true), row("c", true), row("d", true)}
 	cached := pickerLocalLabelKey(*all[2].unbuilt, all[2].active, "auto")
