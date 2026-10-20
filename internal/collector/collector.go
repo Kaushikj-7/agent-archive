@@ -956,13 +956,15 @@ func (p *pass) saveStatus() error {
 		QuarantinedFiles:       p.local.QuarantinedFiles(),
 		UnrefreshableSummaries: p.countRefreshSkips(),
 		PendingNativeLinks:     p.result.PendingNativeLinks, NativeLinkPendingReasons: p.result.NativeLinkPendingReasons,
-		DeferredSessions:  p.result.Deferred,
-		DeferredSince:     p.deferredAt,
-		NextRetryAt:       p.retryAt,
-		SessionIssues:     carriedIssues(previous.SessionIssues, p.retryAt, p.result.Errors),
-		UnreachedSessions: p.result.Unreached,
-		WaitingSubagents:  len(p.result.WaitingSubagents),
-		RunningSubagents:  len(p.result.RunningSubagents),
+		DeferredSessions: p.result.Deferred,
+		DeferredSince:    p.deferredAt,
+		NextRetryAt:      p.retryAt,
+		SessionIssues:    carriedIssues(previous.SessionIssues, p.retryAt, p.result.Errors),
+		// Each carried issue keeps the reason recorded beside it.
+		SessionIssueReasons: carriedIssues(previous.SessionIssueReasons, p.retryAt, p.result.Errors),
+		UnreachedSessions:   p.result.Unreached,
+		WaitingSubagents:    len(p.result.WaitingSubagents),
+		RunningSubagents:    len(p.result.RunningSubagents),
 		// The pass rebuilds everything else from scratch; this list is a
 		// week of history, so it carries the previous pass's forward.
 		ExpiredSubagents: state.CarryExpiredSubagents(previous.ExpiredSubagents, p.expiredSubagents, p.now),
@@ -977,10 +979,11 @@ func (p *pass) saveStatus() error {
 	return nil
 }
 
-// carriedIssues is the previous pass's issue for each session on the lookup
-// allowance's backoff schedule (retrying) that this pass recorded no failure
-// for (failed): it held the session (Result.RetryLater), or ended with its
-// attempt in flight, so the failure the last attempt recorded still stands.
+// carriedIssues is the previous pass's issue (or reason) for each session on
+// the lookup allowance's backoff schedule (retrying) that this pass recorded
+// no failure for (failed): it held the session (Result.RetryLater), or ended
+// with its attempt in flight, so the failure the last attempt recorded still
+// stands.
 // The caller records this pass's own failures beside them (internal/cli's
 // recordSessionIssues).
 func carriedIssues(previous map[string]string, retrying map[string]time.Time, failed map[string]error) map[string]string {

@@ -29,7 +29,7 @@ func TestRecordSessionIssuesCarriesSessionsHeldForARetry(t *testing.T) {
 		{"alone", map[string]error{}, 1},
 	} {
 		// What collector.Run saves for a pass that held it.
-		status := state.Status{LastScanAt: f.now, NextRetryAt: held, SessionIssues: map[string]string{"held": issueCaptureFailed}}
+		status := state.Status{LastScanAt: f.now, NextRetryAt: held, SessionIssues: map[string]string{"held": issueCaptureFailed}, SessionIssueReasons: map[string]string{"held": state.ErrDurableStorageCapacity.Error()}}
 		if len(tc.errs) > 0 {
 			status.SetLastErrors(collector.FailedSessionsProblem(len(tc.errs)))
 		}
@@ -44,8 +44,8 @@ func TestRecordSessionIssuesCarriesSessionsHeldForARetry(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.SessionIssues["held"] != issueCaptureFailed || got.IssueCounts[issueCaptureFailed] != tc.counts || len(got.LastErrors) != 1 || got.LastErrors[0] != summary || !strings.HasPrefix(summary, plural(tc.counts, "session")) {
-			t.Fatalf("%s: status=%+v summary=%q, want the held session's issue carried and counted", tc.name, got, summary)
+		if got.SessionIssues["held"] != issueCaptureFailed || got.SessionIssueReasons["held"] != state.ErrDurableStorageCapacity.Error() || got.IssueCounts[issueCaptureFailed] != tc.counts || len(got.LastErrors) != 1 || got.LastErrors[0] != summary || !strings.HasPrefix(summary, plural(tc.counts, "session")) {
+			t.Fatalf("%s: status=%+v summary=%q, want the held session's issue and reason carried and counted", tc.name, got, summary)
 		}
 	}
 }

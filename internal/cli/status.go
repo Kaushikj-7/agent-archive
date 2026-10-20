@@ -627,6 +627,9 @@ type statusSessions struct {
 	// nextRetry is when each session on the Codex lookup allowance's
 	// backoff schedule is next attempted (state.Status.NextRetryAt).
 	nextRetry map[string]time.Time
+	// issueReasons is each failed session's recognized reason
+	// (state.Status.SessionIssueReasons).
+	issueReasons map[string]string
 }
 
 // readSessionStatus reads the collector's status, the pending count, and the
@@ -719,7 +722,7 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	if len(batches) > 0 {
 		view.LastImport = batches[len(batches)-1].ID
 	}
-	return statusSessions{store: store, regs: regs, skip: skip, owed: owed, deferred: view.Collector.DeferredSessions, unreached: view.Collector.UnreachedSessions, nextRetry: view.Collector.NextRetryAt}
+	return statusSessions{store: store, regs: regs, skip: skip, owed: owed, deferred: view.Collector.DeferredSessions, unreached: view.Collector.UnreachedSessions, nextRetry: view.Collector.NextRetryAt, issueReasons: view.Collector.SessionIssueReasons}
 }
 
 // appStatus is one configured app's capture evidence: its sessions, per
@@ -932,7 +935,7 @@ func (s statusSessions) addSession(app *appStatus, pair *projectCaptureStatus, r
 		pair.HookObserved = true
 	}
 	if issue := issues[reg.ArchiveSessionID]; issue != "" {
-		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: issue, Detail: issueGapDetail(issue)})
+		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: issue, Detail: issueGapDetail(issue, s.issueReasons[reg.ArchiveSessionID])})
 	}
 	if reg.Harness.Version != "" && !containsString(app.HarnessVersions, reg.Harness.Version) {
 		app.HarnessVersions = append(app.HarnessVersions, reg.Harness.Version)
@@ -2182,6 +2185,7 @@ func (sc statusScreen) storageRows(view statusView) []statusRow {
 		rows = append(rows, statusRow{mark: mark, cells: []string{text}})
 	}
 	if sc.verbose {
+		rows = append(rows, sc.issueGroupRows(view.Collector)...)
 		uploads := fmt.Sprintf("Last upload: %s · %d pending", sc.ago(view.Collector.LastPublishedAt), view.Collector.PendingCount)
 		rows = append(rows, statusRow{mark: sc.info(), cells: []string{uploads}})
 	}
