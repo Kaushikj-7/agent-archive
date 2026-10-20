@@ -18,18 +18,8 @@ import (
 // The caller closes the returned data lease
 // after the preview and any returned publication have finished their consumers.
 func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (builder func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error), release func(), resultErr error) {
-	if reg.HistoricalProject != nil || reg.NativeImport != nil {
-		return nil, func() {}, errors.New("historical imports cannot recover native continuation; preview a new explicit import")
-	}
-	if reg.IsChild() || !reg.ReadsTranscriptFile() {
-		return nil, func() {}, errors.New("recovery supports top-level transcript files only; start a fresh parent session for subagent recovery")
-	}
-	semantics, err := sourceSemantics(opts.Sources, reg)
-	if err != nil {
+	if err := CheckGenerationRecoverySource(reg, opts); err != nil {
 		return nil, func() {}, err
-	}
-	if semantics.Mutation != agentapi.AppendOnly {
-		return nil, func() {}, errors.New("recovery requires an append-only native transcript")
 	}
 	adapter, err := sourceAdapter(opts.Sources, reg.Harness.Name)
 	if err != nil {
@@ -89,6 +79,25 @@ func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistrat
 	keep = true
 	builder, release = generationRecoveryBuilder(ctx, owner, filtered, adapter)
 	return builder, release, nil
+}
+
+// CheckGenerationRecoverySource refuses a registration whose source recovery
+// cannot replace. It reads no native transcript.
+func CheckGenerationRecoverySource(reg archive.SessionRegistration, opts Options) error {
+	if reg.HistoricalProject != nil || reg.NativeImport != nil {
+		return errors.New("historical imports cannot recover native continuation; preview a new explicit import")
+	}
+	if reg.IsChild() || !reg.ReadsTranscriptFile() {
+		return errors.New("recovery supports top-level transcript files only; start a fresh parent session for subagent recovery")
+	}
+	semantics, err := sourceSemantics(opts.Sources, reg)
+	if err != nil {
+		return err
+	}
+	if semantics.Mutation != agentapi.AppendOnly {
+		return errors.New("recovery requires an append-only native transcript")
+	}
+	return nil
 }
 
 // maintainFrozen runs only from retained evidence. Privacy and parser upgrades

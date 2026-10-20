@@ -138,43 +138,72 @@ func TestGenerationRecoveryClearsSettledStageOnlyInSuccessor(t *testing.T) {
 	}
 }
 
+// Each refusal says whether sync can settle the stage: an unfinished release
+// is owed, a link no release can settle is unsupported, and unreadable or
+// inconsistent controls keep their own cause.
 func TestGenerationRecoveryRefusesUnsettledStageBeforeBuilding(t *testing.T) {
 	t.Parallel()
-	for name, unsettle := range map[string]func(*testing.T, *Store, archive.SessionRegistration){
-		"verified-only progress": func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+	owed := func(err error) bool { return errors.Is(err, ErrGenerationStageUnsettled) }
+	unsupported := func(err error) bool { return errors.Is(err, ErrGenerationStageUnsupported) }
+	ownCause := func(err error) bool {
+		return err != nil && !errors.Is(err, ErrGenerationStageUnsettled) && !errors.Is(err, ErrGenerationStageUnsupported)
+	}
+	for name, tc := range map[string]struct {
+		unsettle func(*testing.T, *Store, archive.SessionRegistration)
+		want     func(error) bool
+	}{
+		"verified-only progress": {func(t *testing.T, s *Store, reg archive.SessionRegistration) {
 			t.Helper()
 			setStagedReleasePhase(t, s, reg.ArchiveSessionID, stagedReleaseVerified)
-		},
-		"local-complete progress": func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+		}, owed},
+		"local-complete progress": {func(t *testing.T, s *Store, reg archive.SessionRegistration) {
 			t.Helper()
 			setStagedReleasePhase(t, s, reg.ArchiveSessionID, stagedReleaseLocalComplete)
-		},
-		"missing receipt": func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+		}, owed},
+		"release not begun": {func(t *testing.T, s *Store, reg archive.SessionRegistration) {
 			t.Helper()
-			if err := os.Remove(filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseReceiptName))); err != nil {
+			for _, name := range []stagedControlName{stagedReleaseReceiptName, stagedReleaseProgressName} {
+				if err := os.Remove(filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, name))); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}, owed},
+		"corrupt progress": {func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+			t.Helper()
+			if err := os.WriteFile(filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseProgressName)), []byte(`{"version":3}`), 0o600); err != nil {
 				t.Fatal(err)
 			}
-		},
-		"mismatched link": func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+		}, func(err error) bool { return ownCause(err) && errors.Is(err, ErrDurableStorageRecovery) }},
+		"receipt for another selection": {func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+			t.Helper()
+			var progress stagedReleaseProgress
+			if err := s.readStagedControl(reg.ArchiveSessionID, stagedReleaseProgressName, &progress); err != nil {
+				t.Fatal(err)
+			}
+			progress.ReceiptSHA256 = strings.Repeat("d", 64)
+			if err := s.writeStagedControl(t.Context(), reg.ArchiveSessionID, stagedReleaseProgressName, progress); err != nil {
+				t.Fatal(err)
+			}
+		}, func(err error) bool { return ownCause(err) && errors.Is(err, ErrDurableStorageRecovery) }},
+		// A rewritten registration fails its own integrity check first.
+		"mismatched link": {func(t *testing.T, s *Store, reg archive.SessionRegistration) {
 			t.Helper()
 			reg.StagedImportSHA256 = strings.Repeat("b", 64)
 			if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
 				t.Fatal(err)
 			}
-		},
-		"foreign root": func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+		}, ownCause},
+		"foreign root": {func(t *testing.T, s *Store, reg archive.SessionRegistration) {
 			t.Helper()
 			foreignStageRoot(t, s, reg.ArchiveSessionID)
-		},
+		}, ownCause},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			s, reg, at := settledStageGenerationFixture(t)
-			unsettle(t, s, reg)
-			err := assertStageRecoveryRefused(t, s, reg.ArchiveSessionID, at)
-			// A rewritten registration fails its own integrity check first.
-			if name != "mismatched link" && !errors.Is(err, ErrGenerationStageUnsettled) {
-				t.Fatalf("refusal does not name the unsettled stage: %v", err)
+			tc.unsettle(t, s, reg)
+			if err := assertStageRecoveryRefused(t, s, reg.ArchiveSessionID, at); !tc.want(err) {
+				t.Fatalf("refusal misclassified: %v", err)
 			}
 		})
 	}
@@ -188,8 +217,8 @@ func TestGenerationRecoveryRefusesUnsettledStageBeforeBuilding(t *testing.T) {
 		if err := config.WithPublicationComposition(s.Home(), func(config.PublicationCompositionGuard) error { return nil }); err != nil {
 			t.Fatal(err)
 		}
-		if err := assertStageRecoveryRefused(t, s, reg.ArchiveSessionID, at); !errors.Is(err, ErrGenerationStageUnsettled) {
-			t.Fatalf("refusal does not name the unsettled stage: %v", err)
+		if err := assertStageRecoveryRefused(t, s, reg.ArchiveSessionID, at); !unsupported(err) {
+			t.Fatalf("untyped link not reported as unsupported: %v", err)
 		}
 	})
 }

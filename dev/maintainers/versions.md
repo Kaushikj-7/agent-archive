@@ -167,7 +167,8 @@ completed-successor routing. This does not allocate another configuration floor.
 A version 2 successor omits `staged_import_sha256` only when the predecessor's
 committed typed staged selection names that stage and its release progress is
 `released` with no prepared stage left; replay rechecks that release. Any other
-stage link refuses before a journal. Journals that kept the link replay
+stage link refuses before a journal: an unfinished release as owed, and an
+untyped, mismatched, historical or native-import link as unsupported. Journals that kept the link replay
 unchanged, so the journal format and version do not change; earlier binaries
 refuse to replay a successor without the link.
 

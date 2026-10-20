@@ -8,10 +8,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- Transcript recovery of a session first imported through a released typed stage
-  starts its new generation without that stage link, which stays with the frozen
-  original. Recovery refuses until an unreleased, mismatched or redirected stage
-  settles; run `agent-archive sync` first.
+- Transcript recovery of a session imported through a typed stage starts its new
+  generation without that stage link, which stays with the frozen original. If
+  the stage's release is unfinished, `recover` asks you to run `agent-archive sync`
+  first. Sessions imported through other stages are refused, because no release
+  can settle them. Both refusals happen before the transcript is read or any
+  setting changes.
 - Narrowing and then widening the skill evidence mode before pending work is
   uploaded now restores the skill evidence its oldest unuploaded capture was
   allowed, instead of keeping the narrower copy. A narrower upload that already

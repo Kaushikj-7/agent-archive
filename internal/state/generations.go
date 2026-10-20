@@ -148,7 +148,7 @@ func (s *Store) beginGenerationRecoveryGuard(g config.DurableStorageGuard, id st
 			return "", err
 		}
 	}
-	if err := s.generationStageSettled(s.generationReadContext(), old); err != nil {
+	if err := s.CheckGenerationStage(s.generationReadContext(), old); err != nil {
 		return "", err
 	}
 	next, err := local.ID()
@@ -1009,11 +1009,16 @@ func validGenerationRecoveryVersion(r generationRecovery) bool {
 func (s *Store) generationCommittedAuthority(ctx context.Context, reg archive.SessionRegistration) (string, string, error) {
 	read, ctx, closeContext := s.withDurableContext(ctx)
 	defer closeContext()
-	s = read
-	published, err := s.LoadPublishedStateContext(ctx, reg.ArchiveSessionID)
+	published, err := read.LoadPublishedStateContext(ctx, reg.ArchiveSessionID)
 	if err != nil {
 		return "", "", err
 	}
+	return read.generationPublishedAuthority(ctx, published)
+}
+
+// generationPublishedAuthority digests the exact prior selection of an
+// already loaded publication. The caller owns the durable read context.
+func (s *Store) generationPublishedAuthority(ctx context.Context, published *Published) (string, string, error) {
 	prior := published.PublicationPredecessor()
 	if prior.State != PredecessorPresent {
 		return "", "", errors.New("generation recovery requires exact prior publication authority")
@@ -1063,15 +1068,29 @@ func (s *Store) validateGenerationRecoveryReplay(ctx context.Context, id string,
 	if validationErr != nil {
 		return ErrSessionIndexRecoveryRequired
 	}
-	if old.StagedImportSHA256 != "" && r.Registration.StagedImportSHA256 == "" {
-		if err := s.generationStageSettled(ctx, old); generationReadRefusal(err) {
+	clearsStage := old.StagedImportSHA256 != "" && r.Registration.StagedImportSHA256 == ""
+	if r.Version != 2 && !clearsStage {
+		return nil
+	}
+	// One read of the predecessor's publication serves both authority checks.
+	read, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
+	published, err := read.LoadPublishedStateContext(ctx, id)
+	if generationReadRefusal(err) {
+		return err
+	}
+	if err != nil {
+		return ErrSessionIndexRecoveryRequired
+	}
+	if clearsStage {
+		if err := read.generationStageSettled(ctx, old, published); generationReadRefusal(err) {
 			return err
 		} else if err != nil {
 			return ErrSessionIndexRecoveryRequired
 		}
 	}
 	if r.Version == 2 {
-		priorMetadata, priorSources, err := s.generationCommittedAuthority(ctx, old)
+		priorMetadata, priorSources, err := read.generationPublishedAuthority(ctx, published)
 		if generationReadRefusal(err) {
 			return err
 		}
@@ -1082,61 +1101,59 @@ func (s *Store) validateGenerationRecoveryReplay(ctx context.Context, id string,
 	return nil
 }
 
-// ErrGenerationStageUnsettled keeps a predecessor's stage authority owed;
-// agent-archive sync settles a releasable stage before recovery.
-var ErrGenerationStageUnsettled = fmt.Errorf("the session's import stage has not settled: %w", ErrReadySelectionFrozen)
+// ErrGenerationStageUnsettled reports a typed import stage whose release is
+// still owed; agent-archive sync completes it before recovery.
+var ErrGenerationStageUnsettled = errors.New("the session's import stage has not settled")
 
-// CheckGenerationStage reports ErrGenerationStageUnsettled before recovery is
-// confirmed when the registration's stage link could not leave its successor.
+// ErrGenerationStageUnsupported reports a stage link that no release can
+// settle: an untyped, mismatched, historical or native-import stage.
+var ErrGenerationStageUnsupported = errors.New("this session's import stage can never be released, so recovery does not support it; start a new session to continue")
+
+// CheckGenerationStage reports whether the registration's stage link could
+// leave a recovery successor. Callers check it before confirmation and again
+// under the recovery lock.
 func (s *Store) CheckGenerationStage(ctx context.Context, reg archive.SessionRegistration) error {
-	return s.generationStageSettled(ctx, reg)
+	if reg.StagedImportSHA256 == "" {
+		return nil
+	}
+	read, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
+	published, err := read.LoadPublishedStateContext(ctx, reg.ArchiveSessionID)
+	if err != nil {
+		return err
+	}
+	return read.generationStageSettled(ctx, reg, published)
 }
 
 // generationStageSettled permits a successor without the predecessor's stage
 // link only when the committed typed selection names that exact stage and its
-// release durably completed. Legacy, historical, mismatched, unreleased or
-// foreign-rooted stage authority stays with the predecessor and refuses.
-func (s *Store) generationStageSettled(ctx context.Context, old archive.SessionRegistration) error {
+// release durably completed. An unfinished release is owed; a link no release
+// can settle is unsupported; unreadable or inconsistent controls keep their
+// own error. Every refusal leaves the stage authority with the predecessor.
+func (s *Store) generationStageSettled(ctx context.Context, old archive.SessionRegistration, published *Published) error {
 	if old.StagedImportSHA256 == "" {
 		return nil
 	}
 	if old.HistoricalProject != nil || old.NativeImport != nil {
-		return ErrGenerationStageUnsettled
-	}
-	read, ctx, closeContext := s.withDurableContext(ctx)
-	defer closeContext()
-	s = read
-	id := old.ArchiveSessionID
-	published, err := s.LoadPublishedStateContext(ctx, id)
-	if err != nil {
-		return err
+		return ErrGenerationStageUnsupported
 	}
 	if published.state.LastPublished == nil || published.state.LastPublished.StagedProof() == nil {
-		return ErrGenerationStageUnsettled
+		return ErrGenerationStageUnsupported
 	}
-	proof := published.state.LastPublished.StagedProof()
-	if proof.StageSHA256 != old.StagedImportSHA256 {
-		return ErrGenerationStageUnsettled
+	release := stagedReleaseState{selection: published.state.LastPublished.StagedProof()}
+	if release.selection.StageSHA256 != old.StagedImportSHA256 {
+		return ErrGenerationStageUnsupported
 	}
-	var receipt stagedReleaseReceipt
-	var progress stagedReleaseProgress
-	for _, control := range []struct {
-		name  stagedControlName
-		value any
-	}{{stagedReleaseReceiptName, &receipt}, {stagedReleaseProgressName, &progress}} {
-		if err := s.readStagedControl(id, control.name, control.value); generationReadRefusal(err) {
-			return err
-		} else if err != nil {
-			return errors.Join(ErrGenerationStageUnsettled, err)
-		}
-	}
-	if !sameStagedSelection(receipt.Selection, *proof) || progress.Version != receipt.Version || progress.ReceiptSHA256 != receipt.SHA256 || progress.Phase != stagedReleaseReleased {
-		return ErrGenerationStageUnsettled
-	}
-	if _, present, err := s.loadPreparedImportStage(ctx, id); generationReadRefusal(err) {
+	if err := s.readStagedReleaseControls(old.ArchiveSessionID, &release); err != nil {
 		return err
-	} else if err != nil || present {
-		return errors.Join(ErrGenerationStageUnsettled, err)
+	}
+	if !release.progressFound || release.progress.Phase != stagedReleaseReleased {
+		return ErrGenerationStageUnsettled // Release has not begun or finished.
+	}
+	if _, present, err := s.loadPreparedImportStage(ctx, old.ArchiveSessionID); err != nil {
+		return err
+	} else if present {
+		return ErrGenerationStageUnsettled
 	}
 	return nil
 }

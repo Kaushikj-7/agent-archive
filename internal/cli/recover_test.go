@@ -504,21 +504,40 @@ func TestRecoverRefusesPauseDestinationAndSubagent(t *testing.T) {
 	}
 }
 
-func TestRecoverUnsettledImportStagePrintsSyncCommand(t *testing.T) {
+func TestRecoverRefusesUnsupportedImportStageBeforeReadingTranscript(t *testing.T) {
 	t.Parallel()
-	env, home, _, id := recoverFixture(t)
+	env, home, path, id := recoverFixture(t)
 	reg, _ := onlyRegistration(t, home)
 	reg.StagedImportSHA256 = strings.Repeat("a", 64)
 	data, err := json.Marshal(reg)
 	must(t, err)
 	must(t, os.WriteFile(filepath.Join(home, "registrations", id+".json"), data, 0600))
+	// Filtering this transcript would fail with a different error.
+	must(t, os.WriteFile(path, []byte("not native JSON"), 0600))
+	before, err := os.ReadFile(filepath.Join(home, "config.json"))
+	must(t, err)
 	for _, args := range [][]string{{"recover", id}, {"recover", id, "--confirm"}} {
 		var out, errOut bytes.Buffer
-		if code := Run(args, nil, &out, &errOut, env); code != 1 || errOut.String() != "agent-archive: recover: the session's import stage has not settled. Run:\n  agent-archive sync\n" {
+		if code := Run(args, nil, &out, &errOut, env); code != 1 || errOut.String() != "agent-archive: recover: "+state.ErrGenerationStageUnsupported.Error()+"\n" {
 			t.Fatalf("%v: %d %q", args, code, errOut.String())
 		}
 	}
 	if _, found, err := state.OpenReadOnly(home).GenerationSuccessor(id); err != nil || found {
-		t.Fatalf("unsettled stage started recovery: %v %v", found, err)
+		t.Fatalf("unsupported stage started recovery: %v %v", found, err)
+	}
+	if after, err := os.ReadFile(filepath.Join(home, "config.json")); err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("refused recovery changed configuration: %v", err)
+	}
+}
+
+func TestRecoverFailurePutsSyncOnItsOwnLineOnlyForOwedStages(t *testing.T) {
+	t.Parallel()
+	owed := recoverFailure(fmt.Errorf("begin: %w", state.ErrGenerationStageUnsettled))
+	if owed != "agent-archive: recover: the session's import stage has not settled. Run:\n  agent-archive sync\n" {
+		t.Fatalf("owed stage: %q", owed)
+	}
+	cause := recoverFailure(fmt.Errorf("read release progress: %w", state.ErrDurableStorageRecovery))
+	if strings.Contains(cause, "agent-archive sync") || !strings.Contains(cause, "read release progress") {
+		t.Fatalf("storage failure lost its cause: %q", cause)
 	}
 }
