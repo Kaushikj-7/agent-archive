@@ -48,7 +48,8 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 		return code
 	}
 	doc.Query = opts.query.Text
-	opts.indexing = cfg.SearchIndexing
+	// Background indexing runs only while capture is on and not paused.
+	opts.indexing = cfg.SearchIndexing && cfg.Archive.Enabled && !cfg.Paused
 	ctx, stop := readCommandContext(env)
 	defer stop()
 	if opts.read != "" {

@@ -88,7 +88,9 @@ type Config struct {
 	// SearchIndexing is this machine's explicit background indexing consent.
 	SearchIndexing bool `json:"search_indexing,omitempty"`
 	// SearchIndexingDeclined records an explicit off answer, so search stops
-	// offering indexing. Turning indexing on clears it.
+	// offering indexing. Turning indexing on clears it. It is deliberately
+	// unfenced: an older writer may drop it, which only asks the question once
+	// more, while a fence would make older binaries refuse the whole file.
 	SearchIndexingDeclined bool `json:"search_indexing_declined,omitempty"`
 	// SearchLifecycleProtection stays set after opt-in, including after disabling.
 	SearchLifecycleProtection bool `json:"search_lifecycle_protection,omitempty"`

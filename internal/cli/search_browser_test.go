@@ -501,6 +501,12 @@ func TestSearchBrowserCoverageIsOneLineUnderTheHeading(t *testing.T) {
 			t.Errorf("coverage repeated in the footer: %q", note)
 		}
 	}
+	// A search that reads no index words its own coverage.
+	s := &contentSearchBrowser{page: search.Page{Observation: search.Observation{Indexed: 3, Known: 9, Failed: 1}}, pages: 1, choices: rowChoices(nil, listFormatOptions{}),
+		coverage: func(search.Page) string { return "Searched 104 of 2,350 sessions\x1b[2J" }}
+	if got := s.coverageLine(); got != "Searched 104 of 2,350 sessions[2J" {
+		t.Errorf("supplied coverage %q", got)
+	}
 }
 
 // A real pipe lets the line-mode browser poll without blocking. Actions arrive

@@ -47,6 +47,11 @@ type contentSearchBrowser struct {
 	// toggleScope, set with rerun, switches between all projects and the
 	// current project before the query runs again.
 	toggleScope bool
+	// coverage, when set, words the coverage line under the heading for the
+	// page shown, in place of the local index's ("Indexed 105 of 211 ·
+	// catching up"): a search that reads no index says what it searched
+	// ("Searched 104 of 2,350 sessions"). It is made safe for one line.
+	coverage func(search.Page) string
 }
 
 // searchRequest is something the results list hands to the browser around
@@ -188,6 +193,8 @@ func (s *contentSearchBrowser) coverageLine() string {
 	o := s.page.Observation
 	var parts []string
 	switch {
+	case s.coverage != nil:
+		parts = append(parts, archive.DisplayLine(s.coverage(s.page)))
 	case o.Complete:
 		parts = append(parts, "Index complete")
 	case o.Pending > 0:
@@ -195,10 +202,10 @@ func (s *contentSearchBrowser) coverageLine() string {
 	default:
 		parts = append(parts, fmt.Sprintf("Indexed %d of %d", o.Indexed, o.Known), "coverage incomplete")
 	}
-	if o.Failed > 0 {
+	if o.Failed > 0 && s.coverage == nil {
 		parts = append(parts, fmt.Sprintf("%d failed", o.Failed))
 	}
-	if o.Unsupported > 0 {
+	if o.Unsupported > 0 && s.coverage == nil {
 		parts = append(parts, fmt.Sprintf("%d unsupported", o.Unsupported))
 	}
 	if s.pages == 3 && s.page.Next != "" {
@@ -354,7 +361,7 @@ func (s *contentSearchBrowser) strip(r listRow, width int) []string {
 	total := max(hit.MatchCount, st.ordinal)
 	lines := []string{rule, s.style.dim(stripLine(fmt.Sprintf("%s › match %d of %d in this session", searchRole(st.role, hit.Harness), st.ordinal, total), width))}
 	lines = append(lines, passageWindow(s.opts.query.Text, st.text, width, searchStripPassageLines, s.style)...)
-	details := []string{appName(hit.Harness)}
+	details := []string{archive.DisplayLine(appName(hit.Harness))}
 	if r.Project != "" && r.Project != "-" {
 		details = append(details, r.Project)
 	}
