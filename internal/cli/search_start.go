@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -44,6 +45,10 @@ func searchIndexingDeclined(cfg config.Config) bool {
 	return !cfg.SearchIndexing && (cfg.SearchIndexingDeclined || cfg.SearchLifecycleProtection)
 }
 
+// searchAnswerLockWait bounds how long a No waits for another configuration
+// writer, such as a sync pass, to finish.
+var searchAnswerLockWait = 5 * time.Second
+
 func (e Env) declineSearchIndexing() error {
 	home, err := e.readHome()
 	if err != nil {
@@ -54,6 +59,13 @@ func (e Env) declineSearchIndexing() error {
 		return errors.New("setup is running; answer again when it finishes")
 	}
 	defer release()
+	// Every configuration writer, pause and resume included, holds the
+	// collector lock, so the answer is saved over the latest configuration.
+	unlock, err := lockCollectorWait(home, "search indexing answer", e.now(), searchAnswerLockWait)
+	if err != nil {
+		return fmt.Errorf("%s holds the collector lock; the answer was not saved, and search asks again next time", lockHolder(home))
+	}
+	defer unlock()
 	if setupjournal.TransactionPending(home) {
 		return errors.New(recoveryPending(home))
 	}

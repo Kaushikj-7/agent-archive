@@ -172,3 +172,28 @@ func TestSearchDeclineSavesWithoutStorageAndOffersOverInterruptedIndex(t *testin
 		t.Fatalf("decline not saved: %+v %v\n%s", cfg.SearchIndexingDeclined, err, out)
 	}
 }
+
+func TestSearchProjectDotScopesToTheCurrentRepository(t *testing.T) {
+	env, _, _ := publishedFixture(t)
+	code, doc, diag := searchJSONRun(t, env, "visible", "--project", ".")
+	if code != 0 || doc.Scope == nil || doc.Scope.All || doc.Scope.Repo == "" && len(doc.Scope.Projects) == 0 {
+		t.Fatalf("--project . did not scope: %d %+v %s", code, doc.Scope, diag)
+	}
+}
+
+func TestSearchDeclineWaitsForOtherConfigurationWriters(t *testing.T) {
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "synthetic", "--aws-profile", "test", "--region", "us-east-1", "--apps", "claude", "--project", project)
+	previous := searchAnswerLockWait
+	searchAnswerLockWait = 10 * time.Millisecond
+	t.Cleanup(func() { searchAnswerLockWait = previous })
+	release, err := local.Lock(home)
+	must(t, err)
+	out, _, _ := runOnTerminal(t, env, newFakeKeys("q"), "2\nchecksum\n", "search")
+	release()
+	cfg, _, err := config.Load(home)
+	if err != nil || cfg.SearchIndexingDeclined || !strings.Contains(out, "the answer was not saved") {
+		t.Fatalf("saved while another writer held the configuration: %v %v\n%s", cfg.SearchIndexingDeclined, err, out)
+	}
+}
