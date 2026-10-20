@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `agent-archive search` covers every project by default. Use `--project` to
+  narrow it; `--all-projects` is still accepted. Outside a project, search no
+  longer refuses to run.
+- On a terminal, `agent-archive search` with no query asks what to search for.
+  Before a local search index exists, it asks once whether to index in the
+  background (Yes by default) and saves the answer. A Yes indexes your first
+  sessions before the query, so the first search is not empty.
+
 ### Fixed
 
 - Transcript recovery of a session imported through a typed stage starts its new

@@ -14,9 +14,10 @@ agent-archive search 'check*' --project my-project --since 7d
 agent-archive search --refresh --session SESSION_ID --harness codex
 ```
 
-Search defaults to the current repository/project using existing worktree-aware
-repository identity and configured project fallback. Broaden with --all-projects;
-empty project results never broaden automatically. Replays and child sessions
+Search covers every project's indexed sessions. Narrow with `--project DIR|NAME`,
+which uses existing worktree-aware repository identity and configured project
+fallback; empty project results never broaden automatically. `--all-projects`
+is accepted and is the default. Replays and child sessions
 are hidden by default; --replays include and --children include reveal them.
 Scope/date/harness/replay/child filters apply before ranking and limiting.
 Namespace refresh discovery is independent of the query's project filters.
@@ -66,7 +67,6 @@ See [privacy](../security/privacy.md) and
 [the search output schema](../../schemas/search-output.schema.json). Result and
 context text contain conversation content. stdout holds the document; diagnostics
 use stderr. Cached queries return success even with missing or partial coverage.
-Outside a known project, choose `--project NAME` or `--all-projects` explicitly.
 An older local schema requires explicit `search --refresh`; cached readers never
 create an index or acquire SQLite writer admission to upgrade one.
 
@@ -144,6 +144,13 @@ against a missing index instead report known local zero counts and index_present
 false. Unknown matching totals always remain null.
 
 ## Browse matches on a terminal
+
+On a terminal, `agent-archive search` with no query asks what to search for.
+Before the first local index exists, search asks once whether to index in the
+background (Yes by default). Either answer is saved through the same setup step
+as `setup --yes --search-indexing on|off`, so search does not ask again; change
+it later with that command. Turning indexing on runs one bounded pass before
+the query. Declining prints the manual refresh command.
 
 When stdin and stdout are terminals, a content query opens the shared session
 browser. JSON and piped output stay bounded ordinary output. The original FTS

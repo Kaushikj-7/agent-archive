@@ -6,9 +6,11 @@ import (
 	"github.com/wangjohn/agent-archive/internal/destination"
 )
 
-// SetSearchIndexing records local consent and permanently protects lifecycle writers.
+// SetSearchIndexing records local consent and permanently protects lifecycle
+// writers. An explicit off is remembered as declined.
 func SetSearchIndexing(c *Config, enabled bool) error {
 	c.SearchIndexing = enabled
+	c.SearchIndexingDeclined = !enabled
 	if enabled {
 		c.SearchLifecycleProtection = true
 	}

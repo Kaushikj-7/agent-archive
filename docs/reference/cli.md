@@ -642,19 +642,21 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 Guide: [Search conversation text](../guides/search.md).
 
 ```text
-Usage: agent-archive search "QUERY" [options]
+Usage: agent-archive search ["QUERY"] [options]
        agent-archive search --refresh [--session SESSION_ID --harness NAME]
        agent-archive search --read REF [--offset N] [--max-bytes N]
 
 Search visible conversation messages and titles in the private local index.
-Queries never read storage. Choose --project or --all-projects outside a known
-project; an empty scoped result never broadens. Coverage describes a past local
+Queries never read storage. Search covers every project unless --project names
+one; an empty scoped result never broadens. Coverage describes a past local
 observation, not current remote contents. Refresh is namespace-wide unless a
 session is named. It does not install or enable automatic indexing.
 Words are ANDed, quotes match phrases, and a trailing * enables prefix matching.
 Punctuation splits words; this is keyword search, not substring/semantic search.
 References bind exact source revisions. Reads print escaped, quoted text.
-On an interactive terminal, browse ranked snippets and exact bounded context.
+On an interactive terminal, search without a query asks for one. Before the
+first local index exists, search asks once whether to index in the background.
+Browse ranked snippets and exact bounded context.
 Scrolling past the last result loads the next results. Use n/p for matching
 body passages, r to rerun the fixed query, and h to hand off the current
 session through existing gates. Metadata / filtering is
@@ -671,8 +673,8 @@ disabled. JSON and piped output remain bounded documents.
   --before N          Preceding visible messages with --read, 0–2 (default 0)
   --after N           Following visible messages with --read, 0–2 (default 0)
   --max-output-bytes N  Escaped stdout bytes, 4096–1048576 (default 262144)
-  --project DIR|NAME  Restrict to a project (default current repository)
-  --all-projects      Search every project's indexed sessions
+  --project DIR|NAME  Restrict to a project (default every project)
+  --all-projects      Search every project's indexed sessions (the default)
   --since DATE|AGE    Inclusive capture start, date/RFC3339 time/age
   --until DATE|AGE    Inclusive capture end, date/RFC3339 time/age
   --replays MODE      hide (default), include or only replay sessions

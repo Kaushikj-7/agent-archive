@@ -87,6 +87,9 @@ type Config struct {
 	SourceSetPublicationProtection bool `json:"source_set_publication_protection,omitempty"`
 	// SearchIndexing is this machine's explicit background indexing consent.
 	SearchIndexing bool `json:"search_indexing,omitempty"`
+	// SearchIndexingDeclined records an explicit off answer, so search stops
+	// offering indexing. Turning indexing on clears it.
+	SearchIndexingDeclined bool `json:"search_indexing_declined,omitempty"`
 	// SearchLifecycleProtection stays set after opt-in, including after disabling.
 	SearchLifecycleProtection bool `json:"search_lifecycle_protection,omitempty"`
 	// NativeAuthorityProtection permanently refuses writers unable to preserve native roots and bindings.
