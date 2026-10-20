@@ -70,7 +70,7 @@ const searchBrowserPTYScript = ptyKeysHarness + `try:
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 20, 36, 0, 0))
                 signal.signal(signal.SIGTTOU, signal.SIG_DFL)
                 p.send_signal(signal.SIGWINCH)
-                wait_for(b'i details', start)
+                wait_for(b'n/p next', start)
                 assert keys_on(), 'resize left key mode'
                 os.write(master, b'\x1b[F\x1b[H')
             else:

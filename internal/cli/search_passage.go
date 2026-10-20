@@ -56,7 +56,7 @@ func (s *contentSearchBrowser) passageLines(hit search.Hit, st *searchMatchState
 		title = shortSessionID(hit.SessionID)
 	}
 	lines = []string{s.style.bold(stripLine(title, width))}
-	left := s.style.agent(hit.Harness, appName(hit.Harness))
+	left := s.style.agent(hit.Harness, archive.DisplayLine(appName(hit.Harness)))
 	meta := []string{}
 	if project := archive.DisplayLine(hit.Project); project != "" {
 		meta = append(meta, project)
