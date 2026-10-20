@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"bytes"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 func TestBareSearchOnTerminalAsksForQueryThenBrowses(t *testing.T) {
@@ -51,5 +54,42 @@ func TestSearchOnTerminalOffersIndexingOnceBeforeFirstIndex(t *testing.T) {
 				t.Fatalf("asked again after answering: %d %s %s", code, errOut, out)
 			}
 		})
+	}
+}
+
+func TestFirstIndexPassWaitsForBackgroundJobThenIndexes(t *testing.T) {
+	env, _, _ := publishedFixture(t)
+	home, _ := env.readHome()
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	release, err := local.NamedLock(home, "search-worker.lock")
+	must(t, err)
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		release()
+	}()
+	var out bytes.Buffer
+	if err := indexFirstPass(home, cfg, contentSearchOptions{}, newPrompter(strings.NewReader(""), &out), env); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "1 of 1 known sessions indexed") {
+		t.Fatalf("busy job was not waited out: %s", out.String())
+	}
+}
+
+func TestFirstIndexPassStopsOnInterrupt(t *testing.T) {
+	env, _, _ := publishedFixture(t)
+	home, _ := env.readHome()
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	release, err := local.NamedLock(home, "search-worker.lock")
+	must(t, err)
+	defer release()
+	signals := make(chan os.Signal, 1)
+	signals <- os.Interrupt
+	env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
+	var out bytes.Buffer
+	if err := indexFirstPass(home, cfg, contentSearchOptions{}, newPrompter(strings.NewReader(""), &out), env); err == nil || err.Error() != "interrupted" {
+		t.Fatalf("interrupt ignored: %v %s", err, out.String())
 	}
 }

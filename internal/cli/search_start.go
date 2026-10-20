@@ -2,11 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/search"
@@ -60,23 +62,28 @@ func offerSearchIndexing(p *prompter, dir string, cfg config.Config, env searchC
 	return on, nil
 }
 
-// indexFirstPass runs one bounded refresh right after indexing is turned on,
-// so the first search finds something. A busy or failed pass is left to the
-// background job.
-func indexFirstPass(home string, cfg config.Config, opts contentSearchOptions, p *prompter, env searchCommandDependencies) {
+// indexFirstPass indexes for up to 30 seconds right after indexing is turned
+// on, so the first search finds something. The new background job may start
+// at once and hold the index; the wait retries until it lets go. An interrupt
+// ends the command; any other failure is left to the background job.
+func indexFirstPass(home string, cfg config.Config, opts contentSearchOptions, p *prompter, env searchCommandDependencies) error {
 	stdout := p.out
 	ctx, stop := readCommandContext(env)
 	defer stop()
 	spin := p.style.spin(stdout, "Indexing your first sessions")
 	pass := opts
-	pass.refresh, pass.wait, pass.session = true, 0, ""
+	pass.refresh, pass.wait, pass.session = true, 30*time.Second, ""
 	_, coverage, err := refreshContentSearch(ctx, home, cfg, env, pass)
 	spin.stop()
-	if err == nil && coverage != nil && coverage.Known > 0 {
+	if errors.Is(err, context.Canceled) {
+		return errors.New("interrupted")
+	}
+	if coverage != nil && coverage.Known > 0 {
 		terminal.Printf(stdout, "%s Background indexing is on. %d of %d known sessions indexed so far; the rest fill in over the next few minutes.\n", p.style.okMark(), coverage.Indexed, coverage.Known)
-		return
+		return nil
 	}
 	terminal.Printf(stdout, "%s Background indexing is on. Results fill in over the next few minutes.\n", p.style.okMark())
+	return nil
 }
 
 // promptSearchQuery asks for the words bare search runs on a terminal.
@@ -111,7 +118,9 @@ func startInteractiveSearch(home, dir string, cfg *config.Config, opts *contentS
 		*cfg = reloaded
 	}
 	if enabled {
-		indexFirstPass(home, *cfg, *opts, p, env)
+		if err := indexFirstPass(home, *cfg, *opts, p, env); err != nil {
+			return searchCommandError(stderr, err)
+		}
 	}
 	if !opts.ask {
 		return 0
