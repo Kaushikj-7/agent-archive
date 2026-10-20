@@ -34,6 +34,9 @@ func Preview(ctx context.Context, adapter interface {
 			out.Name, out.NameNativeID, out.NameSource = facts.Name, facts.NameNativeID, facts.NameSource
 			continue
 		}
+		if link, ok := pullRequestLink(safe); ok {
+			out.PullRequest = link
+		}
 		if branch := archive.ValidBranch(firstStringDeep(safe, "gitBranch")); branch != "HEAD" {
 			out.Branch = branch
 		}

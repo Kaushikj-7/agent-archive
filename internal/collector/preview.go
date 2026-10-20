@@ -21,6 +21,7 @@ type TranscriptPreview struct {
 	NameSource       archive.SessionNameSource
 	Title            string
 	Branch           string
+	PullRequests     []archive.PullRequestLink
 	RecordedActivity time.Time
 	NameComplete     bool
 	Bytes            int64
@@ -61,6 +62,7 @@ func PreviewTranscript(ctx context.Context, snapshot agentapi.FileInput, preview
 		}
 	}
 	out.Name, out.Title, out.Branch = accumulator.Labels.Name, accumulator.Labels.Title, accumulator.Labels.Branch
+	out.PullRequests = accumulator.Labels.PullRequests
 	out.NameSource = accumulator.NameSource
 	out.RecordedActivity, out.Gaps = accumulator.Activity, accumulator.Gaps
 	partialGap := false

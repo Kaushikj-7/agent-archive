@@ -11,6 +11,12 @@ follow [Semantic Versioning](https://semver.org/).
 - The `handoff` picker appears sooner when many recent sessions are not
   uploaded yet. It now reads up to four of their transcripts at once to title
   them, instead of one after another.
+- The `handoff` picker no longer waits seconds for a large session that is
+  not uploaded yet. For a transcript over 4 MiB it reads only the first and
+  last 256 KiB, filtered as before. Its title still comes from the first
+  prompt; its name, branch and pull request come from those last records, so
+  a rename that only appears mid-transcript shows after the session uploads.
+  A transcript whose first 256 KiB holds no prompt is still read whole.
 - Uploads no longer stop for good after about 500 sessions. Each session's
   local record of its last upload counted against the 1 GiB limit on pending
   local work, so once those records filled it every later session failed with
