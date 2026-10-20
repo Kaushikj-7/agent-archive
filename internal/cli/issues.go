@@ -224,7 +224,8 @@ func (i sessionIssues) add(id, code, reason string, subagent bool) {
 func classifySessions(sessionErrs map[string]error, isSubagent func(string) bool) sessionIssues {
 	issues := sessionIssues{codes: make(map[string]string, len(sessionErrs)), reasons: map[string]string{}, tallies: map[string]issueTally{}}
 	for id, sessionErr := range sessionErrs {
-		issues.add(id, sessionIssueCode(sessionErr), sessionIssueReason(sessionErr), errors.Is(sessionErr, collector.ErrSubagentCandidate) || isSubagent(id))
+		code := sessionIssueCode(sessionErr)
+		issues.add(id, code, sessionIssueReason(sessionErr, code), errors.Is(sessionErr, collector.ErrSubagentCandidate) || isSubagent(id))
 	}
 	return issues
 }

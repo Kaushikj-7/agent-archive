@@ -83,12 +83,20 @@ var issueReasons = []error{
 }
 
 // sessionIssueReason is the reason status records for one session's
-// failure: the text of the first of issueReasons it wraps, or "" when it
-// wraps none, which status shows as an unrecognized error.
-func sessionIssueReason(issue error) string {
-	for _, reason := range issueReasons {
-		if errors.Is(issue, reason) {
-			return reason.Error()
+// failure, classified as code: the text of the first of issueReasons it
+// wraps, or "" when it wraps none, which status shows as an unrecognized
+// error. Of several joined failures (collection and retention both failed),
+// only those classified as code are searched, so the reason explains the
+// failure status names.
+func sessionIssueReason(issue error, code string) string {
+	for _, part := range joinedErrors(issue) {
+		if sessionIssueCode(part) != code {
+			continue
+		}
+		for _, reason := range issueReasons {
+			if errors.Is(part, reason) {
+				return reason.Error()
+			}
 		}
 	}
 	return ""

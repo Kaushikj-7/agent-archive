@@ -29,8 +29,11 @@ func TestSessionIssueReasonIsOnlyFixedText(t *testing.T) {
 		{"joined", errors.Join(errors.New("transcript says hunter2"), fmt.Errorf("x: %w", state.ErrDurableStorageCapacity)), capacity},
 		{"operating system", fmt.Errorf("write snapshot: %w", &fs.PathError{Op: "write", Path: "/Users/someone/secret.jsonl", Err: syscall.ENOSPC}), syscall.ENOSPC.Error()},
 		{"unrecognized", errors.New("filter transcript: hunter2 in /Users/someone"), ""},
+		// As recordRetentionErrors joins them: the session is reported as
+		// retention_failed, so its reason is the removal's.
+		{"retention beside collection", errors.Join(fmt.Errorf("x: %w", state.ErrDurableStorageCapacity), fmt.Errorf("%w: %w", errRetentionFailed, &fs.PathError{Op: "remove", Path: "/Users/someone/x", Err: syscall.EACCES})), fs.ErrPermission.Error()},
 	} {
-		if got := sessionIssueReason(tc.err); got != tc.want {
+		if got := sessionIssueReason(tc.err, sessionIssueCode(tc.err)); got != tc.want {
 			t.Errorf("%s: reason %q, want %q", tc.name, got, tc.want)
 		}
 	}
