@@ -140,15 +140,18 @@ evidence.
 4. Copy [the pending JSON template](release-evidence/example.json) to
    `dev/maintainers/release-evidence/vX.Y.Z.json`. Commit it to main in a reviewed
    documentation-only PR. Fill the tag, exact tagged commit, all six downloaded
-   SHA256 digests, and every check with `result: passed`, actual tester,
-   ISO-8601 UTC timestamp and a durable HTTPS evidence URL. Each evidence record
+   SHA256 digests, and decide every check. Acceptance is best effort: a check
+   is `result: passed` with actual tester, ISO-8601 UTC timestamp and a durable
+   HTTPS evidence URL, or `result: skipped` with tester, UTC timestamp and a
+   non-empty `reason` (evidence optional, HTTPS if present). Each evidence record
    must identify the candidate and describe the actual procedure/result;
    generic links or an earlier release's evidence do not establish acceptance.
    `repository-settings` includes both approval environments, main protection,
    vulnerability reporting, labels and release freeze. `documentation` includes
    command/link/generated reference audits and actual current provider/app
-   versions. Pending, skipped, unavailable or failed checks stay pending and
-   **block promotion**; the example intentionally fails this gate.
+   versions. Pending, missing or failed checks **block promotion**; the example
+   intentionally fails this gate. Promotion prints skipped checks and reasons in
+   the job log before it publishes.
 5. Under `ci`, record exact successful push run IDs for `Test`, `Levenshtein`,
    and `Extended`, with tester, UTC timestamp and evidence URL. Promotion queries
    GitHub and requires the exact repository/SHA/workflow plus successful jobs:
@@ -188,7 +191,8 @@ non-cancelling publication concurrency group.
 
 The human acceptance gate is deliberate: the script checks structure, exact
 identity/digests and CI results, but cannot judge whether a provider/app test
-was honestly performed. Protected reviewers must inspect linked evidence.
+was honestly performed or whether a skip is acceptable. Protected
+`release-promotion` reviewers must inspect linked evidence and skip reasons.
 No live signed-candidate, architecture, provider, application or approval
 setting acceptance is established by this implementation or its fake API tests.
 
