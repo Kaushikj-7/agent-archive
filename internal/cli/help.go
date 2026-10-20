@@ -18,7 +18,8 @@ var commandHelp = map[string]string{
        agent-archive search --read REF [--offset N] [--max-bytes N]
 
 Search visible conversation messages and titles in the private local index.
-Queries never read storage. Search covers every project unless --project names
+Queries never read storage, except on a terminal after indexing was declined.
+Search covers every project unless --project names
 one; an empty scoped result never broadens. Coverage describes a past local
 observation, not current remote contents. Refresh is namespace-wide unless a
 session is named. It does not install or enable automatic indexing.
@@ -27,6 +28,9 @@ Punctuation splits words; this is keyword search, not substring/semantic search.
 References bind exact source revisions. Reads print escaped, quoted text.
 On an interactive terminal, search without a query asks for one. Before the
 first local index exists, search asks once whether to index in the background.
+After No, with no local index, a terminal search downloads sessions in scope
+from the bucket, newest first, and matches them in memory. It pauses after 2
+minutes to ask whether to go on; Esc stops and shows what was found.
 Browse ranked snippets and exact bounded context.
 Scrolling past the last result loads the next results. Use n/p for matching
 body passages, r to rerun the fixed query, and h to hand off the current

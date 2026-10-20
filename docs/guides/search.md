@@ -4,7 +4,9 @@ Content search finds indexed titles and visible user/assistant messages in
 supported filtered retained sources, including supported preserved revisions.
 It keeps private local searchable text. Ordinary queries read only an existing
 local index; they never discover archives, download sources or index content.
-A missing index returns partial empty results without creating files.
+A missing index returns partial empty results without creating files, except
+on a terminal after indexing was declined (see
+[searching the bucket directly](#search-the-bucket-directly)).
 
 ```sh
 agent-archive search --refresh
@@ -150,7 +152,35 @@ Before the first local index exists, search asks once whether to index in the
 background (Yes by default). Either answer is saved through the same setup step
 as `setup --yes --search-indexing on|off`, so search does not ask again; change
 it later with that command. Turning indexing on runs one bounded pass before
-the query. Declining prints the manual refresh command.
+the query. Declining makes terminal searches read the bucket directly.
+
+## Search the bucket directly
+
+After you decline indexing, a search on a terminal with no local index reads
+the bucket itself. It first warns that it downloads sessions from your R2 or S3
+bucket, keeps nothing on this machine, pauses after 2 minutes, and roughly how
+long a full search of the sessions in scope takes (at about 50 sessions a
+minute). It prints the command that makes the next search instant:
+
+```sh
+agent-archive setup --yes --search-indexing on
+```
+
+It lists the archive's metadata, applies the query's scope and filters (all
+projects unless `--project`; harness, dates, replays and children) before
+downloading anything, then reads the matching sessions newest first. Each
+session's verified sources go through the same parser visibility and privacy
+rules as indexing, into an in-memory database that is never written to disk.
+Only matching sessions keep their passages, until the command exits. A progress
+line counts the sessions searched and matching, and each matching session is
+printed as it is found. Esc stops early. After 2 minutes it asks whether to keep
+going, search only the project you are in (with its session count), show the
+results so far, or stop. The results open in the same browser as indexed
+search; reading a passage downloads its source again. Ctrl-C exits.
+
+Direct search never runs for `--json`, piped output, `--refresh` or
+`--cursor`, and a local index, such as one made by `search --refresh`, is
+always used instead.
 
 When stdin and stdout are terminals, a content query opens the shared session
 browser. JSON and piped output stay bounded ordinary output. The original FTS

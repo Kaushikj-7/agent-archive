@@ -31,8 +31,9 @@ func (e Env) setSearchIndexing(on bool, out io.Writer) bool {
 
 // offerSearchIndexing asks once, on a terminal, before the first local index
 // exists, whether to build it in the background. Either answer is saved;
-// a declined or failed offer leaves the search to run on what is indexed.
-// It reports whether indexing was turned on now.
+// after No, terminal searches read the bucket directly (see
+// runDirectSearch), and a failed offer leaves the search to run on what is
+// indexed. It reports whether indexing was turned on now.
 func offerSearchIndexing(p *prompter, dir string, cfg config.Config, env searchCommandDependencies) (bool, error) {
 	stdout := p.out
 	if cfg.SearchIndexing || cfg.SearchIndexingDeclined || !cfg.Archive.Enabled || cfg.Paused {
@@ -43,7 +44,7 @@ func offerSearchIndexing(p *prompter, dir string, cfg config.Config, env searchC
 	}
 	terminal.Println(stdout, "Search keeps a private, searchable copy of your archived conversations on this machine.")
 	terminal.Println(stdout, p.style.dim("The background job updates it about once a minute and pauses with capture."))
-	answer, err := p.guidedChoice(promptModel{Question: "Build the search index in the background?", Default: "yes", Receipt: "Search index:", Primary: []option{{"yes", "Yes, index in the background"}, {"no", "No, I'll run the refresh myself"}}})
+	answer, err := p.guidedChoice(promptModel{Question: "Build the search index in the background?", Default: "yes", Receipt: "Search index:", Primary: []option{{"yes", "Yes, index in the background"}, {"no", "No, search the bucket directly each time (slow)"}}})
 	if err != nil {
 		return false, err
 	}
@@ -52,10 +53,6 @@ func offerSearchIndexing(p *prompter, dir string, cfg config.Config, env searchC
 		terminal.Println(stdout, "The answer was not saved. To retry, run:")
 		terminal.Println(stdout, p.style.cmd("agent-archive setup --yes --search-indexing "+map[bool]string{true: "on", false: "off"}[on]))
 		return false, nil
-	}
-	if !on {
-		terminal.Println(stdout, "To build or update the index yourself, run:")
-		terminal.Println(stdout, p.style.cmd("agent-archive search --refresh --wait 10m"))
 	}
 	return on, nil
 }
@@ -96,13 +93,14 @@ func promptSearchQuery(p *prompter, opts contentSearchOptions) (string, error) {
 
 // startInteractiveSearch runs the terminal screens before a query: the
 // indexing offer, then the query itself for bare search. It asks nothing for
-// refresh, JSON or piped output.
+// refresh, JSON or piped output. It leaves its prompter in opts.prompt, open,
+// for a direct search's later question; the caller closes it.
 func startInteractiveSearch(home, dir string, cfg *config.Config, opts *contentSearchOptions, stdout, stderr io.Writer, env searchCommandDependencies) int {
 	if !opts.hasQuery || opts.refresh || opts.json || opts.stdin == nil || !browseInteractive(env, opts.stdin, stdout) {
 		return 0
 	}
 	p := newPrompter(opts.stdin, stdout)
-	defer p.close()
+	opts.prompt = p
 	enabled, err := offerSearchIndexing(p, dir, *cfg, env)
 	if err != nil {
 		return searchCommandError(stderr, err)

@@ -15,6 +15,14 @@ follow [Semantic Versioning](https://semver.org/).
   Before a local search index exists, it asks once whether to index in the
   background (Yes by default) and saves the answer. A Yes indexes your first
   sessions before the query, so the first search is not empty.
+- After you answer No to search indexing, a search on a terminal with no local
+  index reads the bucket directly instead of returning nothing. It warns first,
+  downloads sessions in scope newest first, matches them in memory and keeps
+  nothing on this machine. It shows matches as it finds them, pauses after 2
+  minutes to ask whether to keep going, narrow to this project, or show the
+  results, and Esc stops early. JSON and piped output still report the missing
+  index. To search instantly instead, run
+  `agent-archive setup --yes --search-indexing on`.
 
 ### Fixed
 

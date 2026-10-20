@@ -44,37 +44,43 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 		return writeContentSearch(doc, opts, stdout, stderr)
 	}
 	namespace, dir := contentSearchLocation(home, cfg)
-	if code := startInteractiveSearch(home, dir, &cfg, &opts, stdout, stderr, env); code != 0 {
+	code := startInteractiveSearch(home, dir, &cfg, &opts, stdout, stderr, env)
+	if opts.prompt != nil {
+		defer opts.prompt.close()
+	}
+	if code != 0 {
 		return code
 	}
 	doc.Query = opts.query.Text
 	opts.indexing = cfg.SearchIndexing
 	ctx, stop := readCommandContext(env)
 	defer stop()
+	// browse opens the results browser over index, which it closes, and
+	// hands off the session picked there.
+	browse := func(index *search.Store, page search.Page, opts contentSearchOptions, failure *contentSearchError) int {
+		if opts.prompt != nil {
+			opts.prompt.close()
+		}
+		row, picked, input, code := runContentSearchBrowser(ctx, env, cfg, namespace, index, page, opts, stdout, stderr)
+		_ = index.Close()
+		if code != 0 || !picked {
+			return contentSearchBrowserExit(code, failure)
+		}
+		return handOffSearchPick(stop, row, input, opts, failure, stdout, stderr, env)
+	}
 	if opts.read != "" {
 		return readSearchContext(ctx, env, cfg, namespace, opts, doc, stdout, stderr)
 	}
 	if opts.hasQuery {
-		f := &contentSearchFiltersDocument{Harness: opts.query.Harness, Replays: string(opts.query.Replay), Children: string(opts.query.Children)}
-		if f.Replays == "" {
-			f.Replays = "include"
-		}
-		if f.Children == "" {
-			f.Children = "include"
-		}
-		if !opts.query.From.IsZero() {
-			f.Since = &opts.query.From
-		}
-		if !opts.query.To.IsZero() {
-			f.Until = &opts.query.To
-		}
-		doc.Filters = f
+		doc.Filters = contentSearchFiltersOf(opts.query)
 	}
 
+	var scope sessionScope
 	if opts.hasQuery {
 		// Search covers every project unless --project names one.
 		opts.all = opts.project == ""
-		scope, e := scopeFor(env, opts.project, opts.all)
+		var e error
+		scope, e = scopeFor(env, opts.project, opts.all)
 		if e != nil {
 			setSearchError(&doc, e)
 			return writeContentSearch(doc, opts, stdout, stderr)
@@ -90,6 +96,13 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 		queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		index, e := search.OpenRead(queryCtx, dir, namespace)
+		if os.IsNotExist(e) && wantsDirectSearch(cfg, opts) {
+			found, code := runDirectSearch(ctx, cfg, namespace, scope, opts, stdout, stderr, env)
+			if found == nil {
+				return code
+			}
+			return browse(found.index, found.page, found.opts, nil)
+		}
 		if os.IsNotExist(e) {
 			doc.Coverage = contentSearchCoverageOf(search.Observation{}, false)
 		} else if e != nil {
@@ -100,16 +113,7 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 				if doc.Error != nil {
 					searchCommandError(stderr, errors.New(doc.Error.Message))
 				}
-				row, picked, input, code := runContentSearchBrowser(ctx, env, cfg, namespace, index, page, opts, stdout, stderr)
-				_ = index.Close()
-				if code != 0 || !picked {
-					return contentSearchBrowserExit(code, doc.Error)
-				}
-				// The search store and all browser reads are closed before handing
-				// signal and prompt ownership to the ordinary handoff pipeline.
-				stop()
-				code = runHandoffWithInput([]string{row.SessionID, "--harness", row.HarnessKey, "--source", "archive"}, opts.stdin, stdout, stderr, env, input)
-				return contentSearchBrowserExit(code, doc.Error)
+				return browse(index, page, opts, doc.Error)
 			}
 			_ = index.Close()
 			if e != nil {
@@ -120,6 +124,33 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 		}
 	}
 	return writeContentSearch(doc, opts, stdout, stderr)
+}
+
+// handOffSearchPick hands off the session picked in the results browser. The
+// search store and all browser reads are closed first; stop hands signal and
+// prompt ownership to the ordinary handoff pipeline.
+func handOffSearchPick(stop func(), row listRow, input *typedInput, opts contentSearchOptions, failure *contentSearchError, stdout, stderr io.Writer, env searchCommandDependencies) int {
+	stop()
+	code := runHandoffWithInput([]string{row.SessionID, "--harness", row.HarnessKey, "--source", "archive"}, opts.stdin, stdout, stderr, env, input)
+	return contentSearchBrowserExit(code, failure)
+}
+
+// contentSearchFiltersOf is the filters object a query's document reports.
+func contentSearchFiltersOf(q search.Query) *contentSearchFiltersDocument {
+	f := &contentSearchFiltersDocument{Harness: q.Harness, Replays: string(q.Replay), Children: string(q.Children)}
+	if f.Replays == "" {
+		f.Replays = "include"
+	}
+	if f.Children == "" {
+		f.Children = "include"
+	}
+	if !q.From.IsZero() {
+		f.Since = &q.From
+	}
+	if !q.To.IsZero() {
+		f.Until = &q.To
+	}
+	return f
 }
 
 // A cached browser or handoff success cannot erase a requested refresh failure.

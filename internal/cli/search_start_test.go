@@ -42,8 +42,10 @@ func TestSearchOnTerminalOffersIndexingOnceBeforeFirstIndex(t *testing.T) {
 				t.Fatalf("indexing %v declined %v want %v: %v\n%s", cfg.SearchIndexing, cfg.SearchIndexingDeclined, accept, err, out)
 			}
 			defined := env.jobDefinition(userHome, env.installation(home, userHome).searchRole().ref()).Defined
-			want := map[bool]string{true: "Background indexing is on.", false: "agent-archive search --refresh --wait 10m"}[accept]
-			if defined != accept || !strings.Contains(out, "Build the search index in the background?") || !strings.Contains(out, want) || !strings.Contains(out, "Search for:") {
+			// Declining searches the (empty) bucket directly instead of
+			// pointing at a manual refresh.
+			want := map[bool]string{true: "Background indexing is on.", false: "No archived sessions to search in all projects."}[accept]
+			if defined != accept || !strings.Contains(out, "Build the search index in the background?") || !strings.Contains(out, want) || !strings.Contains(out, "Search for:") || strings.Contains(out, "search --refresh") {
 				t.Fatalf("job %v: %s", defined, out)
 			}
 			out, errOut, code = runOnTerminal(t, env, newFakeKeys("q"), "checksum\n", "search")
