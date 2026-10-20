@@ -6,44 +6,75 @@ import (
 	"errors"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/search"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
-// setSearchIndexing saves an indexing answer through the same setup
-// transaction as setup --yes --search-indexing on|off. Setup's review goes to
-// out only when it fails, since the person answered one question.
+// setSearchIndexing saves an indexing answer. Yes goes through the same setup
+// transaction as setup --yes --search-indexing on, whose review reaches out
+// only when it fails. No changes nothing but the saved answer, under the setup
+// lock, so it needs no storage check or network.
 func (e Env) setSearchIndexing(on bool, out io.Writer) bool {
-	mode := searchIndexingOff
-	if on {
-		mode = searchIndexingOn
+	if !on {
+		if err := e.declineSearchIndexing(); err != nil {
+			terminal.Printf(out, "%s %v\n", styleFor(out).warnMark(), err)
+			return false
+		}
+		return true
 	}
 	var review bytes.Buffer
-	if code := runSetupCommand([]string{"--yes", "--search-indexing", string(mode)}, strings.NewReader(""), &review, &review, e); code != 0 {
+	if code := runSetupCommand([]string{"--yes", "--search-indexing", string(searchIndexingOn)}, strings.NewReader(""), &review, &review, e); code != 0 {
 		_, _ = out.Write(review.Bytes())
 		return false
 	}
 	return true
 }
 
+func (e Env) declineSearchIndexing() error {
+	home, err := e.readHome()
+	if err != nil {
+		return err
+	}
+	release, err := local.NamedLock(home, "setup.lock")
+	if err != nil {
+		return errors.New("setup is running; answer again when it finishes")
+	}
+	defer release()
+	if setupjournal.TransactionPending(home) {
+		return errors.New(recoveryPending(home))
+	}
+	return config.DeclineSearchIndexing(home)
+}
+
+// searchIndexMissing reports whether no usable local index exists yet,
+// counting an index whose first creation was interrupted as missing.
+func searchIndexMissing(dir, namespace string) bool {
+	index, err := search.OpenRead(context.Background(), dir, namespace)
+	if err == nil {
+		_ = index.Close()
+	}
+	return os.IsNotExist(err) || errors.Is(err, search.ErrUninitialized)
+}
+
 // offerSearchIndexing asks once, on a terminal, before the first local index
 // exists, whether to build it in the background. Either answer is saved;
 // a declined or failed offer leaves the search to run on what is indexed.
 // It reports whether indexing was turned on now.
-func offerSearchIndexing(p *prompter, dir string, cfg config.Config, env searchCommandDependencies) (bool, error) {
+func offerSearchIndexing(p *prompter, dir, namespace string, cfg config.Config, env searchCommandDependencies) (bool, error) {
 	stdout := p.out
 	// Lifecycle protection without indexing is an earlier explicit off.
 	declined := cfg.SearchIndexingDeclined || cfg.SearchLifecycleProtection
 	if cfg.SearchIndexing || declined || !cfg.Archive.Enabled || cfg.Paused {
 		return false, nil
 	}
-	if _, err := os.Lstat(filepath.Join(dir, "content.sqlite")); !errors.Is(err, os.ErrNotExist) {
+	if !searchIndexMissing(dir, namespace) {
 		return false, nil
 	}
 	terminal.Println(stdout, "Search keeps a private, searchable copy of your archived conversations on this machine.")
@@ -113,7 +144,8 @@ func startInteractiveSearch(home, dir string, cfg *config.Config, opts *contentS
 	}
 	p := newPrompter(opts.stdin, stdout)
 	defer p.close()
-	enabled, err := offerSearchIndexing(p, dir, *cfg, env)
+	namespace, _ := contentSearchLocation(home, *cfg)
+	enabled, err := offerSearchIndexing(p, dir, namespace, *cfg, env)
 	if err != nil {
 		return searchCommandError(stderr, err)
 	}
