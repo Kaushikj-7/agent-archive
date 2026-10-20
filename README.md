@@ -1,7 +1,6 @@
 # agent-archive
 ### Session handoffs and backups for Claude Code, Codex, and Cursor
 
-[![Tests](https://github.com/wangjohn/agent-archive/actions/workflows/extended.yml/badge.svg?branch=main&event=schedule)](https://github.com/wangjohn/agent-archive/actions/workflows/extended.yml?query=branch%3Amain+event%3Aschedule)
 [![Go 1.27](https://img.shields.io/badge/go-1.27.2-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
