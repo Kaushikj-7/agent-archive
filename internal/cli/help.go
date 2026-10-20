@@ -32,7 +32,9 @@ session's matching passage under the list and its matched words highlighted.
 Use n/p for the session's other matches, Enter to read the passage, / for a
 new query, Tab to switch between all projects and the current one, r to rerun,
 and h to hand off the session through existing gates. Scrolling past the last
-result loads the next results. JSON and piped output remain bounded documents.
+result loads the next results. The passage shows the messages around the
+match; i shows its exact reference, and t the session's transcript.
+JSON and piped output remain bounded documents.
   --json              Print one versioned bounded JSON document
   --refresh           Run a bounded verified archive refresh
   --session SESSION_ID  Exact refresh target; requires --harness

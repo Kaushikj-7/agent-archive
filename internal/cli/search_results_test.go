@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -68,6 +69,12 @@ func searchProjectsFixture(t *testing.T) Env {
 		verified, e := archive.BuildMetadataWithAnalysis(bundle, analysis, parseErr, "synthetic", m.CapturedAt, m.CapturedAt, archive.SourceReference{Key: key, SHA256: packed.SHA256, CompressedBytes: len(packed.Bytes)}, archive.ParserInfo{Version: parser.Version()})
 		must(t, e)
 		verified.Name, verified.ProjectName, verified.RepoKey = m.Name, m.ProjectName, m.RepoKey
+		// Published too, so a passage reads from its exact source.
+		metadataKey, e := archive.MetadataObjectKey(verified.Harness.Name, verified.SessionID)
+		must(t, e)
+		encoded, e := json.Marshal(verified)
+		must(t, e)
+		must(t, objects.Put(t.Context(), metadataKey, encoded))
 		must(t, index.Observe(t.Context(), verified, parsersFor(env), env.now(), 0))
 		progress, e := index.Run(t.Context(), objects, parsersFor(env), env.now(), search.Budget{})
 		if e != nil || progress.Committed != 1 {

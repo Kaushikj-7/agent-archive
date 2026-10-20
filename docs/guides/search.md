@@ -197,10 +197,37 @@ occurrences. The highlight and the passage under the list follow the arrow,
 page, Home and End keys; Enter opens the passage shown. A listed number or
 unique short ID also opens its exact source-bound context.
 The number resolves the full harness/session identity even when short IDs collide.
-A title match has no body reference and explains that instead of opening an
-unrelated transcript. In details, `n`/`p` navigate matching **body** passages,
-`m` follows the displayed raw-byte continuation in the current message, arrows
-and page keys scroll the current bounded text, `b` returns, and `q` exits.
+
+Enter opens the passage as `show` lays out a session:
+
+```text
+docs: propose sublinear read paths for list/show/handoff
+Claude Code · agent-archive · Oct 16, 09:12                         match 1 of 3
+
+  claude › Merged #633. The listing benchmark is in dev/bench.
+
+  you ›    The list and show commands feel slow on the big bucket. Can you
+           check the read performance of our archive commands?
+
+  claude › I'll trace list, show and handoff against the R2 bucket first,
+           then write the proposal in dev/proposals.
+           … 38 more lines (m)
+
+n/p next/previous match   ↑↓ scroll   t transcript   h hand off   i details   b back   q quit
+```
+
+The matching message is read from its exact source revision and shown between
+the message before and after it (dim), each labeled with who wrote it; its
+matched words are highlighted. Long neighbors are cut to three lines, and `m`
+shows them whole, then reads on in a matching message longer than one bounded
+read. `n`/`p` move to the session's other matches (the list's strip follows),
+`i` shows the source revision, byte range and SHA-256 of the exact reference,
+`t` opens the session's whole transcript in the pager `show --transcript` uses
+(the session as archived now, which may have grown since it was indexed),
+arrows and page keys scroll, `b` returns and `q` exits. A source that changed
+or was deleted since indexing is reported, never replaced by newer text. A
+title match has no message reference and says so instead of opening an
+unrelated transcript.
 Without keys (the line fallback), each result's passage is printed under it,
 `a` switches scope, `/` asks for a new query, and the same letter actions plus
 pgup/pgdn, up/down and home/end scroll the current text. Long unbroken Unicode text wraps into

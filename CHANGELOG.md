@@ -21,6 +21,11 @@ follow [Semantic Versioning](https://semver.org/).
   highlighted. Coverage is one line under the heading. `n`/`p` step through a
   session's matches, `/` asks for a new query, `Tab` switches between all
   projects and the current repository, and `h` hands off from the list.
+- Enter on a search result opens the matching message as `show` lays out a
+  session: the message before and after it, each labeled with who wrote it,
+  and the matched words highlighted. The source revision, byte range and
+  SHA-256 move behind `i`, and `t` opens the session's transcript in the same
+  pager as `show --transcript`.
 
 ### Fixed
 
