@@ -13,8 +13,8 @@ follow [Semantic Versioning](https://semver.org/).
   longer refuses to run.
 - On a terminal, `agent-archive search` with no query asks what to search for.
   Before a local search index exists, it asks once whether to index in the
-  background (Yes by default) and saves the answer. A Yes indexes your first
-  sessions before the query, so the first search is not empty.
+  background (Yes by default) and saves the answer. A Yes indexes for up to 30
+  seconds before the query, so the first search covers some of your sessions.
 
 ### Fixed
 

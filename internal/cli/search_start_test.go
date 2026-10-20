@@ -122,3 +122,20 @@ func TestSearchQueryPromptEscapesProjectName(t *testing.T) {
 		t.Fatalf("project name not escaped: %q", out.String())
 	}
 }
+
+func TestMissingIndexWhilePausedAsksForRefresh(t *testing.T) {
+	env, _, _ := publishedFixture(t)
+	home, _ := env.readHome()
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	must(t, config.SetSearchIndexing(&cfg, true))
+	cfg.Paused = true
+	must(t, config.Save(home, cfg))
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"search", "visible"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("%d %s %s", code, &out, &errOut)
+	}
+	if strings.Contains(out.String(), "background indexing is building it") || !strings.Contains(out.String(), "Run search --refresh") {
+		t.Fatalf("paused indexing reported as running: %s", out.String())
+	}
+}
