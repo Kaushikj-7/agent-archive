@@ -565,7 +565,7 @@ func (p *Published) writeWithStaged(next publishedState, staged *PendingPublicat
 				return e
 			}
 			savedDigest = sum
-			candidate, binding, releaseCandidate, e = p.store.savedAccountingCandidate(storage, path, sum, n)
+			candidate, binding, releaseCandidate, e = p.store.savedAccountingCandidate(storage, path, sum, n, publishedCharge(next, 2, n))
 			if e != nil {
 				return e
 			}

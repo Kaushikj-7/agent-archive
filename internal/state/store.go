@@ -1202,6 +1202,12 @@ type Status struct {
 	// last pass, as a code (see internal/cli's issueCodes), never the error
 	// itself.
 	SessionIssues map[string]string `json:"session_issues,omitempty"`
+	// SessionIssueReasons gives, for each of the SessionIssues whose error
+	// the last pass recognized, the fixed text of that error (see
+	// internal/cli's issueReasons), never the error itself: it holds no
+	// transcript content, path, or anything a credential_process printed.
+	// A session whose error was not recognized has no entry.
+	SessionIssueReasons map[string]string `json:"session_issue_reasons,omitempty"`
 	// IssueCounts counts SessionIssues by code, subagents included: the
 	// numbers the last error's summary of failed sessions is built from. It
 	// is cleared when a later failure replaces that summary, so status can
