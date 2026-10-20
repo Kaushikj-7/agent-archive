@@ -1,0 +1,134 @@
+{
+  "schema": 1,
+  "tag": "v0.2.2",
+  "commit": "8764d74558037ce869772bf557daa49085e4002d",
+  "sha256": {
+    "agent-archive-darwin-amd64": "e7d2f9b5efdbb6d19716449a848e9f4087696905936aeb235fdd6048c437619c",
+    "agent-archive-darwin-arm64": "3c9d7fa945cc5dab98df8fd48687ba26984bfd562c3374c9eeab893a62949ed6",
+    "agent-archive-linux-amd64": "05892668092eb2c88b1f742bb1dd3df26d101521f30d4380b1ef46e3e14688d4",
+    "agent-archive-linux-arm64": "174ff96828a9ce08e6935720f9bf390772322ea7b4c12026ef252f0cf22c94a9",
+    "SHA256SUMS": "c560053f1f9fba75e77cd8aed8b399effefed77069457a4bf5b4094d863f2c67",
+    "release-candidate.json": "73397285282234860aabcee147a12dc410cae67f18093243734cdc24ac0bd340"
+  },
+  "checks": {
+    "signed-install-darwin-amd64": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "signed-install-darwin-arm64": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "install-linux-amd64": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "install-linux-arm64": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "clean-user": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "upgrade": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "s3": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "r2": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "claude-code": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "codex": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "cursor": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "recovery": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "cleanup": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "listing-budget": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "documentation": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    },
+    "repository-settings": {
+      "result": "pending",
+      "tester": "",
+      "utc": "",
+      "evidence": ""
+    }
+  },
+  "ci": {
+    "Test": {
+      "result": "passed",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-19T19:34:47Z",
+      "evidence": "https://github.com/wangjohn/agent-archive/actions/runs/39306631628",
+      "run_id": 39306631628
+    },
+    "Levenshtein": {
+      "result": "passed",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-19T18:59:22Z",
+      "evidence": "https://github.com/wangjohn/agent-archive/actions/runs/39306631643",
+      "run_id": 39306631643
+    },
+    "Extended": {
+      "result": "passed",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-19T19:56:37Z",
+      "evidence": "https://github.com/wangjohn/agent-archive/actions/runs/39306631723",
+      "run_id": 39306631723
+    }
+  }
+}
