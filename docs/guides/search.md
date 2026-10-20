@@ -177,9 +177,10 @@ session's verified sources go through the same parser visibility and privacy
 rules as indexing, into an in-memory database that is never written to disk.
 Only matching sessions keep their passages, until the command exits. A progress
 line counts the sessions searched and matching, and each matching session is
-printed as it is found. Esc stops early. After 2 minutes it asks whether to keep
-going, search only the project you are in (with its session count), show the
-results so far, or stop. The results open in the same browser as indexed
+printed as it is found; the summary also counts sessions that could not be
+read. Esc stops early. After 2 minutes it asks whether to keep going, search
+only the project you are in (with its session count, and counting from then on
+only that project's sessions), show the results so far, or stop. The results open in the same browser as indexed
 search; reading a passage downloads its source again. Ctrl-C exits.
 
 Direct search never runs for `--json`, piped output, `--refresh` or

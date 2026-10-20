@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/search"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -299,5 +301,106 @@ func TestDirectSearchFiltersMetadataLikeTheIndex(t *testing.T) {
 		if got := aboutMinutes(minutes); got != want {
 			t.Errorf("aboutMinutes(%d) = %q", minutes, got)
 		}
+	}
+}
+
+func TestDirectSearchNarrowingCountsOnlyTheProject(t *testing.T) {
+	t.Parallel()
+	// The other project's session is the newest, so it is searched, and
+	// matches, before the pause narrows to the working directory's project.
+	env, _, ids, _ := directSearchFixture(t, []directSession{
+		{"native-a-old", 0, "checksum in project a"},
+		{"native-a-new", 0, "checksum again in project a"},
+		{"native-b", 1, "checksum in project b"},
+	})
+	env.directSearchPause = func() time.Duration { return 0 }
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "2\n1\n", "search", "checksum")
+	if code != 0 {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	for _, want := range []string{"Searched the newest 1 of 3 sessions · 1 matching session", "(2 sessions)", "Searched all 2 sessions · 2 matching sessions"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, shortSessionID(ids[2])+"  1 match") {
+		t.Fatalf("the other project's match was not printed as found:\n%s", out)
+	}
+}
+
+func TestDirectSearchCountsSessionsThatCouldNotBeRead(t *testing.T) {
+	t.Parallel()
+	env, objects, _, sources := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}, {"native-2", 0, "checksum two"}})
+	must(t, objects.ObjectStore.Delete(t.Context(), sources[0]))
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 0 || !strings.Contains(out, "Searched all 2 sessions · 1 matching session · 1 could not be read") {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	assertNoSearchIndex(t, env)
+}
+
+// A session read directly keeps its passages only when it matches.
+func TestDirectSearchDropsTheTextOfSessionsThatDoNotMatch(t *testing.T) {
+	t.Parallel()
+	env, objects, ids, _ := directSearchFixture(t, []directSession{{"native-hit", 0, "checksum mismatch"}, {"native-miss", 0, "nothing relevant"}})
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	index, err := search.OpenMemory(t.Context(), "test/context")
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}}
+	for _, m := range listed {
+		if _, _, err = scan.session(t.Context(), m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, word := range []string{"mismatch", "relevant"} {
+		count, e := index.SessionMatches(t.Context(), search.Query{Text: word}, "codex", ids[i])
+		if e != nil || count != 1-i {
+			t.Fatalf("%s: %d passages match %q (%v), want %d", ids[i], count, word, e, 1-i)
+		}
+	}
+}
+
+// delegationKeys records whether the prompter had handed Ctrl-Z to the keys
+// when key mode turned on and off.
+type delegationKeys struct {
+	*fakeKeys
+	p       *prompter
+	on, off bool
+}
+
+func (k *delegationKeys) keys() error {
+	k.on = k.p.render != nil && k.p.render.delegated > 0
+	return k.fakeKeys.keys()
+}
+
+func (k *delegationKeys) lines() {
+	k.off = k.p.render != nil && k.p.render.delegated > 0
+	k.fakeKeys.lines()
+}
+
+// While a direct search reads keys, they alone answer Ctrl-Z: the prompter
+// left from the questions before would otherwise stop the process too.
+func TestDirectSearchKeysOwnStopsWhileScanning(t *testing.T) {
+	t.Parallel()
+	index, err := search.OpenMemory(t.Context(), "test/context")
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader(""), &out)
+	defer p.close()
+	keys := &delegationKeys{fakeKeys: newFakeKeys(), p: p}
+	env := Env{openKeys: func(io.Reader) (keyTerminal, bool) { return keys, true }}
+	scan := &directScan{index: index, budget: time.Hour, now: time.Now, matched: map[string]bool{}, unread: map[string]bool{}}
+	why, err := scan.scan(t.Context(), p, &out, env, "all projects")
+	if err != nil || why != directScanDone {
+		t.Fatalf("%s %v", why, err)
+	}
+	if !keys.on || !keys.off {
+		t.Fatalf("prompter kept its own stop handling while keys were read (on %v, off %v)", keys.on, keys.off)
+	}
+	if p.render.delegated != 0 {
+		t.Fatalf("prompter still delegates stops after the scan: %d", p.render.delegated)
 	}
 }

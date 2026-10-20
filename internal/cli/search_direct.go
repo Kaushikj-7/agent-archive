@@ -93,6 +93,21 @@ type directScan struct {
 	searched int
 	matching int
 	failed   int
+	// matched and unread are the sessions searched that matched and that
+	// could not be read, by harness/session, so narrowing keeps only the
+	// counts of sessions in the narrowed scope.
+	matched map[string]bool
+	unread  map[string]bool
+}
+
+// directSessionKey identifies a session among those a direct search reads.
+func directSessionKey(m archive.Metadata) string { return m.Harness.Name + "/" + m.SessionID }
+
+// unreadable is how many sessions searched so far could not be read.
+func (s *directScan) unreadable() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failed
 }
 
 func (s *directScan) counts() (searched, matching int) {
@@ -104,28 +119,25 @@ func (s *directScan) counts() (searched, matching int) {
 // session indexes one session through the same verified loading and parser
 // visibility as background indexing, and reports its matches. Its text is
 // dropped unless it matches.
-func (s *directScan) session(ctx context.Context, m archive.Metadata) (int, error) {
+func (s *directScan) session(ctx context.Context, m archive.Metadata) (count int, unread bool, err error) {
 	at := s.now()
-	if err := s.index.Observe(ctx, m, s.parsers, at, 0); err != nil {
-		return 0, err
+	if err = s.index.Observe(ctx, m, s.parsers, at, 0); err != nil {
+		return 0, false, err
 	}
 	progress, err := s.index.Run(ctx, s.objects, s.parsers, at, search.Budget{Sources: 1000, Sessions: 1})
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if progress.Committed == 0 {
 		// An unreadable source is counted, not retried: the next search
 		// reads it again.
-		s.mu.Lock()
-		s.failed++
-		s.mu.Unlock()
-		return 0, s.index.ForgetSession(ctx, m.Harness.Name, m.SessionID)
+		return 0, true, s.index.ForgetSession(ctx, m.Harness.Name, m.SessionID)
 	}
-	count, err := s.index.SessionMatches(ctx, s.query, m.Harness.Name, m.SessionID)
+	count, err = s.index.SessionMatches(ctx, s.query, m.Harness.Name, m.SessionID)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	return count, s.index.DropSessionText(ctx, m.Harness.Name, m.SessionID, count > 0)
+	return count, false, s.index.DropSessionText(ctx, m.Harness.Name, m.SessionID, count > 0)
 }
 
 // run reads sessions until none is left or the budget is spent, sending each
@@ -146,7 +158,7 @@ func (s *directScan) run(ctx context.Context, found chan<- directMatch) (directS
 			return directScanPaused, nil
 		}
 		m := s.sessions[next]
-		count, err := s.session(ctx, m)
+		count, unread, err := s.session(ctx, m)
 		select {
 		case <-ctx.Done():
 			// Esc or a signal: the session cut short is not counted.
@@ -160,6 +172,11 @@ func (s *directScan) run(ctx context.Context, found chan<- directMatch) (directS
 		s.searched++
 		if count > 0 {
 			s.matching++
+			s.matched[directSessionKey(m)] = true
+		}
+		if unread {
+			s.failed++
+			s.unread[directSessionKey(m)] = true
 		}
 		s.mu.Unlock()
 		if count > 0 {
@@ -225,7 +242,7 @@ func runDirectSearch(ctx context.Context, cfg config.Config, namespace string, s
 			_ = index.Close()
 		}
 	}()
-	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: opts.query, now: env.now, budget: env.directSearchBudget(), sessions: sessions, total: len(sessions)}
+	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: opts.query, now: env.now, budget: env.directSearchBudget(), sessions: sessions, total: len(sessions), matched: map[string]bool{}, unread: map[string]bool{}}
 	printDirectSearchWarning(p, cfg, scan)
 
 	// The project the working directory is in, offered at a pause when the
@@ -243,18 +260,22 @@ func runDirectSearch(ctx context.Context, cfg config.Config, namespace string, s
 			return nil, searchCommandError(stderr, err)
 		}
 		searched, matching := scan.counts()
+		unread := ""
+		if n := scan.unreadable(); n > 0 {
+			unread = " · " + countText(n) + " could not be read"
+		}
 		if why != directScanPaused {
 			switch {
 			case searched >= scan.total:
-				terminal.Printf(stdout, "%s Searched all %s · %s\n", p.style.okMark(), sessionsText(scan.total), matchingSessionsText(matching))
+				terminal.Printf(stdout, "%s Searched all %s · %s%s\n", p.style.okMark(), sessionsText(scan.total), matchingSessionsText(matching), unread)
 			case searched == 0:
 				terminal.Printf(stdout, "%s Stopped before searching any of the %s\n", p.style.okMark(), sessionsText(scan.total))
 			default:
-				terminal.Printf(stdout, "%s Stopped after the newest %s of %s · %s\n", p.style.okMark(), countText(searched), sessionsText(scan.total), matchingSessionsText(matching))
+				terminal.Printf(stdout, "%s Stopped after the newest %s of %s · %s%s\n", p.style.okMark(), countText(searched), sessionsText(scan.total), matchingSessionsText(matching), unread)
 			}
 			break
 		}
-		terminal.Printf(stdout, "%s Searched the newest %s of %s · %s\n", p.style.okMark(), countText(searched), sessionsText(scan.total), matchingSessionsText(matching))
+		terminal.Printf(stdout, "%s Searched the newest %s of %s · %s%s\n", p.style.okMark(), countText(searched), sessionsText(scan.total), matchingSessionsText(matching), unread)
 		choice, err := askDirectSearchPause(ctx, p, scan, narrow)
 		if err != nil {
 			return nil, searchCommandError(stderr, err)
@@ -291,19 +312,32 @@ func directSearchInterrupted(stderr io.Writer) int {
 	return 130
 }
 
-// narrow keeps the sessions not searched yet that are in scope, after those
-// already searched.
+// narrow keeps the sessions in scope, those already searched first, and
+// counts only those: a session searched before narrowing that is outside the
+// scope is neither searched nor matching any more, as the results leave it
+// out.
 func (s *directScan) narrow(scope sessionScope) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	kept := s.sessions[:s.searched:s.searched]
-	for _, m := range s.sessions[s.searched:] {
-		if scope.contains(m, nil) {
-			kept = append(kept, m)
+	var kept []archive.Metadata
+	searched, matching, failed := 0, 0, 0
+	for i, m := range s.sessions {
+		if !scope.contains(m, nil) {
+			continue
+		}
+		kept = append(kept, m)
+		if i < s.searched {
+			searched++
+			if s.matched[directSessionKey(m)] {
+				matching++
+			}
+			if s.unread[directSessionKey(m)] {
+				failed++
+			}
 		}
 	}
-	s.sessions = kept
-	s.total = len(kept)
+	s.sessions, s.total = kept, len(kept)
+	s.searched, s.matching, s.failed = searched, matching, failed
 }
 
 // printDirectSearchWarning says what a direct search costs before it starts,
@@ -327,7 +361,15 @@ func printDirectSearchWarning(p *prompter, cfg config.Config, scan *directScan) 
 func (s *directScan) scan(ctx context.Context, p *prompter, stdout io.Writer, env searchCommandDependencies, scopeLabel string) (directScanStop, error) {
 	var keys *keyInput
 	if term, ok := env.openKeyTerminal(p.source); ok {
-		keys = startKeys(term)
+		// The keys answer Ctrl-Z while they are read; the prompter's own
+		// stop handling, left from the questions before, stands aside so
+		// the process is stopped once, with the terminal restored first.
+		release := p.suspendPrompts(true)
+		if keys = startKeys(term); keys == nil {
+			release()
+		} else {
+			defer release()
+		}
 	}
 	if keys != nil {
 		defer keys.close()
