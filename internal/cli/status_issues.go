@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -20,17 +21,15 @@ func printStatusIssues(out io.Writer, view statusView, sc statusScreen) {
 	for _, problem := range lastErrorRows(view.Collector) {
 		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{problem}})
 	}
-	ids := make([]string, 0, len(view.Collector.SessionIssues))
-	for id := range view.Collector.SessionIssues {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	for _, id := range ids {
-		rows = append(rows, statusRow{cells: []string{id, issueGapDetail(view.Collector.SessionIssues[id])}})
-	}
+	rows = append(rows, sc.issueGroupRows(view)...)
 	for _, app := range slices.Concat(view.Apps, view.importedApps) {
 		rows = append(rows, sc.discoveryIssueRows(app)...)
 		for _, gap := range app.CaptureGaps {
+			// The groups above already cover the sessions the last pass
+			// could not update.
+			if strings.HasPrefix(gap.Detail, issueGapLead) {
+				continue
+			}
 			rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{appName(app.Name), gap.Detail}})
 		}
 		// The rows above already name individual gaps. Share the detailed
@@ -60,6 +59,21 @@ func printStatusIssues(out io.Writer, view statusView, sc statusScreen) {
 		sc.printRows(out, rows)
 	}
 	terminal.Printf(out, "\n%s\n%s\n", sc.style.cmd("agent-archive status"), sc.style.cmd("agent-archive status --verbose"))
+}
+
+// issueGroupRows are the last pass's failed sessions, one row per kind of
+// failure and reason, each naming a few of its sessions. A kind with
+// nothing to do is information, not a warning.
+func (sc statusScreen) issueGroupRows(view statusView) []statusRow {
+	var rows []statusRow
+	for _, group := range issueGroups(view.Collector, func(id string) bool { return view.subagentIssues[id] }) {
+		mark := sc.info()
+		if group.actionable() {
+			mark = sc.style.warnMark()
+		}
+		rows = append(rows, statusRow{mark: mark, cells: []string{group.text()}, notes: []statusNote{{text: group.examples()}}})
+	}
+	return rows
 }
 
 func (sc statusScreen) discoveryIssueRows(app appStatus) []statusRow {

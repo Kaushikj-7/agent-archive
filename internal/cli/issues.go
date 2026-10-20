@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/collector"
@@ -17,6 +19,8 @@ import (
 // spelling (capture_failed replaced capture_or_publication_failed, which
 // status still reads; see issueGapDetail). They carry no error text: a raw
 // error can hold transcript content or what a credential_process printed.
+// Beside a code, status records the session's reason only when its error
+// wraps one of the fixed-text sentinels in issueReasons.
 const (
 	issueStorageAuth             = "storage_auth"
 	issueStorageUnavailable      = "storage_unavailable"
@@ -134,13 +138,22 @@ func sessionIssueCode(issue error) string {
 // pass could not update, with the next step for its kind of failure. A code
 // this version does not write, like capture_or_publication_failed from an
 // older one, gets capture_failed's.
-func issueGapDetail(code string) string {
+// A recognized reason (sessionIssueReason) follows the first clause.
+func issueGapDetail(code, reason string) string {
 	label, ok := issueLabels[code]
 	if !ok {
 		label = issueLabels[issueCaptureFailed]
 	}
-	return "Last scan could not update this session; retained evidence was kept. " + sentence(label.next)
+	detail := issueGapLead
+	if reason != "" {
+		detail += " (" + reason + ")"
+	}
+	return detail + "; retained evidence was kept. " + sentence(label.next)
 }
+
+// issueGapLead begins every issueGapDetail, so status --issues can tell those
+// gaps from the others when it shows them grouped instead.
+const issueGapLead = "Last scan could not update this session"
 
 // issueTally counts one kind of issue, top-level sessions and subagents
 // apart, so the last error names each.
@@ -181,10 +194,27 @@ func issueSummary(tallies map[string]issueTally) string {
 }
 
 // sessionIssues is what a pass's failed sessions come to: each one's issue
-// code, and the count of each code, sessions and subagents apart.
+// code and recognized reason, and the count of each code, sessions and
+// subagents apart.
 type sessionIssues struct {
 	codes   map[string]string
+	reasons map[string]string
 	tallies map[string]issueTally
+}
+
+// add records one session's code and reason and counts the code.
+func (i sessionIssues) add(id, code, reason string, subagent bool) {
+	i.codes[id] = code
+	if reason != "" {
+		i.reasons[id] = reason
+	}
+	tally := i.tallies[code]
+	if subagent {
+		tally.subagents++
+	} else {
+		tally.sessions++
+	}
+	i.tallies[code] = tally
 }
 
 // classifySessions classifies each failed session and counts the codes.
@@ -192,17 +222,10 @@ type sessionIssues struct {
 // candidate's failure says so itself, since a candidate never became a
 // registration.
 func classifySessions(sessionErrs map[string]error, isSubagent func(string) bool) sessionIssues {
-	issues := sessionIssues{codes: make(map[string]string, len(sessionErrs)), tallies: map[string]issueTally{}}
+	issues := sessionIssues{codes: make(map[string]string, len(sessionErrs)), reasons: map[string]string{}, tallies: map[string]issueTally{}}
 	for id, sessionErr := range sessionErrs {
 		code := sessionIssueCode(sessionErr)
-		issues.codes[id] = code
-		tally := issues.tallies[code]
-		if errors.Is(sessionErr, collector.ErrSubagentCandidate) || isSubagent(id) {
-			tally.subagents++
-		} else {
-			tally.sessions++
-		}
-		issues.tallies[code] = tally
+		issues.add(id, code, sessionIssueReason(sessionErr, code), errors.Is(sessionErr, collector.ErrSubagentCandidate) || isSubagent(id))
 	}
 	return issues
 }
@@ -212,8 +235,8 @@ func classifySessions(sessionErrs map[string]error, isSubagent func(string) bool
 // for, because it held them until their next attempt: each keeps the issue
 // its last attempt recorded, which the collector carried into
 // current.SessionIssues (capture_failed, which every such failure is, when
-// it carried none), and counts in the summary as it did then, so status
-// still shows it failing.
+// it carried none) with its reason, and counts in the summary as it did
+// then, so status still shows it failing.
 func (i sessionIssues) carryRetrying(current state.Status, isSubagent func(string) bool) {
 	for id := range current.NextRetryAt {
 		if _, failed := i.codes[id]; failed {
@@ -223,14 +246,7 @@ func (i sessionIssues) carryRetrying(current state.Status, isSubagent func(strin
 		if code == "" {
 			code = issueCaptureFailed
 		}
-		i.codes[id] = code
-		tally := i.tallies[code]
-		if isSubagent(id) {
-			tally.subagents++
-		} else {
-			tally.sessions++
-		}
-		i.tallies[code] = tally
+		i.add(id, code, current.SessionIssueReasons[id], isSubagent(id))
 	}
 }
 
@@ -267,32 +283,29 @@ func recordSelectedPassSessionIssues(localStore *state.Store, result collector.R
 	}
 	isSubagent := subagentLookup(localStore)
 	issues := classifySessions(result.Errors, isSubagent)
-	issues.carryCodes(current.SessionIssues, isSubagent)
+	issues.carryCodes(current, isSubagent)
 	prior := classifySessions(nil, isSubagent)
-	prior.carryCodes(previous.SessionIssues, isSubagent)
+	prior.carryCodes(previous, isSubagent)
 	current.ReplaceLastError(collector.FailedSessionsProblem(len(result.Errors)), "")
 	_, err = saveSessionIssues(localStore, current, issues, prior.summary())
 	return err
 }
 
-func (i sessionIssues) carryCodes(codes map[string]string, isSubagent func(string) bool) {
-	for id, code := range codes {
+func (i sessionIssues) carryCodes(status state.Status, isSubagent func(string) bool) {
+	for id, code := range status.SessionIssues {
 		if _, recorded := i.codes[id]; recorded {
 			continue
 		}
-		i.codes[id] = code
-		tally := i.tallies[code]
-		if isSubagent(id) {
-			tally.subagents++
-		} else {
-			tally.sessions++
-		}
-		i.tallies[code] = tally
+		i.add(id, code, status.SessionIssueReasons[id], isSubagent(id))
 	}
 }
 
 func saveSessionIssues(localStore *state.Store, current state.Status, issues sessionIssues, old string) (string, error) {
 	current.SessionIssues = issues.codes
+	current.SessionIssueReasons = nil
+	if len(issues.reasons) > 0 {
+		current.SessionIssueReasons = issues.reasons
+	}
 	current.IssueCounts = make(map[string]int, len(issues.tallies))
 	for code, tally := range issues.tallies {
 		current.IssueCounts[code] = tally.total()
@@ -349,4 +362,96 @@ func issueHeadline(status state.Status) (problem, next string, ok bool) {
 		}
 	}
 	return "", "", true
+}
+
+// issueGroupExamples is how many session IDs status --issues names for
+// each group of failed sessions; the rest are in status --json.
+const issueGroupExamples = 3
+
+// issueGroup is the failed sessions of the last pass that share an issue
+// code and reason ("" when their error was not recognized).
+type issueGroup struct {
+	code   string
+	reason string
+	ids    []string
+	tally  issueTally
+}
+
+// text words a group: its count (sessions and subagents apart, as in the
+// last error's summary), what happened, its reason, and the next step.
+func (g issueGroup) text() string {
+	label, ok := issueLabels[g.code]
+	if !ok {
+		label = issueLabels[issueCaptureFailed]
+	}
+	reason := g.reason
+	if reason == "" {
+		reason = "error not recognized"
+	}
+	return fmt.Sprintf("%s %s: %s — %s", g.tally, label.what, reason, label.next)
+}
+
+// actionable reports whether the group needs something from the user: a
+// storage kind, or a kind with a headline of its own. The others (a
+// subagent that could not be captured, a transcript over the size limit)
+// have nothing to do.
+func (g issueGroup) actionable() bool {
+	label, ok := issueLabels[g.code]
+	return !ok || storageIssues[g.code] || label.headline != ""
+}
+
+// examples names up to issueGroupExamples of the group's sessions.
+func (g issueGroup) examples() string {
+	shown := g.ids[:min(len(g.ids), issueGroupExamples)]
+	text := strings.Join(shown, ", ")
+	if more := len(g.ids) - len(shown); more > 0 {
+		text += fmt.Sprintf(" and %d more", more)
+	}
+	return text
+}
+
+// issueGroups groups the last pass's failed sessions by code and reason,
+// the largest group first, then in issueCodes order, so hundreds of
+// sessions that failed alike read as one line. isSubagent reports whether a
+// session is a subagent, which the group counts apart.
+func issueGroups(status state.Status, isSubagent func(string) bool) []issueGroup {
+	type key struct {
+		code   string
+		reason string
+	}
+	byKey := map[key]*issueGroup{}
+	for id, code := range status.SessionIssues {
+		k := key{code, status.SessionIssueReasons[id]}
+		group := byKey[k]
+		if group == nil {
+			group = &issueGroup{code: k.code, reason: k.reason}
+			byKey[k] = group
+		}
+		group.ids = append(group.ids, id)
+		if isSubagent(id) {
+			group.tally.subagents++
+		} else {
+			group.tally.sessions++
+		}
+	}
+	groups := make([]issueGroup, 0, len(byKey))
+	for _, group := range byKey {
+		slices.Sort(group.ids)
+		groups = append(groups, *group)
+	}
+	rank := func(code string) int {
+		if i := slices.Index(issueCodes, code); i >= 0 {
+			return i
+		}
+		return len(issueCodes)
+	}
+	slices.SortFunc(groups, func(a, b issueGroup) int {
+		return cmp.Or(
+			cmp.Compare(len(b.ids), len(a.ids)),
+			cmp.Compare(rank(a.code), rank(b.code)),
+			strings.Compare(a.code, b.code),
+			strings.Compare(a.reason, b.reason),
+		)
+	})
+	return groups
 }

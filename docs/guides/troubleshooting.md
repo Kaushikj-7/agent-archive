@@ -292,9 +292,15 @@ stays the same length however many projects you include.
   names the limit, and `agent-archive status APP` lists each such session
   with its size and how to keep capturing the work (continue it in a new
   session; `agent-archive handoff` carries the context there).
-  `agent-archive sync` prints each session's own error,
-  and `status --json` has each session's kind as a code
-  (`collector.session_issues`). When no kind is about storage, status
+  `status --issues` and `status --verbose` group the failed sessions by
+  kind and error, one line per group naming a few of them, for example
+  "268 sessions failed to capture or upload: durable publication capacity
+  exhausted; … — run agent-archive sync for details". The error shown is
+  one of a fixed set agent-archive recognizes, so it never repeats paths
+  or transcript text; any other error reads "error not recognized", and
+  `agent-archive sync` prints each session's own error. `status --json`
+  has each session's kind as a code (`collector.session_issues`) and its
+  recognized error (`collector.session_issue_reasons`). When no kind is about storage, status
   leads with the most pressing one ("Some sessions could not be captured")
   and its next step instead of **The last sync failed**. When everything
   the last pass recorded needs nothing from you (a subagent that could not

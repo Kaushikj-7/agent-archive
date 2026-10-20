@@ -1,11 +1,16 @@
 package state
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/config"
 )
 
 // settledPayloadShape counts the inline payloads of a published state file
@@ -171,5 +176,92 @@ func TestPendingPublicationRefusesReleasedPayload(t *testing.T) {
 		if err := json.Unmarshal(raw, &decoded); !errors.Is(err, ErrDurableStorageRecovery) {
 			t.Errorf("%s: pending decoder accepted released replay bytes: %v", name, err)
 		}
+	}
+}
+
+// publishedUsage returns the durable quota census of s's home.
+func publishedUsage(t *testing.T, s *Store, id string, n int64) (u durableUsage, additional int64) {
+	t.Helper()
+	if err := config.WithPublicationComposition(s.home, func(c config.PublicationCompositionGuard) error {
+		g, e := c.Storage(s.home)
+		if e != nil {
+			return e
+		}
+		q, e := s.openDurableQuota(g)
+		if e != nil {
+			return e
+		}
+		defer func() {
+			if err := q.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+		if u, e = q.usageContext(t.Context()); e != nil {
+			return e
+		}
+		path := filepath.Join("published", id+".json")
+		info, e := q.home.Root.Lstat(path)
+		if e != nil {
+			return e
+		}
+		additional, e = q.publishedAdditional(t.Context(), path, info, n)
+		return e
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return u, additional
+}
+
+// A settled source-set state is published cache like every other version:
+// only source bytes it still holds inline count against the durable quota, so
+// a history of ordinary publications cannot exhaust it and refuse the next.
+func TestSettledPublicationChargesOnlyRetainedInlineBytes(t *testing.T) {
+	t.Parallel()
+	s, pending := settledPayloadFixture(t)
+	id := pending.Bundle.ArchiveSessionID
+	published, err := s.LoadPublishedState(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = published.SaveCommittedPublication(pending, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// Only the published state is left to count.
+	if err = s.RemovePending(id); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(s.publishedPath(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stand in for a large cached bundle.
+	raw = append(raw, bytes.Repeat([]byte(" "), 2<<20)...)
+	if err = os.WriteFile(s.publishedPath(id), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if u, additional := publishedUsage(t, s, id, 1024); u.charged != 0 || additional != int64(len(raw))+1024 {
+		t.Fatalf("released settled state charged %d (replacement %d); want 0 and %d", u.charged, additional, len(raw)+1024)
+	}
+
+	// Earlier builds left the journal's inline bytes in the settled state.
+	old := published.state
+	old.Payloads = pending.Sources
+	old.Preparation = pending.Preparation
+	type wireState publishedState
+	raw, err = json.Marshal(wireState(old))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = append(raw, bytes.Repeat([]byte(" "), 2<<20)...)
+	if err = os.WriteFile(s.publishedPath(id), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inline := int64(base64.StdEncoding.EncodedLen(len(pending.Sources[0].Payload.Inline)) + base64.StdEncoding.EncodedLen(len(pending.Preparation.Inputs[0].Payload.Inline)))
+	u, additional := publishedUsage(t, s, id, 1024)
+	if u.charged != 2*inline || u.physical != int64(len(raw)) {
+		t.Fatalf("settled state with inline bytes charged %d of %d physical; want %d", u.charged, u.physical, 2*inline)
+	}
+	if want := max(int64(len(raw))+1024, 2*1024) - 2*inline; additional != want {
+		t.Fatalf("replacement credit: additional %d, want %d", additional, want)
 	}
 }

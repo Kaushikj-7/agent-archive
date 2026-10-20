@@ -56,7 +56,7 @@ func TestPublicationQuotaCloseRefusesClassificationAndReleasesLoan(t *testing.T)
 				if e != nil {
 					return e
 				}
-				mode, e := q.publishedProtocol(t.Context(), path, info)
+				mode, _, e := q.publishedProtocol(t.Context(), path, info)
 				if mode != 0 || !errors.Is(e, closeFailure) || corrupt && !errors.Is(e, ErrDurableStorageRecovery) {
 					t.Fatalf("classification escaped close failure mode=%d err=%v", mode, e)
 				}
