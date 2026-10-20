@@ -327,6 +327,40 @@ def discover(packages, out, deadline, race=False):
     return {p: sorted(n) for p, n in names.items()}
 
 
+def daily_race_schedule(packages, out, deadline, env):
+    """Assign daily short race bodies with the full tier's compiled CLI split.
+
+    One short race process for the whole CLI package reached its 20-minute
+    package timeout on a slower hosted runner. The full schedule keeps every
+    CLI parent, and its later CLI processes get their own package lifetimes.
+    The daily job's 30-minute budget cannot run them after the all-package
+    invocation, so the daily tier overlaps every invocation in one batch.
+    """
+    checked(['go', 'list', '-json', *packages], out/'race-packages.json', deadline, env)
+    package_map = full_race.packages((out/'race-packages.json').read_text())
+    checked(full_race.LIST_FLAGS + packages, out/'race-list.jsonl', deadline, env)
+    names = full_race.listing((out/'race-list.jsonl').read_text(), package_map)
+    hints = json.loads((ROOT/'scripts/go_shard_hints.json').read_text())['cli']
+    schedule = full_race.schedule(package_map, names, packages, hints)
+    width = len(full_race.COMMON)
+    for command in schedule['commands']:
+        if command[:width] != full_race.COMMON:
+            raise Failure('daily race schedule lost its common flags')
+        command[width:width] = ['-short']
+    schedule['batches'] = [list(range(len(schedule['commands'])))]
+    return schedule
+
+
+def verify_daily_race(out, schedule):
+    """Every assigned parent has exactly one terminal in its own invocation."""
+    for index, assignment in enumerate(schedule['assignments']):
+        subset = {p: schedule['packages'][p] for p in assignment}
+        try:
+            full_race.coverage((out/f'race-{index}.jsonl').read_text(), subset, assignment, body_evidence)
+        except full_race.shards.Failure as error:
+            raise Failure(str(error)) from error
+
+
 def prepare_performance(out, deadline, env, expected_source):
     """Compile dependencies with two workers; never run initialization or tests."""
     packages = PERFORMANCE[-4:]
@@ -860,15 +894,16 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
             verify_selected(proof['actual'], selected, children, real_manager=real_manager, plain_owned=plain_owned)
         invocation['evidence'] = proof
         path.write_text(json.dumps(report, indent=2)+'\n')
-    def execute_full_batch(batch):
+    def execute_full_batch(batch, env=None, short=False):
         if len(batch) == 1:
             command, name = batch[0]
-            execute(command, name)
+            execute(command, name, short, env=env)
             return
         # Record both exact ordered entries before launching. The supervisor is
         # synchronous; no threads mutate the report or execute callbacks.
-        env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
-        env.pop('AGENT_ARCHIVE_PERF', None)
+        if env is None:
+            env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0')
+            env.pop('AGENT_ARCHIVE_PERF', None)
         invocations = [{'command': command, 'log': name+'.jsonl', 'evidence': None,
                         'performance_enabled': False, 'real_systemd_enabled': False}
                        for command, name in batch]
@@ -878,7 +913,7 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
                     for invocation in invocations]
         checked_many(commands, deadline)
         for invocation in invocations:
-            invocation['evidence'] = body_evidence((out/invocation['log']).read_text(), False)
+            invocation['evidence'] = body_evidence((out/invocation['log']).read_text(), short)
         path.write_text(json.dumps(report, indent=2)+'\n')
     if suite == 'audit' or tier == 'daily' and suite == 'linux':
         audit_source = full_race.source_proof(ROOT)
@@ -918,9 +953,13 @@ def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=Fals
                 else:
                     short_env = dict(os.environ, AGENT_ARCHIVE_REAL_SYSTEMD='0', **{SOURCE_AUDIT_ENV: '1'})
                     short_env.pop('AGENT_ARCHIVE_PERF', None)
-                    execute(common + ['-short'] + packages, 'race', True, env=short_env)
-                    if tier == 'daily':
-                        verify_owned_audit_skip((out/'race.jsonl').read_text())
+                    schedule = daily_race_schedule(packages, out, deadline, short_env)
+                    report['daily_schedule'] = schedule
+                    path.write_text(json.dumps(report, indent=2)+'\n')
+                    for batch in schedule['batches']:
+                        execute_full_batch([(schedule['commands'][i], f'race-{i}') for i in batch], env=short_env, short=True)
+                    verify_daily_race(out, schedule)
+                    verify_owned_audit_skip((out/'race-0.jsonl').read_text())
         if tier == 'daily' and suite == 'linux':
             chosen = [e for e in catalog()['restorations'] if e['restore'] == 'daily']
             by_pkg = {}

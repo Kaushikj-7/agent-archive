@@ -352,7 +352,11 @@ daily campaign on Sunday. Daily runs all Linux representative race bodies plus
 the five named full restorations, native Darwin platform smoke, expanded native
 config/catalog/capture/source-I/O integration and the pinned
 published writer, actual systemd scheduler/setup/timer/uninstall, five seconds
-of mutations on every discovered fuzz target and expanded purge cases. Weekly
+of mutations on every discovered fuzz target and expanded purge cases. Daily
+Linux short race bodies use the full tier's compiled CLI split with `-short`,
+because one short CLI process reached the 20-minute package timeout; all its
+invocations overlap in one batch to fit the daily job's 30-minute limit and
+must record every assigned parent. Weekly
 runs complete default Linux and Darwin race suites, plain full-size performance
 assertions, exhaustive purge products and 30 seconds per fuzz target. Security
 advisory/workflow audits remain fresh daily in Levenshtein, including the
