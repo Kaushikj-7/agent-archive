@@ -297,14 +297,3 @@ func TestSearchPassageWindowShowsTheFirstMatch(t *testing.T) {
 		t.Fatalf("long word not split to the width: %q", long)
 	}
 }
-
-func TestHighlightedLinesKeepLineBreaksAndSafeText(t *testing.T) {
-	style := textStyle{color: true}
-	lines := highlightedLines("visible", "first visible\n\n  indented \x1b[2J visible\u202e", 80, style)
-	if len(lines) != 3 || lines[1] != "" || !strings.HasPrefix(lines[2], "  indented [2J ") {
-		t.Fatalf("lines: %q", lines)
-	}
-	if strings.Count(strings.Join(lines, "\n"), style.match("visible")) != 2 || strings.Contains(strings.Join(lines, ""), "\u202e") {
-		t.Fatalf("highlight or sanitizing lost: %q", lines)
-	}
-}

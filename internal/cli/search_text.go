@@ -169,17 +169,6 @@ func renderCells(cells []passageCell, style textStyle) string {
 	return b.String()
 }
 
-// highlightedLines is text wrapped to width with every term of query
-// highlighted, line breaks kept.
-func highlightedLines(query, text string, width int, style textStyle) []string {
-	cells := passageCells(text, search.MatchSpans(query, text), true)
-	var out []string
-	for _, l := range wrapCells(cells, width) {
-		out = append(out, renderCells(cells[l.start:l.end], style))
-	}
-	return out
-}
-
 // passageWindow is at most lines lines of text, as one paragraph wrapped to
 // width, that show its first matched term: from the start when it is that
 // close, else from the line before it, led by "…". A window that stops before
