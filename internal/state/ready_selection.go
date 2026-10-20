@@ -138,6 +138,13 @@ func (owned *PendingPublication) validateReadySelectionShape() error {
 // Remote predecessor observation belongs to the caller; publication rechecks it
 // before any source effect. Present is checksum-bound to retained exact bytes.
 func (s *Store) FreezeReadySelection(ctx context.Context, id string, p PendingPublication, predecessor ReadyPredecessor, previous []byte) (PendingPublication, error) {
+	return s.freezeReadySelection(ctx, id, nil, p, predecessor, previous)
+}
+
+// freezeReadySelection binds the proof to owner when given, and otherwise to
+// the retained registration. Generation recovery passes its journaled successor
+// before that registration exists, so begin can refuse it with nothing written.
+func (s *Store) freezeReadySelection(ctx context.Context, id string, owner *archive.SessionRegistration, p PendingPublication, predecessor ReadyPredecessor, previous []byte) (PendingPublication, error) {
 	if p.Selection != nil || p.JournalVersion != 0 || p.Catalog != nil {
 		return p, ErrReadySelectionFrozen
 	}
@@ -148,7 +155,7 @@ func (s *Store) FreezeReadySelection(ctx context.Context, id string, p PendingPu
 	if err != nil || !cfg.SupportsOrdinarySelection() {
 		return p, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	reg, found, err := s.LoadRegistration(id)
+	reg, found, err := s.readyOwner(id, owner)
 	if err != nil || !found || reg.CaptureFrozen || reg.StagedImportSHA256 != "" || reg.HistoricalProject != nil || !cfg.AcceptSession(reg) {
 		return p, errors.Join(ErrReadySelectionFrozen, err)
 	}
@@ -200,7 +207,14 @@ func (s *Store) FreezeReadySelection(ctx context.Context, id string, p PendingPu
 	if err != nil {
 		return p, err
 	}
-	return p, s.validateReadySelection(ctx, p)
+	return p, s.validateReadySelectionOwner(ctx, p, owner)
+}
+
+func (s *Store) readyOwner(id string, owner *archive.SessionRegistration) (archive.SessionRegistration, bool, error) {
+	if owner != nil {
+		return *owner, true, nil
+	}
+	return s.LoadRegistration(id)
 }
 
 func (s *Store) freezeReadyPredecessor(ctx context.Context, id string, p *PendingPublication, previous []byte) error {
@@ -236,6 +250,10 @@ func (s *Store) readyBinding(ctx context.Context, p PendingPublication) (string,
 }
 
 func (s *Store) validateReadySelection(ctx context.Context, p PendingPublication) error {
+	return s.validateReadySelectionOwner(ctx, p, nil)
+}
+
+func (s *Store) validateReadySelectionOwner(ctx context.Context, p PendingPublication, owner *archive.SessionRegistration) error {
 	if p.StagedProof() != nil {
 		return s.validateStagedSelection(ctx, p)
 	}
@@ -248,7 +266,7 @@ func (s *Store) validateReadySelection(ctx context.Context, p PendingPublication
 	if err := validateReadySourceKeys(p); err != nil {
 		return err
 	}
-	if err := s.validateReadyOwner(ctx, p); err != nil {
+	if err := s.validateReadyOwner(ctx, p, owner); err != nil {
 		return err
 	}
 	if err := s.validateReadyDigests(ctx, p); err != nil {
@@ -272,12 +290,12 @@ func validateReadySourceKeys(p PendingPublication) error {
 	return nil
 }
 
-func (s *Store) validateReadyOwner(ctx context.Context, p PendingPublication) error {
+func (s *Store) validateReadyOwner(ctx context.Context, p PendingPublication, owner *archive.SessionRegistration) error {
 	cfg, err := s.inspectDurableReadRoots(ctx)
 	if err != nil || !cfg.SupportsOrdinarySelection() || cfg.DestinationID() != p.Selection.DestinationID {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	reg, found, err := s.LoadRegistration(p.Bundle.ArchiveSessionID)
+	reg, found, err := s.readyOwner(p.Bundle.ArchiveSessionID, owner)
 	if err != nil || !found || reg.CaptureFrozen || reg.StagedImportSHA256 != "" || reg.HistoricalProject != nil || !cfg.AcceptSession(reg) {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}

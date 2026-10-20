@@ -197,20 +197,39 @@ def stage(gh, tag, commit, directory, security=verify_security):
         require(hashes == {name: digest(directory / name) for name in ASSETS}, 'published bytes differ from signed artifact')
 
 
-def evidence_row(row):
-    require(isinstance(row, dict) and row.get('result') == 'passed', 'acceptance row is missing or pending')
+def evidence_row(row, skippable=False):
+    """Validate one acceptance row and return its skip reason, or None when it passed.
+
+    Only human checks are skippable; CI rows must pass. A skip still needs a
+    tester, UTC time and reason, so an untouched pending template never passes.
+    """
+    require(isinstance(row, dict), 'acceptance row is missing or pending')
+    result = row.get('result')
+    require(result != 'failed', 'acceptance row failed; fix it and accept a new candidate tag')
+    skipped = skippable and result == 'skipped'
+    require(result == 'passed' or skipped, 'acceptance row is missing or pending')
     require(isinstance(row.get('tester'), str) and row['tester'].strip(), 'acceptance tester required')
-    require(isinstance(row.get('evidence'), str) and row['evidence'].startswith('https://'), 'acceptance evidence URL required')
+    evidence = row.get('evidence')
+    if skipped:
+        require(isinstance(row.get('reason'), str) and row['reason'].strip(), 'skipped acceptance row needs a reason')
+        require(evidence in (None, '') or (isinstance(evidence, str) and evidence.startswith('https://')),
+                'acceptance evidence URL must be HTTPS')
+    else:
+        require(isinstance(evidence, str) and evidence.startswith('https://'), 'acceptance evidence URL required')
     parsed = datetime.fromisoformat(row.get('utc', '').replace('Z', '+00:00'))
     require(parsed.utcoffset() is not None and parsed.utcoffset().total_seconds() == 0, 'acceptance UTC timestamp required')
+    return ' '.join(row['reason'].split()) if skipped else None
 
 
 def verify_acceptance(gh, acceptance, tag, commit, hashes):
     require(acceptance.get('schema') == 1 and acceptance.get('tag') == tag
             and acceptance.get('commit') == commit and acceptance.get('sha256') == hashes,
             'acceptance does not bind exact candidate identity and all six asset digests')
+    skipped = {}
     for name in ROWS:
-        evidence_row(acceptance.get('checks', {}).get(name))
+        reason = evidence_row(acceptance.get('checks', {}).get(name), skippable=True)
+        if reason is not None:
+            skipped[name] = reason
     for workflow, names in CI_JOBS.items():
         item = acceptance.get('ci', {}).get(workflow, {})
         evidence_row(item)
@@ -236,6 +255,16 @@ def verify_acceptance(gh, acceptance, tag, commit, hashes):
         for name in names:
             require(any(job.get('name') == name and job.get('conclusion') == 'success'
                         and job.get('head_sha') == commit for job in found), f'required successful CI job missing: {name}')
+    return skipped
+
+
+def acceptance_summary(skipped):
+    """Return the job-log summary of best-effort acceptance gaps."""
+    if not skipped:
+        return f'acceptance: all {len(ROWS)} checks passed'
+    lines = [f'acceptance: {len(skipped)} of {len(ROWS)} checks skipped']
+    lines += [f'  {name}: {reason}' for name, reason in skipped.items()]
+    return '\n'.join(lines)
 
 
 def guard_latest(gh, tag):
@@ -250,7 +279,7 @@ def promote(gh, tag, commit, acceptance, security=verify_security, tag_guard=gua
     release = gh.release(tag)
     with tempfile.TemporaryDirectory() as scratch:
         hashes = verify_release(gh, release, tag, commit, Path(scratch), security)
-    verify_acceptance(gh, acceptance, tag, commit, hashes)
+    skipped = verify_acceptance(gh, acceptance, tag, commit, hashes)
     if release['prerelease'] is False:
         latest = gh.api('releases/latest', missing=True)
         require(latest and (latest['id'] == release['id'] or version(latest['tag_name']) > version(tag)),
@@ -264,6 +293,7 @@ def promote(gh, tag, commit, acceptance, security=verify_security, tag_guard=gua
     require(gh.tag_commit(tag) == commit, 'remote tag moved during verification')
     require(snapshot(gh.release(tag)) == snapshot(release), 'release changed during verification')
     guard_latest(gh, tag)
+    print(acceptance_summary(skipped), flush=True)
     try:
         gh.api(f'releases/{release["id"]}', {'prerelease': False, 'make_latest': 'true'})
     except (RuntimeError, subprocess.TimeoutExpired):
