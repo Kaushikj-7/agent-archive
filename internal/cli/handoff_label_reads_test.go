@@ -115,10 +115,11 @@ func TestPickerModelLabelWantsStopsWhereArchiveOrderIsUnknown(t *testing.T) {
 	}
 	m := &pickerModel{source: "auto", labels: map[localLabelKey]localLabelResult{}}
 	for _, tc := range []struct {
-		name         string
-		remoteDone   bool
-		need, budget int
-		want         []string
+		name       string
+		remoteDone bool
+		need       int
+		budget     int
+		want       []string
 	}{
 		{"next archive page unread", false, 10, 10, []string{"new"}},
 		{"archive read to the end", true, 10, 10, []string{"new", "mid", "old"}},

@@ -65,12 +65,12 @@ func (r *labelReads) ensure(wants []labelWant) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.ctx == nil && len(wants) > 0 {
+		r.ctx, r.cancel = context.WithCancel(r.parent)
+	}
 	for _, w := range wants {
 		if _, ok := r.started[w.key]; ok || r.taken[w.key] {
 			continue
-		}
-		if r.ctx == nil {
-			r.ctx, r.cancel = context.WithCancel(r.parent)
 		}
 		result := &labelRead{done: make(chan struct{})}
 		r.started[w.key] = result
