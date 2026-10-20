@@ -1068,11 +1068,17 @@ func (s *Store) validateGenerationRecoveryReplay(ctx context.Context, id string,
 	if validationErr != nil {
 		return ErrSessionIndexRecoveryRequired
 	}
+	return s.validateGenerationPredecessorAuthority(ctx, id, old, r)
+}
+
+// validateGenerationPredecessorAuthority rechecks the predecessor's exact prior
+// selection (version 2) and a cleared stage link's release from one read of
+// its publication.
+func (s *Store) validateGenerationPredecessorAuthority(ctx context.Context, id string, old archive.SessionRegistration, r generationRecovery) error {
 	clearsStage := old.StagedImportSHA256 != "" && r.Registration.StagedImportSHA256 == ""
 	if r.Version != 2 && !clearsStage {
 		return nil
 	}
-	// One read of the predecessor's publication serves both authority checks.
 	read, ctx, closeContext := s.withDurableContext(ctx)
 	defer closeContext()
 	published, err := read.LoadPublishedStateContext(ctx, id)
