@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -121,6 +122,11 @@ func (s *sessionScan) ordinaryPrivacySuccessor(p state.PendingPublication, prior
 	if err != nil {
 		return next, err
 	}
+	oldest, err := s.oldestOrdinaryPrivacyAlternative(p, prior, input)
+	if err != nil {
+		return next, err
+	}
+	alternatives = append(alternatives, oldest...)
 	filtered, packed, ref, proof, release, err := state.RefilterCoveredPublicationInput(s.ctx, s.reg, adapter, origin, next.Preparation.OriginMetadata, input, 0, original, state.PublicationContext{NativeTarget: next.Preparation.NativeTarget, DestinationID: s.reg.DestinationID, AdmissionContext: s.publicationAdmission()}, state.PublicationPolicy{FilterVersion: input.FilterVersion, AdapterVersion: input.AdapterVersion, SkillEvidence: pendingSkillMode(input.SkillPolicy)}, policy, pendingSkillMode(p.SkillEvidence), s.readBudget(), publicationPrivacyReader{scan: s}, alternatives)
 	if err != nil {
 		return next, err
@@ -188,6 +194,38 @@ func (s *sessionScan) ordinaryPrivacyAlternatives(input state.PreparationInput, 
 	selection := state.PublicationSelection{Role: state.PublicationCurrent, CapturedAt: metadata.CapturedAt.UTC(), SourceSchemaVersion: archive.SourceSchemaVersion}
 	other := state.PreparationInput{ParentSessionID: &parent, NativeChild: &child, Reference: metadata.SourceBundle, Selection: selection, FilterVersion: metadata.FilterVersion, AdapterVersion: metadata.Adapter.Version, SkillPolicy: string(ceiling), Payload: state.PublicationPayload{Kind: state.PublicationRemote}}
 	return []state.PublicationPrivacyAlternative{{Metadata: metadata, MetadataBody: prior.Body, Input: other, Policy: state.PublicationPolicy{FilterVersion: other.FilterVersion, AdapterVersion: other.AdapterVersion, SkillEvidence: ceiling}}}, nil
+}
+
+// oldestOrdinaryPrivacyAlternative restores evidence that the oldest
+// uncommitted selection was authorized to publish under its own policy. Only
+// the Store's linked original qualifies; a commit since then, or retained bytes
+// that are gone, keeps the immediate pending ceiling.
+func (s *sessionScan) oldestOrdinaryPrivacyAlternative(p state.PendingPublication, prior state.PublicationPredecessor, input state.PreparationInput) ([]state.PublicationPrivacyAlternative, error) {
+	origin, found, err := s.local.PublicationPrivacyOrigin(s.id(), p, prior)
+	if err != nil || !found || skillPolicyRank(origin.Policy) <= skillPolicyRank(pendingSkillMode(p.SkillEvidence)) {
+		return nil, err
+	}
+	alternative, err := origin.OrdinaryAlternative()
+	if err != nil {
+		return nil, err
+	}
+	if alternative.Input.Reference == input.Reference {
+		return nil, nil
+	}
+	if err := s.validateAuthorityIdentity(alternative.Metadata); err != nil {
+		return nil, err
+	}
+	if alternative.Input.Payload.Kind != state.PublicationInline {
+		_, release, err := (publicationPrivacyReader{scan: s}).ReadPublicationPrivacySource(s.ctx, alternative.Input)
+		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		release()
+	}
+	return []state.PublicationPrivacyAlternative{alternative}, nil
 }
 
 func (s *sessionScan) renderOrdinaryPrivacyMetadata(bundle archive.SourceBundle, ref archive.SourceReference, origin archive.Metadata) ([]byte, error) {

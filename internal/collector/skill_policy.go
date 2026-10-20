@@ -20,6 +20,19 @@ func pendingSkillMode(value string) config.SkillEvidence {
 	return config.SkillEvidence(value)
 }
 
+// skillPolicyRank orders skill-evidence ceilings from narrowest to broadest.
+func skillPolicyRank(mode config.SkillEvidence) int {
+	switch mode {
+	case config.SkillEvidenceNone:
+		return 0
+	case config.SkillEvidenceMetadata:
+		return 1
+	case config.SkillEvidenceBody:
+		return 2
+	}
+	return 2
+}
+
 // limitSkillEvidence also removes skill evidence retained in an older local
 // candidate. Otherwise a policy change would re-upload cached snapshots.
 func limitSkillEvidence(in []archive.SupplementalEvidence, mode config.SkillEvidence) []archive.SupplementalEvidence {

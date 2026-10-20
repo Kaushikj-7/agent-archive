@@ -644,3 +644,11 @@ Exact injected root inventory is
 installed-only, including foreign/project roots regardless of unproven native
 eligibility. Config/plugin/native activation facts and skill invocation/read use
 are not inferred. Native private root paths are not added to inventory payloads.
+
+Retained skill-evidence policy successors (filter32) bound uncommitted ordinary
+and complete current/preserved history work by the policy of the oldest
+uncommitted ready selection that the Store retained as its privacy original,
+then by the current mode. The original qualifies only while it is linked to the
+installed journal and the remote position equals the one it was prepared
+against; otherwise the immediate pending ceiling applies. A committed narrower
+selection is never widened from older pending bytes.
