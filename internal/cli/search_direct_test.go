@@ -240,6 +240,24 @@ func TestDirectSearchNeverRunsForJSONOrWithAnIndex(t *testing.T) {
 	}
 }
 
+// A machine that turned indexing on and later off has lifecycle protection
+// but no declined flag; that earlier off still means search the bucket.
+func TestDirectSearchAfterIndexingWasTurnedOff(t *testing.T) {
+	t.Parallel()
+	env, _, ids, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}})
+	home, err := env.readHome()
+	must(t, err)
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	cfg.SearchIndexingDeclined, cfg.SearchLifecycleProtection = false, true
+	must(t, config.Save(home, cfg))
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 0 || strings.Contains(out, "Build the search index") || !strings.Contains(out, "Without an index") || !strings.Contains(out, shortSessionID(ids[0])+"  1 match") {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	assertNoSearchIndex(t, env)
+}
+
 func TestDirectSearchFiltersMetadataLikeTheIndex(t *testing.T) {
 	t.Parallel()
 	day := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)

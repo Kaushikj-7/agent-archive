@@ -22,13 +22,7 @@ import (
 )
 
 func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, env searchCommandDependencies) int {
-	kind := contentSearchResults
-	if opts.read != "" {
-		kind = contentSearchContextRead
-	} else if !opts.hasQuery {
-		kind = contentSearchRefreshOnly
-	}
-	doc := contentSearchDocument{SchemaVersion: 1, Kind: kind, OK: true, Results: []contentSearchHit{}, Query: opts.query.Text, Limit: opts.query.Limit}
+	doc := contentSearchDocument{SchemaVersion: 1, Kind: contentSearchKindOf(opts), OK: true, Results: []contentSearchHit{}, Query: opts.query.Text, Limit: opts.query.Limit}
 
 	home, err := env.readHome()
 	if err != nil {
@@ -52,21 +46,28 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 		return code
 	}
 	doc.Query = opts.query.Text
-	opts.indexing = cfg.SearchIndexing
+	// Background indexing runs only while capture is on and not paused.
+	opts.indexing = cfg.SearchIndexing && cfg.Archive.Enabled && !cfg.Paused
 	ctx, stop := readCommandContext(env)
 	defer stop()
-	// browse opens the results browser over index, which it closes, and
-	// hands off the session picked there.
-	browse := func(index *search.Store, page search.Page, opts contentSearchOptions, failure *contentSearchError) int {
+	// browse opens the results browser over index, which it closes; handOff
+	// then hands off the session picked there, outside the browser's reads.
+	browse := func(index *search.Store, page search.Page, opts contentSearchOptions, failure *contentSearchError) (*searchPick, int) {
 		if opts.prompt != nil {
 			opts.prompt.close()
 		}
 		row, picked, input, code := runContentSearchBrowser(ctx, env, cfg, namespace, index, page, opts, stdout, stderr)
 		_ = index.Close()
 		if code != 0 || !picked {
-			return contentSearchBrowserExit(code, failure)
+			return nil, contentSearchBrowserExit(code, failure)
 		}
-		return handOffSearchPick(stop, row, input, opts, failure, stdout, stderr, env)
+		return &searchPick{row: row, input: input, opts: opts, failure: failure}, 0
+	}
+	handOff := func(pick *searchPick, code int) int {
+		if pick == nil {
+			return code
+		}
+		return handOffSearchPick(stop, *pick, stdout, stderr, env)
 	}
 	if opts.read != "" {
 		return readSearchContext(ctx, env, cfg, namespace, opts, doc, stdout, stderr)
@@ -101,7 +102,7 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 			if found == nil {
 				return code
 			}
-			return browse(found.index, found.page, found.opts, nil)
+			return handOff(browse(found.index, found.page, found.opts, nil))
 		}
 		if os.IsNotExist(e) {
 			doc.Coverage = contentSearchCoverageOf(search.Observation{}, false)
@@ -113,7 +114,7 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 				if doc.Error != nil {
 					searchCommandError(stderr, errors.New(doc.Error.Message))
 				}
-				return browse(index, page, opts, doc.Error)
+				return handOff(browse(index, page, opts, doc.Error))
 			}
 			_ = index.Close()
 			if e != nil {
@@ -129,10 +130,30 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 // handOffSearchPick hands off the session picked in the results browser. The
 // search store and all browser reads are closed first; stop hands signal and
 // prompt ownership to the ordinary handoff pipeline.
-func handOffSearchPick(stop func(), row listRow, input *typedInput, opts contentSearchOptions, failure *contentSearchError, stdout, stderr io.Writer, env searchCommandDependencies) int {
+func handOffSearchPick(stop func(), pick searchPick, stdout, stderr io.Writer, env searchCommandDependencies) int {
 	stop()
-	code := runHandoffWithInput([]string{row.SessionID, "--harness", row.HarnessKey, "--source", "archive"}, opts.stdin, stdout, stderr, env, input)
-	return contentSearchBrowserExit(code, failure)
+	code := runHandoffWithInput([]string{pick.row.SessionID, "--harness", pick.row.HarnessKey, "--source", "archive"}, pick.opts.stdin, stdout, stderr, env, pick.input)
+	return contentSearchBrowserExit(code, pick.failure)
+}
+
+// searchPick is the session picked in the results browser, with the typed
+// input and options the handoff continues with.
+type searchPick struct {
+	row     listRow
+	input   *typedInput
+	opts    contentSearchOptions
+	failure *contentSearchError
+}
+
+// contentSearchKindOf is the document kind a search command produces.
+func contentSearchKindOf(opts contentSearchOptions) contentSearchKind {
+	switch {
+	case opts.read != "":
+		return contentSearchContextRead
+	case !opts.hasQuery:
+		return contentSearchRefreshOnly
+	}
+	return contentSearchResults
 }
 
 // contentSearchFiltersOf is the filters object a query's document reports.

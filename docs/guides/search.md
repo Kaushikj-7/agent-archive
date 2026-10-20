@@ -2,10 +2,13 @@
 
 Content search finds indexed titles and visible user/assistant messages in
 supported filtered retained sources, including supported preserved revisions.
-It keeps private local searchable text. Ordinary queries read only an existing
+It keeps private local searchable text. Cached queries read only an existing
 local index; they never discover archives, download sources or index content.
-A missing index returns partial empty results without creating files, except
-on a terminal after indexing was declined (see
+A missing index returns partial empty results without creating files. There
+are two exceptions on a terminal. A Yes to interactive search's one-time
+indexing question turns indexing on through setup and runs a first refresh
+(see below). After indexing was declined, a search with no local index reads
+the bucket directly, in memory, and creates no files (see
 [searching the bucket directly](#search-the-bucket-directly)).
 
 ```sh
@@ -56,8 +59,9 @@ backoff; oversized work discards staging and blocks until its desired state chan
 
 The private index is under AGENT_ARCHIVE_HOME/search/, partitioned by archive
 destination, installation, destination activation and privacy version. It is
-separate from the metadata cache. No automatic indexing job is installed by these
-commands. Uninstall retains local archive data. To discard searchable text,
+separate from the metadata cache. Refresh, JSON and piped queries never install an
+automatic indexing job; only a Yes to interactive search's one-time question does,
+through setup. Uninstall retains local archive data. To discard searchable text,
 disable automatic indexing with `setup --yes --search-indexing off`, stop explicit
 refresh commands, and remove that search directory; archive sources remain.
 See [privacy](../security/privacy.md) and
@@ -225,8 +229,10 @@ the usable result list.
 the terminal before invoking the ordinary handoff command with the selected
 full harness/session ID and archive source. Existing repository, destination and
 launch gates apply. It hands off the authorized current session, which may differ
-from a historical search match. Searching does not authorize indexing, setup,
-refresh or rebuild.
+from a historical search match. Browsing results never starts indexing, setup,
+refresh or rebuild; only the one-time indexing question, answered Yes, does.
+Browsing the results of a direct bucket search reads exact sources from the
+bucket, as any context read does, but writes no index.
 
 Checksum-verified sources in unsupported immutable formats (including legacy
 source schema 1) become explicit `unsupported_source_schema` coverage gaps.

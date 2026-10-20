@@ -40,7 +40,7 @@ func (e Env) directSearchBudget() time.Duration {
 // after the indexing offer was declined. JSON, piped output, refresh and
 // cursors keep reporting the missing index.
 func wantsDirectSearch(cfg config.Config, opts contentSearchOptions) bool {
-	return cfg.SearchIndexingDeclined && opts.prompt != nil && opts.hasQuery && !opts.json && !opts.refresh && opts.query.Cursor == ""
+	return searchIndexingDeclined(cfg) && opts.prompt != nil && opts.hasQuery && !opts.json && !opts.refresh && opts.query.Cursor == ""
 }
 
 // directSearchCandidate applies the query's scope and filters to a session's
