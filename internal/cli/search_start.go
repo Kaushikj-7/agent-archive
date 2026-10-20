@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/search"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -37,7 +38,9 @@ func (e Env) setSearchIndexing(on bool, out io.Writer) bool {
 // It reports whether indexing was turned on now.
 func offerSearchIndexing(p *prompter, dir string, cfg config.Config, env searchCommandDependencies) (bool, error) {
 	stdout := p.out
-	if cfg.SearchIndexing || cfg.SearchIndexingDeclined || !cfg.Archive.Enabled || cfg.Paused {
+	// Lifecycle protection without indexing is an earlier explicit off.
+	declined := cfg.SearchIndexingDeclined || cfg.SearchLifecycleProtection
+	if cfg.SearchIndexing || declined || !cfg.Archive.Enabled || cfg.Paused {
 		return false, nil
 	}
 	if _, err := os.Lstat(filepath.Join(dir, "content.sqlite")); !errors.Is(err, os.ErrNotExist) {
@@ -90,7 +93,7 @@ func indexFirstPass(home string, cfg config.Config, opts contentSearchOptions, p
 func promptSearchQuery(p *prompter, opts contentSearchOptions) (string, error) {
 	scope := "Searching all projects."
 	if opts.project != "" {
-		scope = "Searching project " + opts.project + "."
+		scope = "Searching project " + archive.DisplayLine(opts.project) + "."
 	}
 	return p.guidedText(promptModel{Question: "Search for:", Label: "Search", Helpers: []string{`All words must match; "quotes" match a phrase and a trailing * matches a prefix.`, scope}, Validate: func(value string) error {
 		if value == "" {

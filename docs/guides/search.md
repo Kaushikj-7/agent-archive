@@ -54,8 +54,9 @@ backoff; oversized work discards staging and blocks until its desired state chan
 
 The private index is under AGENT_ARCHIVE_HOME/search/, partitioned by archive
 destination, installation, destination activation and privacy version. It is
-separate from the metadata cache. No automatic indexing job is installed by these
-commands. Uninstall retains local archive data. To discard searchable text,
+separate from the metadata cache. Refresh, JSON and piped queries never install an
+automatic indexing job; only a Yes to interactive search's one-time question does,
+through setup. Uninstall retains local archive data. To discard searchable text,
 disable automatic indexing with `setup --yes --search-indexing off`, stop explicit
 refresh commands, and remove that search directory; archive sources remain.
 See [privacy](../security/privacy.md) and

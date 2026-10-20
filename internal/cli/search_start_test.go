@@ -93,3 +93,32 @@ func TestFirstIndexPassStopsOnInterrupt(t *testing.T) {
 		t.Fatalf("interrupt ignored: %v %s", err, out.String())
 	}
 }
+
+func TestSearchOnTerminalKeepsEarlierDisabledIndexingChoice(t *testing.T) {
+	t.Parallel()
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "synthetic", "--aws-profile", "test", "--region", "us-east-1", "--apps", "claude", "--project", project)
+	setupYes(t, env, "", 0, "--yes", "--search-indexing", "on")
+	setupYes(t, env, "", 0, "--yes", "--search-indexing", "off")
+	// A configuration written before the decline was recorded.
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	cfg.SearchIndexingDeclined = false
+	must(t, config.Save(home, cfg))
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "checksum\n", "search")
+	if code != 0 || strings.Contains(out, "Build the search index") {
+		t.Fatalf("asked despite earlier off: %d %s %s", code, errOut, out)
+	}
+}
+
+func TestSearchQueryPromptEscapesProjectName(t *testing.T) {
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader("word\n"), &out)
+	if _, err := promptSearchQuery(p, contentSearchOptions{project: "evil\n\x1b[2Jname"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "\x1b[2J") || strings.Contains(out.String(), "evil\n") {
+		t.Fatalf("project name not escaped: %q", out.String())
+	}
+}
