@@ -5,6 +5,23 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 32
+
+Global and Muse adapter 0.32.0 accompany this change. Parsers, source and
+metadata schemas, and native filtering rules are unchanged.
+
+- A retained skill-evidence policy successor of uncommitted ordinary or
+  complete current/preserved history work is bounded by the policy of the
+  oldest uncommitted ready selection, not by the immediately preceding pending
+  policy. A body → none → body sequence before upload therefore restores the
+  originally authorized skill evidence; every output stays limited by the
+  current mode as well. Only the Store-owned privacy original linked to the
+  installed journal qualifies, and only while the remote position equals the
+  one that original was prepared against. A committed narrower selection, an
+  unlinked or missing original, or unreadable retained original bytes keep the
+  immediate ceiling. Current native files and live skill folders are never
+  read for this.
+
 ## Source filter version 31
 
 Global and Muse adapter 0.31.0 accompany this change. Muse parser0.7.0
