@@ -142,23 +142,28 @@ func TestGenerationRecoveryRefusesUnsettledStageBeforeBuilding(t *testing.T) {
 	t.Parallel()
 	for name, unsettle := range map[string]func(*testing.T, *Store, archive.SessionRegistration){
 		"verified-only progress": func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+			t.Helper()
 			setStagedReleasePhase(t, s, reg.ArchiveSessionID, stagedReleaseVerified)
 		},
 		"local-complete progress": func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+			t.Helper()
 			setStagedReleasePhase(t, s, reg.ArchiveSessionID, stagedReleaseLocalComplete)
 		},
 		"missing receipt": func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+			t.Helper()
 			if err := os.Remove(filepath.Join(s.Home(), stagedControl(reg.ArchiveSessionID, stagedReleaseReceiptName))); err != nil {
 				t.Fatal(err)
 			}
 		},
 		"mismatched link": func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+			t.Helper()
 			reg.StagedImportSHA256 = strings.Repeat("b", 64)
 			if err := local.Write(s.registrationPath(reg.ArchiveSessionID), reg); err != nil {
 				t.Fatal(err)
 			}
 		},
 		"foreign root": func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+			t.Helper()
 			foreignStageRoot(t, s, reg.ArchiveSessionID)
 		},
 	} {
@@ -249,21 +254,26 @@ func interruptStageGenerationAtJournal(t *testing.T, s *Store, reg archive.Sessi
 func TestGenerationRecoveryReplayKeepsChangedStageAuthorityOwed(t *testing.T) {
 	t.Parallel()
 	for name, change := range map[string]struct {
-		apply, restore func(*testing.T, *Store, archive.SessionRegistration)
+		apply   func(*testing.T, *Store, archive.SessionRegistration)
+		restore func(*testing.T, *Store, archive.SessionRegistration)
 	}{
 		"progress regressed": {
 			apply: func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+				t.Helper()
 				setStagedReleasePhase(t, s, reg.ArchiveSessionID, stagedReleaseLocalComplete)
 			},
 			restore: func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+				t.Helper()
 				setStagedReleasePhase(t, s, reg.ArchiveSessionID, stagedReleaseReleased)
 			},
 		},
 		"foreign root": {
 			apply: func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+				t.Helper()
 				foreignStageRoot(t, s, reg.ArchiveSessionID)
 			},
 			restore: func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+				t.Helper()
 				dir := filepath.Join(s.Home(), filepath.Dir(stagedControl(reg.ArchiveSessionID, stagedReleaseReceiptName)))
 				foreign, err := os.Readlink(dir)
 				if err != nil {
