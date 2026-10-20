@@ -4,7 +4,9 @@ Content search finds indexed titles and visible user/assistant messages in
 supported filtered retained sources, including supported preserved revisions.
 It keeps private local searchable text. Ordinary queries read only an existing
 local index; they never discover archives, download sources or index content.
-A missing index returns partial empty results without creating files.
+A missing index returns partial empty results without creating files. The one
+exception is a Yes to interactive search's one-time indexing question, which
+turns indexing on through setup and runs a first refresh (see below).
 
 ```sh
 agent-archive search --refresh
@@ -196,8 +198,8 @@ the usable result list.
 the terminal before invoking the ordinary handoff command with the selected
 full harness/session ID and archive source. Existing repository, destination and
 launch gates apply. It hands off the authorized current session, which may differ
-from a historical search match. Searching does not authorize indexing, setup,
-refresh or rebuild.
+from a historical search match. Browsing results never starts indexing, setup,
+refresh or rebuild; only the one-time indexing question, answered Yes, does.
 
 Checksum-verified sources in unsupported immutable formats (including legacy
 source schema 1) become explicit `unsupported_source_schema` coverage gaps.
