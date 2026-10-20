@@ -12,10 +12,11 @@
   },
   "checks": {
     "signed-install-darwin-amd64": {
-      "result": "pending",
-      "tester": "",
-      "utc": "",
-      "evidence": ""
+      "result": "skipped",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-20T09:29:11Z",
+      "reason": "No Intel Mac and no Rosetta on the test Mac, so the amd64 binary was not installed or run. Its Developer ID signature and online notarization ticket were verified with codesign --verify --strict -R=notarized --check-notarization.",
+      "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6286244378"
     },
     "signed-install-darwin-arm64": {
       "result": "passed",
@@ -36,16 +37,17 @@
       "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6286244378"
     },
     "clean-user": {
-      "result": "pending",
-      "tester": "",
-      "utc": "",
-      "evidence": ""
+      "result": "skipped",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-20T09:29:11Z",
+      "reason": "Owner chose to skip macOS checks: no disposable macOS user account was available, and running setup on the owner's real account would replace a working installation. Fresh non-root users were exercised on Linux (installs, R2 and S3 runs).",
+      "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6286244378"
     },
     "upgrade": {
-      "result": "pending",
-      "tester": "",
-      "utc": "",
-      "evidence": ""
+      "result": "skipped",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-20T09:29:11Z",
+      "reason": "v0.1.1 has macOS binaries only, so the upgrade path needs a second disposable macOS user, which was not available; owner chose to skip macOS checks."
     },
     "s3": {
       "result": "passed",
@@ -60,22 +62,24 @@
       "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6287074161"
     },
     "claude-code": {
-      "result": "pending",
-      "tester": "",
-      "utc": "",
-      "evidence": ""
+      "result": "skipped",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-20T09:29:11Z",
+      "reason": "The real Claude Code app was not exercised in a disposable account (owner chose to skip macOS app checks). Its installed hook command was exercised end to end with synthetic hook payloads on Linux against real R2 and S3: published by the timer's collector and read back verified.",
+      "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6287074161"
     },
     "codex": {
-      "result": "pending",
-      "tester": "",
-      "utc": "",
-      "evidence": ""
+      "result": "skipped",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-20T09:29:11Z",
+      "reason": "Codex is not installed on the test machine and was not exercised."
     },
     "cursor": {
-      "result": "pending",
-      "tester": "",
-      "utc": "",
-      "evidence": ""
+      "result": "skipped",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-20T09:29:11Z",
+      "reason": "The real Cursor app was not exercised (not installed on the test machine). Cursor database import through the snapshot root was exercised on Linux with a hand-made database in the live acceptance harness.",
+      "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6286669342"
     },
     "recovery": {
       "result": "passed",
@@ -96,10 +100,11 @@
       "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6287075064"
     },
     "documentation": {
-      "result": "pending",
-      "tester": "",
-      "utc": "",
-      "evidence": ""
+      "result": "skipped",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-20T09:29:11Z",
+      "reason": "Partial: 436 relative links checked with none broken, the generated CLI reference is current, and every documented command prints its own usage. The audit of current provider and app versions was not done because Codex and Cursor are not installed on the test machine.",
+      "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6286281079"
     },
     "repository-settings": {
       "result": "pending",
