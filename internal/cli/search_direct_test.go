@@ -331,7 +331,7 @@ func TestDirectSearchNarrowingCountsOnlyTheProject(t *testing.T) {
 func TestDirectSearchCountsSessionsThatCouldNotBeRead(t *testing.T) {
 	t.Parallel()
 	env, objects, _, sources := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}, {"native-2", 0, "checksum two"}})
-	must(t, objects.ObjectStore.Delete(t.Context(), sources[0]))
+	must(t, objects.Delete(t.Context(), sources[0]))
 	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
 	if code != 0 || !strings.Contains(out, "Searched all 2 sessions · 1 matching session · 1 could not be read") {
 		t.Fatalf("%d %s %s", code, errOut, out)
@@ -366,8 +366,9 @@ func TestDirectSearchDropsTheTextOfSessionsThatDoNotMatch(t *testing.T) {
 // when key mode turned on and off.
 type delegationKeys struct {
 	*fakeKeys
-	p       *prompter
-	on, off bool
+	p   *prompter
+	on  bool
+	off bool
 }
 
 func (k *delegationKeys) keys() error {
