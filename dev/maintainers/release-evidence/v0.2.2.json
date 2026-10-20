@@ -54,10 +54,10 @@
       "evidence": ""
     },
     "r2": {
-      "result": "pending",
-      "tester": "",
-      "utc": "",
-      "evidence": ""
+      "result": "passed",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-20T08:28:56Z",
+      "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6287074161"
     },
     "claude-code": {
       "result": "pending",
@@ -78,22 +78,22 @@
       "evidence": ""
     },
     "recovery": {
-      "result": "pending",
-      "tester": "",
-      "utc": "",
-      "evidence": ""
+      "result": "passed",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-20T08:31:21Z",
+      "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6287074643"
     },
     "cleanup": {
-      "result": "pending",
-      "tester": "",
-      "utc": "",
-      "evidence": ""
+      "result": "passed",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-20T08:40:51Z",
+      "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6287075464"
     },
     "listing-budget": {
-      "result": "pending",
-      "tester": "",
-      "utc": "",
-      "evidence": ""
+      "result": "passed",
+      "tester": "Claude Code for wangjohn",
+      "utc": "2026-10-20T08:34:08Z",
+      "evidence": "https://github.com/wangjohn/agent-archive/pull/715#issuecomment-6287075064"
     },
     "documentation": {
       "result": "pending",
