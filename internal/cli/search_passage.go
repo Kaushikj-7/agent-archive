@@ -361,3 +361,14 @@ func (b *sessionBrowser) drawSearchDetails(lines []string, top int, notice strin
 	terminal.Print(b.stdout, frame.String())
 	return screen
 }
+
+// highlightedLines is text wrapped to width with every term of query
+// highlighted, line breaks kept.
+func highlightedLines(query, text string, width int, style textStyle) []string {
+	cells := passageCells(text, search.MatchSpans(query, text), true)
+	var out []string
+	for _, l := range wrapCells(cells, width) {
+		out = append(out, renderCells(cells[l.start:l.end], style))
+	}
+	return out
+}
