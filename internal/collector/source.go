@@ -146,7 +146,10 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 // collector options would allocate their unrelated policy fields per source.
 type providerReader struct {
 	// localRead is set only by the explicit unregistered source entry point.
-	localRead               bool
+	localRead bool
+	// preview opens the provider's bounded preview pass, when it has one,
+	// for a label preview that reads no content beyond its windows.
+	preview                 bool
 	countInspection         bool
 	inspectionCache         *inspectioncache.Cache
 	inspectionObservation   **inspectioncache.Observation
@@ -283,7 +286,11 @@ func (r providerReader) pass(ctx context.Context, p agentapi.SourceProvider, key
 		env.ReadBudget = r.resourceOwner.readBudget()
 	}
 	env.LegacyUnboundRegistration = r.harness == archive.HarnessCodex && r.admission.Binding == nil && (r.discovery == nil || r.discovery.Origin != archive.SessionOriginDiscovery)
-	pass, err := p.OpenPass(ctx, env)
+	open := p.OpenPass
+	if bounded, ok := p.(agentapi.PreviewSourceProvider); ok && r.preview {
+		open = bounded.OpenPreviewPass
+	}
+	pass, err := open(ctx, env)
 	if err != nil {
 		return nil, nil, err
 	}
