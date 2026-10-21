@@ -288,7 +288,7 @@ func writeContentSearch(doc contentSearchDocument, opts contentSearchOptions, st
 				if doc.Coverage != nil && !doc.Coverage.Present && opts.indexing {
 					out.WriteString("No search index yet; background indexing is building it. Try again in a few minutes.\n")
 				} else if doc.Coverage != nil && !doc.Coverage.Present {
-					out.WriteString("Search coverage is incomplete: no local content index. Run search --refresh.\n")
+					out.WriteString("Search coverage is incomplete: no local content index. To build it, run:\n  agent-archive search --refresh\n")
 				} else if doc.Coverage != nil && doc.Coverage.Complete {
 					fmt.Fprintf(&out, "%d result(s). Coverage complete at last observation; remote changes are unknown.\n", len(doc.Results))
 				} else {

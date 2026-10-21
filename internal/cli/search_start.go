@@ -25,7 +25,7 @@ import (
 func (e Env) setSearchIndexing(on bool, out io.Writer) bool {
 	if !on {
 		if err := e.declineSearchIndexing(); err != nil {
-			terminal.Printf(out, "%s %v\n", styleFor(out).warnMark(), err)
+			terminal.Printf(out, "%s %v. The answer was not saved; search asks again next time.\n", styleFor(out).warnMark(), err)
 			return false
 		}
 		return true
@@ -63,7 +63,7 @@ func (e Env) declineSearchIndexing() error {
 	// collector lock, so the answer is saved over the latest configuration.
 	unlock, err := lockCollectorWait(home, "search indexing answer", e.now(), searchAnswerLockWait)
 	if err != nil {
-		return fmt.Errorf("%s holds the collector lock; the answer was not saved, and search asks again next time", lockHolder(home))
+		return fmt.Errorf("%s holds the collector lock", lockHolder(home))
 	}
 	defer unlock()
 	if setupjournal.TransactionPending(home) {
@@ -103,8 +103,12 @@ func offerSearchIndexing(p *prompter, dir, namespace string, cfg config.Config, 
 	}
 	on := answer == "yes"
 	if !env.setSearchIndexing(on, stdout) {
-		terminal.Println(stdout, "The answer was not saved. To retry, run:")
-		terminal.Println(stdout, p.style.cmd("agent-archive setup --yes --search-indexing "+map[bool]string{true: "on", false: "off"}[on]))
+		// A failed No has said search asks again; a failed Yes printed
+		// setup's review, so name the setup that retries it.
+		if on {
+			terminal.Println(stdout, "The answer was not saved. To retry, run:")
+			terminal.Println(stdout, p.style.cmd("agent-archive setup --yes --search-indexing on"))
+		}
 		return false, nil
 	}
 	return on, nil
@@ -126,8 +130,12 @@ func indexFirstPass(home string, cfg config.Config, opts contentSearchOptions, p
 	if errors.Is(err, context.Canceled) {
 		return errors.New("interrupted")
 	}
+	if coverage != nil && coverage.Known > 0 && coverage.Indexed >= coverage.Known {
+		terminal.Printf(stdout, "%s Background indexing is on; %s indexed.\n", p.style.okMark(), sessionsText(coverage.Known))
+		return nil
+	}
 	if coverage != nil && coverage.Known > 0 {
-		terminal.Printf(stdout, "%s Background indexing is on. %d of %d known sessions indexed so far; the rest fill in over the next few minutes.\n", p.style.okMark(), coverage.Indexed, coverage.Known)
+		terminal.Printf(stdout, "%s Background indexing is on; %d of %d sessions indexed, the rest within minutes.\n", p.style.okMark(), coverage.Indexed, coverage.Known)
 		return nil
 	}
 	terminal.Printf(stdout, "%s Background indexing is on. Results fill in over the next few minutes.\n", p.style.okMark())
