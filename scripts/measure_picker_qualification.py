@@ -60,8 +60,8 @@ def main():
             parser.error("set explicit isolated " + name)
     env.update(GOMAXPROCS="2", AGENT_ARCHIVE_PERF="1")
     version = subprocess.check_output([str(args.go), "version"], env=env, text=True).strip()
-    if "go1.27.2 " not in version:
-        parser.error("Go1.27.2 exactly required")
+    if "go1.27.3 " not in version:
+        parser.error("Go1.27.3 exactly required")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     manifest = {"toolchain": version, "platform": platform.platform(),

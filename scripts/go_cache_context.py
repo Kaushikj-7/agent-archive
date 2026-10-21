@@ -31,7 +31,7 @@ TOOL_PINS = {
     'deadcode': ['golang.org/x/tools', 'v0.50.0'],
     'git-2.30.2': '94f6e3e283f2adfc518b39cfc39291f1c2832ad0',
     'git-2.39.2': 'cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6',
-    'shared': '6f799f72befb925d10f2ef01a7c9a46725fa714d',
+    'shared': 'ee7597a16b237dfe86b9435e0edffd3439021355',
 }
 COMPILATION_MODES = {
     'race': [False, True], 'tags': [],
@@ -173,8 +173,8 @@ def runtime_context(run=execute, env=None, os_release=Path('/etc/os-release'),
     go = json.loads(run(['go', 'env', '-json', *GO_FIELDS]))
     if not isinstance(go, dict) or set(go) != set(GO_FIELDS) or any(type(v) is not str for v in go.values()):
         raise InvalidContext('incomplete Go metadata')
-    if (not re.fullmatch(r'go version go1\.27\.2 (linux|darwin)/(amd64|arm64)', version)
-            or go['GOVERSION'] != 'go1.27.2'
+    if (not re.fullmatch(r'go version go1\.27\.3 (linux|darwin)/(amd64|arm64)', version)
+            or go['GOVERSION'] != 'go1.27.3'
             or go['GOOS'] not in (('linux', 'darwin') if native else ('linux',))
             or go['GOHOSTOS'] != go['GOOS']
             or go['GOARCH'] != go['GOHOSTARCH'] or go['GOARCH'] not in ('amd64', 'arm64')
@@ -247,10 +247,10 @@ def validate_context(context, *, native=False):
     if (system not in (('linux', 'darwin') if native else ('linux',))
             or go['GOHOSTOS'] != system or go['GOHOSTARCH'] != arch
             or arch not in ('amd64', 'arm64')
-            or context['version'] != f'go version go1.27.2 {system}/{arch}'
+            or context['version'] != f'go version go1.27.3 {system}/{arch}'
             or context['runner_os'] != {'linux': 'Linux', 'darwin': 'macOS'}[system]
             or context['runner_arch'] != {'amd64': 'X64', 'arm64': 'ARM64'}[arch]
-            or any(go[k] != v for k, v in {'GOVERSION': 'go1.27.2', 'CGO_ENABLED': '1',
+            or any(go[k] != v for k, v in {'GOVERSION': 'go1.27.3', 'CGO_ENABLED': '1',
                     'GOTOOLCHAIN': 'local', 'GOWORK': 'off', 'GOFLAGS': '-mod=readonly', 'GOCACHEPROG': ''}.items())):
         raise InvalidContext('runtime build/runner identity differs')
     image = context['image']

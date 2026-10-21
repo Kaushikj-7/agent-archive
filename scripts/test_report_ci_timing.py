@@ -645,7 +645,7 @@ class ListingRepetitionTests(unittest.TestCase):
             path.mkdir()
             manifest = {'success': True, 'shard': shard,
                         'catalog': {'schema': 4, 'workers': 8, 'source': 'a' * 40,
-                                    'configuration': {'GOVERSION': 'go1.27.2'}, 'packages': ['pkg']},
+                                    'configuration': {'GOVERSION': 'go1.27.3'}, 'packages': ['pkg']},
                         'timing_observation': {'run_id': '1', 'run_attempt': '1',
                                                'cache_restore_state': 'prefix',
                                                'runner_image': 'ubuntu24', 'runner_image_version': 'one'},
@@ -687,7 +687,7 @@ class LocalListingDiagnosticTests(unittest.TestCase):
     def run_diagnostic(self, root, *, fail=False, wrong_names=False, source_changed=False):
         import measure_go_listing as diagnostic
         calls = []
-        config = {'GOVERSION': 'go1.27.2', 'GOFLAGS': '', 'GOMODCACHE': '/synthetic/modules',
+        config = {'GOVERSION': 'go1.27.3', 'GOFLAGS': '', 'GOMODCACHE': '/synthetic/modules',
                   'GOOS': 'darwin', 'GOHOSTOS': 'darwin', 'GOARCH': 'arm64', 'GOHOSTARCH': 'arm64'}
         proof = {'source': 'a' * 40, 'tree': 'b' * 40}
 

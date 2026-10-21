@@ -19,7 +19,7 @@ share a second complete33-membership seed. Each command uses a fresh home, Env,
 request cache and meter. Setup durations are logged separately. The actual140
 production-construction equivalence control remains independent.
 
-Run using Go 1.27.2 and isolated caches, synthetic home and native files:
+Run using Go 1.27.3 and isolated caches, synthetic home and native files:
 
 ```sh
 go test -p 2 ./internal/cli -run '^TestPickerQualification' -count=1 -timeout=5m

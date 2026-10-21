@@ -51,8 +51,8 @@ def measure(go, output):
         run('configuration', [go, 'env', '-json', *go_parent_shards.CONFIG_FIELDS,
                               'GOMODCACHE'])
         config = json.loads((output / 'configuration.log').read_text())
-        if config['GOVERSION'] != 'go1.27.2' or config['GOFLAGS']:
-            raise ValueError('use exact Go 1.27.2 with empty GOFLAGS')
+        if config['GOVERSION'] != 'go1.27.3' or config['GOFLAGS']:
+            raise ValueError('use exact Go 1.27.3 with empty GOFLAGS')
         if config['GOOS'] != config['GOHOSTOS'] or config['GOARCH'] != config['GOHOSTARCH']:
             raise ValueError('use the native OS and architecture for binary listing')
         env['GOMODCACHE'] = config.pop('GOMODCACHE')
