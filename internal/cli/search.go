@@ -20,6 +20,7 @@ type searchCommandDependencies interface {
 	now() time.Time
 	newCommandFlags(string, io.Writer) *commandFlags
 	setSearchIndexing(bool, io.Writer) bool
+	directSearchBudget() time.Duration
 }
 
 type contentSearchOptions struct {
@@ -28,6 +29,9 @@ type contentSearchOptions struct {
 	// ask is bare search on a terminal: the query is asked for once the
 	// configuration is known, and flags that need a query are allowed.
 	ask bool
+	// prompt is the terminal prompter startInteractiveSearch asked through,
+	// or nil when nothing was asked; it keeps the answers typed ahead.
+	prompt *prompter
 	// indexing is automatic indexing's saved choice, for the missing-index line.
 	indexing    bool
 	query       search.Query

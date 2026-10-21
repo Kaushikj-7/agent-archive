@@ -26,6 +26,15 @@ follow [Semantic Versioning](https://semver.org/).
   and the matched words highlighted. The source revision, byte range and
   SHA-256 move behind `i`, and `t` opens the session's transcript in the same
   pager as `show --transcript`.
+- After you answer No to search indexing, a search on a terminal with no local
+  index reads the bucket directly instead of returning nothing. It warns first,
+  downloads sessions in scope newest first and matches them in memory, keeping
+  no conversation text on this machine (session titles are cached, as for
+  `list`). It shows matches as it finds them, pauses after 2
+  minutes to ask whether to keep going, narrow to this project, or show the
+  results, and Esc stops early. JSON and piped output still report the missing
+  index. To search instantly instead, run
+  `agent-archive setup --yes --search-indexing on`.
 - `status --issues` and `status --verbose` say why sessions failed in the last
   pass, grouped: one line per kind of failure and error with its count and a
   few session IDs, such as "268 sessions failed to capture or upload: durable
@@ -36,6 +45,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The `handoff` picker no longer waits seconds for a large session that is
+  not uploaded yet. For a transcript over 4 MiB it filters and parses only
+  the first and last 256 KiB, instead of the whole transcript. Its title still comes from the first
+  prompt; its name, branch and pull request come from those last records, so
+  a rename that only appears mid-transcript shows after the session uploads.
+  A transcript whose first 256 KiB holds no prompt is still read whole.
 - Uploads no longer stop for good after about 500 sessions. Each session's
   local record of its last upload counted against the 1 GiB limit on pending
   local work, so once those records filled it every later session failed with
