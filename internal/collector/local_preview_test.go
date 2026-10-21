@@ -141,10 +141,11 @@ func TestLocalPreviewLeavesOtherSourcesToTheFullRead(t *testing.T) {
 	}
 }
 
-// A transcript the windows span is previewed only when they read every
-// record: one across the end of the head window, starting before the tail
-// window, is read by neither, so the transcript is read whole.
-func TestLocalPreviewLeavesASpannedTranscriptWithAnUnreadRecordToTheFullRead(t *testing.T) {
+// A transcript the windows span is previewed whole, as one window, so a
+// record across the end of the head window that starts before the tail
+// window is still read. One holding a record over the record limit is read
+// whole by the full read instead.
+func TestLocalPreviewReadsASpannedTranscriptWhole(t *testing.T) {
 	t.Parallel()
 	reply := func(n int) string {
 		b, err := json.Marshal(map[string]any{"type": "assistant", "sessionId": "native-large", "timestamp": "2026-01-02T00:00:01Z", "message": map[string]any{"role": "assistant", "content": strings.Repeat("w", n)}})
@@ -153,31 +154,38 @@ func TestLocalPreviewLeavesASpannedTranscriptWithAnUnreadRecordToTheFullRead(t *
 		}
 		return string(b) + "\n"
 	}
-	var b strings.Builder
-	b.WriteString(`{"type":"user","uuid":"u1","sessionId":"native-large","timestamp":"2026-01-02T00:00:00Z","message":{"role":"user","content":"Fix the widget"}}` + "\n")
-	for b.Len() < testPreviewWindow*5/8 {
-		b.WriteString(reply(1 << 10))
+	write := func(middle string) string {
+		var b strings.Builder
+		b.WriteString(`{"type":"user","uuid":"u1","sessionId":"native-large","timestamp":"2026-01-02T00:00:00Z","message":{"role":"user","content":"Fix the widget"}}` + "\n")
+		for b.Len() < testPreviewWindow*5/8 {
+			b.WriteString(reply(1 << 10))
+		}
+		at := b.Len()
+		b.WriteString(middle)
+		for b.Len() < testPreviewWindow*15/8 {
+			b.WriteString(reply(1 << 10))
+		}
+		if at+len(middle) <= testPreviewWindow || at >= b.Len()-testPreviewWindow || b.Len() > 2*testPreviewWindow {
+			t.Fatalf("fixture does not straddle: record %d-%d of %d", at, at+len(middle), b.Len())
+		}
+		path := filepath.Join(t.TempDir(), "native-large.jsonl")
+		if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
 	}
-	straddler := b.Len()
-	b.WriteString(reply(testPreviewWindow / 2))
-	for b.Len() < testPreviewWindow*15/8 {
-		b.WriteString(reply(1 << 10))
-	}
-	if end := straddler + len(reply(testPreviewWindow/2)); end <= testPreviewWindow || straddler >= b.Len()-testPreviewWindow || b.Len() > 2*testPreviewWindow {
-		t.Fatalf("fixture does not straddle: record %d-%d of %d", straddler, end, b.Len())
-	}
-	path := filepath.Join(t.TempDir(), "native-large.jsonl")
-	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	home := newTestStore(t).Home()
 	reg := largeRegistration(t)
-	reg.TranscriptPath = path
-	if _, err := PreviewLocalTranscript(t.Context(), newTestStore(t).Home(), reg, "", testSources, testParsers, testPreviewLimits); !errors.Is(err, ErrPreviewUnavailable) {
-		t.Fatalf("got %v, want ErrPreviewUnavailable", err)
+	padding := strings.Repeat(" ", testPreviewWindow/2)
+	reg.TranscriptPath = write(`{"type":"pr-link","sessionId":"native-large","prNumber":"215","prRepository":"example-org/widget-tools"}` + padding + "\n")
+	preview, err := PreviewLocalTranscript(t.Context(), home, reg, "", testSources, testParsers, testPreviewLimits)
+	if err != nil || !preview.NameComplete || len(preview.PullRequests) != 1 || preview.PullRequests[0].Number != 215 {
+		t.Fatalf("straddling record not read: %+v %v", preview, err)
 	}
-	reg.TranscriptPath = writeLargeClaudeTranscript(t, testPreviewWindow/2)
-	if preview, err := PreviewLocalTranscript(t.Context(), newTestStore(t).Home(), reg, "", testSources, testParsers, testPreviewLimits); err != nil || !preview.NameComplete {
-		t.Fatalf("a transcript inside the head window was not previewed whole: %+v %v", preview, err)
+	requirePreviewMatchesFullRead(t, home, reg, preview)
+	reg.TranscriptPath = write(reply(testPreviewWindow + 1))
+	if _, err := PreviewLocalTranscript(t.Context(), home, reg, "", testSources, testParsers, testPreviewLimits); !errors.Is(err, ErrPreviewUnavailable) {
+		t.Fatalf("record over the limit: got %v, want ErrPreviewUnavailable", err)
 	}
 }
 

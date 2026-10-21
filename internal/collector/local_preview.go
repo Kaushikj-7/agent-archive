@@ -28,7 +28,8 @@ var ErrPreviewUnavailable = errors.New("the session's transcript cannot be previ
 // from its metadata or spawn record), a native or staged import, a
 // historical project, a harness with no record previewer, a session whose
 // retained or pending evidence carries a session label, and a transcript
-// short enough for the windows to span but with a record they did not read.
+// short enough for the windows to span with a record the preview left unread
+// (one over the record limit, or an unfinished last record).
 func PreviewLocalTranscript(ctx context.Context, home string, reg archive.SessionRegistration, cursorDatabase string, sources agentapi.SourcesLookup, previews agentapi.PreviewsLookup, limits PreviewLimits) (TranscriptPreview, error) {
 	defer trace.Start("preview local transcript").End()
 	if reg.NativeImport != nil || reg.HistoricalProject != nil || reg.StagedImportSHA256 != "" || !reg.ReadsTranscriptFile() || reg.IsChild() || reg.SubagentID != "" || previews == nil {
@@ -100,11 +101,18 @@ func (r providerReader) previewTranscript(ctx context.Context, previewer agentap
 	if file == nil {
 		return out, ErrPreviewUnavailable
 	}
+	spanned := file.Length() <= limits.HeadBytes+limits.TailBytes
+	if spanned {
+		// One head window over the whole transcript reads the bytes both
+		// windows would, without leaving a record across their boundary
+		// unread, and says whether it read every record.
+		limits.HeadBytes += limits.TailBytes
+	}
 	preview, err := PreviewTranscript(ctx, file, previewer, limits, nativeID)
-	if err == nil && !preview.NameComplete && file.Length() <= limits.HeadBytes+limits.TailBytes {
-		// The windows span the whole transcript yet left a record unread (one
-		// across their boundary, or over the record limit). Read it whole,
-		// which is as cheap at this size, rather than miss what it holds.
+	if err == nil && spanned && !preview.NameComplete {
+		// A record over the record limit, or an unfinished last one, was
+		// left unread. Read the transcript whole, which is as cheap at this
+		// size, rather than miss what that record holds.
 		return TranscriptPreview{}, ErrPreviewUnavailable
 	}
 	return preview, err
