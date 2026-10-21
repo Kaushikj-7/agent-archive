@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -94,11 +95,18 @@ type directScan struct {
 	searched int
 	matching int
 	failed   int
+	// failedInRow is how many of the latest sessions searched could not
+	// be read, since the last one that could.
+	failedInRow int
 	// matched and unread are the sessions searched that matched and that
 	// could not be read, by harness/session, so narrowing keeps only the
 	// counts of sessions in the narrowed scope.
 	matched map[string]bool
 	unread  map[string]bool
+
+	// ran, when set, runs after each session's index pass, before its
+	// matches are counted.
+	ran func()
 }
 
 // directSessionKey identifies a session among those a direct search reads.
@@ -127,33 +135,59 @@ func (s *directScan) counts() (searched, matching int) {
 	return s.searched, s.matching
 }
 
-// session indexes one session through the same verified loading and parser
-// visibility as background indexing, and reports its matches. Its text is
-// dropped unless it matches.
-func (s *directScan) session(ctx context.Context, m archive.Metadata) (count int, unread bool, err error) {
+// directSearchFailureLimit is how many sessions in a row may fail to read
+// before a direct search stops: past it the bucket, not a session, is the
+// likely problem.
+const directSearchFailureLimit = 5
+
+// errDirectSearchUnreadable ends a direct search whose sessions stopped being
+// readable.
+var errDirectSearchUnreadable = errors.New("sessions in a row could not be read")
+
+// session indexes one session through the same verified loading, authority
+// recheck and parser visibility as refresh, and reports its matches. Its text
+// is dropped unless it matches. A session that could not be read reports why
+// as unread; one deleted or changed since the listing reports neither.
+func (s *directScan) session(ctx context.Context, m archive.Metadata) (count int, unread error, err error) {
 	at := s.now()
 	if err = s.index.Observe(ctx, m, s.parsers, at, 0); err != nil {
-		return 0, false, err
+		return 0, nil, err
 	}
-	progress, err := s.index.Run(ctx, s.objects, s.parsers, at, search.Budget{Sources: 1000, Sessions: 1})
-	if err != nil {
-		return 0, false, err
+	// The second session lets a session changed since the listing be read
+	// again as it now is.
+	progress, err := s.index.Run(ctx, s.objects, s.parsers, at, search.Budget{Sources: 1000, Sessions: 2, VerifyCurrent: true})
+	if s.ran != nil {
+		s.ran()
+	}
+	switch {
+	case err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded):
+		// Run bounds each pass; a session slower than that is unread.
+		unread = fmt.Errorf("reading the session took too long: %w", err)
+	case err != nil:
+		return 0, nil, err
+	case progress.Committed == 0 && progress.Failed > 0:
+		unread = progress.Failure
+		if unread == nil {
+			unread = errors.New("source unavailable")
+		}
 	}
 	if progress.Committed == 0 {
 		// An unreadable source is counted, not retried: the next search
 		// reads it again.
-		return 0, true, s.index.ForgetSession(ctx, m.Harness.Name, m.SessionID)
+		return 0, unread, s.index.ForgetSession(ctx, m.Harness.Name, m.SessionID)
 	}
 	count, err = s.index.SessionMatches(ctx, s.query, m.Harness.Name, m.SessionID)
 	if err != nil {
-		return 0, false, err
+		return 0, nil, err
 	}
-	return count, false, s.index.DropSessionText(ctx, m.Harness.Name, m.SessionID, count > 0)
+	return count, nil, s.index.DropSessionText(ctx, m.Harness.Name, m.SessionID, count > 0)
 }
 
 // run reads sessions until none is left or the budget is spent, sending each
-// match on found. It returns when ctx ends too. The budget is measured from
-// the wall clock; tests set it to zero or far beyond the fixture.
+// match on found. It returns when ctx ends too, and with an error once
+// directSearchFailureLimit sessions in a row could not be read. The budget is
+// measured from the wall clock; tests set it to zero or far beyond the
+// fixture.
 func (s *directScan) run(ctx context.Context, found chan<- directMatch) (directScanStop, error) {
 	started := time.Now()
 	for read := 0; ; read++ {
@@ -172,7 +206,11 @@ func (s *directScan) run(ctx context.Context, found chan<- directMatch) (directS
 		count, unread, err := s.session(ctx, m)
 		select {
 		case <-ctx.Done():
-			// Esc or a signal: the session cut short is not counted.
+			// Esc or a signal: the session cut short is not counted, so
+			// none of its text may stay for the results.
+			if e := s.index.ForgetSession(context.WithoutCancel(ctx), m.Harness.Name, m.SessionID); e != nil {
+				return directScanStopped, e
+			}
 			return directScanStopped, nil
 		default:
 		}
@@ -185,11 +223,18 @@ func (s *directScan) run(ctx context.Context, found chan<- directMatch) (directS
 			s.matching++
 			s.matched[directSessionKey(m)] = true
 		}
-		if unread {
+		if unread != nil {
 			s.failed++
 			s.unread[directSessionKey(m)] = true
+			s.failedInRow++
+		} else {
+			s.failedInRow = 0
 		}
+		inRow := s.failedInRow
 		s.mu.Unlock()
+		if inRow >= directSearchFailureLimit {
+			return directScanStopped, fmt.Errorf("%d %w: %w", inRow, errDirectSearchUnreadable, unread)
+		}
 		if count > 0 {
 			select {
 			case found <- directMatch{metadata: m, count: count}:
@@ -266,6 +311,12 @@ func runDirectSearch(ctx context.Context, cfg config.Config, namespace string, s
 		why, err := scan.scan(ctx, p, stdout, env, scopeLabel)
 		if why == directScanInterrupted {
 			return nil, directSearchInterrupted(stderr)
+		}
+		if errors.Is(err, errDirectSearchUnreadable) {
+			code := searchCommandError(stderr, err)
+			terminal.Println(stderr, "Check your network connection and bucket access, then search again. To check storage, run:")
+			terminal.Println(stderr, "  agent-archive status")
+			return nil, code
 		}
 		if err != nil {
 			return nil, searchCommandError(stderr, err)

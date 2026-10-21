@@ -8,7 +8,7 @@ A missing index returns partial empty results without creating files. There
 are two exceptions on a terminal. A Yes to interactive search's one-time
 indexing question turns indexing on through setup and runs a first refresh
 (see below). After indexing was declined, a search with no local index reads
-the bucket directly, in memory, and creates no files (see
+the bucket directly, in memory, and creates no index files (see
 [searching the bucket directly](#search-the-bucket-directly)).
 
 ```sh
@@ -179,7 +179,8 @@ rules as indexing, into an in-memory database that is never written to disk.
 Only matching sessions keep their passages, until the command exits. A progress
 line counts the sessions searched and matching, and each matching session is
 printed as it is found; the summary also counts sessions that could not be
-read. Esc stops early. After 2 minutes it asks whether to keep going, search
+read. If 5 sessions in a row cannot be read, as when the network drops, it
+stops, prints the error, and exits with status 1. Esc stops early. After 2 minutes it asks whether to keep going, search
 only the project you are in (with its session count, and counting from then on
 only that project's sessions), show the results so far, or stop. The results open in the same browser as indexed
 search; reading a passage downloads its source again. Ctrl-C exits.

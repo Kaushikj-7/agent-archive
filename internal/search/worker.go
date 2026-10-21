@@ -42,6 +42,9 @@ type Progress struct {
 	MetadataChecks  int
 	CatalogNodes    int
 	MetadataBytes   int64
+	// Failure is why the last session this pass failed, for the caller to
+	// show. It is held in memory only; the work record keeps a fixed code.
+	Failure error
 }
 
 type sourceRequest struct {
@@ -258,6 +261,7 @@ func (s *Store) Run(ctx context.Context, objects storage.ObjectStore, parsers ag
 				return progress, e
 			}
 			progress.Failed++
+			progress.Failure = err
 			continue
 		}
 		if done {

@@ -45,6 +45,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A direct bucket search (after you decline indexing) stops when 5 sessions
+  in a row cannot be read, as when the network drops, and prints the error
+  and `agent-archive status` instead of finishing with "N could not be read"
+  and exit status 0. Like refresh, it now rechecks each session against the
+  bucket before searching its text, so a session deleted since the listing
+  is skipped, and Esc no longer leaves the session it cut short in the
+  results.
 - The `handoff` picker appears sooner when sessions are not uploaded yet. To
   title each, it filters and parses only the first and last 256 KiB of its
   transcript instead of the whole transcript, which took seconds for a large
