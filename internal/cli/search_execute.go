@@ -44,6 +44,12 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 		return writeContentSearch(doc, opts, stdout, stderr)
 	}
 	namespace, dir := contentSearchLocation(home, cfg)
+	if code := startInteractiveSearch(home, dir, &cfg, &opts, stdout, stderr, env); code != 0 {
+		return code
+	}
+	doc.Query = opts.query.Text
+	// Background indexing runs only while capture is on and not paused.
+	opts.indexing = cfg.SearchIndexing && cfg.Archive.Enabled && !cfg.Paused
 	ctx, stop := readCommandContext(env)
 	defer stop()
 	if opts.read != "" {
@@ -67,14 +73,11 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 	}
 
 	if opts.hasQuery {
+		// Search covers every project unless --project names one.
+		opts.all = opts.project == ""
 		scope, e := scopeFor(env, opts.project, opts.all)
 		if e != nil {
 			setSearchError(&doc, e)
-			return writeContentSearch(doc, opts, stdout, stderr)
-		}
-		if !opts.all && !scope.narrowed() {
-			setSearchError(&doc, searchFailure("scope_required"))
-			doc.Error.Message = "choose --project or --all-projects outside a known project"
 			return writeContentSearch(doc, opts, stdout, stderr)
 		}
 		opts.query.Scope = search.Scope{Restricted: scope.narrowed(), Named: scope.Dir == "", RepoKey: scope.RepoKey, ProjectName: scope.Label, ProjectIDs: scope.ProjectIDs}

@@ -6,13 +6,36 @@ import (
 	"github.com/wangjohn/agent-archive/internal/destination"
 )
 
-// SetSearchIndexing records local consent and permanently protects lifecycle writers.
+// SetSearchIndexing records local consent and permanently protects lifecycle
+// writers. An explicit off is remembered as declined.
 func SetSearchIndexing(c *Config, enabled bool) error {
 	c.SearchIndexing = enabled
+	c.SearchIndexingDeclined = !enabled
 	if enabled {
 		c.SearchLifecycleProtection = true
 	}
 	return prepareDiscoveryConfig(c)
+}
+
+// DeclineSearchIndexing saves a No to the indexing question without other
+// changes. It refuses while indexing is on; turning it off goes through setup,
+// which also removes the background job.
+func DeclineSearchIndexing(home string) error {
+	cfg, found, err := Load(home)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("not set up yet; run `agent-archive setup` first")
+	}
+	if cfg.SearchIndexing {
+		return errors.New("search indexing is on; turn it off with agent-archive setup --yes --search-indexing off")
+	}
+	if cfg.SearchIndexingDeclined {
+		return nil
+	}
+	cfg.SearchIndexingDeclined = true
+	return Save(home, cfg)
 }
 
 // searchUnderlyingConfig removes only the outer lifecycle fence on a value copy.

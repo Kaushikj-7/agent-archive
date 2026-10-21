@@ -8,6 +8,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `agent-archive search` covers every project by default. Use `--project` to
+  narrow it; `--all-projects` is still accepted. Outside a project, search no
+  longer refuses to run.
+- On a terminal, `agent-archive search` with no query asks what to search for.
+  Before a local search index exists, it asks once whether to index in the
+  background (Yes by default) and saves the answer. A Yes indexes for up to 30
+  seconds before the query, so the first search covers some of your sessions.
 - `status --issues` and `status --verbose` say why sessions failed in the last
   pass, grouped: one line per kind of failure and error with its count and a
   few session IDs, such as "268 sessions failed to capture or upload: durable

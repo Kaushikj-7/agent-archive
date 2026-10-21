@@ -729,8 +729,10 @@ Coverage reports the last local observation. A remote deletion or stricter
 privacy policy cannot be known until observed by explicit refresh or the opted-in
 periodic worker; context reads
 verify the exact retained reference and never substitute a newer source. Unknown
-privacy provenance is not searchable. No automatic indexing job is installed by
-search commands, and an existing index is not consent to automatic indexing.
+privacy provenance is not searchable. Search installs the automatic indexing job
+only after you answer Yes to its one-time question on a terminal; that answer goes
+through the same setup step as `setup --yes --search-indexing on`. An existing
+index is not consent to automatic indexing.
 Explicit refresh is allowed while capture is paused.
 
 `search --refresh --rebuild` atomically discards searchable derived state and
@@ -744,7 +746,8 @@ this does not delete archived sources. See [search](../guides/search.md) and
 ### Optional background search indexing
 
 Automatic search indexing is a machine-local opt-in, off by default. Pairing,
-refresh and upgrade do not opt in. Enabling installs an independent search job;
+refresh and upgrade do not opt in. Interactive search asks once, before the
+first local index exists; a No is saved and not asked again. Enabling installs an independent search job;
 it reads retained archive metadata and verified source bundles into the private
 local content index under the same extraction/privacy rules as explicit refresh.
 Collection sends at most 256 content-free harness/session candidates per batch,
