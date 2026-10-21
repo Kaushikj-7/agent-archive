@@ -2,9 +2,14 @@
 
 Content search finds indexed titles and visible user/assistant messages in
 supported filtered retained sources, including supported preserved revisions.
-It keeps private local searchable text. Ordinary queries read only an existing
+It keeps private local searchable text. Cached queries read only an existing
 local index; they never discover archives, download sources or index content.
-A missing index returns partial empty results without creating files.
+A missing index returns partial empty results without creating files. There
+are two exceptions on a terminal. A Yes to interactive search's one-time
+indexing question turns indexing on through setup and runs a first refresh
+(see below). After indexing was declined, a search with no local index reads
+the bucket directly, in memory, and creates no files (see
+[searching the bucket directly](#search-the-bucket-directly)).
 
 ```sh
 agent-archive search --refresh
@@ -14,9 +19,10 @@ agent-archive search 'check*' --project my-project --since 7d
 agent-archive search --refresh --session SESSION_ID --harness codex
 ```
 
-Search defaults to the current repository/project using existing worktree-aware
-repository identity and configured project fallback. Broaden with --all-projects;
-empty project results never broaden automatically. Replays and child sessions
+Search covers every project's indexed sessions. Narrow with `--project DIR|NAME`,
+which uses existing worktree-aware repository identity and configured project
+fallback; empty project results never broaden automatically. `--all-projects`
+is accepted and is the default. Replays and child sessions
 are hidden by default; --replays include and --children include reveal them.
 Scope/date/harness/replay/child filters apply before ranking and limiting.
 Namespace refresh discovery is independent of the query's project filters.
@@ -53,8 +59,9 @@ backoff; oversized work discards staging and blocks until its desired state chan
 
 The private index is under AGENT_ARCHIVE_HOME/search/, partitioned by archive
 destination, installation, destination activation and privacy version. It is
-separate from the metadata cache. No automatic indexing job is installed by these
-commands. Uninstall retains local archive data. To discard searchable text,
+separate from the metadata cache. Refresh, JSON and piped queries never install an
+automatic indexing job; only a Yes to interactive search's one-time question does,
+through setup. Uninstall retains local archive data. To discard searchable text,
 disable automatic indexing with `setup --yes --search-indexing off`, stop explicit
 refresh commands, and remove that search directory; archive sources remain.
 See [privacy](../security/privacy.md) and
@@ -66,7 +73,6 @@ See [privacy](../security/privacy.md) and
 [the search output schema](../../schemas/search-output.schema.json). Result and
 context text contain conversation content. stdout holds the document; diagnostics
 use stderr. Cached queries return success even with missing or partial coverage.
-Outside a known project, choose `--project NAME` or `--all-projects` explicitly.
 An older local schema requires explicit `search --refresh`; cached readers never
 create an index or acquire SQLite writer admission to upgrade one.
 
@@ -145,6 +151,43 @@ false. Unknown matching totals always remain null.
 
 ## Browse matches on a terminal
 
+On a terminal, `agent-archive search` with no query asks what to search for.
+Before the first local index exists, search asks once whether to index in the
+background (Yes by default). Either answer is saved through the same setup step
+as `setup --yes --search-indexing on|off`, so search does not ask again; change
+it later with that command. Turning indexing on runs one bounded pass before
+the query. Declining makes terminal searches read the bucket directly.
+
+## Search the bucket directly
+
+After you decline indexing, a search on a terminal with no local index reads
+the bucket itself. It first warns that it downloads sessions from your R2 or S3
+bucket, keeps no conversation text on this machine (session titles are cached
+as for `list`), pauses after 2 minutes, and roughly how
+long a full search of the sessions in scope takes (at about 50 sessions a
+minute). It prints the command that makes the next search instant:
+
+```sh
+agent-archive setup --yes --search-indexing on
+```
+
+It lists the archive's metadata, applies the query's scope and filters (all
+projects unless `--project`; harness, dates, replays and children) before
+downloading anything, then reads the matching sessions newest first. Each
+session's verified sources go through the same parser visibility and privacy
+rules as indexing, into an in-memory database that is never written to disk.
+Only matching sessions keep their passages, until the command exits. A progress
+line counts the sessions searched and matching, and each matching session is
+printed as it is found; the summary also counts sessions that could not be
+read. Esc stops early. After 2 minutes it asks whether to keep going, search
+only the project you are in (with its session count, and counting from then on
+only that project's sessions), show the results so far, or stop. The results open in the same browser as indexed
+search; reading a passage downloads its source again. Ctrl-C exits.
+
+Direct search never runs for `--json`, piped output, `--refresh` or
+`--cursor`, and a local index, such as one made by `search --refresh`, is
+always used instead.
+
 When stdin and stdout are terminals, a content query opens the shared session
 browser. JSON and piped output stay bounded ordinary output. The original FTS
 query remains fixed, including phrase spacing. Metadata `/` filtering is disabled
@@ -188,8 +231,10 @@ the usable result list.
 the terminal before invoking the ordinary handoff command with the selected
 full harness/session ID and archive source. Existing repository, destination and
 launch gates apply. It hands off the authorized current session, which may differ
-from a historical search match. Searching does not authorize indexing, setup,
-refresh or rebuild.
+from a historical search match. Browsing results never starts indexing, setup,
+refresh or rebuild; only the one-time indexing question, answered Yes, does.
+Browsing the results of a direct bucket search reads exact sources from the
+bucket, as any context read does, but writes no index.
 
 Checksum-verified sources in unsupported immutable formats (including legacy
 source schema 1) become explicit `unsupported_source_schema` coverage gaps.

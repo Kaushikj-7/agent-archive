@@ -349,8 +349,8 @@ class SourceProofTest(unittest.TestCase):
 
 class PlainVetTest(unittest.TestCase):
     proof={'source':'a'*40,'tree':'b'*40}
-    context={'version':'go version go1.27.2 linux/amd64','runner_os':'Linux','runner_arch':'X64',
-             'race':False,'tags':[],'go':{'GOVERSION':'go1.27.2','GOOS':'linux','GOHOSTOS':'linux',
+    context={'version':'go version go1.27.3 linux/amd64','runner_os':'Linux','runner_arch':'X64',
+             'race':False,'tags':[],'go':{'GOVERSION':'go1.27.3','GOOS':'linux','GOHOSTOS':'linux',
              'GOARCH':'amd64','GOHOSTARCH':'amd64','CGO_ENABLED':'1','GOTOOLCHAIN':'local',
              'GOWORK':'off','GOFLAGS':'-mod=readonly'}}
 

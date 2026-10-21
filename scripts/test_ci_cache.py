@@ -444,7 +444,7 @@ class NativeIdentityTests(unittest.TestCase):
         sdk = [b'1']
         def command(argv):
             if argv == ['go', 'version']:
-                return b'go version go1.27.2 darwin/arm64\n'
+                return b'go version go1.27.3 darwin/arm64\n'
             if argv[:3] == ['go', 'env', '-json']:
                 return json.dumps(self.go).encode()
             return ' '.join(argv).encode()+sdk[0]
@@ -467,7 +467,7 @@ class ToolTests(unittest.TestCase):
             binary = Path(tmp)/'deadcode'
             binary.write_bytes(b'one')
             binary.chmod(0o755)
-            metadata = [b'BINARY: go1.27.2\n\tpath\tgolang.org/x/tools/cmd/deadcode\n\tmod\tgolang.org/x/tools\tv0.50.0\th1:abc\n\tbuild\tGOOS=linux\n\tbuild\tGOARCH=amd64\n\tbuild\tCGO_ENABLED=1\n']
+            metadata = [b'BINARY: go1.27.3\n\tpath\tgolang.org/x/tools/cmd/deadcode\n\tmod\tgolang.org/x/tools\tv0.50.0\th1:abc\n\tbuild\tGOOS=linux\n\tbuild\tGOARCH=amd64\n\tbuild\tCGO_ENABLED=1\n']
             def command(argv, **kwargs):
                 if argv[1:3] == ['version', '-m']:
                     return metadata[0]
@@ -475,9 +475,9 @@ class ToolTests(unittest.TestCase):
             first = verified_tools.inspect(binary, 'deadcode', command)
             binary.write_bytes(b'two')
             self.assertNotEqual(first['sha256'], verified_tools.inspect(binary, 'deadcode', command)['sha256'])
-            for change in (b'go1.27.3', b'v0.49.0', b'other/tools', b'CGO_ENABLED=0'):
+            for change in (b'go1.27.4', b'v0.49.0', b'other/tools', b'CGO_ENABLED=0'):
                 old = metadata[0]
-                needle = (b'go1.27.2' if change == b'go1.27.3' else b'v0.50.0' if change == b'v0.49.0'
+                needle = (b'go1.27.3' if change == b'go1.27.4' else b'v0.50.0' if change == b'v0.49.0'
                           else b'golang.org/x/tools' if change == b'other/tools' else b'CGO_ENABLED=1')
                 metadata[0] = old.replace(needle, change)
                 with self.assertRaises(keys.InvalidContext):
@@ -496,7 +496,7 @@ class ToolTests(unittest.TestCase):
                     binary.chmod(0o755)
                     return b''
                 if argv[:3] == ['go', 'version', '-m']:
-                    return b'BINARY: go1.27.2\n\tpath\tgolang.org/x/tools/cmd/deadcode\n\tmod\tgolang.org/x/tools\tv0.50.0\th1:abc\n\tbuild\tGOOS=linux\n\tbuild\tGOARCH=amd64\n\tbuild\tCGO_ENABLED=1\n'
+                    return b'BINARY: go1.27.3\n\tpath\tgolang.org/x/tools/cmd/deadcode\n\tmod\tgolang.org/x/tools\tv0.50.0\th1:abc\n\tbuild\tGOOS=linux\n\tbuild\tGOARCH=amd64\n\tbuild\tCGO_ENABLED=1\n'
                 return b'{"GOOS":"linux","GOARCH":"amd64","CGO_ENABLED":"1"}'
             binary = verified_tools.ensure('deadcode', root, command)
             self.assertEqual(len(installs), 1)
@@ -606,7 +606,7 @@ class WorkflowTests(unittest.TestCase):
         from test_release_assets import steps
         lane = jobs((ROOT/'.github/workflows/levenshtein.yml').read_text())['native-release-vulnerabilities']
         compiler = re.findall(r'^toolchain go(\S+)$', (ROOT/'go.mod').read_text(), re.M)
-        self.assertEqual(compiler, ['1.27.2'])
+        self.assertEqual(compiler, ['1.27.3'])
         setup = next(step for step in steps(lane) if 'uses: actions/setup-go@' in step)
         self.assertIn("go-version: '"+compiler[0]+"'", setup)
         self.assertNotIn('go-version-file:', setup)
