@@ -369,8 +369,7 @@ func TestSearchFailedNewQueryKeepsTheOldQuery(t *testing.T) {
 	must(t, err)
 	must(t, index.Close())
 	hit := search.Hit{SessionID: "0a13656b25d0", Harness: "codex", Title: "Old result", Snippet: "visible"}
-	s := &contentSearchBrowser{opts: contentSearchOptions{query: search.Query{Text: "visible", Limit: 20}}, index: index, hits: []search.Hit{hit}, pages: 1, choices: rowChoices(nil, listFormatOptions{})}
-	s.nextText, s.rerun = "replacement", true
+	s := &contentSearchBrowser{opts: contentSearchOptions{query: search.Query{Text: "visible", Limit: 20}}, index: index, hits: []search.Hit{hit}, pages: 1, choices: rowChoices(nil, listFormatOptions{}), nextText: "replacement", rerun: true}
 	if _, err := s.load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -401,8 +400,8 @@ func TestSearchSlashKeepsAQueryTypedRightAfterIt(t *testing.T) {
 
 func TestDirectSearchResultsOfferNoNewQueryOrWiderScope(t *testing.T) {
 	scope := search.Scope{Restricted: true, ProjectName: "inside"}
-	s := &contentSearchBrowser{opts: contentSearchOptions{query: search.Query{Text: "needle", Scope: scope}, direct: "Searched the newest 4 of 9 sessions in the bucket"}, pages: 1}
-	s.coverage = func(search.Page) string { return s.opts.direct }
+	direct := "Searched the newest 4 of 9 sessions in the bucket"
+	s := &contentSearchBrowser{opts: contentSearchOptions{query: search.Query{Text: "needle", Scope: scope}, direct: direct}, pages: 1, coverage: func(search.Page) string { return direct }}
 	if s.canNewSearch() || s.canToggleScope() {
 		t.Fatal("direct results offer / or Tab over a store holding only the first query's matches")
 	}
@@ -415,5 +414,13 @@ func TestDirectSearchResultsOfferNoNewQueryOrWiderScope(t *testing.T) {
 	}
 	if question := l.listQuestion("read"); strings.Contains(question, "/ new search") {
 		t.Fatalf("line question offers /: %q", question)
+	}
+}
+
+func TestSearchSlashRunsThroughTheCancellableLoader(t *testing.T) {
+	env := searchProjectsFixture(t)
+	screens := searchScreens(t, env, newFakeKeys("/handoff\r", "q"), "", "read performance")
+	if !strings.Contains(strings.Join(screens, "\n"), "Searching… Esc cancels") {
+		t.Fatalf("new query ran without the cancellable search:\n%s", strings.Join(screens, "\n---\n"))
 	}
 }

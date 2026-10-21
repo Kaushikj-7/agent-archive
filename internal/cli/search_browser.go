@@ -79,10 +79,11 @@ const searchStripLines = 4 + searchStripPassageLines
 func runContentSearchBrowser(ctx context.Context, env searchCommandDependencies, cfg config.Config, namespace string, index *search.Store, page search.Page, opts contentSearchOptions, stdout, stderr io.Writer) (listRow, bool, *typedInput, int) {
 	style := styleFor(stdout)
 	format := listFormatOptions{Search: true, Numbered: true, Now: env.now(), Style: style, NarrowHint: "o next indexed results, or narrow the content query and rerun."}
-	s := &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace, index: index, opts: opts, page: page, hits: page.Hits, pages: 1, choices: rowChoices(nil, format), style: style, now: format.Now}
+	var coverage func(search.Page) string
 	if opts.direct != "" {
-		s.coverage = func(search.Page) string { return opts.direct }
+		coverage = func(search.Page) string { return opts.direct }
 	}
+	s := &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace, index: index, opts: opts, page: page, hits: page.Hits, pages: 1, choices: rowChoices(nil, format), style: style, now: format.Now, coverage: coverage}
 	s.choices.loadOlder = &browserLoadAction{LoadContext: s.load, Available: func() bool { return true }}
 	s.installRows()
 	input := newTypedInput(opts.stdin)
@@ -396,9 +397,31 @@ func (s *contentSearchBrowser) strip(r listRow, width int) []string {
 }
 
 // newSearchQuery asks for another query on the browser's screen, with line
-// input back for the question, then runs it in the scope shown. quit is set
-// when input ended while reading lines.
+// input back for the question, then runs it in the scope shown through the
+// browser's cancellable loader, as r and Tab do: it shows that it is
+// searching, and Esc or q still work. quit is set when input ended while
+// reading lines, or q was typed during the search.
 func (b *sessionBrowser) newSearchQuery(ctx context.Context) (quit bool, err error) {
+	text, quit, err := b.askSearchQuery()
+	if err != nil || quit || text == "" {
+		return quit, err
+	}
+	s := b.search
+	s.nextText, s.rerun = text, true
+	if _, err = b.list.loadOlderContext(ctx, b.prompt, b.stdout); err != nil {
+		return false, err
+	}
+	if b.list.operationQuit {
+		return true, nil
+	}
+	b.list.keepSearchSelection("")
+	b.list.olderSpent = ""
+	return false, nil
+}
+
+// askSearchQuery asks for the next query with line input, then gives the
+// keys back. An empty text with no error means Ctrl-D kept the results.
+func (b *sessionBrowser) askSearchQuery() (text string, quit bool, err error) {
 	s := b.search
 	b.screen.clear()
 	if b.keys != nil {
@@ -421,22 +444,12 @@ func (b *sessionBrowser) newSearchQuery(ctx context.Context) (quit bool, err err
 	if opts.query.Scope.Restricted {
 		opts.project = s.scopeLabel()
 	}
-	text, err := promptSearchQuery(b.prompt, opts)
+	text, err = promptSearchQuery(b.prompt, opts)
 	if errors.Is(err, io.EOF) {
 		// Ctrl-D at the question goes back to the results it replaced.
-		return b.keys == nil, nil
+		return "", b.keys == nil, nil
 	}
-	if err != nil {
-		return false, err
-	}
-	s.nextText = text
-	s.rerun = true
-	if _, err = s.load(ctx); err != nil {
-		return false, err
-	}
-	b.list.keepSearchSelection("")
-	b.list.olderSpent = ""
-	return false, nil
+	return text, false, err
 }
 
 func (l *sessionPicker) listQuestion(action string) string {
