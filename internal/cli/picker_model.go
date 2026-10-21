@@ -489,7 +489,14 @@ func (m *pickerModel) labelWants(st *pickerScopeState, need, budget int) []label
 	planned := 0
 	buffer := st.buffer
 	for _, c := range st.locals[st.localPos:] {
-		for len(buffer) > 0 && need > 0 && !pickerCandidateBefore(c, pickerCandidate{row: handoffPickerRow{active: buffer[0].Row.Activity}, item: &buffer[0]}) {
+		for len(buffer) > 0 && need > 0 {
+			if st.suppress[pickerID(buffer[0].Row.Harness, buffer[0].Row.SessionID)] {
+				buffer = buffer[1:]
+				continue
+			}
+			if pickerCandidateBefore(c, pickerCandidate{row: handoffPickerRow{active: buffer[0].Row.Activity}, item: &buffer[0]}) {
+				break
+			}
 			buffer = buffer[1:]
 			need--
 		}
@@ -507,10 +514,12 @@ func (m *pickerModel) labelWants(st *pickerScopeState, need, budget int) []label
 			}
 			continue
 		}
-		planned++
-		if concurrentLabel(*c.row.unbuilt) {
-			wants = append(wants, labelWant{key: key, reg: *c.row.unbuilt, active: c.row.active})
+		// Finish a synchronous native read before planning later file reads.
+		if !concurrentLabel(*c.row.unbuilt) {
+			break
 		}
+		planned++
+		wants = append(wants, labelWant{key: key, reg: *c.row.unbuilt, active: c.row.active})
 		need--
 	}
 	return wants
