@@ -71,7 +71,12 @@ func (sc statusScreen) issueGroupRows(view statusView) []statusRow {
 		if group.actionable() {
 			mark = sc.style.warnMark()
 		}
-		rows = append(rows, statusRow{mark: mark, cells: []string{group.text()}, notes: []statusNote{{text: group.examples()}}})
+		var notes []statusNote
+		if command := group.command(); command != "" {
+			notes = append(notes, statusNote{text: sc.style.cmd(command)})
+		}
+		notes = append(notes, statusNote{text: group.examples()})
+		rows = append(rows, statusRow{mark: mark, cells: []string{group.text()}, notes: notes})
 	}
 	return rows
 }

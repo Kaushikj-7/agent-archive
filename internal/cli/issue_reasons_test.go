@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -95,12 +96,20 @@ func TestStatusIssuesGroupsFailedSessionsByReason(t *testing.T) {
 	status.SessionIssues["synthetic-other"] = issueCaptureFailed
 	must(t, store.SaveStatus(status))
 
-	full := "268 sessions failed to capture or upload: " + state.ErrDurableStorageCapacity.Error() + " — run agent-archive sync for details"
-	other := "1 session failed to capture or upload: error not recognized — run agent-archive sync for details"
+	full := "268 sessions failed to capture or upload: " + state.ErrDurableStorageCapacity.Error() + " — for details run"
+	other := "1 session failed to capture or upload: error not recognized — for details run"
 	issues := statusOutput(t, env, "--issues")
 	for _, want := range []string{full, "synthetic-000, synthetic-001, synthetic-002 and 265 more", other, "synthetic-other"} {
 		if strings.Count(issues, want) != 1 {
 			t.Errorf("status --issues shows %q %d times, want once:\n%s", want, strings.Count(issues, want), issues)
+		}
+	}
+	// Each group's command is on its own line, right under the group.
+	lines := strings.Split(issues, "\n")
+	for _, group := range []string{full, other} {
+		i := slices.IndexFunc(lines, func(l string) bool { return strings.HasSuffix(l, group) })
+		if i < 0 || i+1 == len(lines) || strings.TrimSpace(lines[i+1]) != "agent-archive sync" {
+			t.Errorf("status --issues lacks agent-archive sync on its own line after %q:\n%s", group, issues)
 		}
 	}
 	if strings.Contains(issues, "synthetic-003") || strings.Contains(issues, issueGapLead) {
@@ -124,19 +133,38 @@ func TestStatusIssuesGroupsFailedSessionsByReason(t *testing.T) {
 }
 
 // A group counts subagents apart from sessions, as the last error's summary
-// does, and a kind with nothing to do is information, not a warning.
+// does, even candidates the collector rejected before ever registering
+// them; a kind with nothing to do is information, not a warning, and comes
+// after the groups that need the user however many it holds.
 func TestStatusIssueGroupsCountSubagentsAndKeepNoActionKindsQuiet(t *testing.T) {
 	t.Parallel()
 	home, env, _, _ := overviewFixture(t)
 	store, err := state.Open(home)
 	must(t, err)
-	registration := filepath.Join(home, "registrations", "synthetic-child.json")
-	must(t, os.MkdirAll(filepath.Dir(registration), 0o700))
-	must(t, os.WriteFile(registration, []byte(`{"archive_session_id":"synthetic-child","parent_session_id":"synthetic-parent"}`), 0o600))
-	_, err = recordSessionIssues(store, map[string]error{"synthetic-child": fmt.Errorf("x: %w", collector.ErrSubagentNotCaptured)}, subagentLookup(store), "")
+	// As the collector reports a rejected candidate: no registration exists.
+	rejected := errors.Join(fmt.Errorf("x: %w", collector.ErrSubagentNotCaptured), collector.ErrSubagentCandidate)
+	summary, err := recordSessionIssues(store, map[string]error{
+		"synthetic-child-1": rejected,
+		"synthetic-child-2": rejected,
+		"synthetic-top":     errors.New("synthetic failure"),
+	}, subagentLookup(store), "")
 	must(t, err)
+	if !strings.Contains(summary, "2 subagents "+issueLabels[issueSubagentNotCaptured].what) {
+		t.Fatalf("summary %q does not count the subagents", summary)
+	}
 
-	group := "1 subagent " + issueLabels[issueSubagentNotCaptured].what
+	// A later pass that selected other sessions keeps the mark it carries.
+	previous, err := store.LoadStatus()
+	must(t, err)
+	must(t, recordSelectedPassSessionIssues(store, collector.Result{}, previous))
+	carried, err := store.LoadStatus()
+	must(t, err)
+	if !mapsEqual(carried.SubagentIssues, map[string]bool{"synthetic-child-1": true, "synthetic-child-2": true}) {
+		t.Fatalf("subagent_issues %v after a selected pass", carried.SubagentIssues)
+	}
+
+	group := "2 subagents " + issueLabels[issueSubagentNotCaptured].what
+	failed := "1 session " + issueLabels[issueCaptureFailed].what
 	for _, args := range [][]string{{"--issues"}, {"--verbose"}} {
 		out := statusOutput(t, env, args...)
 		line := ""
@@ -148,5 +176,32 @@ func TestStatusIssueGroupsCountSubagentsAndKeepNoActionKindsQuiet(t *testing.T) 
 		if line == "" || strings.Contains(line, "!") {
 			t.Errorf("status %v group line %q, want an informational %q:\n%s", args, line, group, out)
 		}
+		if i := strings.Index(out, failed); i < 0 || i > strings.Index(out, group) {
+			t.Errorf("status %v does not put %q before %q:\n%s", args, failed, group, out)
+		}
+	}
+}
+
+// A status file from before subagent_issues still counts a subagent that
+// could not be captured as a subagent: only subagents carry that code.
+func TestStatusIssueGroupsCountSubagentsFromAnOlderStatusFile(t *testing.T) {
+	t.Parallel()
+	home, env, _, _ := overviewFixture(t)
+	store, err := state.Open(home)
+	must(t, err)
+	must(t, store.SaveStatus(state.Status{LastScanAt: env.now(), SessionIssues: map[string]string{"synthetic-child": issueSubagentNotCaptured}}))
+	out := statusOutput(t, env, "--issues")
+	if want := "1 subagent " + issueLabels[issueSubagentNotCaptured].what; !strings.Contains(out, want) {
+		t.Errorf("status --issues lacks %q:\n%s", want, out)
+	}
+}
+
+// A storage outage's group keeps saying the next pass retries, beside the
+// command it moves to its own line.
+func TestStorageUnavailableGroupSaysTheNextPassRetries(t *testing.T) {
+	t.Parallel()
+	group := issueGroup{code: issueStorageUnavailable, ids: []string{"synthetic"}, tally: issueTally{sessions: 1}}
+	if text := group.text(); !strings.Contains(text, "the next pass also retries") || strings.Contains(text, group.command()) {
+		t.Errorf("group text %q, want the retry clause without %q", text, group.command())
 	}
 }

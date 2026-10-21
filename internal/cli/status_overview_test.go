@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -21,6 +23,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/scheduler/host"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -470,6 +473,79 @@ func BenchmarkStatusOverview(b *testing.B) {
 				if code := runStatusCommand(nil, io.Discard, io.Discard, env); code != 0 {
 					b.Fatal(code)
 				}
+			}
+		})
+	}
+}
+
+// When the fix for the overview's problem is known, the overview names that
+// command on its own line rather than sending the user to status --issues.
+func TestStatusOverviewNamesTheCommandThatFixesItsProblem(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		stage func(t *testing.T, home string, env *Env, cfg config.Config, summary statusSummary)
+		want  string
+	}{
+		{"not scheduled", func(t *testing.T, _ string, env *Env, _ config.Config, _ statusSummary) {
+			t.Helper()
+			env.Scheduler = newFakeScheduler(t, "missing")
+		}, "agent-archive setup"},
+		{"another installation", func(t *testing.T, _ string, env *Env, _ config.Config, _ statusSummary) {
+			t.Helper()
+			env.Scheduler = newFakeScheduler(t, string(scheduler.AnotherInstallation))
+		}, "agent-archive setup"},
+		{"collector executable unavailable", func(t *testing.T, home string, env *Env, _ config.Config, _ statusSummary) {
+			t.Helper()
+			userHome, err := env.userHomeDir()
+			must(t, err)
+			ref := env.installation(home, userHome).ref()
+			plist, err := launchd.LaunchAgent(filepath.Join(home, "missing-executable"), home, string(ref), nil)
+			must(t, err)
+			path := launchd.PlistPath(userSite(userHome), ref)
+			must(t, os.MkdirAll(filepath.Dir(path), 0o700))
+			must(t, os.WriteFile(path, plist, 0o600))
+		}, "agent-archive setup --refresh"},
+		{"no current summary", func(t *testing.T, home string, _ *Env, _ config.Config, _ statusSummary) {
+			t.Helper()
+			must(t, os.Remove(filepath.Join(home, statusSummaryFile)))
+		}, "agent-archive sync"},
+		{"no recent result", func(t *testing.T, home string, env *Env, _ config.Config, summary statusSummary) {
+			t.Helper()
+			summary.CompletedAt = env.now().Add(-2 * scanStaleAfter)
+			must(t, local.Write(filepath.Join(home, statusSummaryFile), summary))
+		}, "agent-archive sync"},
+		{"storage access failed", func(t *testing.T, home string, env *Env, cfg config.Config, _ statusSummary) {
+			t.Helper()
+			must(t, local.Write(filepath.Join(home, "storage-health.json"), storageHealth{ConfigurationID: configurationID(cfg), State: "authentication_failed", CheckedAt: env.now()}))
+		}, "agent-archive sync"},
+		{"old summary with a recorded failure", func(t *testing.T, home string, env *Env, _ config.Config, summary statusSummary) {
+			t.Helper()
+			summary.CompletedAt = env.now().Add(-2 * scanStaleAfter)
+			summary.Problem = statusProblemCapture
+			must(t, local.Write(filepath.Join(home, statusSummaryFile), summary))
+		}, "agent-archive sync"},
+		{"failed collection", func(t *testing.T, home string, _ *Env, _ config.Config, summary statusSummary) {
+			t.Helper()
+			summary.Problem = statusProblemCapture
+			must(t, local.Write(filepath.Join(home, statusSummaryFile), summary))
+		}, "agent-archive status --issues"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, env, cfg, summary := overviewFixture(t)
+			tc.stage(t, home, &env, cfg, summary)
+			var out bytes.Buffer
+			if code := Run([]string{"status"}, nil, &out, &out, env); code != 0 {
+				t.Fatalf("exit=%d: %s", code, &out)
+			}
+			lines := strings.Split(out.String(), "\n")
+			if !slices.Contains(lines, tc.want) {
+				t.Fatalf("overview lacks a line %q:\n%s", tc.want, &out)
+			}
+			// The issues view is still offered, after the fix.
+			if i, j := slices.Index(lines, tc.want), slices.Index(lines, "agent-archive status --issues"); j < i {
+				t.Errorf("overview offers status --issues before %q:\n%s", tc.want, &out)
 			}
 		})
 	}

@@ -192,6 +192,11 @@ The first ordinary collection after upgrading creates the summary. If necessary,
 run `agent-archive sync`; status itself does not start collection. Queue and upload
 figures describe the last recorded check, rather than work arriving since then.
 **Needs attention** names one recorded failure or a broken background job.
+Under the problem, status prints the command that fixes it when one does:
+`agent-archive setup` for a job that is not scheduled or belongs to another
+installation, `agent-archive setup --refresh` for a missing installed
+executable, and `agent-archive sync` for a missing or old summary or failed
+storage access. Otherwise it prints `agent-archive status --issues`.
 
 **Detected agents** uses setup's saved observations, including agents with
 archiving off. It shows the detection age. An enabled agent without a usable
@@ -293,9 +298,12 @@ stays the same length however many projects you include.
   with its size and how to keep capturing the work (continue it in a new
   session; `agent-archive handoff` carries the context there).
   `status --issues` and `status --verbose` group the failed sessions by
-  kind and error, one line per group naming a few of them, for example
-  "268 sessions failed to capture or upload: durable publication capacity
-  exhausted; … — run agent-archive sync for details". The error shown is
+  kind and error, one line per group with the command to run on its own
+  line under it, then a few of the sessions, for example "268 sessions
+  failed to capture or upload: durable publication capacity exhausted; … —
+  for details run" followed by `agent-archive sync`. Groups that need you come first, then
+  those with nothing to do, such as subagents that could not be captured,
+  which count as subagents even though they were never registered. The error shown is
   one of a fixed set agent-archive recognizes, so it never repeats paths
   or transcript text; any other error reads "error not recognized", and
   `agent-archive sync` prints each session's own error. `status --json`

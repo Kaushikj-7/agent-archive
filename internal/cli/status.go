@@ -278,8 +278,9 @@ type statusView struct {
 	// them.
 	lastErrorProblem string
 	lastErrorByIssue bool
-	// subagentIssues are the subagents among the collector's SessionIssues,
-	// by their registrations, which status counts apart from sessions.
+	// subagentIssues are the subagents among the collector's SessionIssues
+	// (state.Status.SubagentIssues, or a registration's parent), which
+	// status counts apart from sessions.
 	subagentIssues map[string]bool
 	// importedApps are apps whose sessions were imported without hooks
 	// (config.ImportedHarnesses), with their import counts.
@@ -646,11 +647,17 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	}
 	regs, reqs, stateWarnings := statusState(home, store)
 	view.Warnings = append(view.Warnings, stateWarnings...)
+	// status.json marks the subagents among its failed sessions, including
+	// candidates that were never registered; a status file from before that
+	// mark has its codes and the registrations.
+	view.subagentIssues = map[string]bool{}
+	for id := range view.Collector.SessionIssues {
+		if subagentIssue(view.Collector, id) {
+			view.subagentIssues[id] = true
+		}
+	}
 	for _, reg := range regs {
 		if _, failed := view.Collector.SessionIssues[reg.ArchiveSessionID]; failed && reg.ParentSessionID != "" {
-			if view.subagentIssues == nil {
-				view.subagentIssues = map[string]bool{}
-			}
 			view.subagentIssues[reg.ArchiveSessionID] = true
 		}
 	}

@@ -11,6 +11,7 @@ $ agent-archive status
 
 No current summary; the next collection records one.
 
+\e[36magent-archive sync\e[0m
 \e[36magent-archive status --issues\e[0m
 \e[36magent-archive status --verbose\e[0m
 [exit 0]

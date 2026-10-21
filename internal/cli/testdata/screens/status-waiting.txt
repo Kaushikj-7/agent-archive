@@ -11,6 +11,7 @@ Detected agents
 
 No current summary; the next collection records one.
 
+agent-archive sync
 agent-archive status --issues
 agent-archive status --verbose
 [exit 0]
