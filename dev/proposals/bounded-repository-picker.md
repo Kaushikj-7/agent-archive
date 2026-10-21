@@ -349,7 +349,7 @@ as passing acceptance.
 
 Run focused package race tests, the current CI tiers and policy checks. Catalog
 and configuration changes may select full platform backstops under the new tier
-planner; retain exact source/body evidence. Use Go 1.27.2 and the synthetic Env/
+planner; retain exact source/body evidence. Use Go 1.27.3 and the synthetic Env/
 store/home fixtures described in [testing](../contributing/testing.md). No real
 homes, native settings or production buckets are used for implementation tests.
 

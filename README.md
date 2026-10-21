@@ -1,7 +1,7 @@
 # agent-archive
 ### Session handoffs and backups for Claude Code, Codex, and Cursor
 
-[![Go 1.27](https://img.shields.io/badge/go-1.27.2-00ADD8?logo=go)](go.mod)
+[![Go 1.27](https://img.shields.io/badge/go-1.27.3-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Continue a Claude Code session in Codex, or vice-versa. You can pick a session and bring its conversation context into another coding agent. Add your own S3 or R2 bucket for automatic backups and access from other machines.

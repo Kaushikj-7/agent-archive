@@ -10,7 +10,7 @@ import go_cache_context as keys
 
 def metadata():
     go = dict.fromkeys(keys.GO_FIELDS, '')
-    go.update(GOVERSION='go1.27.2', GOOS='linux', GOHOSTOS='linux',
+    go.update(GOVERSION='go1.27.3', GOOS='linux', GOHOSTOS='linux',
               GOARCH='amd64', GOHOSTARCH='amd64', GOAMD64='v1', CGO_ENABLED='1',
               GOTOOLCHAIN='local', GOWORK='off', GOFLAGS='-mod=readonly', CC='gcc', CXX='g++')
     return go
@@ -77,7 +77,7 @@ class ContextTests(unittest.TestCase):
                 keys.cache_plan(12, worker, self.context(), source, self.root, workers)
 
     def test_actual_go_metadata_fails_closed(self):
-        for key, value in [('GOVERSION', 'go1.27.3'), ('CGO_ENABLED', '0'),
+        for key, value in [('GOVERSION', 'go1.27.4'), ('CGO_ENABLED', '0'),
                            ('GOHOSTARCH', 'arm64'), ('GOFLAGS', '-mod=mod'),
                            ('GOTOOLCHAIN', 'auto'), ('GOWORK', '/tmp/other'), ('GOCACHEPROG', '/tmp/external-cache')]:
             with self.subTest(key=key):
