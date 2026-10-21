@@ -181,3 +181,27 @@ func TestStatusIssueGroupsCountSubagentsAndKeepNoActionKindsQuiet(t *testing.T) 
 		}
 	}
 }
+
+// A status file from before subagent_issues still counts a subagent that
+// could not be captured as a subagent: only subagents carry that code.
+func TestStatusIssueGroupsCountSubagentsFromAnOlderStatusFile(t *testing.T) {
+	t.Parallel()
+	home, env, _, _ := overviewFixture(t)
+	store, err := state.Open(home)
+	must(t, err)
+	must(t, store.SaveStatus(state.Status{LastScanAt: env.now(), SessionIssues: map[string]string{"synthetic-child": issueSubagentNotCaptured}}))
+	out := statusOutput(t, env, "--issues")
+	if want := "1 subagent " + issueLabels[issueSubagentNotCaptured].what; !strings.Contains(out, want) {
+		t.Errorf("status --issues lacks %q:\n%s", want, out)
+	}
+}
+
+// A storage outage's group keeps saying the next pass retries, beside the
+// command it moves to its own line.
+func TestStorageUnavailableGroupSaysTheNextPassRetries(t *testing.T) {
+	t.Parallel()
+	group := issueGroup{code: issueStorageUnavailable, ids: []string{"synthetic"}, tally: issueTally{sessions: 1}}
+	if text := group.text(); !strings.Contains(text, "the next pass also retries") || strings.Contains(text, group.command()) {
+		t.Errorf("group text %q, want the retry clause without %q", text, group.command())
+	}
+}

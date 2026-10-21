@@ -70,7 +70,7 @@ var issueLabels = map[string]issueLabel{
 		what:      "failed to reach storage (network or service unavailable)",
 		next:      "check the network and the storage service, then run agent-archive sync (the next pass also retries)",
 		command:   "agent-archive sync",
-		groupNext: "check the network and the storage service, then run",
+		groupNext: "check the network and the storage service (the next pass also retries), then run",
 	},
 	// No error of this version carries it: the collector records a rewritten
 	// transcript as a transcript_rewritten capture gap instead. It is kept so
@@ -258,8 +258,15 @@ func (i sessionIssues) carryRetrying(current state.Status, isSubagent func(strin
 		if code == "" {
 			code = issueCaptureFailed
 		}
-		i.add(id, code, current.SessionIssueReasons[id], current.SubagentIssues[id] || isSubagent(id))
+		i.add(id, code, current.SessionIssueReasons[id], subagentIssue(current, id) || isSubagent(id))
 	}
+}
+
+// subagentIssue reports whether status marks a failed session as a
+// subagent: by SubagentIssues, or, for a status file from before that field,
+// by a code only subagents carry.
+func subagentIssue(status state.Status, id string) bool {
+	return status.SubagentIssues[id] || status.SessionIssues[id] == issueSubagentNotCaptured
 }
 
 // summary is the problem the last error records for these sessions.
@@ -308,7 +315,7 @@ func (i sessionIssues) carryCodes(status state.Status, isSubagent func(string) b
 		if _, recorded := i.codes[id]; recorded {
 			continue
 		}
-		i.add(id, code, status.SessionIssueReasons[id], status.SubagentIssues[id] || isSubagent(id))
+		i.add(id, code, status.SessionIssueReasons[id], subagentIssue(status, id) || isSubagent(id))
 	}
 }
 

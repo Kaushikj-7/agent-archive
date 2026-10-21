@@ -126,7 +126,10 @@ func (view *statusOverview) applySummary(summary statusSummary, now time.Time) {
 	if summary.PendingKnown {
 		view.queue = fmt.Sprintf("%d pending at last check", summary.Pending)
 	}
+	// A problem an old summary recorded may be gone; a sync finds out.
+	next := overviewIssues
 	if summary.CompletedAt.IsZero() || now.Sub(summary.CompletedAt) > scanStaleAfter {
+		next = overviewSync
 		view.problem, view.next = "No recent collection result; current health is unknown.", overviewSync
 		if summary.PendingKnown {
 			view.queue = "Unknown now; " + view.queue
@@ -135,9 +138,9 @@ func (view *statusOverview) applySummary(summary statusSummary, now time.Time) {
 		view.state = overviewWorking
 	}
 	if summary.Problem != statusProblemNone {
-		view.attention(statusProblemText(summary.Problem), overviewIssues)
+		view.attention(statusProblemText(summary.Problem), next)
 	} else if summary.VerificationFailures > 0 {
-		view.attention("Some uploads have unresolved read-back failures.", overviewIssues)
+		view.attention("Some uploads have unresolved read-back failures.", next)
 	}
 }
 

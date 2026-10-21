@@ -648,11 +648,11 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	regs, reqs, stateWarnings := statusState(home, store)
 	view.Warnings = append(view.Warnings, stateWarnings...)
 	// status.json marks the subagents among its failed sessions, including
-	// candidates that were never registered; a registration covers a status
-	// file from before that mark.
+	// candidates that were never registered; a status file from before that
+	// mark has its codes and the registrations.
 	view.subagentIssues = map[string]bool{}
-	for id := range view.Collector.SubagentIssues {
-		if _, failed := view.Collector.SessionIssues[id]; failed {
+	for id := range view.Collector.SessionIssues {
+		if subagentIssue(view.Collector, id) {
 			view.subagentIssues[id] = true
 		}
 	}

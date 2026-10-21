@@ -519,6 +519,12 @@ func TestStatusOverviewNamesTheCommandThatFixesItsProblem(t *testing.T) {
 			t.Helper()
 			must(t, local.Write(filepath.Join(home, "storage-health.json"), storageHealth{ConfigurationID: configurationID(cfg), State: "authentication_failed", CheckedAt: env.now()}))
 		}, "agent-archive sync"},
+		{"old summary with a recorded failure", func(t *testing.T, home string, env *Env, _ config.Config, summary statusSummary) {
+			t.Helper()
+			summary.CompletedAt = env.now().Add(-2 * scanStaleAfter)
+			summary.Problem = statusProblemCapture
+			must(t, local.Write(filepath.Join(home, statusSummaryFile), summary))
+		}, "agent-archive sync"},
 		{"failed collection", func(t *testing.T, home string, _ *Env, _ config.Config, summary statusSummary) {
 			t.Helper()
 			summary.Problem = statusProblemCapture
