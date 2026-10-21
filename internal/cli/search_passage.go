@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/search"
@@ -58,7 +59,7 @@ func (s *contentSearchBrowser) passageLines(hit search.Hit, st *searchMatchState
 	lines = []string{s.style.bold(stripLine(title, width))}
 	left := s.style.agent(hit.Harness, archive.DisplayLine(appName(hit.Harness)))
 	meta := []string{}
-	if project := archive.DisplayLine(hit.Project); project != "" {
+	if project := s.hitProject(hit); project != "" {
 		meta = append(meta, project)
 	}
 	meta = append(meta, s.longWhen(hit.CapturedAt))
@@ -232,7 +233,7 @@ func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browse
 	defer func() { s.afterRead = searchActionNone }()
 	p := &openPassage{b: b, row: row, hit: hit, state: s.matchState(hit)}
 	if p.state.ref != nil {
-		p.read(ctx, p.state.ref.Start)
+		p.read(ctx, passageReadStart(p.state, s.opts.query.Text))
 	}
 	for {
 		if b.list.operationQuit {
@@ -317,7 +318,7 @@ func (p *openPassage) apply(ctx context.Context, answer contentSearchAction, scr
 		}
 		p.out = search.Surrounding{}
 		if p.state.ref != nil {
-			p.read(ctx, p.state.ref.Start)
+			p.read(ctx, passageReadStart(p.state, s.opts.query.Text))
 		}
 		p.view.expanded, p.top = false, 0
 	default:
@@ -374,4 +375,24 @@ func highlightedLines(query, text string, width int, style textStyle) []string {
 		out = append(out, renderCells(cells[l.start:l.end], style))
 	}
 	return out
+}
+
+// searchReadBytes is how much of a message one passage read returns.
+const searchReadBytes = 4096
+
+// passageReadStart is where opening a passage reads from: its start, unless
+// the first match lies past what one read returns, when the read begins a
+// little before that match. The indexed passage text is the source's exact
+// bytes from the reference's start, so its offsets are the source's.
+func passageReadStart(st *searchMatchState, query string) int {
+	start := st.ref.Start
+	spans := search.MatchSpans(query, st.text)
+	if len(spans) == 0 || spans[0].End <= searchReadBytes {
+		return start
+	}
+	offset := max(spans[0].Start-searchReadBytes/4, 0)
+	for offset > 0 && !utf8.RuneStart(st.text[offset]) {
+		offset--
+	}
+	return min(start+offset, st.ref.End)
 }

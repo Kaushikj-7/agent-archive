@@ -37,6 +37,8 @@ type contentSearchBrowser struct {
 	handoff       *listRow
 	generation    uint64
 	pendingAction contentSearchAction
+	// labels are the configured project labels, read once for hitProject.
+	labels map[string]string
 	// afterRead is an action typed while the passage loaded that applies to
 	// it once read: i or t.
 	afterRead contentSearchAction
@@ -114,7 +116,7 @@ func (s *contentSearchBrowser) installRows() {
 		if strings.TrimSpace(title) == "" {
 			title = shorts[i]
 		}
-		project := archive.DisplayLine(h.Project)
+		project := s.hitProject(h)
 		if project == "" {
 			project = "-"
 		}
@@ -520,7 +522,7 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 			result.err = err
 			return
 		}
-		result.context, result.err = search.ReadContext(ctx, objects, parsersFor(s.env), ref, offset, 4096, 1, 1, reader.Limits{})
+		result.context, result.err = search.ReadContext(ctx, objects, parsersFor(s.env), ref, offset, searchReadBytes, 1, 1, reader.Limits{})
 	}()
 	joined := false
 	join := func() searchContextResult {
@@ -694,4 +696,16 @@ func (l *sessionPicker) keepSearchSelection(identity string) {
 	l.keep = identity
 	l.start, l.cursor = 0, 0
 	l.memo, l.cache, l.bottom = nil, nil, nil
+}
+
+// hitProject is the name shown for a hit's project: the metadata's name, or
+// the configured label for its project ID, as list and show name it.
+func (s *contentSearchBrowser) hitProject(h search.Hit) string {
+	if h.Project != "" {
+		return archive.DisplayLine(h.Project)
+	}
+	if s.labels == nil {
+		s.labels = projectLabels(s.cfg)
+	}
+	return archive.DisplayLine(s.labels[h.ProjectID])
 }

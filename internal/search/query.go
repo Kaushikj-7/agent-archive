@@ -67,6 +67,9 @@ type Hit struct {
 	Gaps       []Gap      `json:"Gaps"`
 	// Project is the session's project name, empty when it has none.
 	Project string `json:"Project"`
+	// ProjectID is the session's project ID, for a configured label when
+	// the metadata names no project.
+	ProjectID string `json:"ProjectID"`
 	// Passage is the indexed text that matched: the body passage Reference
 	// addresses, or the title for a title match.
 	Passage string `json:"Passage"`
@@ -428,7 +431,7 @@ func (s *Store) Search(ctx context.Context, q Query) (Page, error) {
 		if err != nil {
 			return page, err
 		}
-		hit.Project = projectNameOf(observed)
+		hit.Project, hit.ProjectID = projectOf(observed)
 		if len(ref) > 0 {
 			hit.Reference = new(Reference)
 			if err = json.Unmarshal(ref, hit.Reference); err != nil {
@@ -455,14 +458,16 @@ func (s *Store) Search(ctx context.Context, q Query) (Page, error) {
 
 // projectNameOf is the project name in a session's observed metadata (JSON),
 // made safe for one line; empty when there is none.
-func projectNameOf(metadata []byte) string {
-	var named struct {
+// projectOf is the observed metadata's project name and ID.
+func projectOf(metadata []byte) (name, id string) {
+	var project struct {
 		ProjectName string `json:"project_name"`
+		ProjectID   string `json:"project_id"`
 	}
-	if len(metadata) == 0 || json.Unmarshal(metadata, &named) != nil {
-		return ""
+	if len(metadata) == 0 || json.Unmarshal(metadata, &project) != nil {
+		return "", ""
 	}
-	return archive.DisplayLine(named.ProjectName)
+	return archive.DisplayLine(project.ProjectName), project.ProjectID
 }
 
 func queryArgs(expression string, q Query) []any {
