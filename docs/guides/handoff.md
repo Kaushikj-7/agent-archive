@@ -595,7 +595,9 @@ number, agent, title, project, PR, and when.
 - **`· not uploaded`** marks a session on this machine that the archive does
   not have yet (shown once the archive was read, so a failed read marks nothing).
   You can hand it off; it is read from its transcript as it is now. The title
-  is cut to make room for it.
+  is cut to make room for it. For a transcript over 4 MiB, the row is read
+  from its first and last 256 KiB: a name or pull request that appears only
+  between them shows once the session is uploaded.
 - **`+45`** after a title says how many subagent sessions it has, where the
   title leaves room. They are not rows; search for one.
 - There is no ID column: numbers choose rows, and a typed short ID works too.

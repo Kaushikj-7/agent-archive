@@ -623,17 +623,9 @@ func (p handoffPicker) buildLocalMetadataResult(reg archive.SessionRegistration,
 }
 
 func (p handoffPicker) readLocalMetadata(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool, error) {
-	bundle, err := collector.ReadLocalBundle(p.ctx, p.home, reg, p.env.now().UTC(), p.env.cursorDatabase(), registryFor(p.env))
-	if err != nil {
+	labels, ok, err := p.readLocalLabels(reg)
+	if err != nil || !ok {
 		return archive.Metadata{}, false, err
-	}
-	analysis, err := analyzeSource(p.ctx, parsersFor(p.env), bundle)
-	if err != nil {
-		return archive.Metadata{}, false, err
-	}
-	labels, ok := archive.LabelsFromAnalysis(analysis)
-	if !ok {
-		return archive.Metadata{}, false, nil
 	}
 	project := ""
 	if reg.ProjectRoot != "" {
@@ -642,6 +634,35 @@ func (p handoffPicker) readLocalMetadata(reg archive.SessionRegistration, active
 	return archive.Metadata{SessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID,
 		ProjectName: project, Harness: reg.Harness, CapturedAt: active, Name: labels.Name, Title: labels.Title,
 		Branch: labels.Branch, PullRequests: labels.PullRequests, Origin: reg.Origin, RepoKey: reg.RepoKey}, true, nil
+}
+
+// handoffPreviewMinBytes is the transcript size from which the picker labels
+// a session from the filtered head and tail windows of its transcript instead
+// of filtering and parsing all of it. A smaller transcript reads whole in a
+// fraction of a second; a large one took seconds, and the first draw waits
+// for the slowest label read.
+const handoffPreviewMinBytes int64 = 4 << 20
+
+// readLocalLabels labels reg from its transcript as it is now. A large
+// transcript is previewed when its head holds a prompt (its title); the
+// name, branch and pull requests then come from the head and tail windows.
+// Any other transcript, or one a preview cannot stand in for, is read whole.
+func (p handoffPicker) readLocalLabels(reg archive.SessionRegistration) (archive.Labels, bool, error) {
+	preview, err := collector.PreviewLocalTranscript(p.ctx, p.home, reg, p.env.cursorDatabase(), registryFor(p.env), previewsFor(p.env), handoffPreviewMinBytes,
+		collector.PreviewLimits{HeadBytes: nativeWindowBytes, TailBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes})
+	if err == nil && preview.Title != "" {
+		return archive.Labels{Name: preview.Name, Title: preview.Title, Branch: preview.Branch, PullRequests: preview.PullRequests}, true, nil
+	}
+	bundle, err := collector.ReadLocalBundle(p.ctx, p.home, reg, p.env.now().UTC(), p.env.cursorDatabase(), registryFor(p.env))
+	if err != nil {
+		return archive.Labels{}, false, err
+	}
+	analysis, err := analyzeSource(p.ctx, parsersFor(p.env), bundle)
+	if err != nil {
+		return archive.Labels{}, false, err
+	}
+	labels, ok := archive.LabelsFromAnalysis(analysis)
+	return labels, ok, nil
 }
 
 // registrationMetadata is the part of a registered session's metadata that

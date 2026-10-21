@@ -6,11 +6,27 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `status --issues` and `status --verbose` say why sessions failed in the last
+  pass, grouped: one line per kind of failure and error with its count and a
+  few session IDs, such as "268 sessions failed to capture or upload: durable
+  publication capacity exhausted; …", instead of one line per session. Only
+  errors from a fixed set are named, so no paths or transcript text are shown
+  or stored; any other error reads "error not recognized" and `agent-archive
+  sync` still prints it. `status --json` adds `collector.session_issue_reasons`.
+
 ### Fixed
 
 - The `handoff` picker appears sooner when many recent sessions are not
   uploaded yet. It now reads up to four of their transcripts at once to title
   them, instead of one after another.
+- The `handoff` picker no longer waits seconds for a large session that is
+  not uploaded yet. For a transcript over 4 MiB it filters and parses only
+  the first and last 256 KiB, instead of the whole transcript. Its title still comes from the first
+  prompt; its name, branch and pull request come from those last records, so
+  a rename that only appears mid-transcript shows after the session uploads.
+  A transcript whose first 256 KiB holds no prompt is still read whole.
 - Uploads no longer stop for good after about 500 sessions. Each session's
   local record of its last upload counted against the 1 GiB limit on pending
   local work, so once those records filled it every later session failed with
