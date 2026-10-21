@@ -34,12 +34,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- The `handoff` picker no longer waits seconds for a large session that is
-  not uploaded yet. For a transcript over 4 MiB it filters and parses only
-  the first and last 256 KiB, instead of the whole transcript. Its title still comes from the first
-  prompt; its name, branch and pull request come from those last records, so
-  a rename that only appears mid-transcript shows after the session uploads.
-  A transcript whose first 256 KiB holds no prompt is still read whole.
+- The `handoff` picker appears sooner when sessions are not uploaded yet. To
+  title each, it filters and parses only the first and last 256 KiB of its
+  transcript instead of the whole transcript, which took seconds for a large
+  one. Its title still comes from the first prompt; its name, branch and pull
+  request come from those records, so in a transcript over 512 KiB a rename
+  that only appears in the middle shows after the session uploads. A
+  transcript whose first 256 KiB holds no prompt is still read whole.
 - Uploads no longer stop for good after about 500 sessions. Each session's
   local record of its last upload counted against the 1 GiB limit on pending
   local work, so once those records filled it every later session failed with
