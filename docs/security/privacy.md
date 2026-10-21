@@ -725,6 +725,17 @@ content. Search does not send that text to a new service: explicit refresh and
 exact-reference context reads use the configured archive provider and existing
 checksum/ownership verification. Cached queries make no archive requests.
 
+After you decline indexing, a search on a terminal with no local index searches
+the bucket directly. It downloads the verified source bundles of sessions in
+scope from the configured provider, newest first, through the same checksum,
+ownership, parser visibility and privacy-version rules as refresh. Text is
+matched in an in-memory SQLite database that is never written to disk, and only
+matching sessions' passages are held until the command exits; no conversation
+text is kept under `AGENT_ARCHIVE_HOME/search/`. Listing sessions uses the
+existing metadata-only cache that `list` and `show` use, which holds session
+titles (previews of the first prompt), so the warning says so. Each direct search downloads the
+sources again, which your provider may bill.
+
 Coverage reports the last local observation. A remote deletion or stricter
 privacy policy cannot be known until observed by explicit refresh or the opted-in
 periodic worker; context reads
