@@ -488,12 +488,15 @@ func TestStatusOverviewNamesTheCommandThatFixesItsProblem(t *testing.T) {
 		want  string
 	}{
 		{"not scheduled", func(t *testing.T, _ string, env *Env, _ config.Config, _ statusSummary) {
+			t.Helper()
 			env.Scheduler = newFakeScheduler(t, "missing")
 		}, "agent-archive setup"},
 		{"another installation", func(t *testing.T, _ string, env *Env, _ config.Config, _ statusSummary) {
+			t.Helper()
 			env.Scheduler = newFakeScheduler(t, string(scheduler.AnotherInstallation))
 		}, "agent-archive setup"},
 		{"collector executable unavailable", func(t *testing.T, home string, env *Env, _ config.Config, _ statusSummary) {
+			t.Helper()
 			userHome, err := env.userHomeDir()
 			must(t, err)
 			ref := env.installation(home, userHome).ref()
@@ -504,16 +507,20 @@ func TestStatusOverviewNamesTheCommandThatFixesItsProblem(t *testing.T) {
 			must(t, os.WriteFile(path, plist, 0o600))
 		}, "agent-archive setup --refresh"},
 		{"no current summary", func(t *testing.T, home string, _ *Env, _ config.Config, _ statusSummary) {
+			t.Helper()
 			must(t, os.Remove(filepath.Join(home, statusSummaryFile)))
 		}, "agent-archive sync"},
 		{"no recent result", func(t *testing.T, home string, env *Env, _ config.Config, summary statusSummary) {
+			t.Helper()
 			summary.CompletedAt = env.now().Add(-2 * scanStaleAfter)
 			must(t, local.Write(filepath.Join(home, statusSummaryFile), summary))
 		}, "agent-archive sync"},
 		{"storage access failed", func(t *testing.T, home string, env *Env, cfg config.Config, _ statusSummary) {
+			t.Helper()
 			must(t, local.Write(filepath.Join(home, "storage-health.json"), storageHealth{ConfigurationID: configurationID(cfg), State: "authentication_failed", CheckedAt: env.now()}))
 		}, "agent-archive sync"},
 		{"failed collection", func(t *testing.T, home string, _ *Env, _ config.Config, summary statusSummary) {
+			t.Helper()
 			summary.Problem = statusProblemCapture
 			must(t, local.Write(filepath.Join(home, statusSummaryFile), summary))
 		}, "agent-archive status --issues"},
