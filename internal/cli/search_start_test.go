@@ -48,8 +48,10 @@ func TestSearchOnTerminalOffersIndexingOnceBeforeFirstIndex(t *testing.T) {
 				t.Fatalf("indexing %v declined %v want %v: %v\n%s", cfg.SearchIndexing, cfg.SearchIndexingDeclined, accept, err, out)
 			}
 			defined := env.jobDefinition(userHome, env.installation(home, userHome).searchRole().ref()).Defined
-			want := map[bool]string{true: "Background indexing is on.", false: "agent-archive search --refresh --wait 10m"}[accept]
-			if defined != accept || !strings.Contains(out, "Build the search index in the background?") || !strings.Contains(out, want) || !strings.Contains(out, "Search for:") {
+			// Declining searches the (empty) bucket directly instead of
+			// pointing at a manual refresh.
+			want := map[bool]string{true: "Background indexing is on.", false: "No archived sessions to search in all projects."}[accept]
+			if defined != accept || !strings.Contains(out, "Build the search index in the background?") || !strings.Contains(out, want) || !strings.Contains(out, "Search for:") || strings.Contains(out, "search --refresh") {
 				t.Fatalf("job %v: %s", defined, out)
 			}
 			out, errOut, code = runOnTerminal(t, env, newFakeKeys("q"), "checksum\n", "search")
@@ -155,7 +157,10 @@ func TestSearchDeclineSavesWithoutStorageAndOffersOverInterruptedIndex(t *testin
 	must(t, os.MkdirAll(dir, 0o700))
 	must(t, os.WriteFile(filepath.Join(dir, "content.sqlite"), nil, 0o600))
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
-		t.Error("declining opened storage")
+		// After the No is saved, the search reads the bucket directly.
+		if saved, _, e := config.Load(home); e != nil || !saved.SearchIndexingDeclined {
+			t.Error("declining opened storage")
+		}
 		return nil, errors.New("offline")
 	}
 	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "2\nchecksum\n", "search")

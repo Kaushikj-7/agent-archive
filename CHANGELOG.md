@@ -15,6 +15,15 @@ follow [Semantic Versioning](https://semver.org/).
   Before a local search index exists, it asks once whether to index in the
   background (Yes by default) and saves the answer. A Yes indexes for up to 30
   seconds before the query, so the first search covers some of your sessions.
+- After you answer No to search indexing, a search on a terminal with no local
+  index reads the bucket directly instead of returning nothing. It warns first,
+  downloads sessions in scope newest first and matches them in memory, keeping
+  no conversation text on this machine (session titles are cached, as for
+  `list`). It shows matches as it finds them, pauses after 2
+  minutes to ask whether to keep going, narrow to this project, or show the
+  results, and Esc stops early. JSON and piped output still report the missing
+  index. To search instantly instead, run
+  `agent-archive setup --yes --search-indexing on`.
 - `status --issues` and `status --verbose` say why sessions failed in the last
   pass, grouped: one line per kind of failure and error with its count and a
   few session IDs, such as "268 sessions failed to capture or upload: durable

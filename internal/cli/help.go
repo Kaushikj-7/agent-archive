@@ -19,15 +19,20 @@ var commandHelp = map[string]string{
 
 Search visible conversation messages and titles in the private local index.
 Cached queries never read storage; only a Yes to the one-time indexing question
-first runs a refresh. Search covers every project unless --project names one; an
-empty scoped result never broadens. Coverage describes a past local
-observation, not current remote contents. Refresh is namespace-wide unless a
-session is named. It does not install or enable automatic indexing.
+first runs a refresh. With indexing declined and no local index, a terminal
+search reads the bucket directly instead. Search covers every project unless
+--project names one; an empty scoped result never broadens. Coverage describes
+a past local observation, not current remote contents. Refresh is
+namespace-wide unless a session is named. It does not install or enable
+automatic indexing.
 Words are ANDed, quotes match phrases, and a trailing * enables prefix matching.
 Punctuation splits words; this is keyword search, not substring/semantic search.
 References bind exact source revisions. Reads print escaped, quoted text.
 On an interactive terminal, search without a query asks for one. Before the
 first local index exists, search asks once whether to index in the background.
+After No, with no local index, a terminal search downloads sessions in scope
+from the bucket, newest first, and matches them in memory. It pauses after 2
+minutes to ask whether to go on; Esc stops and shows what was found.
 Browse ranked snippets and exact bounded context.
 Scrolling past the last result loads the next results. Use n/p for matching
 body passages, r to rerun the fixed query, and h to hand off the current
