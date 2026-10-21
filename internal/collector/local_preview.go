@@ -24,12 +24,13 @@ var ErrPreviewUnavailable = errors.New("the session's transcript cannot be previ
 //
 // It is ErrPreviewUnavailable for a session a preview cannot stand in for:
 // one not read from a single transcript file (a Cursor database chat, Codex
-// related history), a subagent or child session, whose full read names it
-// from its metadata or spawn record, a native or staged import, a historical project, a
-// harness with no record previewer, a session whose retained or pending
-// evidence carries a session label, and a transcript shorter than minBytes,
-// which a full read handles about as quickly.
-func PreviewLocalTranscript(ctx context.Context, home string, reg archive.SessionRegistration, cursorDatabase string, sources agentapi.SourcesLookup, previews agentapi.PreviewsLookup, minBytes int64, limits PreviewLimits) (TranscriptPreview, error) {
+// related history), a subagent or child session (its full read names it
+// from its metadata or spawn record), a native or staged import, a
+// historical project, a harness with no record previewer, a session whose
+// retained or pending evidence carries a session label, and a transcript
+// short enough for the windows to span with a record the preview left unread
+// (one over the record limit, or an unfinished last record).
+func PreviewLocalTranscript(ctx context.Context, home string, reg archive.SessionRegistration, cursorDatabase string, sources agentapi.SourcesLookup, previews agentapi.PreviewsLookup, limits PreviewLimits) (TranscriptPreview, error) {
 	// A leaf: the handoff picker runs several of these at once.
 	defer trace.StartLeaf("preview local transcript").End()
 	if reg.NativeImport != nil || reg.HistoricalProject != nil || reg.StagedImportSHA256 != "" || !reg.ReadsTranscriptFile() || reg.IsChild() || reg.SubagentID != "" || previews == nil {
@@ -68,13 +69,13 @@ func PreviewLocalTranscript(ctx context.Context, home string, reg archive.Sessio
 		return TranscriptPreview{}, ErrPreviewUnavailable
 	}
 	reader.preview = true
-	return reader.previewTranscript(ctx, previewer, minBytes, limits, reg.NativeSessionID)
+	return reader.previewTranscript(ctx, previewer, limits, reg.NativeSessionID)
 }
 
 // previewTranscript opens the source as filter does, with the same read
 // limits and admission checks, and previews its windows instead of filtering
 // all of it.
-func (r providerReader) previewTranscript(ctx context.Context, previewer agentapi.RecordPreviewer, minBytes int64, limits PreviewLimits, nativeID string) (out TranscriptPreview, err error) {
+func (r providerReader) previewTranscript(ctx context.Context, previewer agentapi.RecordPreviewer, limits PreviewLimits, nativeID string) (out TranscriptPreview, err error) {
 	ctx, cancel := r.validationContext(ctx)
 	defer cancel()
 	provider, filter, err := r.binding()
@@ -98,8 +99,22 @@ func (r providerReader) previewTranscript(ctx context.Context, previewer agentap
 		return out, err
 	}
 	file := snap.Input().File
-	if file == nil || file.Length() < minBytes {
+	if file == nil {
 		return out, ErrPreviewUnavailable
 	}
-	return PreviewTranscript(ctx, file, previewer, limits, nativeID)
+	spanned := file.Length() <= limits.HeadBytes+limits.TailBytes
+	if spanned {
+		// One head window over the whole transcript reads the bytes both
+		// windows would, without leaving a record across their boundary
+		// unread, and says whether it read every record.
+		limits.HeadBytes += limits.TailBytes
+	}
+	preview, err := PreviewTranscript(ctx, file, previewer, limits, nativeID)
+	if err == nil && spanned && !preview.NameComplete {
+		// A record over the record limit, or an unfinished last one, was
+		// left unread. Read the transcript whole, which is as cheap at this
+		// size, rather than miss what that record holds.
+		return TranscriptPreview{}, ErrPreviewUnavailable
+	}
+	return preview, err
 }

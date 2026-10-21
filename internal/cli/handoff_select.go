@@ -636,19 +636,15 @@ func (p handoffPicker) readLocalMetadata(reg archive.SessionRegistration, active
 		Branch: labels.Branch, PullRequests: labels.PullRequests, Origin: reg.Origin, RepoKey: reg.RepoKey}, true, nil
 }
 
-// handoffPreviewMinBytes is the transcript size from which the picker labels
-// a session from the filtered head and tail windows of its transcript instead
-// of filtering and parsing all of it. A smaller transcript reads whole in a
-// fraction of a second; a large one took seconds, and the first draw waits
-// for the slowest label read.
-const handoffPreviewMinBytes int64 = 4 << 20
-
-// readLocalLabels labels reg from its transcript as it is now. A large
-// transcript is previewed when its head holds a prompt (its title); the
-// name, branch and pull requests then come from the head and tail windows.
-// Any other transcript, or one a preview cannot stand in for, is read whole.
+// readLocalLabels labels reg from its transcript as it is now. The
+// transcript is previewed from its filtered head and tail windows when its
+// head holds a prompt (its title); the name, branch and pull requests then
+// come from those windows, which hold all of a transcript up to their
+// combined size. Any other transcript, or one a preview cannot stand in for,
+// is read whole: filtering and parsing a large one took seconds, and the
+// first draw waits for every label read.
 func (p handoffPicker) readLocalLabels(reg archive.SessionRegistration) (archive.Labels, bool, error) {
-	preview, err := collector.PreviewLocalTranscript(p.ctx, p.home, reg, p.env.cursorDatabase(), registryFor(p.env), previewsFor(p.env), handoffPreviewMinBytes,
+	preview, err := collector.PreviewLocalTranscript(p.ctx, p.home, reg, p.env.cursorDatabase(), registryFor(p.env), previewsFor(p.env),
 		collector.PreviewLimits{HeadBytes: nativeWindowBytes, TailBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes})
 	if err == nil && preview.Title != "" {
 		return archive.Labels{Name: preview.Name, Title: preview.Title, Branch: preview.Branch, PullRequests: preview.PullRequests}, true, nil

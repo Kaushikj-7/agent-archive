@@ -143,6 +143,12 @@ func TestBoundedHandoffAsyncSearchKeepsUnknownLabelsAndReportsActivityErrors(t *
 		regs[i] = original
 		regs[i].ArchiveSessionID = fmt.Sprintf("unreadable-%03d", i)
 	}
+	// An unreadable transcript fails the label read, preview and full read
+	// alike, after its activity is read. Each full read reads the clock once.
+	if os.Geteuid() == 0 {
+		t.Skip("root reads unreadable files")
+	}
+	must(t, os.Chmod(filepath.Join(f.project, "native-new.jsonl"), 0o000))
 	env := f.env
 	now := env.now()
 	// Label reads run concurrently, so each one's clock reading is counted under a lock.
@@ -152,9 +158,6 @@ func TestBoundedHandoffAsyncSearchKeepsUnknownLabelsAndReportsActivityErrors(t *
 		mu.Lock()
 		defer mu.Unlock()
 		attempts++
-		if attempts == 1 {
-			must(t, os.Remove(filepath.Join(f.project, "native-new.jsonl")))
-		}
 		return now
 	}
 	model := &pickerModel{labels: map[localLabelKey]localLabelResult{}}

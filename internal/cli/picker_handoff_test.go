@@ -167,18 +167,14 @@ func TestRealCLIBoundedHandoffNativeFailureKeepsEligibilityUnknown(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An unreadable transcript fails the label read, preview and full read
+	// alike, after its activity is read.
+	if os.Geteuid() == 0 {
+		t.Skip("root reads unreadable files")
+	}
+	must(t, os.Chmod(path, 0o000))
 	now := f.env.now()
 	env := f.env
-	removed := false
-	env.Now = func() time.Time {
-		if !removed {
-			if err := os.Remove(path); err != nil {
-				t.Fatal(err)
-			}
-			removed = true
-		}
-		return now
-	}
 	scope := sessionScope{Label: "fixture", Dir: f.project, ProjectIDs: []string{regs[0].ProjectID}}
 	choices, model, _, used, err := boundedHandoffChoices(catalog.WithReadView(t.Context()), env, remote, f.home, handoffOptions{source: "auto"}, scope, regs, listFormatOptions{Now: now}, io.Discard)
 	if err != nil || !used {
@@ -196,6 +192,7 @@ func TestRealCLIBoundedHandoffNativeFailureKeepsEligibilityUnknown(t *testing.T)
 	if _, ok := compatibility.localMetadata(regs[0], active); ok || len(model.labels) != 0 {
 		t.Fatal("shared search cache stored an unknown native failure")
 	}
+	must(t, os.Chmod(path, 0o600))
 	must(t, os.WriteFile(path, raw, 0o600))
 	retried, err := model.Older(t.Context(), scope)
 	if err != nil || len(retried.Rows) != 1 || retried.Incomplete || retried.Empty || retried.LabelAttempts != 2 {
