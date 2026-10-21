@@ -18,7 +18,7 @@ MODULES = (
 def shared_identity(source):
     source = Path(source).resolve(strict=True)
     proof = source_identity(source, TOOL_PINS['shared'])
-    if (source/'.go-version').read_text().strip() != '1.27.2':
+    if (source/'.go-version').read_text().strip() != '1.27.3':
         raise InvalidContext('shared compiler pin differs')
     return proof
 

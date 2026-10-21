@@ -565,10 +565,13 @@ def verify_plain_vet(directory, report, expected, expected_context_sha256, histo
     else:
         raise Failure('plain vet compatibility identity schema missing or unsupported')
     go = context['go']
+    # Receipts under a recognized historical contract are immutable go1.27.2
+    # facts; every other receipt comes from the current toolchain.
+    go_version = 'go1.27.2' if historical_vet_contract is not None else 'go1.27.3'
     if (context.get('race') is not False or context.get('tags') != []
-            or context.get('version') != 'go version go1.27.2 linux/amd64'
+            or context.get('version') != f'go version {go_version} linux/amd64'
             or context.get('runner_os') != 'Linux' or context.get('runner_arch') != 'X64'
-            or any(go.get(k) != v for k,v in {'GOVERSION':'go1.27.2', 'GOOS':'linux',
+            or any(go.get(k) != v for k,v in {'GOVERSION':go_version, 'GOOS':'linux',
                 'GOHOSTOS':'linux','GOARCH':'amd64','GOHOSTARCH':'amd64','CGO_ENABLED':'1',
                 'GOTOOLCHAIN':'local','GOWORK':'off','GOFLAGS':'-mod=readonly'}.items())
             or not isinstance(expected_context_sha256,str)

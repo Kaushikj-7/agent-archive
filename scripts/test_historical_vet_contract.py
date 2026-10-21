@@ -32,6 +32,9 @@ class HistoricalContractTest(unittest.TestCase):
         value = {k: v for k, v in value.items() if k in contract.FIELDS}
         value['go'] = {k: v for k, v in value['go'].items() if k in contract.GO_FIELDS}
         value['schema'] = 'aa-pr-go-v1'
+        # The recognized contracts recorded go1.27.2, not the current toolchain.
+        value['version'] = 'go version go1.27.2 linux/amd64'
+        value['go']['GOVERSION'] = 'go1.27.2'
         return value
 
     def test_both_recognized_contracts_validate_original_data(self):
