@@ -18,18 +18,21 @@ import (
 // contentSearchBrowser owns only bounded local search results and references.
 // The fixed FTS query never enters the metadata picker's filter grammar.
 type contentSearchBrowser struct {
-	env           searchCommandDependencies
-	cfg           config.Config
-	namespace     string
-	index         *search.Store
-	opts          contentSearchOptions
-	page          search.Page
-	hits          []search.Hit
-	byKey         map[string]search.Hit
-	choices       *scopeChoices
-	pages         int
-	stale         bool
-	rerun         bool
+	env       searchCommandDependencies
+	cfg       config.Config
+	namespace string
+	index     *search.Store
+	opts      contentSearchOptions
+	page      search.Page
+	hits      []search.Hit
+	byKey     map[string]search.Hit
+	choices   *scopeChoices
+	pages     int
+	stale     bool
+	rerun     bool
+	// nextText is a new query from /, applied only when its rerun succeeds,
+	// so a failed search leaves the old results with their own query.
+	nextText      string
 	notice        string
 	handoff       *listRow
 	generation    uint64
@@ -230,6 +233,10 @@ func (s *contentSearchBrowser) load(ctx context.Context) (bool, error) {
 	q := s.opts.query
 	reset := s.rerun
 	s.rerun = false
+	if reset && s.nextText != "" {
+		q.Text = s.nextText
+	}
+	s.nextText = ""
 	toggle := s.toggleScope && reset
 	s.toggleScope = false
 	if !reset && !s.hasNextPage() {
@@ -406,7 +413,7 @@ func (b *sessionBrowser) newSearchQuery(ctx context.Context) (quit bool, err err
 	if err != nil {
 		return false, err
 	}
-	s.opts.query.Text = text
+	s.nextText = text
 	s.rerun = true
 	if _, err = s.load(ctx); err != nil {
 		return false, err

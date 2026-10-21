@@ -358,3 +358,35 @@ func TestSearchHeadingCountsAPartialRanking(t *testing.T) {
 		t.Fatalf("heading: %q", heading)
 	}
 }
+
+func TestSearchFailedNewQueryKeepsTheOldQuery(t *testing.T) {
+	env, _, _ := prepareSearchBrowser(t)
+	home, _ := env.readHome()
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	namespace, dir := contentSearchLocation(home, cfg)
+	index, err := search.OpenRead(t.Context(), dir, namespace)
+	must(t, err)
+	must(t, index.Close())
+	hit := search.Hit{SessionID: "0a13656b25d0", Harness: "codex", Title: "Old result", Snippet: "visible"}
+	s := &contentSearchBrowser{opts: contentSearchOptions{query: search.Query{Text: "visible", Limit: 20}}, index: index, hits: []search.Hit{hit}, pages: 1, choices: rowChoices(nil, listFormatOptions{})}
+	s.nextText, s.rerun = "replacement", true
+	if _, err := s.load(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if s.opts.query.Text != "visible" || s.notice == "" || len(s.hits) != 1 {
+		t.Fatalf("failed search relabeled old results: query %q notice %q hits %d", s.opts.query.Text, s.notice, len(s.hits))
+	}
+}
+
+func TestSearchLinesKeepPassagesWhenTheTerminalSizeIsUnknown(t *testing.T) {
+	hit := search.Hit{SessionID: "0a13656b25d0", Harness: "claude", Title: "Plan", Role: "user", Snippet: "the needle passage"}
+	s := &contentSearchBrowser{opts: contentSearchOptions{query: search.Query{Text: "needle"}}, hits: []search.Hit{hit}, pages: 1, choices: rowChoices(nil, listFormatOptions{})}
+	s.installRows()
+	format := listFormatOptions{Search: true, Numbered: true}
+	var out strings.Builder
+	must(t, printSessionGroups(&out, sessionTableGroups(s.choices.shown().rows, format), format))
+	if !strings.Contains(out.String(), "the needle passage") {
+		t.Fatalf("passage dropped without a terminal size:\n%s", out.String())
+	}
+}
