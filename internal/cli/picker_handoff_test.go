@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -270,14 +269,13 @@ func TestBoundedHandoffSearchPreservesArchiveMatchesWhenLocalLabelsFail(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := f.env.now()
-	env := f.env
-	// Label reads run concurrently, so the first clock reading removes the file once.
-	var remove sync.Once
-	env.Now = func() time.Time {
-		remove.Do(func() { must(t, os.Remove(path)) })
-		return now
+	// An unreadable transcript fails the label read, preview and full read
+	// alike, after its activity is read.
+	if os.Geteuid() == 0 {
+		t.Skip("root reads unreadable files")
 	}
+	must(t, os.Chmod(path, 0o000))
+	env := f.env
 	var readErr error
 	p := handoffPicker{ctx: t.Context(), env: env, home: f.home, source: "auto", archiveRead: true, scope: sessionScope{All: true}, localLabels: map[localLabelKey]localLabelResult{}, readError: &readErr}
 	rows, total, partial := p.rows(regs, archived, 1000)
