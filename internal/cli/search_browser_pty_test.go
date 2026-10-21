@@ -55,7 +55,7 @@ const searchBrowserPTYScript = ptyKeysHarness + `try:
         finish(0)
     else:
         os.write(master, b'1\r')
-        wait_for(b'Hand off current session')
+        wait_for(b'i details')
         assert keys_on(), 'key mode off in search context'
         if mode == 'handoff':
             # One burst crosses browser and ordinary destination prompt ownership.
@@ -70,7 +70,7 @@ const searchBrowserPTYScript = ptyKeysHarness + `try:
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 20, 36, 0, 0))
                 signal.signal(signal.SIGTTOU, signal.SIG_DFL)
                 p.send_signal(signal.SIGWINCH)
-                wait_for(b'Hand off current session', start)
+                wait_for(b'n/p next', start)
                 assert keys_on(), 'resize left key mode'
                 os.write(master, b'\x1b[F\x1b[H')
             else:

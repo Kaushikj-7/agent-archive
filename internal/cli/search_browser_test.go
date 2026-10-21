@@ -46,19 +46,19 @@ func TestSearchBrowserKeysAndLinesKeepExactBodyReference(t *testing.T) {
 			}
 			var fake *fakeKeys
 			if keyed {
-				fake = newFakeKeys("1\r", later(100*time.Millisecond, "n"), "p", "b", "q")
+				fake = newFakeKeys("1\r", "i", later(100*time.Millisecond, "n"), "p", "b", "q")
 			}
 			var out, errOut string
 			var code int
 			if keyed {
 				out, errOut, code = runOnTerminal(t, env, fake, "", "search", "visible", "--all-projects")
 			} else {
-				out, errOut, code = runSearchAfterContext(t, env, "n\np\nb\nq\n")
+				out, errOut, code = runSearchAfterContext(t, env, "1\n", "codex › visible", "i\nn\np\nb\nq\n", "visible", "--all-projects")
 			}
 			if code != 0 {
 				t.Fatalf("%d %s %s", code, errOut, out)
 			}
-			for _, want := range []string{id, shortSessionID(id), `All projects · "visible" · 1 session, best match first`, jsonPage.Results[0].Harness + " / " + jsonPage.Results[0].Session, "Reference:", "[selected · assistant]", "visible", "Hand off current session", "no further matching body passage"} {
+			for _, want := range []string{id, shortSessionID(id), `All projects · "visible" · 1 session, best match first`, "Session: " + jsonPage.Results[0].Harness + " / " + jsonPage.Results[0].Session, "Reference:", "  codex › visible", searchMatchFooter, "no further matching body passage"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("missing %q: %s", want, out)
 				}
@@ -268,7 +268,7 @@ func TestSearchDetailsWrapLongUnicodeLinesForScrolling(t *testing.T) {
 	env.TerminalSize = fixedTerminal{36, 20}.terminalSize
 	b := &sessionBrowser{env: env, stdout: io.Discard, prompt: newPrompter(strings.NewReader(""), io.Discard), search: &contentSearchBrowser{}}
 	lines := []string{strings.Repeat("界", 2000) + "TAILMARK"}
-	screen := b.drawSearchDetails(lines, 0)
+	screen := b.drawSearchDetails(lines, 0, "")
 	if !screen.cut || screen.bottom == 0 || len(screen.lines) < 100 {
 		t.Fatalf("long line cannot scroll: %+v", screen)
 	}
@@ -509,15 +509,16 @@ func TestSearchBrowserCoverageIsOneLineUnderTheHeading(t *testing.T) {
 	}
 }
 
-// A real pipe lets the line-mode browser poll without blocking. Actions arrive
-// only after selected context is painted, distinguishing retrieval from cancel.
-func runSearchAfterContext(t *testing.T, env Env, actions string) (string, string, int) {
+// A real pipe lets the line-mode browser poll without blocking. open is typed
+// at the results; actions arrive only once shown is on the screen, after the
+// passage is painted, distinguishing retrieval from cancel.
+func runSearchAfterContext(t *testing.T, env Env, open, shown, actions string, args ...string) (string, string, int) {
 	t.Helper()
 	input, send, err := os.Pipe()
 	must(t, err)
 	defer func() { _ = input.Close() }()
-	shown := make(chan struct{})
-	out := &searchContextOutput{shown: shown}
+	painted := make(chan struct{})
+	out := &searchContextOutput{shown: painted, marker: shown}
 	var diagnostics bytes.Buffer
 	env.TerminalSize = fixedTerminal{100, 40}.terminalSize
 	env.IsTerminal = func(stream any) bool { return stream == any(input) || stream == any(out) }
@@ -525,31 +526,32 @@ func runSearchAfterContext(t *testing.T, env Env, actions string) (string, strin
 	done := make(chan error, 1)
 	go func() {
 		defer func() { _ = send.Close() }()
-		if _, e := io.WriteString(send, "1\n"); e != nil {
+		if _, e := io.WriteString(send, open); e != nil {
 			done <- e
 			return
 		}
 		select {
-		case <-shown:
+		case <-painted:
 			_, e := io.WriteString(send, actions)
 			done <- e
 		case <-time.After(5 * time.Second):
 			done <- errors.New("selected context was not painted")
 		}
 	}()
-	code := Run([]string{"search", "visible", "--all-projects"}, input, out, &diagnostics, env)
+	code := Run(append([]string{"search"}, args...), input, out, &diagnostics, env)
 	must(t, <-done)
 	return out.String(), diagnostics.String(), code
 }
 
 type searchContextOutput struct {
 	bytes.Buffer
-	shown chan struct{}
+	shown  chan struct{}
+	marker string
 }
 
 func (o *searchContextOutput) Write(p []byte) (int, error) {
 	n, err := o.Buffer.Write(p)
-	if o.shown != nil && strings.Contains(o.String(), "[selected · assistant]") {
+	if o.shown != nil && strings.Contains(o.String(), searchMatchFooter) && strings.Contains(o.String(), o.marker) {
 		close(o.shown)
 		o.shown = nil
 	}

@@ -717,7 +717,7 @@ func (b *sessionBrowser) measureDetails(lines []string, top int, pager bool, hin
 	}
 	question := detailsKeysQuestion(true, pager)
 	if b.search != nil {
-		question = searchDetailsQuestion
+		question = searchMatchFooter
 	}
 	below := displayLines(hint, width) + displayLines(b.prompt.promptText(question, false, nil, -1, ": "), width)
 	chrome := max(displayLines(notice.text, width), 1) + below

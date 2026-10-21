@@ -15,7 +15,6 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
-	"github.com/wangjohn/agent-archive/internal/search"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -1267,102 +1266,6 @@ func numericBrowserAnswer(answer string) bool {
 }
 
 func (l *sessionPicker) searchUnavailable() bool { return l.searchFailure != nil }
-
-// searchDetails is the finite search branch of the existing browser. It retains
-// one match page and one bounded context; scrolling never performs IO.
-func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browseAction, error) {
-	s := b.search
-	hit, ok := s.byKey[row.selectionKey]
-	if !ok {
-		return browseBack, nil
-	}
-	// The passage opens on the match the strip showed, and n and p move the
-	// strip's match too.
-	state := s.matchState(hit)
-	ref := state.ref
-	var out search.Surrounding
-	notice := ""
-	read := func(offset int) {
-		out = search.Surrounding{}
-		if ref == nil {
-			return
-		}
-		var err error
-		out, err = b.readSearchSelection(ctx, *ref, offset)
-		if err != nil {
-			notice = err.Error()
-		}
-	}
-	if ref != nil {
-		read(ref.Start)
-	}
-	top := 0
-	for {
-		if b.list.operationQuit {
-			return browseQuit, nil
-		}
-		b.screen.clear()
-		lines := searchContextLines(hit, ref, out, notice)
-		screen := b.drawSearchDetails(lines, top)
-		answer := s.pendingAction
-		s.pendingAction = searchActionNone
-		// Pending actions apply only after readSearchSelection joined its read.
-		if answer == searchActionNone {
-			var err error
-			answer, err = b.searchDetailAction(&screen)
-			if err != nil {
-				return endOfInput(err)
-			}
-			top = screen.top
-			if answer == searchActionNone {
-				continue
-			}
-		}
-		switch answer {
-		case searchActionPageDown, searchActionPageUp, searchActionDown, searchActionUp, searchActionHome, searchActionEnd:
-			move := map[contentSearchAction]scrollMove{searchActionPageDown: scrollPageDown, searchActionPageUp: scrollPageUp, searchActionDown: scrollLineDown, searchActionUp: scrollLineUp, searchActionHome: scrollTop, searchActionEnd: scrollBottom}[answer]
-			screen.scroll(move)
-			top = screen.top
-		case searchActionBack, searchActionNone:
-			return browseBack, nil
-		case searchActionQuit:
-			return browseQuit, nil
-		case searchActionHandoff:
-			s.handoff = &row
-			return browseQuit, nil
-		case searchActionRerun:
-			s.rerun = true
-			_, err := s.load(ctx)
-			b.list.keepSearchSelection(rowIdentity(row))
-			return browseBack, err
-		case searchActionMore:
-			if ref != nil && out.Selected.Next != 0 {
-				read(out.Selected.Next)
-				top = 0
-			} else {
-				notice = "No more raw context in this message."
-			}
-		case searchActionNext, searchActionPrevious:
-			direction := 1
-			if answer == searchActionPrevious {
-				direction = -1
-			}
-			if err := s.stepMatch(ctx, hit, state, direction); err != nil {
-				notice = err.Error()
-				continue
-			}
-			ref = state.ref
-			notice = ""
-			out = search.Surrounding{}
-			if ref != nil {
-				read(ref.Start)
-			}
-			top = 0
-		default:
-			notice = searchDetailsQuestion
-		}
-	}
-}
 
 func (b *sessionBrowser) searchDetailAction(screen *detailsScreen) (contentSearchAction, error) {
 	if b.keys == nil {

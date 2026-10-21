@@ -37,6 +37,11 @@ type contentSearchBrowser struct {
 	handoff       *listRow
 	generation    uint64
 	pendingAction contentSearchAction
+	// labels are the configured project labels, read once for hitProject.
+	labels map[string]string
+	// afterRead is an action typed while the passage loaded that applies to
+	// it once read: i or t.
+	afterRead contentSearchAction
 	// style and now are the screen's color and clock, for the rows, the
 	// heading and the detail strip.
 	style textStyle
@@ -111,7 +116,7 @@ func (s *contentSearchBrowser) installRows() {
 		if strings.TrimSpace(title) == "" {
 			title = shorts[i]
 		}
-		project := archive.DisplayLine(h.Project)
+		project := s.hitProject(h)
 		if project == "" {
 			project = "-"
 		}
@@ -478,12 +483,16 @@ const (
 	searchActionBack     contentSearchAction = "b"
 	searchActionHandoff  contentSearchAction = "h"
 	searchActionRerun    contentSearchAction = "r"
-	searchActionPageDown contentSearchAction = "pgdn"
-	searchActionPageUp   contentSearchAction = "pgup"
-	searchActionDown     contentSearchAction = "down"
-	searchActionUp       contentSearchAction = "up"
-	searchActionHome     contentSearchAction = "home"
-	searchActionEnd      contentSearchAction = "end"
+	// searchActionDetails shows or hides the passage's exact reference.
+	searchActionDetails contentSearchAction = "i"
+	// searchActionTranscript opens the session's transcript.
+	searchActionTranscript contentSearchAction = "t"
+	searchActionPageDown   contentSearchAction = "pgdn"
+	searchActionPageUp     contentSearchAction = "pgup"
+	searchActionDown       contentSearchAction = "down"
+	searchActionUp         contentSearchAction = "up"
+	searchActionHome       contentSearchAction = "home"
+	searchActionEnd        contentSearchAction = "end"
 )
 
 type searchContextResult struct {
@@ -513,7 +522,7 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 			result.err = err
 			return
 		}
-		result.context, result.err = search.ReadContext(ctx, objects, parsersFor(s.env), ref, offset, 4096, 1, 1, reader.Limits{})
+		result.context, result.err = search.ReadContext(ctx, objects, parsersFor(s.env), ref, offset, searchReadBytes, 1, 1, reader.Limits{})
 	}()
 	joined := false
 	join := func() searchContextResult {
@@ -557,75 +566,12 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 		case searchActionNext, searchActionPrevious, searchActionMore, searchActionBack, searchActionHandoff, searchActionRerun:
 			s.pendingAction = answer
 			return search.Surrounding{}, context.Canceled
+		case searchActionDetails, searchActionTranscript:
+			// Applied once the passage is read, which they do not replace.
+			s.afterRead = answer
 		case searchActionNone, searchActionPageDown, searchActionPageUp, searchActionDown, searchActionUp, searchActionHome, searchActionEnd:
 		}
 	}
-}
-
-func searchContextLines(h search.Hit, ref *search.Reference, out search.Surrounding, notice string) []string {
-	var text strings.Builder
-	text.WriteString(archive.DisplayLine(h.Harness) + " / " + archive.DisplayLine(h.SessionID) + "\n" + archive.DisplayLine(h.Title) + "\n")
-	for _, gap := range h.Gaps[:min(len(h.Gaps), 3)] {
-		text.WriteString("Coverage gap: " + oneRow(archive.DisplayLine(gap.RevisionID+": "+gap.Reason), 160) + "\n")
-	}
-	if len(h.Gaps) > 3 {
-		text.WriteString("Additional source coverage gaps are reported in JSON.\n")
-	}
-	if ref == nil {
-		text.WriteString("Title match: no body passage reference. n loads matching body passages if available.\n")
-	} else {
-		revision := "active source"
-		if ref.Source.RevisionID != "" {
-			revision = archive.DisplayLine(ref.Source.RevisionID)
-		}
-		text.WriteString("Source revision: " + revision + "\n")
-		_, _ = fmt.Fprintf(&text, "Reference: message %d · raw bytes %d–%d · source %s\n", ref.Record, ref.Start, ref.End, archive.DisplayLine(ref.Source.Reference.SHA256))
-		for _, v := range out.Before {
-			text.WriteString("[before · " + archive.DisplayLine(v.Role) + "]\n" + searchDisplayText(v.Context.Text) + "\n")
-		}
-		text.WriteString("[selected · " + archive.DisplayLine(out.Role) + "]\n" + searchDisplayText(out.Selected.Text) + "\n")
-		for _, v := range out.After {
-			text.WriteString("[after · " + archive.DisplayLine(v.Role) + "]\n" + searchDisplayText(v.Context.Text) + "\n")
-		}
-		_, _ = fmt.Fprintf(&text, "Passage bytes %d–%d", out.Selected.Start, out.Selected.End)
-		if out.Selected.Next != 0 {
-			_, _ = fmt.Fprintf(&text, "; m more context at raw offset %d", out.Selected.Next)
-		}
-		text.WriteString("\n")
-	}
-	if notice != "" {
-		text.WriteString(archive.DisplayLine(notice) + "\n")
-	}
-	return strings.Split(strings.TrimSuffix(text.String(), "\n"), "\n")
-}
-
-func searchDisplayText(text string) string {
-	lines := strings.Split(text, "\n")
-	for i := range lines {
-		lines[i] = archive.DisplayLine(lines[i])
-	}
-	return strings.Join(lines, "\n")
-}
-
-const searchDetailsQuestion = "↑↓/PgUp/PgDn (or pgup/pgdn) scroll · n next match · p previous match · m more context · h Hand off current session · r rerun · b back · q quit"
-
-func (b *sessionBrowser) drawSearchDetails(lines []string, top int) detailsScreen {
-	if width, _, ok := b.env.terminalSize(b.stdout); ok && width > 0 {
-		var wrapped []string
-		for _, line := range lines {
-			wrapped = append(wrapped, splitColumns(line, width)...)
-		}
-		lines = wrapped
-	}
-	screen, _ := b.measureDetails(lines, top, false, "", browseNotice{})
-	for _, line := range lines[screen.top : screen.top+screen.shown] {
-		terminal.Println(b.stdout, line)
-	}
-	if screen.cut {
-		terminal.Println(b.stdout, scrollIndicator(screen.top, len(lines)-screen.top-screen.shown))
-	}
-	terminal.Println(b.stdout, searchDetailsQuestion)
-	return screen
 }
 
 // searchReadAction consumes only one currently available input action. The
@@ -750,4 +696,16 @@ func (l *sessionPicker) keepSearchSelection(identity string) {
 	l.keep = identity
 	l.start, l.cursor = 0, 0
 	l.memo, l.cache, l.bottom = nil, nil, nil
+}
+
+// hitProject is the name shown for a hit's project: the metadata's name, or
+// the configured label for its project ID, as list and show name it.
+func (s *contentSearchBrowser) hitProject(h search.Hit) string {
+	if h.Project != "" {
+		return archive.DisplayLine(h.Project)
+	}
+	if s.labels == nil {
+		s.labels = projectLabels(s.cfg)
+	}
+	return archive.DisplayLine(s.labels[h.ProjectID])
 }

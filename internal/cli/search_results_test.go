@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -341,8 +342,8 @@ func TestSearchResultRowsEscapeTheirTitles(t *testing.T) {
 func TestSearchEnterOpensTheMatchTheStripShows(t *testing.T) {
 	env := searchProjectsFixture(t)
 	screens := searchScreens(t, env, newFakeKeys("\x1b[B", "n", "\r", "b", "q"), "", "read performance")
-	passage := lastScreenWith(t, screens, "Reference: message")
-	if !strings.Contains(passage, "Reference: message 4 ") || !strings.Contains(passage, "[selected · assistant]\nDone: read performance notes are in dev/bench.") {
+	passage := lastScreenWith(t, screens, searchMatchFooter)
+	if !strings.Contains(passage, "match 2 of 3\n") || !strings.Contains(passage, "  codex › Done: read performance notes are in dev/bench.") {
 		t.Fatalf("Enter did not open the strip's second match:\n%s", passage)
 	}
 }
@@ -422,5 +423,29 @@ func TestSearchSlashRunsThroughTheCancellableLoader(t *testing.T) {
 	screens := searchScreens(t, env, newFakeKeys("/handoff\r", "q"), "", "read performance")
 	if !strings.Contains(strings.Join(screens, "\n"), "Searching… Esc cancels") {
 		t.Fatalf("new query ran without the cancellable search:\n%s", strings.Join(screens, "\n---\n"))
+	}
+}
+
+func TestSearchPassageOpensNearAMatchPastTheFirstRead(t *testing.T) {
+	text := strings.Repeat("é filler ", 700) + "the needle here"
+	ref := &search.Reference{Start: 100, End: 100 + len(text)}
+	start := passageReadStart(&searchMatchState{ref: ref, text: text}, "needle")
+	match := 100 + strings.Index(text, "needle")
+	if start <= ref.Start || start > match || match+len("needle") > start+searchReadBytes || !utf8.RuneStart(text[start-ref.Start]) {
+		t.Fatalf("read starts at %d for a match at %d", start, match)
+	}
+	short := &searchMatchState{ref: &search.Reference{Start: 7, End: 7 + 12}, text: "a needle now"}
+	if got := passageReadStart(short, "needle"); got != 7 {
+		t.Fatalf("a match in the first read moved the start to %d", got)
+	}
+}
+
+func TestSearchRowsUseTheConfiguredLabelWithoutAProjectName(t *testing.T) {
+	s := &contentSearchBrowser{labels: projectLabels(config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{{Root: "/synthetic/labeled-repo", ProjectID: "p1", Included: true}}}})}
+	if got := s.hitProject(search.Hit{ProjectID: "p1"}); got != "labeled-repo" {
+		t.Fatalf("project %q", got)
+	}
+	if got := s.hitProject(search.Hit{Project: "named", ProjectID: "p1"}); got != "named" {
+		t.Fatalf("metadata name lost: %q", got)
 	}
 }
