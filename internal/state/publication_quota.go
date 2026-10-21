@@ -249,7 +249,18 @@ func (q *durableQuota) scanPublished(ctx context.Context, remaining *int, u *dur
 	}
 }
 
-func (q *durableQuota) publishedAdditional(ctx context.Context, path string, old os.FileInfo, n int64) (int64, error) {
+// chargedInFull is the at-rest charge of a new file that counts its whole size.
+const chargedInFull int64 = -1
+
+// publishedAdditional is the quota growth for replacing published path (old,
+// or nil when absent) with n bytes that will count charge at rest. A file
+// charged in full needs room for its own double charge and for the old file
+// beside it until the rename. Settled published state (charge >= 0) is cache
+// outside the quota apart from its charge, so it needs only the transient copy,
+// covered first by the old file's atomic-copy allowance, and its new charge.
+// A copy left by an interrupted write holds the census in recovery until it
+// is swept, whatever was reserved for it.
+func (q *durableQuota) publishedAdditional(ctx context.Context, path string, old os.FileInfo, n, charge int64) (int64, error) {
 	if n < 0 || n > durableStorageQuota/2 {
 		return 0, ErrDurableStorageCapacity
 	}
@@ -267,7 +278,10 @@ func (q *durableQuota) publishedAdditional(ctx context.Context, path string, old
 		c = 2 * charged
 	}
 	// n <= Q/2 and o <= Q: these expressions cannot overflow int64.
-	return max(int64(0), o+n-c, 2*n-c), nil
+	if charge < 0 {
+		return max(int64(0), o+n-c, 2*n-c), nil
+	}
+	return max(int64(0), n-c/2, 2*min(charge, n)-c), nil
 }
 
 func legacyBlockedPublicationControl(p publishedState) bool {

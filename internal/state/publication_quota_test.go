@@ -53,7 +53,7 @@ func TestPublicationQuotaLegacyReplacementHasNoCredit(t *testing.T) {
 		if usage.charged != 0 {
 			t.Fatal("legacy gained lifetime charge", usage)
 		}
-		extra, e := q.publishedAdditional(t.Context(), path, info, 1024)
+		extra, e := q.publishedAdditional(t.Context(), path, info, 1024, chargedInFull)
 		if e != nil {
 			return e
 		}

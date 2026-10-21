@@ -124,7 +124,7 @@ func TestPublicationAccountingLargePeersSurvivePressureAndSavedRefresh(t *testin
 		if e != nil {
 			return e
 		}
-		charge, e := q.publishedAdditional(t.Context(), path, info, 64)
+		charge, e := q.publishedAdditional(t.Context(), path, info, 64, chargedInFull)
 		if e != nil {
 			return e
 		}

@@ -319,10 +319,13 @@ type durableCommitCheck struct {
 }
 
 func (q *durableQuota) writeWithHeadroomContext(ctx context.Context, path string, n int64, write func(io.Writer) error, commit func(func() error) error, headroom int64) (err error) {
-	return q.writeWithCommitContext(ctx, path, n, write, durableCommitCheck{plain: commit}, headroom)
+	return q.writeWithCommitContext(ctx, path, n, write, durableCommitCheck{plain: commit}, headroom, chargedInFull)
 }
 
-func (q *durableQuota) writeWithCommitContext(ctx context.Context, path string, n int64, write func(io.Writer) error, commit durableCommitCheck, headroom int64) (err error) {
+// writeWithCommitContext atomically writes path under the quota lock. charge
+// is what the new file will count at rest (publishedCharge), or chargedInFull
+// when it counts its whole size.
+func (q *durableQuota) writeWithCommitContext(ctx context.Context, path string, n int64, write func(io.Writer) error, commit durableCommitCheck, headroom, charge int64) (err error) {
 	if n < 0 || n > durableStorageQuota/2 {
 		return ErrDurableStorageCapacity
 	}
@@ -342,7 +345,7 @@ func (q *durableQuota) writeWithCommitContext(ctx context.Context, path string, 
 	}
 	additional := max(int64(0), 2*n-2*old)
 	if filepath.Dir(path) == "published" {
-		additional, err = q.publishedAdditional(ctx, path, info, n)
+		additional, err = q.publishedAdditional(ctx, path, info, n, charge)
 		if err != nil {
 			return err
 		}
@@ -532,7 +535,7 @@ func (s *Store) writeDurableGuardCommit(ctx context.Context, g config.DurableSto
 	} else if streamed {
 		encode = func(w io.Writer) error { return streamJSON(ctx, w, p, reservation) }
 	}
-	return q.writeWithCommitContext(ctx, path, n, encode, commit, headroom)
+	return q.writeWithCommitContext(ctx, path, n, encode, commit, headroom, chargedInFull)
 }
 
 func (s *Store) stagePendingSourceGuard(g config.DurableStorageGuard, id string, ref archive.SourceReference, data []byte) (err error) {
@@ -580,10 +583,10 @@ func chargeDurableFile(path, name string, size int64, u *durableUsage) error {
 // writeDurableGuardDigest retains the exact emitted digest only after guarded
 // atomic publication succeeds. It never substitutes disk quota for a memory lease.
 func (s *Store) writeDurableGuardDigest(ctx context.Context, g config.DurableStorageGuard, path string, p any) (sum [32]byte, n int64, err error) {
-	return s.writeDurableGuardDigestChecked(ctx, g, path, p, nil)
+	return s.writeDurableGuardDigestChecked(ctx, g, path, p, nil, chargedInFull)
 }
 
-func (s *Store) writeDurableGuardDigestChecked(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit func(*local.AtomicWriteWitness, func() error) error) (sum [32]byte, n int64, err error) {
+func (s *Store) writeDurableGuardDigestChecked(ctx context.Context, g config.DurableStorageGuard, path string, p any, commit func(*local.AtomicWriteWitness, func() error) error, charge int64) (sum [32]byte, n int64, err error) {
 	if err = g.CheckHome(s.home); err != nil {
 		return sum, n, err
 	}
@@ -627,7 +630,7 @@ func (s *Store) writeDurableGuardDigestChecked(ctx context.Context, g config.Dur
 			return errors.Join(errStateBudget, e)
 		}
 		return e
-	}, durableCommitCheck{witnessed: commit}, 0)
+	}, durableCommitCheck{witnessed: commit}, 0, charge)
 	if err == nil {
 		copy(sum[:], hash.Sum(nil))
 		n = emitted
