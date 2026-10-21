@@ -222,8 +222,10 @@ var (
 	ErrUnavailable = errors.New("search source unavailable")
 )
 
-// Context contains a bounded byte interval within the referenced passage.
-// Next is an absolute byte offset; zero means the passage is complete.
+// Context contains a bounded byte interval within the referenced message.
+// Next is an absolute byte offset to read on from, into a later passage of
+// the same message when this passage ends first; zero means the message is
+// complete.
 type Context struct {
 	Text  string `json:"Text"`
 	Start int    `json:"Start"`
@@ -247,9 +249,11 @@ type Surrounding struct {
 }
 
 // ReadContext verifies and interprets one source once for all requested slices.
+// offset may lie past ref's passage in a later passage of the same message,
+// as a Next read on from the end of ref's passage does.
 func ReadContext(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, ref Reference, offset, maxBytes, before, after int, limits reader.Limits) (Surrounding, error) {
 	out := Surrounding{Before: []ContextSlice{}, After: []ContextSlice{}}
-	if maxBytes < 4 || maxBytes > passageBytes || offset < ref.Start || offset > ref.End || before < 0 || before > 2 || after < 0 || after > 2 {
+	if maxBytes < 4 || maxBytes > passageBytes || offset < ref.Start || before < 0 || before > 2 || after < 0 || after > 2 {
 		return out, errors.New("invalid search context bounds")
 	}
 	p, err := verifiedReferenceProjection(ctx, objects, parsers, ref, limits)
@@ -267,7 +271,7 @@ func ReadContext(ctx context.Context, objects storage.ObjectStore, parsers agent
 		return out, ErrChanged
 	}
 	out.Role = p.Passages[selected].Role
-	out.Selected, err = sliceContext(p.Passages[selected], offset, maxBytes)
+	out.Selected, err = readMessage(p.Passages, selected, offset, maxBytes)
 	if err != nil {
 		return out, err
 	}
@@ -279,11 +283,11 @@ func ReadContext(ctx context.Context, objects storage.ObjectStore, parsers agent
 		}
 		seen[v.Reference.Record] = true
 		// Return the first chunk of the neighboring message, preserving continuation.
-		for i > 0 && p.Passages[i-1].Reference.Record == v.Reference.Record {
+		for i > 0 && continues(p.Passages[i-1], v) {
 			i--
 			v = p.Passages[i]
 		}
-		c, e := sliceContext(v, v.Reference.Start, maxBytes)
+		c, e := readMessage(p.Passages, i, v.Reference.Start, maxBytes)
 		if e != nil {
 			return out, e
 		}
@@ -295,13 +299,34 @@ func ReadContext(ctx context.Context, objects storage.ObjectStore, parsers agent
 			continue
 		}
 		seen[v.Reference.Record] = true
-		c, e := sliceContext(v, v.Reference.Start, maxBytes)
+		c, e := readMessage(p.Passages, i, v.Reference.Start, maxBytes)
 		if e != nil {
 			return out, e
 		}
 		out.After = append(out.After, ContextSlice{v.Reference, v.Role, c})
 	}
 	return out, nil
+}
+
+// readMessage reads maxBytes of the message passages[i] begins from offset,
+// which may lie in a later passage of the message: they follow each other
+// and overlap, so the read is from the first that holds offset. Next is set
+// while the message continues, past this passage too.
+func readMessage(passages []Passage, i, offset, maxBytes int) (Context, error) {
+	for offset >= passages[i].Reference.End && i+1 < len(passages) && continues(passages[i], passages[i+1]) {
+		i++
+	}
+	out, err := sliceContext(passages[i], offset, maxBytes)
+	if err == nil && out.Next == 0 && i+1 < len(passages) && continues(passages[i], passages[i+1]) {
+		out.Next = out.End
+	}
+	return out, err
+}
+
+// continues reports that next is the passage after p in the same message:
+// one record can hold several messages, each indexed from its own start.
+func continues(p, next Passage) bool {
+	return next.Reference.Record == p.Reference.Record && next.Reference.Start > p.Reference.Start && next.Reference.Start < p.Reference.End
 }
 
 func sliceContext(passage Passage, offset, maxBytes int) (Context, error) {

@@ -40,7 +40,7 @@ type contentSearchBrowser struct {
 	// labels are the configured project labels, read once for hitProject.
 	labels map[string]string
 	// afterRead is an action typed while the passage loaded that applies to
-	// it once read: i or t.
+	// it once read: i, t or m.
 	afterRead contentSearchAction
 	// style and now are the screen's color and clock, for the rows, the
 	// heading and the detail strip.
@@ -502,9 +502,14 @@ type searchContextResult struct {
 	panicValue any
 }
 
+// searchLoadingNotice says a passage is loading and how to stop it.
+const searchLoadingNotice = "Loading selected passage… Esc cancels"
+
 // readSearchSelection services cancellation while the finite selected-source
-// read runs. The deferred join precedes every return and store/browser cleanup.
-func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Reference, offset int) (search.Surrounding, error) {
+// read runs, saying so on a line of its own unless shown says the caller
+// showed it. The deferred join precedes every return and store/browser
+// cleanup.
+func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Reference, offset int, shown bool) (search.Surrounding, error) {
 	s := b.search
 	s.generation++
 	generation := s.generation
@@ -539,7 +544,9 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 			join()
 		}
 	}()
-	terminal.Println(b.stdout, "Loading selected passage… Esc cancels")
+	if !shown {
+		terminal.Println(b.stdout, searchLoadingNotice)
+	}
 	for {
 		select {
 		case r := <-done:
@@ -547,8 +554,12 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 			if r.panicValue != nil {
 				panic(r.panicValue)
 			}
-			if r.generation != s.generation || ctx.Err() != nil {
+			if r.generation != s.generation {
 				return search.Surrounding{}, context.Canceled
+			}
+			if err := ctx.Err(); err != nil {
+				// Out of time, even when the read ended with the deadline.
+				return search.Surrounding{}, err
 			}
 			return r.context, r.err
 		case <-ctx.Done():
@@ -557,16 +568,18 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 		}
 		answer, err := b.searchReadAction()
 		if err != nil {
+			// Esc cancels what was typed for the passage with its read.
+			s.afterRead = searchActionNone
 			return search.Surrounding{}, err
 		}
 		switch answer {
 		case searchActionQuit:
 			b.list.operationQuit = true
 			return search.Surrounding{}, context.Canceled
-		case searchActionNext, searchActionPrevious, searchActionMore, searchActionBack, searchActionHandoff, searchActionRerun:
+		case searchActionNext, searchActionPrevious, searchActionBack, searchActionHandoff, searchActionRerun:
 			s.pendingAction = answer
 			return search.Surrounding{}, context.Canceled
-		case searchActionDetails, searchActionTranscript:
+		case searchActionDetails, searchActionTranscript, searchActionMore:
 			// Applied once the passage is read, which they do not replace.
 			s.afterRead = answer
 		case searchActionNone, searchActionPageDown, searchActionPageUp, searchActionDown, searchActionUp, searchActionHome, searchActionEnd:

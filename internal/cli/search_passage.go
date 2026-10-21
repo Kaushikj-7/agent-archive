@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -17,7 +18,11 @@ import (
 // laid out as show lays out a session.
 
 // searchMatchFooter is the footer under a matching passage: its keys.
-const searchMatchFooter = "n/p next/previous match   ↑↓ scroll   t transcript   h hand off   i details   b back   q quit"
+const searchMatchFooter = "n/p match   ↑↓ scroll   m more   t transcript   h hand off   i details   b back   q quit"
+
+// searchSeekContext is how many lines above its first highlighted line a
+// match that opens below the first screen is shown from.
+const searchSeekContext = 2
 
 // searchNeighborLines is how many lines of the message before and after the
 // match the passage shows until m shows them whole.
@@ -47,8 +52,9 @@ type passageMessage struct {
 // highlighted, and the message after (dim), each led by who wrote it with
 // its lines hung under its first. A neighbor longer than searchNeighborLines
 // is cut, saying how many more lines m shows. With view.details, the exact
-// reference follows.
-func (s *contentSearchBrowser) passageLines(hit search.Hit, st *searchMatchState, out search.Surrounding, width int, view passageView) (lines []string, cut bool) {
+// reference follows. match is the index of the first line with a matched
+// term, or -1.
+func (s *contentSearchBrowser) passageLines(hit search.Hit, st *searchMatchState, out search.Surrounding, width int, view passageView) (lines []string, cut bool, match int) {
 	if width <= 0 {
 		width = unknownRuleWidth * 2
 	}
@@ -90,9 +96,14 @@ func (s *contentSearchBrowser) passageLines(hit search.Hit, st *searchMatchState
 	for _, m := range messages {
 		labelWidth = max(labelWidth, visibleWidth(searchRole(m.role, hit.Harness)+" ›"))
 	}
+	match = -1
 	for _, m := range messages {
-		shown, cutHere := s.messageLines(hit, m, labelWidth, width, view.expanded)
-		lines = append(append(lines, ""), shown...)
+		shown, cutHere, first := s.messageLines(hit, m, labelWidth, width, view.expanded)
+		lines = append(lines, "")
+		if match < 0 && first >= 0 {
+			match = len(lines) + first
+		}
+		lines = append(lines, shown...)
 		cut = cut || cutHere
 	}
 	if st.ref == nil && hit.MatchCount > 1 {
@@ -102,29 +113,34 @@ func (s *contentSearchBrowser) passageLines(hit search.Hit, st *searchMatchState
 		lines = append(lines, "")
 		lines = append(lines, s.passageDetails(hit, st.ref, out, width)...)
 	}
-	return lines, cut
+	return lines, cut, match
 }
 
 // messageLines is one message of the passage: two spaces, who wrote it
 // padded to labelWidth, then its text wrapped to what is left of width, each
 // further line set in under the first. The match is plain with its terms
 // highlighted, a neighbor dim and, unless expanded, cut to
-// searchNeighborLines; cut reports that it was.
-func (s *contentSearchBrowser) messageLines(hit search.Hit, m passageMessage, labelWidth, width int, expanded bool) (lines []string, cut bool) {
+// searchNeighborLines; cut reports that it was. first is the index of the
+// first line with a matched term, or -1.
+func (s *contentSearchBrowser) messageLines(hit search.Hit, m passageMessage, labelWidth, width int, expanded bool) (lines []string, cut bool, first int) {
 	label := searchRole(m.role, hit.Harness) + " ›"
 	indent := 2 + labelWidth + 1
 	textWidth := max(width-indent, 20)
 	var text []string
+	first = -1
 	if m.selected {
-		text = highlightedLines(s.opts.query.Text, m.text, textWidth, s.style)
+		text, first = highlightedLines(s.opts.query.Text, m.text, textWidth, s.style)
 	} else {
-		text = highlightedLines("", m.text, textWidth, textStyle{})
+		text, _ = highlightedLines("", m.text, textWidth, textStyle{})
 		for i := range text {
 			text[i] = s.style.dim(text[i])
 		}
 	}
 	if m.cutStart {
 		text = append([]string{s.style.dim("…")}, text...)
+		if first >= 0 {
+			first++
+		}
 	}
 	if !m.selected && !expanded && len(text) > searchNeighborLines {
 		cut = true
@@ -149,7 +165,7 @@ func (s *contentSearchBrowser) messageLines(hit search.Hit, m passageMessage, la
 	if len(lines) == 0 {
 		lines = append(lines, "  "+shownLabel)
 	}
-	return lines, cut
+	return lines, cut, first
 }
 
 // passageDetails is what i shows under the passage, dim: the session's full
@@ -165,10 +181,10 @@ func (s *contentSearchBrowser) passageDetails(hit search.Hit, ref *search.Refere
 			revision = archive.DisplayLine(ref.Source.RevisionID)
 		}
 		facts = append(facts, "Source revision: "+revision,
-			fmt.Sprintf("Reference: message %d · raw bytes %d–%d · source %s", ref.Record, ref.Start, ref.End, archive.DisplayLine(ref.Source.Reference.SHA256)))
+			fmt.Sprintf("Reference: record %d · text bytes %d–%d · source %s", ref.Record, ref.Start, ref.End, archive.DisplayLine(ref.Source.Reference.SHA256)))
 		passage := fmt.Sprintf("Passage bytes %d–%d", out.Selected.Start, out.Selected.End)
 		if out.Selected.Next != 0 {
-			passage += fmt.Sprintf("; m reads on from raw offset %d", out.Selected.Next)
+			passage += fmt.Sprintf("; m reads on from text byte %d", out.Selected.Next)
 		}
 		facts = append(facts, passage)
 	}
@@ -199,19 +215,54 @@ type openPassage struct {
 	cut    bool
 	top    int
 	notice string
+	// unread is set while the last read was cancelled or timed out, with
+	// retry the offset m reads from again.
+	unread bool
+	retry  int
+	// seek scrolls the next drawing to the match's first highlighted line,
+	// as a match opens.
+	seek bool
+	// lines are the passage last drawn, nil until it is.
+	lines []string
 }
 
 // read reads the shown match's exact source from offset; a title match has
-// none to read.
+// none to read. A read cancelled or out of time leaves what was shown, and
+// m tries it again.
 func (p *openPassage) read(ctx context.Context, offset int) {
-	p.out = search.Surrounding{}
 	if p.state.ref == nil {
+		p.out = search.Surrounding{}
 		return
 	}
-	var err error
-	p.out, err = p.b.readSearchSelection(ctx, *p.state.ref, offset)
-	// A key that replaced the read says what happens instead.
-	if err != nil && (p.b.search.pendingAction == searchActionNone || !errors.Is(err, context.Canceled)) {
+	s := p.b.search
+	// A passage on screen says it is loading in its notice row, which keeps
+	// the screen to the terminal's height.
+	if p.lines != nil {
+		p.b.screen.clear()
+		p.b.drawSearchDetails(p.lines, p.top, -1, searchLoadingNotice)
+	}
+	out, err := p.b.readSearchSelection(ctx, *p.state.ref, offset, p.lines != nil)
+	p.unread = false
+	if err != nil && s.afterRead == searchActionMore {
+		// An m typed while it loaded is for a passage that was read.
+		s.afterRead = searchActionNone
+	}
+	switch {
+	case err == nil:
+		p.out = out
+		return
+	case errors.Is(err, context.Canceled) && s.pendingAction != searchActionNone:
+		// A key that replaced the read says what happens instead.
+		p.out = search.Surrounding{}
+		return
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		p.unread, p.retry = true, offset
+		p.notice = "Not loaded · m loads it · b goes back"
+		if errors.Is(err, context.DeadlineExceeded) {
+			p.notice = "Not loaded in 30s · m tries again · b goes back"
+		}
+	default:
+		p.out = search.Surrounding{}
 		p.notice = err.Error()
 	}
 }
@@ -231,7 +282,7 @@ func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browse
 	// An i or t typed while a passage loaded is for that passage only.
 	s.afterRead = searchActionNone
 	defer func() { s.afterRead = searchActionNone }()
-	p := &openPassage{b: b, row: row, hit: hit, state: s.matchState(hit)}
+	p := &openPassage{b: b, row: row, hit: hit, state: s.matchState(hit), seek: true}
 	if p.state.ref != nil {
 		p.read(ctx, passageReadStart(p.state, s.opts.query.Text))
 	}
@@ -241,9 +292,13 @@ func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browse
 		}
 		b.screen.clear()
 		width, _, _ := b.env.terminalSize(b.stdout)
-		var lines []string
-		lines, p.cut = s.passageLines(hit, p.state, p.out, width, p.view)
-		screen := b.drawSearchDetails(lines, p.top, p.notice)
+		lines, cut, match := s.passageLines(hit, p.state, p.out, width, p.view)
+		p.cut = cut
+		if !p.seek {
+			match = -1
+		}
+		screen := b.drawSearchDetails(lines, p.top, match, p.notice)
+		p.top, p.seek, p.lines = screen.top, false, lines
 		p.notice = ""
 		answer := s.pendingAction
 		s.pendingAction = searchActionNone
@@ -299,11 +354,20 @@ func (p *openPassage) apply(ctx context.Context, answer contentSearchAction, scr
 		p.notice = failure
 	case searchActionMore:
 		switch {
+		case p.unread:
+			// Nothing loaded is a match opening, which scrolls to it.
+			opening := p.out.Selected.Text == "" && p.out.Selected.End == 0
+			p.read(ctx, p.retry)
+			if !p.unread {
+				p.top, p.seek = 0, opening
+			}
 		case p.cut:
 			p.view.expanded = true
 		case p.state.ref != nil && p.out.Selected.Next != 0:
 			p.read(ctx, p.out.Selected.Next)
-			p.top = 0
+			if !p.unread {
+				p.top = 0
+			}
 		default:
 			p.notice = "Nothing more of these messages to show."
 		}
@@ -320,7 +384,7 @@ func (p *openPassage) apply(ctx context.Context, answer contentSearchAction, scr
 		if p.state.ref != nil {
 			p.read(ctx, passageReadStart(p.state, s.opts.query.Text))
 		}
-		p.view.expanded, p.top = false, 0
+		p.view.expanded, p.top, p.seek = false, 0, true
 	default:
 		p.notice = "Press n or p for another match, t for the transcript, b for the results, or q to quit."
 	}
@@ -343,16 +407,26 @@ func (b *sessionBrowser) searchTranscript(ctx context.Context, row listRow) (bro
 }
 
 // drawSearchDetails draws the passage from line top, as much as fits above
-// the scroll indicator, the notice (or a blank line), and the footer.
-func (b *sessionBrowser) drawSearchDetails(lines []string, top int, notice string) detailsScreen {
+// the scroll indicator, the notice (or a blank line), and the footer. A seek
+// of zero or more is a line to scroll to, a few lines down, when the screen
+// from top would not show it.
+func (b *sessionBrowser) drawSearchDetails(lines []string, top, seek int, notice string) detailsScreen {
 	if width, _, ok := b.env.terminalSize(b.stdout); ok && width > 0 {
 		var wrapped []string
-		for _, line := range lines {
+		row := -1
+		for i, line := range lines {
+			if i == seek {
+				row = len(wrapped)
+			}
 			wrapped = append(wrapped, splitColumns(line, width)...)
 		}
-		lines = wrapped
+		lines, seek = wrapped, row
 	}
-	screen, shown := b.measureDetails(lines, top, false, "", browseNotice{text: archive.DisplayLine(notice)})
+	shownNotice := browseNotice{text: archive.DisplayLine(notice)}
+	screen, shown := b.measureDetails(lines, top, false, "", shownNotice)
+	if seek >= 0 && (seek < screen.top || seek >= screen.top+screen.shown) {
+		screen, shown = b.measureDetails(lines, seek-searchSeekContext, false, "", shownNotice)
+	}
 	var frame strings.Builder
 	for _, line := range lines[screen.top : screen.top+screen.shown] {
 		frame.WriteString(line + "\n")
@@ -367,14 +441,18 @@ func (b *sessionBrowser) drawSearchDetails(lines []string, top int, notice strin
 }
 
 // highlightedLines is text wrapped to width with every term of query
-// highlighted, line breaks kept.
-func highlightedLines(query, text string, width int, style textStyle) []string {
+// highlighted, line breaks kept. first is the index of the first line with
+// a highlighted term, or -1.
+func highlightedLines(query, text string, width int, style textStyle) (out []string, first int) {
 	cells := passageCells(text, search.MatchSpans(query, text), true)
-	var out []string
+	first = -1
 	for _, l := range wrapCells(cells, width) {
+		if first < 0 && slices.ContainsFunc(cells[l.start:l.end], func(c passageCell) bool { return c.hit }) {
+			first = len(out)
+		}
 		out = append(out, renderCells(cells[l.start:l.end], style))
 	}
-	return out
+	return out, first
 }
 
 // searchReadBytes is how much of a message one passage read returns.

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -355,6 +357,93 @@ func TestDirectSearchCountsSessionsThatCouldNotBeRead(t *testing.T) {
 		t.Fatalf("%d %s %s", code, errOut, out)
 	}
 	assertNoSearchIndex(t, env)
+}
+
+// refusingStore fails every read of the named keys, as a dropped network
+// connection would.
+type refusingStore struct {
+	storage.ObjectStore
+	fail []string
+}
+
+func (s refusingStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if slices.Contains(s.fail, key) {
+		return nil, errors.New("dial tcp: connection refused")
+	}
+	return s.ObjectStore.Get(ctx, key)
+}
+
+func (s refusingStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if slices.Contains(s.fail, key) {
+		return nil, errors.New("dial tcp: connection refused")
+	}
+	return s.ObjectStore.(storage.LimitedGetter).GetLimited(ctx, key, limit)
+}
+
+func TestDirectSearchStopsWhenSessionsKeepFailingToRead(t *testing.T) {
+	t.Parallel()
+	sessions := make([]directSession, directSearchFailureLimit+1)
+	for i := range sessions {
+		sessions[i] = directSession{fmt.Sprintf("native-%d", i), 0, "checksum"}
+	}
+	env, objects, _, sources := directSearchFixture(t, sessions)
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		return refusingStore{ObjectStore: objects.ObjectStore, fail: sources}, nil
+	}
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 1 || strings.Contains(out, "Searched all") {
+		t.Fatalf("kept searching after the bucket stopped answering: %d %s %s", code, errOut, out)
+	}
+	for _, want := range []string{"search: 5 sessions in a row could not be read: dial tcp: connection refused", "Check your network connection", "\n  agent-archive status\n"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("missing %q:\n%s", want, errOut)
+		}
+	}
+}
+
+// A session deleted after the listing was read is rechecked against the
+// bucket before its text is installed, as refresh does.
+func TestDirectSearchSkipsASessionDeletedSinceTheListing(t *testing.T) {
+	t.Parallel()
+	env, objects, ids, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}})
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	key, err := archive.MetadataObjectKey("codex", ids[0])
+	must(t, err)
+	must(t, objects.Delete(t.Context(), key))
+	index, err := search.OpenMemory(t.Context(), "test/context")
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}}
+	count, unread, err := scan.session(t.Context(), listed[0])
+	if err != nil || unread != nil || count != 0 {
+		t.Fatalf("deleted session searched: %d matches, unread %v, %v", count, unread, err)
+	}
+}
+
+// Esc after a session is read but before it is counted leaves none of its
+// text for the results browser.
+func TestDirectSearchEscAfterAReadKeepsNoUncountedText(t *testing.T) {
+	t.Parallel()
+	env, objects, ids, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}})
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	index, err := search.OpenMemory(t.Context(), "test/context")
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}, ran: cancel}
+	why, err := scan.run(ctx, make(chan directMatch))
+	if why != directScanStopped || err != nil {
+		t.Fatalf("%s %v", why, err)
+	}
+	if searched, _ := scan.counts(); searched != 0 {
+		t.Fatalf("counted the session cut short: %d", searched)
+	}
+	if count, e := index.SessionMatches(t.Context(), search.Query{Text: "checksum"}, "codex", ids[0]); e != nil || count != 0 {
+		t.Fatalf("uncounted session left %d matching passages (%v)", count, e)
+	}
 }
 
 // A session read directly keeps its passages only when it matches.
