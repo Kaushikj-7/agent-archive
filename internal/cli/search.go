@@ -29,6 +29,11 @@ type contentSearchOptions struct {
 	// ask is bare search on a terminal: the query is asked for once the
 	// configuration is known, and flags that need a query are allowed.
 	ask bool
+	// direct is set when the results come from a direct bucket search, to
+	// what it searched ("Searched the newest 104 of 2,350 sessions"). Its
+	// store holds only the matching text of the scope it scanned, so the
+	// browser offers no new query or wider scope over it.
+	direct string
 	// prompt is the terminal prompter startInteractiveSearch asked through,
 	// or nil when nothing was asked; it keeps the answers typed ahead.
 	prompt *prompter

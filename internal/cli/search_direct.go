@@ -104,6 +104,16 @@ type directScan struct {
 // directSessionKey identifies a session among those a direct search reads.
 func directSessionKey(m archive.Metadata) string { return m.Harness.Name + "/" + m.SessionID }
 
+// searchedText says how much of the bucket the results cover, for the
+// results browser's coverage line.
+func (s *directScan) searchedText() string {
+	searched, _ := s.counts()
+	if searched >= s.total {
+		return "Searched all " + sessionsText(s.total) + " in the bucket"
+	}
+	return "Searched the newest " + countText(searched) + " of " + sessionsText(s.total) + " in the bucket"
+}
+
 // unreadable is how many sessions searched so far could not be read.
 func (s *directScan) unreadable() int {
 	s.mu.Lock()
@@ -304,6 +314,7 @@ func runDirectSearch(ctx context.Context, cfg config.Config, namespace string, s
 		return nil, searchCommandError(stderr, err)
 	}
 	browsing = true
+	opts.direct = scan.searchedText()
 	return &directResults{index: index, page: page, opts: opts}, 0
 }
 

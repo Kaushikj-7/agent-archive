@@ -341,9 +341,12 @@ func (l *sessionPicker) listRune(r rune, screen listScreen, typed string) (strin
 	case typed == "" && l.toggles && (r == 'a' || r == 'A'):
 		return "", listToggle
 	case typed == "" && r == '/' && l.contentSearch != nil:
-		// A new query, asked for by the browser around the list.
-		l.contentSearch.request = searchRequestQuery
-		return "", listQuit
+		// A new query, asked for by the browser around the list; results
+		// from a direct bucket search cannot take one.
+		if l.contentSearch.canNewSearch() {
+			l.contentSearch.request = searchRequestQuery
+			return "", listQuit
+		}
 	case typed == "" && r == '/':
 		// The highlight stays where it is until words are typed, so Esc
 		// with none typed comes back to the same row. Moving past the end
@@ -984,7 +987,10 @@ type footerKey struct {
 func (l *sessionPicker) footerLine(s listScreen, action string) string {
 	var keys []footerKey
 	if search := l.contentSearch; search != nil && !l.filtering {
-		keys = []footerKey{{"↑↓ move", 2}, {"Enter " + action, 0}, {"n/p match", 4}, {"/ new search", 3}}
+		keys = []footerKey{{"↑↓ move", 2}, {"Enter " + action, 0}, {"n/p match", 4}}
+		if search.canNewSearch() {
+			keys = append(keys, footerKey{"/ new search", 3})
+		}
 		if search.canToggleScope() {
 			keys = append(keys, footerKey{"Tab scope", 5})
 		}
