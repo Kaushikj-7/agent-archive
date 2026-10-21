@@ -494,7 +494,7 @@ func TestStatusOverviewNamesTheCommandThatFixesItsProblem(t *testing.T) {
 		{"another installation", func(t *testing.T, _ string, env *Env, _ config.Config, _ statusSummary) {
 			t.Helper()
 			env.Scheduler = newFakeScheduler(t, string(scheduler.AnotherInstallation))
-		}, "agent-archive setup"},
+		}, "agent-archive status --issues"},
 		{"collector executable unavailable", func(t *testing.T, home string, env *Env, _ config.Config, _ statusSummary) {
 			t.Helper()
 			userHome, err := env.userHomeDir()
