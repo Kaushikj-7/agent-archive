@@ -193,8 +193,8 @@ run `agent-archive sync`; status itself does not start collection. Queue and upl
 figures describe the last recorded check, rather than work arriving since then.
 **Needs attention** names one recorded failure or a broken background job.
 Under the problem, status prints the command that fixes it when one does:
-`agent-archive setup` for a job that is not scheduled or belongs to another
-installation, `agent-archive setup --refresh` for a missing installed
+`agent-archive setup` for a job that is not scheduled,
+`agent-archive setup --refresh` for a missing installed
 executable, and `agent-archive sync` for a missing or old summary or failed
 storage access. Otherwise it prints `agent-archive status --issues`.
 

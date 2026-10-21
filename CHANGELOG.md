@@ -10,7 +10,7 @@ follow [Semantic Versioning](https://semver.org/).
 
 - `agent-archive status` prints the command that fixes its problem when it
   knows one, on its own line: `agent-archive setup` when background
-  collection is not scheduled or belongs to another installation,
+  collection is not scheduled,
   `agent-archive setup --refresh` when the installed collector is missing,
   and `agent-archive sync` when there is no recent collection result or
   storage access failed. `status --issues` prints a group's `agent-archive
