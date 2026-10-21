@@ -36,7 +36,7 @@ def native_environment():
     if arch is None:
         raise Failure('unsupported native architecture')
     return {'GOOS': 'darwin', 'GOARCH': arch, 'CGO_ENABLED': '1',
-            'GOMAXPROCS': '2', 'GOFLAGS': '', 'GOEXPERIMENT': '', 'GOTOOLCHAIN': 'go1.27.2',
+            'GOMAXPROCS': '2', 'GOFLAGS': '', 'GOEXPERIMENT': '', 'GOTOOLCHAIN': 'go1.27.3',
             'AGENT_ARCHIVE_REAL_SYSTEMD': '0'}
 
 

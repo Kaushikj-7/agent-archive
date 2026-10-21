@@ -22,7 +22,7 @@ contributions are held to a few firm rules; everything else is ordinary Go.
 
 ## Set up
 
-- Go **1.27.2** exactly: go.mod's `toolchain` line, which any `go`
+- Go **1.27.3** exactly: go.mod's `toolchain` line, which any `go`
   command from Go 1.21 on downloads for you. CI refuses any other version.
 - macOS with Xcode's command line tools (`xcode-select --install`): the
   Keychain code uses cgo and Security.framework. Or Linux, which needs only

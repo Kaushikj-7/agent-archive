@@ -180,7 +180,7 @@ class LinuxFullMemoryTest(unittest.TestCase):
                     log.write(json.dumps([tool, args, os.environ.get('GOMEMLIMIT')]) + '\\n')
                 if tool == 'go':
                     if args == ['version']:
-                        print('go version go1.27.2 linux/amd64')
+                        print('go version go1.27.3 linux/amd64')
                     elif args == ['test', 'full-linux-fixture']:
                         if os.environ.get('GOMEMLIMIT') != '3GiB':
                             sys.exit('full Linux child has no 3GiB Go memory budget')

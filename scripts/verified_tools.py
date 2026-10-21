@@ -23,7 +23,7 @@ def inspect(binary, name, command=subprocess.check_output):
         raise InvalidContext('tool is not a regular executable')
     output = command(['go', 'version', '-m', str(binary)], timeout=30).decode()
     fields = [line.strip().split('\t') for line in output.splitlines()[1:]]
-    if (not output.splitlines()[0].endswith(': go1.27.2')
+    if (not output.splitlines()[0].endswith(': go1.27.3')
             or ['path', package] not in fields
             or not any(row[:3] == ['mod', module, version] for row in fields)
             or any(row[0] == '=>' for row in fields)):
@@ -33,7 +33,7 @@ def inspect(binary, name, command=subprocess.check_output):
         if ['build', key+'='+value] not in fields:
             raise InvalidContext('tool build architecture/cgo differs')
     return {'package': package, 'module': module, 'version': version,
-            'compiler': 'go1.27.2', 'build': values,
+            'compiler': 'go1.27.3', 'build': values,
             'sha256': hashlib.sha256(binary.read_bytes()).hexdigest()}
 
 

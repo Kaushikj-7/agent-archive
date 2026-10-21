@@ -106,7 +106,7 @@ def make_manifest(directory, tag, commit, repo, run_id, notary_dir):
         require(result.get('status') == 'Accepted' and result.get('id'), 'notarization not accepted')
         notary[arch] = {'id': result['id'], 'status': 'Accepted'}
     manifest = {'schema': 1, 'tag': tag, 'commit': commit, 'repository': repo,
-                'run_id': int(run_id), 'toolchain': 'go1.27.2', 'notarization': notary,
+                'run_id': int(run_id), 'toolchain': 'go1.27.3', 'notarization': notary,
                 'sha256': {name: digest(directory / name) for name in BINARIES + ['SHA256SUMS']}}
     (directory / MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
 
@@ -161,7 +161,7 @@ def verify_release(gh, release, tag, commit, directory, security=verify_security
         require(asset.get('digest') == 'sha256:' + digest(directory / name), f'asset digest mismatch: {name}')
     manifest = json.loads((directory / MANIFEST).read_text())
     require(manifest.get('schema') == 1 and manifest.get('tag') == tag and manifest.get('commit') == commit
-            and manifest.get('repository') == gh.repo and manifest.get('toolchain') == 'go1.27.2',
+            and manifest.get('repository') == gh.repo and manifest.get('toolchain') == 'go1.27.3',
             'candidate identity/toolchain mismatch')
     require(type(manifest.get('run_id')) is int and manifest['run_id'] > 0, 'missing signing workflow run ID')
     require(manifest.get('sha256') == {name: digest(directory / name) for name in BINARIES + ['SHA256SUMS']},

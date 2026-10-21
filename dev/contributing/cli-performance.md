@@ -2,7 +2,7 @@
 
 The synthetic benchmarks measure current reader/command work without real
 credentials, transcripts, native applications or a bucket. They change no
-production command behavior. Run from the repository root with the toolchain in go.mod (Go 1.27.2):
+production command behavior. Run from the repository root with the toolchain in go.mod (Go 1.27.3):
 
 ```sh
 AGENT_ARCHIVE_PERF=1 go test ./internal/reader ./internal/cli -run '^$' -bench 'Benchmark(ReaderScale|CommandScale)$' -benchtime=1x -count=2

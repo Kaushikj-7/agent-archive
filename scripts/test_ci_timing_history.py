@@ -199,7 +199,7 @@ class TimingContracts(unittest.TestCase):
     def test_worker_normalization_keeps_wall_and_own_elapsed_distinct(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            manifest = {'catalog': {'source': 'a'*40, 'configuration': {'GOVERSION': 'go1.27.2'},
+            manifest = {'catalog': {'source': 'a'*40, 'configuration': {'GOVERSION': 'go1.27.3'},
                                    'units': ['p'], 'cli': [], 'parents': {}},
                         'settings': {}, 'shard': 0, 'success': True,
                         'phases': {'worker_total_seconds': 5},

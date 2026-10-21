@@ -1063,11 +1063,11 @@ again outside this phase. The table does not attribute that unmeasured work.
 
 ### Reproduce a bounded local binary-size diagnostic
 
-From a clean checkout with exact Go 1.27.2 and dependencies already present
+From a clean checkout with exact Go 1.27.3 and dependencies already present
 in the module cache (set `GOMODCACHE` or `GOPATH` explicitly when needed):
 
 ```sh
-python3 -B scripts/measure_go_listing.py --go /path/to/go1.27.2/bin/go \
+python3 -B scripts/measure_go_listing.py --go /path/to/go1.27.3/bin/go \
   --output /tmp/listing-diagnostic-unique
 ```
 

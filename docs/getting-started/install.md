@@ -190,7 +190,7 @@ curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.2.2/insta
 
 ## Build from source
 
-You need Go 1.27.2 (go.mod pins `toolchain go1.27.2`; any `go` command
+You need Go 1.27.3 (go.mod pins `toolchain go1.27.3`; any `go` command
 from Go 1.21 on downloads it automatically). On macOS you also need Xcode's
 command line tools (`xcode-select --install`), which the Keychain code needs
 through cgo. On Linux no C toolchain is needed: the binary is built with
