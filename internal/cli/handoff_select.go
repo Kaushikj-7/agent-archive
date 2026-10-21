@@ -446,7 +446,6 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 	defer p.reads.stop()
 	rows = make([]handoffPickerRow, 0, min(limit, len(all)))
 	attempts, unknown := 0, false
-	p.reads.ensure(p.labelWants(all, limit, 0, 0))
 	for i, row := range all {
 		if len(rows) == limit {
 			// Every archived session left over can be offered; one not
@@ -458,6 +457,8 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 			return rows, len(rows) + len(rest), true
 		}
 		if row.unbuilt != nil {
+			// Refill after a synchronous read or a row that had no prompt.
+			p.reads.ensure(p.labelWants(all[i:], limit, len(rows), attempts))
 			admitted, partial := p.admitLocalLabel(*row.unbuilt, row.active, len(rows), &attempts)
 			if !admitted {
 				unknown = unknown || partial
@@ -469,8 +470,6 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 			}
 			unknown = unknown || labelUnknown
 			if !result.hasPrompt {
-				// This row is not shown, so one more past the planned reads is needed.
-				p.reads.ensure(p.labelWants(all[i+1:], limit, len(rows), attempts))
 				continue
 			}
 			row.metadata, row.unbuilt = result.metadata, nil
@@ -550,10 +549,12 @@ func (p handoffPicker) labelWants(all []handoffPickerRow, limit, accepted, attem
 		if p.searchLabelBudget > 0 && attempts+planned >= p.searchLabelBudget {
 			break
 		}
-		planned++
-		if concurrentLabel(*row.unbuilt) {
-			wants = append(wants, labelWant{key: key, reg: *row.unbuilt, active: row.active})
+		// Finish a synchronous native read before planning later file reads.
+		if !concurrentLabel(*row.unbuilt) {
+			break
 		}
+		planned++
+		wants = append(wants, labelWant{key: key, reg: *row.unbuilt, active: row.active})
 		accepted++
 	}
 	return wants

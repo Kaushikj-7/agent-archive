@@ -54,6 +54,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Handoff label reads keep Cursor database snapshots inside the four-reader
+  bound, and suppressed archive copies no longer leave the reader pool idle.
+
 - `status --issues` counts a subagent that could not be captured as a
   subagent, as the last error's summary does, instead of as a session.
   `status --json` adds `collector.subagent_issues`.

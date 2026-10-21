@@ -174,7 +174,7 @@ func TestLabelReadsFillIdleWorkersAfterMorePlanned(t *testing.T) {
 
 // A Cursor database chat is read through a snapshot of the whole database, so
 // the plans leave it for the row loop to read by itself, in turn.
-func TestLabelWantsLeaveCursorChatsToTheRowLoop(t *testing.T) {
+func TestLabelWantsStopBeforeCursorChats(t *testing.T) {
 	cursor := &archive.SessionRegistration{ArchiveSessionID: "cursor", Harness: archive.Harness{Name: "cursor"}, SourceKind: archive.SourceKindCursorSQLite, SourceKey: "composer"}
 	file := &archive.SessionRegistration{ArchiveSessionID: "file", Harness: archive.Harness{Name: "codex"}}
 	rows := []handoffPickerRow{{active: time.Unix(900, 0), unbuilt: cursor}, {active: time.Unix(800, 0), unbuilt: file}}
@@ -184,7 +184,7 @@ func TestLabelWantsLeaveCursorChatsToTheRowLoop(t *testing.T) {
 		}
 		return out
 	}
-	if got := ids((handoffPicker{source: "auto"}).labelWants(rows, 10, 0, 0)); !slices.Equal(got, []string{"file"}) {
+	if got := ids((handoffPicker{source: "auto"}).labelWants(rows, 10, 0, 0)); len(got) != 0 {
 		t.Errorf("rows plan %q", got)
 	}
 	if got := ids((handoffPicker{source: "auto", searchLabelBudget: 1}).labelWants(rows, 10, 0, 0)); len(got) != 0 {
@@ -192,10 +192,115 @@ func TestLabelWantsLeaveCursorChatsToTheRowLoop(t *testing.T) {
 	}
 	st := &pickerScopeState{locals: []pickerCandidate{{row: rows[0]}, {row: rows[1]}}, remoteDone: true}
 	m := &pickerModel{source: "auto", labels: map[localLabelKey]localLabelResult{}}
-	if got := ids(m.labelWants(st, 10, 10)); !slices.Equal(got, []string{"file"}) {
+	if got := ids(m.labelWants(st, 10, 10)); len(got) != 0 {
 		t.Errorf("model plan %q", got)
 	}
 	if got := ids(m.labelWants(st, 10, 1)); len(got) != 0 {
 		t.Errorf("the Cursor read still spends the model budget: %q", got)
+	}
+	// Once the row loop consumes Cursor, planning fills the file slots again.
+	if got := ids((handoffPicker{source: "auto"}).labelWants(rows[1:], 10, 1, 1)); !slices.Equal(got, []string{"file"}) {
+		t.Errorf("rows replan after Cursor: %q", got)
+	}
+	st.localPos = 1
+	if got := ids(m.labelWants(st, 9, 9)); !slices.Equal(got, []string{"file"}) {
+		t.Errorf("model replan after Cursor: %q", got)
+	}
+}
+
+func TestPickerModelDoesNotOverlapCursorAndTranscriptReads(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var mu sync.Mutex
+		inFlight, peak, fileStarts := 0, 0, 0
+		cursorActive, overlap := false, false
+		releaseCursor, releaseFiles := make(chan struct{}), make(chan struct{})
+		m := &pickerModel{source: "local", pageSize: 10, labelBudget: 10, activity: map[pickerIdentity]time.Time{}}
+		cursor := archive.SessionRegistration{ArchiveSessionID: "cursor", Harness: archive.Harness{Name: "cursor"}, SourceKind: archive.SourceKindCursorSQLite, SourceKey: "composer"}
+		m.regs = append(m.regs, cursor)
+		m.activity[pickerID("cursor", "cursor")] = time.Unix(1000, 0)
+		for i := range handoffLabelReaders {
+			r := archive.SessionRegistration{ArchiveSessionID: fmt.Sprintf("file-%d", i), Harness: archive.Harness{Name: "codex"}}
+			m.regs = append(m.regs, r)
+			m.activity[pickerID("codex", r.ArchiveSessionID)] = time.Unix(int64(900-i), 0)
+		}
+		m.label = func(_ context.Context, r archive.SessionRegistration, _ time.Time) (archive.Metadata, bool, error) {
+			file := r.ReadsTranscriptFile()
+			mu.Lock()
+			inFlight++
+			peak = max(peak, inFlight)
+			if file {
+				fileStarts++
+				overlap = overlap || cursorActive
+			} else {
+				cursorActive = true
+				overlap = overlap || inFlight > 1
+			}
+			mu.Unlock()
+			if file {
+				<-releaseFiles
+			} else {
+				<-releaseCursor
+			}
+			mu.Lock()
+			inFlight--
+			if !file {
+				cursorActive = false
+			}
+			mu.Unlock()
+			return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, Title: r.ArchiveSessionID}, true, nil
+		}
+		if err := m.prepare(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() {
+			v, err := m.First(t.Context(), sessionScope{All: true})
+			if err == nil && (len(v.Rows) != handoffLabelReaders+1 || v.LabelAttempts != handoffLabelReaders+1) {
+				err = fmt.Errorf("rows=%d attempts=%d", len(v.Rows), v.LabelAttempts)
+			}
+			done <- err
+		}()
+		synctest.Wait()
+		mu.Lock()
+		earlyFiles := fileStarts
+		mu.Unlock()
+		close(releaseCursor)
+		synctest.Wait()
+		mu.Lock()
+		allFiles, gotPeak, gotOverlap := fileStarts, peak, overlap
+		mu.Unlock()
+		close(releaseFiles)
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if earlyFiles != 0 || allFiles != handoffLabelReaders || gotPeak > handoffLabelReaders || gotOverlap {
+			t.Fatalf("file reads before Cursor finished=%d total=%d peak=%d overlap=%v", earlyFiles, allFiles, gotPeak, gotOverlap)
+		}
+	})
+}
+
+func TestPickerModelPrefetchIgnoresSuppressedArchiveRows(t *testing.T) {
+	local := func(id string, at int64) pickerCandidate {
+		return pickerCandidate{row: handoffPickerRow{active: time.Unix(at, 0), unbuilt: &archive.SessionRegistration{ArchiveSessionID: id, Harness: archive.Harness{Name: "codex"}}}}
+	}
+	remote := func(id string, at int64) catalog.PickerItem {
+		return catalog.PickerItem{Row: catalog.PickerRow{Harness: "codex", SessionID: id, Activity: time.Unix(at, 0)}}
+	}
+	st := &pickerScopeState{
+		locals:     []pickerCandidate{local("new", 900), local("mid", 800), local("old", 700), local("older", 600)},
+		buffer:     []catalog.PickerItem{remote("visible", 850), remote("copy-1", 840), remote("copy-2", 830), remote("copy-3", 820)},
+		suppress:   map[pickerIdentity]bool{pickerID("codex", "copy-1"): true, pickerID("codex", "copy-2"): true, pickerID("codex", "copy-3"): true},
+		remoteDone: true,
+	}
+	m := &pickerModel{source: "auto", labels: map[localLabelKey]localLabelResult{}}
+	var got []string
+	for _, w := range m.labelWants(st, 5, 10) {
+		got = append(got, w.reg.ArchiveSessionID)
+	}
+	if want := []string{"new", "mid", "old", "older"}; !slices.Equal(got, want) {
+		t.Fatalf("planned %q, want %q", got, want)
+	}
+	if len(st.buffer) != 4 || st.view.Suppressed != 0 {
+		t.Fatal("planning consumed the archive buffer")
 	}
 }
