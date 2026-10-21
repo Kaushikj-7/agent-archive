@@ -68,6 +68,11 @@ func sessionTableGroups(rows []listRow, opts listFormatOptions) []sessionTableGr
 // group's heading when it has one. The verbose table keeps its own columns
 // under one header: sessionTableGroups never groups it.
 func printSessionGroups(w io.Writer, groups []sessionTableGroup, opts listFormatOptions) error {
+	if opts.Search && opts.Width <= 0 {
+		// Only the line layout shows a search result's passage, so a terminal
+		// of unknown size gets 80 columns, as search output always had.
+		opts.Width = 80
+	}
 	if opts.Width > 0 && !opts.Verbose {
 		return printSessionLines(w, groups, opts)
 	}

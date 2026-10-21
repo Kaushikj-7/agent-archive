@@ -811,7 +811,7 @@ func (l *sessionPicker) loadFromLine(answer string) bool {
 			s.rerun = true
 			l.loadedOlder = true
 			return true
-		case answer == "/":
+		case answer == "/" && s.canNewSearch():
 			s.request = searchRequestQuery
 			return true
 		case strings.EqualFold(answer, "a") && s.canToggleScope():

@@ -358,3 +358,62 @@ func TestSearchHeadingCountsAPartialRanking(t *testing.T) {
 		t.Fatalf("heading: %q", heading)
 	}
 }
+
+func TestSearchFailedNewQueryKeepsTheOldQuery(t *testing.T) {
+	env, _, _ := prepareSearchBrowser(t)
+	home, _ := env.readHome()
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	namespace, dir := contentSearchLocation(home, cfg)
+	index, err := search.OpenRead(t.Context(), dir, namespace)
+	must(t, err)
+	must(t, index.Close())
+	hit := search.Hit{SessionID: "0a13656b25d0", Harness: "codex", Title: "Old result", Snippet: "visible"}
+	s := &contentSearchBrowser{opts: contentSearchOptions{query: search.Query{Text: "visible", Limit: 20}}, index: index, hits: []search.Hit{hit}, pages: 1, choices: rowChoices(nil, listFormatOptions{})}
+	s.nextText, s.rerun = "replacement", true
+	if _, err := s.load(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if s.opts.query.Text != "visible" || s.notice == "" || len(s.hits) != 1 {
+		t.Fatalf("failed search relabeled old results: query %q notice %q hits %d", s.opts.query.Text, s.notice, len(s.hits))
+	}
+}
+
+func TestSearchLinesKeepPassagesWhenTheTerminalSizeIsUnknown(t *testing.T) {
+	hit := search.Hit{SessionID: "0a13656b25d0", Harness: "claude", Title: "Plan", Role: "user", Snippet: "the needle passage"}
+	s := &contentSearchBrowser{opts: contentSearchOptions{query: search.Query{Text: "needle"}}, hits: []search.Hit{hit}, pages: 1, choices: rowChoices(nil, listFormatOptions{})}
+	s.installRows()
+	format := listFormatOptions{Search: true, Numbered: true}
+	var out strings.Builder
+	must(t, printSessionGroups(&out, sessionTableGroups(s.choices.shown().rows, format), format))
+	if !strings.Contains(out.String(), "the needle passage") {
+		t.Fatalf("passage dropped without a terminal size:\n%s", out.String())
+	}
+}
+
+func TestSearchSlashKeepsAQueryTypedRightAfterIt(t *testing.T) {
+	env := searchProjectsFixture(t)
+	screens := searchScreens(t, env, newFakeKeys("/handoff\r", "q"), "", "read performance")
+	if last := screens[len(screens)-1]; !strings.Contains(last, `All projects · "handoff" · 2 sessions, best match first`) {
+		t.Fatalf("query typed with / was not the new query:\n%s", last)
+	}
+}
+
+func TestDirectSearchResultsOfferNoNewQueryOrWiderScope(t *testing.T) {
+	scope := search.Scope{Restricted: true, ProjectName: "inside"}
+	s := &contentSearchBrowser{opts: contentSearchOptions{query: search.Query{Text: "needle", Scope: scope}, direct: "Searched the newest 4 of 9 sessions in the bucket"}, pages: 1}
+	s.coverage = func(search.Page) string { return s.opts.direct }
+	if s.canNewSearch() || s.canToggleScope() {
+		t.Fatal("direct results offer / or Tab over a store holding only the first query's matches")
+	}
+	if line := s.coverageLine(); !strings.HasPrefix(line, "Searched the newest 4 of 9 sessions in the bucket") {
+		t.Fatalf("coverage: %q", line)
+	}
+	l := &sessionPicker{contentSearch: s}
+	if footer := l.footerLine(listScreen{}, "read"); strings.Contains(footer, "/ new search") || strings.Contains(footer, "Tab scope") {
+		t.Fatalf("footer offers them: %q", footer)
+	}
+	if question := l.listQuestion("read"); strings.Contains(question, "/ new search") {
+		t.Fatalf("line question offers /: %q", question)
+	}
+}

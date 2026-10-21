@@ -18,18 +18,21 @@ import (
 // contentSearchBrowser owns only bounded local search results and references.
 // The fixed FTS query never enters the metadata picker's filter grammar.
 type contentSearchBrowser struct {
-	env           searchCommandDependencies
-	cfg           config.Config
-	namespace     string
-	index         *search.Store
-	opts          contentSearchOptions
-	page          search.Page
-	hits          []search.Hit
-	byKey         map[string]search.Hit
-	choices       *scopeChoices
-	pages         int
-	stale         bool
-	rerun         bool
+	env       searchCommandDependencies
+	cfg       config.Config
+	namespace string
+	index     *search.Store
+	opts      contentSearchOptions
+	page      search.Page
+	hits      []search.Hit
+	byKey     map[string]search.Hit
+	choices   *scopeChoices
+	pages     int
+	stale     bool
+	rerun     bool
+	// nextText is a new query from /, applied only when its rerun succeeds,
+	// so a failed search leaves the old results with their own query.
+	nextText      string
 	notice        string
 	handoff       *listRow
 	generation    uint64
@@ -80,6 +83,9 @@ func runContentSearchBrowser(ctx context.Context, env searchCommandDependencies,
 	style := styleFor(stdout)
 	format := listFormatOptions{Search: true, Numbered: true, Now: env.now(), Style: style, NarrowHint: "o next indexed results, or narrow the content query and rerun."}
 	s := &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace, index: index, opts: opts, page: page, hits: page.Hits, pages: 1, choices: rowChoices(nil, format), style: style, now: format.Now}
+	if opts.direct != "" {
+		s.coverage = func(search.Page) string { return opts.direct }
+	}
 	s.choices.loadOlder = &browserLoadAction{LoadContext: s.load, Available: func() bool { return true }}
 	s.installRows()
 	input := newTypedInput(opts.stdin)
@@ -154,7 +160,14 @@ func (s *contentSearchBrowser) longWhen(t time.Time) string {
 // search knows a project (the working directory's, or --project's) to narrow
 // to or widen from.
 func (s *contentSearchBrowser) canToggleScope() bool {
-	return s.opts.query.Scope.ProjectName != ""
+	return s.opts.query.Scope.ProjectName != "" && s.opts.direct == ""
+}
+
+// canNewSearch reports whether / may ask for another query: a direct bucket
+// search kept only the text that matched its own query, so another query
+// needs another scan.
+func (s *contentSearchBrowser) canNewSearch() bool {
+	return s.opts.direct == ""
 }
 
 // scopeLabel names the scope the query searches.
@@ -233,6 +246,10 @@ func (s *contentSearchBrowser) load(ctx context.Context) (bool, error) {
 	q := s.opts.query
 	reset := s.rerun
 	s.rerun = false
+	if reset && s.nextText != "" {
+		q.Text = s.nextText
+	}
+	s.nextText = ""
 	toggle := s.toggleScope && reset
 	s.toggleScope = false
 	if !reset && !s.hasNextPage() {
@@ -388,6 +405,12 @@ func (b *sessionBrowser) newSearchQuery(ctx context.Context) (quit bool, err err
 	s := b.search
 	b.screen.clear()
 	if b.keys != nil {
+		// What was typed after / (a paste, or fast typing) begins the query.
+		if b.prompt.handBack != nil {
+			if typed := b.keys.unused(); len(typed) > 0 {
+				b.prompt.handBack(typed)
+			}
+		}
 		end := b.keys.page()
 		defer func() {
 			end()
@@ -409,7 +432,7 @@ func (b *sessionBrowser) newSearchQuery(ctx context.Context) (quit bool, err err
 	if err != nil {
 		return false, err
 	}
-	s.opts.query.Text = text
+	s.nextText = text
 	s.rerun = true
 	if _, err = s.load(ctx); err != nil {
 		return false, err
@@ -425,7 +448,11 @@ func (l *sessionPicker) listQuestion(action string) string {
 		if s.canToggleScope() {
 			scope = ", a scope"
 		}
-		return "Enter number (or unique short SESSION_ID) to " + action + ", / new search" + scope + ", o next results, r rerun, or q to quit"
+		newSearch := ""
+		if s.canNewSearch() {
+			newSearch = ", / new search"
+		}
+		return "Enter number (or unique short SESSION_ID) to " + action + newSearch + scope + ", o next results, r rerun, or q to quit"
 	}
 	return "Enter number (or unique short SESSION_ID) to " + action + ", words to filter, or q to quit"
 }
