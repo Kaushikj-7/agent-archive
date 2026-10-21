@@ -59,7 +59,7 @@ func TestLocalPreviewReadsOnlyTheWindowsOfALargeTranscript(t *testing.T) {
 	t.Parallel()
 	home := newTestStore(t).Home()
 	reg := largeRegistration(t)
-	preview, err := PreviewLocalTranscript(t.Context(), home, reg, "", testSources, testParsers, 1<<20, testPreviewLimits)
+	preview, err := PreviewLocalTranscript(t.Context(), home, reg, "", testSources, testParsers, testPreviewLimits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestLocalPreviewLabelsMatchTheFullReadAtTheEdges(t *testing.T) {
 	home := newTestStore(t).Home()
 	reg := largeRegistration(t, `{"type":"pr-link","isSidechain":true,"sessionId":"native-large","prNumber":"214","prRepository":"example-org/widget-tools"}`,
 		`{"type":"assistant","sessionId":"native-large","timestamp":"2026-01-02T01:00:00Z","gitBranch":"HEAD","message":{"role":"assistant","content":"Detached"}}`)
-	preview, err := PreviewLocalTranscript(t.Context(), home, reg, "", testSources, testParsers, 1<<20, testPreviewLimits)
+	preview, err := PreviewLocalTranscript(t.Context(), home, reg, "", testSources, testParsers, testPreviewLimits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,11 +116,9 @@ func TestLocalPreviewLeavesOtherSourcesToTheFullRead(t *testing.T) {
 	large := writeLargeClaudeTranscript(t, 2<<20)
 	base := archive.SessionRegistration{ArchiveSessionID: "large", NativeSessionID: "native-large", ProjectID: "project", ProjectRoot: "/synthetic/project", SessionStartedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), RegisteredAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Harness: archive.Harness{Name: "claude"}, TranscriptPath: large}
 	for _, tc := range []struct {
-		name     string
-		edit     func(*archive.SessionRegistration)
-		minBytes int64
+		name string
+		edit func(*archive.SessionRegistration)
 	}{
-		{name: "shorter than the minimum", minBytes: 4 << 20},
 		{name: "cursor database chat", edit: func(r *archive.SessionRegistration) {
 			*r = archive.SessionRegistration{ArchiveSessionID: "chat", NativeSessionID: "composer", SourceKind: archive.SourceKindCursorSQLite, SourceKey: "composer", Harness: archive.Harness{Name: "cursor"}}
 		}},
@@ -135,11 +133,7 @@ func TestLocalPreviewLeavesOtherSourcesToTheFullRead(t *testing.T) {
 			if tc.edit != nil {
 				tc.edit(&reg)
 			}
-			minBytes := tc.minBytes
-			if minBytes == 0 {
-				minBytes = 1 << 20
-			}
-			_, err := PreviewLocalTranscript(t.Context(), newTestStore(t).Home(), reg, "", testSources, testParsers, minBytes, testPreviewLimits)
+			_, err := PreviewLocalTranscript(t.Context(), newTestStore(t).Home(), reg, "", testSources, testParsers, testPreviewLimits)
 			if !errors.Is(err, ErrPreviewUnavailable) {
 				t.Fatalf("got %v, want ErrPreviewUnavailable", err)
 			}
@@ -160,7 +154,7 @@ func TestLocalPreviewLeavesLabeledSessionsToTheFullRead(t *testing.T) {
 	if err := s.SaveRequest(reg.ArchiveSessionID, "hook", time.Now(), label.Evidence(time.Now().UTC(), "claude")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PreviewLocalTranscript(t.Context(), s.Home(), reg, "", testSources, testParsers, 1<<20, testPreviewLimits); !errors.Is(err, ErrPreviewUnavailable) {
+	if _, err := PreviewLocalTranscript(t.Context(), s.Home(), reg, "", testSources, testParsers, testPreviewLimits); !errors.Is(err, ErrPreviewUnavailable) {
 		t.Fatalf("got %v, want ErrPreviewUnavailable", err)
 	}
 }
@@ -174,7 +168,7 @@ func TestLocalPreviewRefusesUnknownDurableStateBeforeTheSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := archive.SessionRegistration{ArchiveSessionID: "absent", NativeSessionID: "native", Harness: archive.Harness{Name: "codex"}, TranscriptPath: "/synthetic/never-open"}
-	if _, err := PreviewLocalTranscript(t.Context(), s.Home(), reg, "", refuseNativeSources{t}, testParsers, 0, testPreviewLimits); !errors.Is(err, state.ErrDurableStorageRecovery) {
+	if _, err := PreviewLocalTranscript(t.Context(), s.Home(), reg, "", refuseNativeSources{t}, testParsers, testPreviewLimits); !errors.Is(err, state.ErrDurableStorageRecovery) {
 		t.Fatalf("got %v, want ErrDurableStorageRecovery", err)
 	}
 }

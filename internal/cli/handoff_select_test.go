@@ -719,7 +719,7 @@ func TestHandoffPickerFilterKeepsTheTableNumbersOfSessionsActiveSince(t *testing
 }
 
 // rewriteLargeClaudeTranscript replaces a Claude session's transcript with
-// head, filler replies past handoffPreviewMinBytes, then tail, and dates it
+// head, filler replies past both preview windows, then tail, and dates it
 // active.
 func (f handoffFixture) rewriteLargeClaudeTranscript(t *testing.T, native string, active time.Time, head, middle, tail []string) {
 	t.Helper()
@@ -729,13 +729,13 @@ func (f handoffFixture) rewriteLargeClaudeTranscript(t *testing.T, native string
 	for _, line := range head {
 		b.WriteString(line + "\n")
 	}
-	for b.Len() < int(handoffPreviewMinBytes)/2 {
+	for b.Len() < 2*int(nativeWindowBytes) {
 		b.WriteString(string(reply) + "\n")
 	}
 	for _, line := range middle {
 		b.WriteString(line + "\n")
 	}
-	for b.Len() < int(handoffPreviewMinBytes)+int(nativeWindowBytes) {
+	for b.Len() < 4*int(nativeWindowBytes) {
 		b.WriteString(string(reply) + "\n")
 	}
 	for _, line := range tail {
