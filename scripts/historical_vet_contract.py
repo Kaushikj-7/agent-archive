@@ -81,9 +81,9 @@ def validate_context(context, expected, authority, root):
             or not isinstance(go, dict) or set(go) != GO_FIELDS
             or any(type(v) is not str for v in go.values())
             or context.get('race') is not False or context.get('tags') != []
-            or context.get('version') != 'go version go1.27.3 linux/amd64'
+            or context.get('version') != 'go version go1.27.2 linux/amd64'
             or context.get('runner_os') != 'Linux' or context.get('runner_arch') != 'X64'
-            or any(go[k] != v for k, v in {'GOVERSION': 'go1.27.3', 'GOOS': 'linux',
+            or any(go[k] != v for k, v in {'GOVERSION': 'go1.27.2', 'GOOS': 'linux',
                 'GOHOSTOS': 'linux', 'GOARCH': 'amd64', 'GOHOSTARCH': 'amd64',
                 'CGO_ENABLED': '1', 'GOTOOLCHAIN': 'local', 'GOWORK': 'off',
                 'GOFLAGS': '-mod=readonly'}.items())):
