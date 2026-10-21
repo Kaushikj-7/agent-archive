@@ -53,7 +53,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: wangjohn/levenshtein
-          ref: 6f799f72befb925d10f2ef01a7c9a46725fa714d
+          ref: ee7597a16b237dfe86b9435e0edffd3439021355
           path: levenshtein
           persist-credentials: false
       - name: Install product release compiler
@@ -118,7 +118,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: wangjohn/levenshtein
-          ref: 6f799f72befb925d10f2ef01a7c9a46725fa714d
+          ref: ee7597a16b237dfe86b9435e0edffd3439021355
           path: levenshtein
           persist-credentials: false
       - name: Set up pinned Go for Levenshtein
@@ -187,7 +187,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: wangjohn/levenshtein
-          ref: 6f799f72befb925d10f2ef01a7c9a46725fa714d
+          ref: ee7597a16b237dfe86b9435e0edffd3439021355
           path: levenshtein
           persist-credentials: false
       - name: Install exact shared compiler

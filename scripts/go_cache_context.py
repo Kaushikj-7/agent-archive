@@ -31,7 +31,7 @@ TOOL_PINS = {
     'deadcode': ['golang.org/x/tools', 'v0.50.0'],
     'git-2.30.2': '94f6e3e283f2adfc518b39cfc39291f1c2832ad0',
     'git-2.39.2': 'cbf04937d5b9fcf0a76c28f69e6294e9e3ecd7e6',
-    'shared': '6f799f72befb925d10f2ef01a7c9a46725fa714d',
+    'shared': 'ee7597a16b237dfe86b9435e0edffd3439021355',
 }
 COMPILATION_MODES = {
     'race': [False, True], 'tags': [],
