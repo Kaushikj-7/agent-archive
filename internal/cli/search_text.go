@@ -54,7 +54,8 @@ type passageCell struct {
 
 // passageCells is text as cells, those in spans marked as matched. With
 // keepLines unset, every run of whitespace is one space, so the text reads as
-// one paragraph; set, line breaks are kept.
+// one paragraph; set, line breaks are kept and a tab reaches the next tab
+// stop.
 func passageCells(text string, spans []search.Span, keepLines bool) []passageCell {
 	var cells []passageCell
 	next := 0
@@ -73,6 +74,14 @@ func passageCells(text string, spans []search.Span, keepLines bool) []passageCel
 				continue
 			}
 			fallthrough
+		case r == '\t' && keepLines:
+			// To the next tab stop, as a terminal sets it.
+			for column := lineColumns(cells); ; column++ {
+				cells = append(cells, passageCell{text: " ", width: 1, hit: hit, space: true})
+				if (column+1)%passageTabStop == 0 {
+					break
+				}
+			}
 		case unicode.IsSpace(r):
 			if !keepLines && (len(cells) == 0 || cells[len(cells)-1].space) {
 				continue
@@ -90,6 +99,19 @@ func passageCells(text string, spans []search.Span, keepLines bool) []passageCel
 		cells = cells[:len(cells)-1]
 	}
 	return cells
+}
+
+// passageTabStop is how many columns apart a passage's tab stops are.
+const passageTabStop = 8
+
+// lineColumns is how many columns the cells take since their last line
+// break.
+func lineColumns(cells []passageCell) int {
+	columns := 0
+	for i := len(cells) - 1; i >= 0 && !cells[i].newline; i-- {
+		columns += cells[i].width
+	}
+	return columns
 }
 
 // cellRange is the cells [start, end) of one wrapped line.

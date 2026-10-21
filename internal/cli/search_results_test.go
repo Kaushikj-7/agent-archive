@@ -25,20 +25,25 @@ const searchTranscript = `{"type":"turn_context","model":"gpt-test"}
 {"type":"response_item","id":"m3","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Also note the handoff READ-performance."}]}}
 {"type":"response_item","id":"m4","payload":{"type":"message","role":"assistant","content":"Done: read performance notes are in dev/bench."}}`
 
-func writeSearchTranscript(t *testing.T, dir string) string {
-	t.Helper()
-	path := filepath.Join(dir, "codex.jsonl")
-	must(t, os.WriteFile(path, []byte(searchTranscript), 0o600))
-	return path
-}
-
 // searchProjectsFixture indexes the search transcript as two sessions: one in
 // project inside (repository inside-repo), titled so its title matches too,
 // and an older one in project outside. Commands run from a directory of
 // inside, so search offers Tab to narrow to it.
 func searchProjectsFixture(t *testing.T) Env {
 	t.Helper()
-	env, objects, originalID := publishedFixtureWith(t, writeSearchTranscript)
+	return searchProjectsFixtureOf(t, searchTranscript)
+}
+
+// searchProjectsFixtureOf is searchProjectsFixture with transcript, a Codex
+// transcript, in place of the search transcript.
+func searchProjectsFixtureOf(t *testing.T, transcript string) Env {
+	t.Helper()
+	env, objects, originalID := publishedFixtureWith(t, func(t *testing.T, dir string) string {
+		t.Helper()
+		path := filepath.Join(dir, "codex.jsonl")
+		must(t, os.WriteFile(path, []byte(transcript), 0o600))
+		return path
+	})
 	_, seed, err := reader.RefreshAndLoad(t.Context(), objects, "sessions/codex/"+originalID+"/metadata.json", reader.Limits{})
 	must(t, err)
 	home, _ := env.readHome()

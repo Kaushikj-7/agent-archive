@@ -43,7 +43,8 @@ agent-archive search --read REF --offset NEXT_OFFSET --max-bytes 4096 --json
 
 References bind exact source membership, bytes, interpretation and message
 location, never rendered line numbers. Reads never silently substitute newer
-content. A next_offset of null means that referenced passage is complete.
+content. A next_offset of null means the referenced message is complete; one
+past the reference's passage reads on into the message's next passage.
 Each context slice identifies its own reference and raw UTF-8 offsets.
 The existing plain read prints an escaped quoted string and continuation on
 stderr. --limit defaults to 20 (1–100); --cursor continues the same query/filters
@@ -250,15 +251,16 @@ Claude Code · webapp · Oct 16, 09:12                                match 1 of
            then write the proposal in dev/proposals.
            … 38 more lines (m)
 
-n/p next/previous match   ↑↓ scroll   t transcript   h hand off   i details   b back   q quit
+n/p match   ↑↓ scroll   m more   t transcript   h hand off   i details   b back   q quit
 ```
 
 The matching message is read from its exact source revision and shown between
 the message before and after it (dim), each labeled with who wrote it; its
 matched words are highlighted. Long neighbors are cut to three lines, and `m`
 shows them whole, then reads on in a matching message longer than one bounded
-read. `n`/`p` move to the session's other matches (the list's strip follows),
-`i` shows the source revision, byte range and SHA-256 of the exact reference,
+read, to its end. A match far down a long message opens scrolled to it. Esc
+cancels a passage still loading, and `m` loads it again. `n`/`p` move to the session's other matches (the list's strip follows),
+`i` shows the source revision, record, text byte range and SHA-256 of the exact reference,
 `t` opens the session's whole transcript in the pager `show --transcript` uses
 (the session as archived now, which may have grown since it was indexed),
 arrows and page keys scroll, `b` returns and `q` exits. A source that changed

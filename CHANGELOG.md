@@ -45,6 +45,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- In a search result's passage, `m` reads a matching message longer than
+  8 KiB to its end instead of stopping at 8 KiB with "Nothing more of these
+  messages to show". `search --read` likewise returns a `next_offset` until
+  the whole message is read. An `m` typed while a passage loads applies once
+  it is read instead of cancelling it, reading on no longer pushes a full
+  screen up a line, and Esc or a 30-second timeout says
+  "Not loaded · m loads it · b goes back" instead of "context canceled". A
+  match far down a long message opens scrolled to it, the footer lists
+  `m more`, tabs line up at tab stops, and `i` labels the reference's record
+  and text bytes.
 - A direct bucket search (after you decline indexing) stops when 5 sessions
   in a row cannot be read, as when the network drops, and prints the error
   and `agent-archive status` instead of finishing with "N could not be read"

@@ -203,8 +203,10 @@ func validateContentSearchRead(fs *commandFlags, opts *contentSearchOptions, see
 		if offset < 0 {
 			offset = opts.reference.Start
 		}
-		if offset < opts.reference.Start || offset > opts.reference.End {
-			return fs.usageError("--offset is outside referenced passage")
+		// An offset past the passage reads on in its message, as next_offset
+		// does; the read checks it belongs to that message.
+		if offset < opts.reference.Start {
+			return fs.usageError("--offset is before the referenced passage")
 		}
 	}
 
