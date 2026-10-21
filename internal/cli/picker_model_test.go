@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -408,7 +409,8 @@ func TestPickerModelScopeContinuationsAndFreshActivity(t *testing.T) {
 	for i := range 5 {
 		regs = append(regs, archive.SessionRegistration{ArchiveSessionID: fmt.Sprintf("refresh-%d", i), Harness: archive.Harness{Name: "codex"}, ProjectRoot: "/repo"})
 	}
-	reads := 0
+	// Label reads run on concurrent readers.
+	var reads atomic.Int64
 	m := &pickerModel{archive: a, regs: regs, source: "local", pageSize: 2, labelBudget: 50, observeActivity: func(_ context.Context, regs []archive.SessionRegistration) (map[pickerIdentity]time.Time, error) {
 		out := map[pickerIdentity]time.Time{}
 		for i, r := range regs {
@@ -416,7 +418,7 @@ func TestPickerModelScopeContinuationsAndFreshActivity(t *testing.T) {
 		}
 		return out, nil
 	}, label: func(_ context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
-		reads++
+		reads.Add(1)
 		return archive.Metadata{SessionID: r.ArchiveSessionID, Harness: r.Harness, CapturedAt: at}, true, nil
 	}}
 	if err := m.prepare(t.Context()); err != nil {
@@ -436,8 +438,8 @@ func TestPickerModelScopeContinuationsAndFreshActivity(t *testing.T) {
 		t.Fatal("global borrowed scoped cursor", all, err)
 	}
 	v, err = m.First(t.Context(), scoped)
-	if err != nil || len(v.Rows) != 4 || reads != 5 {
-		t.Fatalf("toggle reread or lost prefix reads=%d view=%+v err=%v", reads, v, err)
+	if err != nil || len(v.Rows) != 4 || reads.Load() != 5 {
+		t.Fatalf("toggle reread or lost prefix reads=%d view=%+v err=%v", reads.Load(), v, err)
 	}
 	active = active.Add(time.Hour)
 	m = &pickerModel{archive: a, regs: regs, source: m.source, pageSize: m.pageSize, labelBudget: m.labelBudget, observeActivity: m.observeActivity, label: m.label, labels: m.labels}
@@ -445,8 +447,8 @@ func TestPickerModelScopeContinuationsAndFreshActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	v, err = m.First(t.Context(), scoped)
-	if err != nil || len(v.Rows) != 2 || reads != 8 || !v.Rows[0].row.active.Equal(active) {
-		t.Fatalf("refresh failed to observe activity/read new safe labels: %+v %v reads=%d", v, err, reads)
+	if err != nil || len(v.Rows) != 2 || reads.Load() != 8 || !v.Rows[0].row.active.Equal(active) {
+		t.Fatalf("refresh failed to observe activity/read new safe labels: %+v %v reads=%d", v, err, reads.Load())
 	}
 }
 

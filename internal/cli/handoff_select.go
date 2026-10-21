@@ -359,6 +359,8 @@ type handoffPicker struct {
 	// be read into (its transcript read to title it): past it, such a
 	// session is left out, as a limit would leave it out. 0 for no bound.
 	readLimit int
+	// reads holds the label reads rows started ahead of its row loop.
+	reads *labelReads
 }
 
 // withContext preserves picker policy while using the current operation's context.
@@ -437,8 +439,14 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 		return (p.source == "local" && !row.registered) || (row.noPrompt && row.unbuilt == nil)
 	})
 	sort.SliceStable(all, func(i, j int) bool { return all[i].active.After(all[j].active) })
+	reader := p
+	p.reads = newLabelReads(p.ctx, func(ctx context.Context, reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool, error) {
+		return reader.withContext(ctx).readLocalMetadata(reg, active)
+	})
+	defer p.reads.stop()
 	rows = make([]handoffPickerRow, 0, min(limit, len(all)))
 	attempts, unknown := 0, false
+	p.reads.ensure(p.labelWants(all, limit, 0, 0))
 	for i, row := range all {
 		if len(rows) == limit {
 			// Every archived session left over can be offered; one not
@@ -461,6 +469,8 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 			}
 			unknown = unknown || labelUnknown
 			if !result.hasPrompt {
+				// This row is not shown, so one more past the planned reads is needed.
+				p.reads.ensure(p.labelWants(all[i+1:], limit, len(rows), attempts))
 				continue
 			}
 			row.metadata, row.unbuilt = result.metadata, nil
@@ -511,6 +521,42 @@ func (p handoffPicker) admitLocalLabel(reg archive.SessionRegistration, active t
 	}
 	*attempts++
 	return true, false
+}
+
+// labelWants is the labels rows would read from all, with accepted rows
+// already taken and attempts of the search budget spent, if every session it
+// reads had a prompt, in the order it would read them.
+func (p handoffPicker) labelWants(all []handoffPickerRow, limit, accepted, attempts int) []labelWant {
+	var wants []labelWant
+	planned := 0
+	for _, row := range all {
+		if accepted == limit {
+			break
+		}
+		if row.unbuilt == nil {
+			accepted++
+			continue
+		}
+		if p.labelLimitReached(accepted) {
+			continue
+		}
+		key := pickerLocalLabelKey(*row.unbuilt, row.active, p.source)
+		if result, cached := p.localLabels[key]; cached {
+			if result.hasPrompt {
+				accepted++
+			}
+			continue
+		}
+		if p.searchLabelBudget > 0 && attempts+planned >= p.searchLabelBudget {
+			break
+		}
+		planned++
+		if concurrentLabel(*row.unbuilt) {
+			wants = append(wants, labelWant{key: key, reg: *row.unbuilt, active: row.active})
+		}
+		accepted++
+	}
+	return wants
 }
 
 func (p handoffPicker) labelLimitReached(rows int) bool {
@@ -565,7 +611,18 @@ func (p handoffPicker) buildLocalMetadata(reg archive.SessionRegistration, activ
 	return metadata, ok
 }
 
+// buildLocalMetadataResult takes the read rows started for reg, if any, and
+// reads its transcript otherwise.
 func (p handoffPicker) buildLocalMetadataResult(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool, error) {
+	if p.reads != nil {
+		if metadata, ok, err, started := p.reads.take(pickerLocalLabelKey(reg, active, p.source)); started {
+			return metadata, ok, err
+		}
+	}
+	return p.readLocalMetadata(reg, active)
+}
+
+func (p handoffPicker) readLocalMetadata(reg archive.SessionRegistration, active time.Time) (archive.Metadata, bool, error) {
 	labels, ok, err := p.readLocalLabels(reg)
 	if err != nil || !ok {
 		return archive.Metadata{}, false, err

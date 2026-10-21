@@ -74,6 +74,10 @@ type pickerModel struct {
 	pageSize        int
 	labelBudget     int
 	states          map[string]*pickerScopeState
+	// reads holds the label reads Older started ahead of its row loop, and
+	// readTarget the rows that Older is filling.
+	reads      *labelReads
+	readTarget int
 }
 
 func pickerScopeQuery(s sessionScope, harness string, limit int) (catalog.PickerQuery, error) {
@@ -289,6 +293,11 @@ func (m *pickerModel) Older(ctx context.Context, s sessionScope) (modelPickerVie
 	st.view.Incomplete = false
 	target := len(st.view.Rows) + m.pageSize
 	attempts, pages := 0, 0
+	m.reads, m.readTarget = newLabelReads(ctx, m.label), target
+	defer func() {
+		m.reads.stop()
+		m.reads = nil
+	}()
 	// Suppression refill has a finite additive registration-dependent bound.
 	pageBudget := 2 + (len(st.suppress)+m.pageSize-1)/m.pageSize
 	for len(st.view.Rows) < target {
@@ -437,10 +446,16 @@ func (m *pickerModel) materializeLocal(ctx context.Context, st *pickerScopeState
 			st.view.Incomplete = true
 			return c, false, nil
 		}
+		// One more than the target: proveMore looks one accepted row ahead.
+		m.reads.ensure(m.labelWants(st, m.readTarget-len(st.view.Rows)+1, m.labelBudget-*attempts))
 		*attempts++
 		st.view.LabelAttempts++
 		var labelErr error
-		result.metadata, result.hasPrompt, labelErr = m.label(ctx, reg, c.row.active)
+		var started bool
+		result.metadata, result.hasPrompt, labelErr, started = m.reads.take(key)
+		if !started {
+			result.metadata, result.hasPrompt, labelErr = m.label(ctx, reg, c.row.active)
+		}
 		if err := ctx.Err(); err != nil {
 			return pickerCandidate{}, false, err
 		}
@@ -462,6 +477,43 @@ func (m *pickerModel) materializeLocal(ctx context.Context, st *pickerScopeState
 	c.row.metadata = result.metadata
 	c.row.unbuilt = nil
 	return c, true, nil
+}
+
+// labelWants is the labels Older would read, from the next local candidate
+// on, for need more rows within budget reads, if every session it reads had
+// a prompt, in the order it would read them. Archived rows already buffered
+// fill the page where they sort first; past them, while more archive pages
+// remain unread, the order is unknown and nothing more is planned.
+func (m *pickerModel) labelWants(st *pickerScopeState, need, budget int) []labelWant {
+	var wants []labelWant
+	planned := 0
+	buffer := st.buffer
+	for _, c := range st.locals[st.localPos:] {
+		for len(buffer) > 0 && need > 0 && !pickerCandidateBefore(c, pickerCandidate{row: handoffPickerRow{active: buffer[0].Row.Activity}, item: &buffer[0]}) {
+			buffer = buffer[1:]
+			need--
+		}
+		if need <= 0 || planned >= budget || (len(buffer) == 0 && !st.remoteDone) {
+			break
+		}
+		if c.row.unbuilt == nil {
+			need--
+			continue
+		}
+		key := pickerLocalLabelKey(*c.row.unbuilt, c.row.active, m.source)
+		if result, cached := m.labels[key]; cached {
+			if result.hasPrompt {
+				need--
+			}
+			continue
+		}
+		planned++
+		if concurrentLabel(*c.row.unbuilt) {
+			wants = append(wants, labelWant{key: key, reg: *c.row.unbuilt, active: c.row.active})
+		}
+		need--
+	}
+	return wants
 }
 
 // proveMore retains one accepted lookahead. Unexamined native candidates or

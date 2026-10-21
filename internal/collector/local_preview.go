@@ -31,7 +31,8 @@ var ErrPreviewUnavailable = errors.New("the session's transcript cannot be previ
 // short enough for the windows to span with a record the preview left unread
 // (one over the record limit, or an unfinished last record).
 func PreviewLocalTranscript(ctx context.Context, home string, reg archive.SessionRegistration, cursorDatabase string, sources agentapi.SourcesLookup, previews agentapi.PreviewsLookup, limits PreviewLimits) (TranscriptPreview, error) {
-	defer trace.Start("preview local transcript").End()
+	// A leaf: the handoff picker runs several of these at once.
+	defer trace.StartLeaf("preview local transcript").End()
 	if reg.NativeImport != nil || reg.HistoricalProject != nil || reg.StagedImportSHA256 != "" || !reg.ReadsTranscriptFile() || reg.IsChild() || reg.SubagentID != "" || previews == nil {
 		return TranscriptPreview{}, ErrPreviewUnavailable
 	}

@@ -30,7 +30,8 @@ var ErrNoTranscript = errors.New("the session's transcript is not available on t
 // (empty means the one under the user's home), through a snapshot of its
 // own when Cursor is running, which is removed before it returns.
 func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegistration, capturedAt time.Time, cursorDatabase string, sources agentapi.SourcesLookup) (archive.SourceBundle, error) {
-	defer trace.Start("read local transcript").End()
+	// A leaf: the handoff picker runs several of these at once.
+	defer trace.StartLeaf("read local transcript").End()
 	if reg.NativeImport != nil {
 		if err := reg.ValidateNativeImport(); err != nil {
 			return archive.SourceBundle{}, err
