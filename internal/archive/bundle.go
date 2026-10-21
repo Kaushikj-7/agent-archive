@@ -68,13 +68,8 @@ func NewSourceBundle(reg SessionRegistration, adapter Adapter, transcript Filter
 	if transcript.ObservedHarness.Mode != "" {
 		harness.Mode = transcript.ObservedHarness.Mode
 	}
-	for _, evidence := range supplemental {
-		if evidence.Kind == EvidenceKindSessionLabels {
-			label, ok := labelFromEvidence(evidence)
-			if !ok || evidence.Provenance != labelProvenance(reg.Harness.Name) || label.NativeID != reg.NativeSessionID {
-				return SourceBundle{}, errors.New("session label does not match its owning source")
-			}
-		}
+	if err := checkSessionLabelOwner(reg, supplemental); err != nil {
+		return SourceBundle{}, err
 	}
 	filteredSupplemental, gaps, err := FilterSupplementalEvidence(supplemental)
 	if err != nil {

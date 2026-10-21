@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -98,7 +99,7 @@ func requirePreviewMatchesFullRead(t *testing.T, home string, reg archive.Sessio
 	if err != nil {
 		t.Fatal(err)
 	}
-	parser, _ := testParsers.LookupParser("claude")
+	parser, _ := testParsers.LookupParser(reg.Harness.Name)
 	analysis, err := parser.Parse(t.Context(), bundle)
 	if err != nil {
 		t.Fatal(err)
@@ -189,21 +190,80 @@ func TestLocalPreviewReadsASpannedTranscriptWhole(t *testing.T) {
 	}
 }
 
-// A session label reaches the full read as evidence, not from the
-// transcript, so a session with one is read whole.
-func TestLocalPreviewLeavesLabeledSessionsToTheFullRead(t *testing.T) {
+// A Codex session with a thread name is previewed from its windows, named
+// from its label as a full read names it: by a name Codex can interpret,
+// none when the label confirms there is none, and not by one it cannot.
+func TestLocalPreviewNamesALabeledCodexSessionAsTheFullRead(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	reg := archive.SessionRegistration{ArchiveSessionID: "large", NativeSessionID: "native-large", ProjectID: "project", ProjectRoot: "/synthetic/project", SessionStartedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), RegisteredAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Harness: archive.Harness{Name: "claude"}, TranscriptPath: writeLargeClaudeTranscript(t, 2<<20)}
-	if err := s.SaveRegistration(reg); err != nil {
+	const native = "01900000-0000-7000-8000-000000000001"
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	var b strings.Builder
+	b.WriteString(`{"type":"session_meta","payload":{"id":"` + native + `","cli_version":"0.159.2","history_mode":"legacy"}}` + "\n")
+	b.WriteString(`{"type":"response_item","timestamp":"2026-01-02T00:00:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix the widget"}]}}` + "\n")
+	reply := `{"type":"response_item","timestamp":"2026-01-02T00:00:01Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` + strings.Repeat("widget work ", 1000) + `"}]}}` + "\n"
+	for b.Len() < 2<<20 {
+		b.WriteString(reply)
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	label := archive.SessionLabel{NativeID: "native-large", State: archive.SessionLabelPresent, Name: "Thread name", Source: archive.SessionLabelDatabase, Contract: "synthetic"}
-	if err := s.SaveRequest(reg.ArchiveSessionID, "hook", time.Now(), label.Evidence(time.Now().UTC(), "claude")); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name  string
+		label archive.SessionLabel
+		want  string
+	}{
+		{"named", archive.SessionLabel{State: archive.SessionLabelPresent, Name: "Thread   name", Source: archive.SessionLabelDatabase, Contract: codex.LabelContract}, "Thread name"},
+		{"confirmed absent", archive.SessionLabel{State: archive.SessionLabelAbsent, Source: archive.SessionLabelDatabase, Contract: codex.LabelContract}, ""},
+		{"uninterpretable", archive.SessionLabel{State: archive.SessionLabelPresent, Name: "Thread name", Source: archive.SessionLabelDatabase, Contract: "synthetic"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			reg := registration(t, path)
+			reg.NativeSessionID = native
+			if err := s.SaveRegistration(reg); err != nil {
+				t.Fatal(err)
+			}
+			tc.label.NativeID = native
+			if err := s.SaveRequest(reg.ArchiveSessionID, "hook", time.Now(), tc.label.Evidence(time.Now().UTC(), "codex")); err != nil {
+				t.Fatal(err)
+			}
+			preview, err := PreviewLocalTranscript(t.Context(), s.Home(), reg, "", testSources, testParsers, testPreviewLimits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if preview.Bytes > 2*testPreviewWindow+1 || preview.Name != tc.want || preview.Title != "Fix the widget" {
+				t.Fatalf("preview read %d bytes: %+v", preview.Bytes, preview)
+			}
+			requirePreviewMatchesFullRead(t, s.Home(), reg, preview)
+		})
 	}
-	if _, err := PreviewLocalTranscript(t.Context(), s.Home(), reg, "", testSources, testParsers, testPreviewLimits); !errors.Is(err, ErrPreviewUnavailable) {
-		t.Fatalf("got %v, want ErrPreviewUnavailable", err)
+}
+
+// A session label reaches a full read as evidence, not from the transcript,
+// so a session with one whose previewer cannot name it from the label, or
+// whose label names another session, is read whole.
+func TestLocalPreviewLeavesLabelsItCannotApplyToTheFullRead(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, harness, native string }{
+		{"no namer", "claude", "native-large"},
+		{"another session's label", "codex", "native-other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			reg := largeRegistration(t)
+			if err := s.SaveRegistration(reg); err != nil {
+				t.Fatal(err)
+			}
+			label := archive.SessionLabel{NativeID: tc.native, State: archive.SessionLabelPresent, Name: "Thread name", Source: archive.SessionLabelDatabase, Contract: "synthetic"}
+			if err := s.SaveRequest(reg.ArchiveSessionID, "hook", time.Now(), label.Evidence(time.Now().UTC(), tc.harness)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := PreviewLocalTranscript(t.Context(), s.Home(), reg, "", testSources, testParsers, testPreviewLimits); !errors.Is(err, ErrPreviewUnavailable) {
+				t.Fatalf("got %v, want ErrPreviewUnavailable", err)
+			}
+		})
 	}
 }
 

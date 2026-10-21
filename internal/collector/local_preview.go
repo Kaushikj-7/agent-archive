@@ -3,7 +3,6 @@ package collector
 import (
 	"context"
 	"errors"
-	"slices"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -27,7 +26,8 @@ var ErrPreviewUnavailable = errors.New("the session's transcript cannot be previ
 // related history), a subagent or child session (its full read names it
 // from its metadata or spawn record), a native or staged import, a
 // historical project, a harness with no record previewer, a session whose
-// retained or pending evidence carries a session label, and a transcript
+// retained or pending evidence carries a session label its previewer cannot
+// name it from (or the full read would refuse), and a transcript
 // short enough for the windows to span with a record the preview left unread
 // (one over the record limit, or an unfinished last record).
 func PreviewLocalTranscript(ctx context.Context, home string, reg archive.SessionRegistration, cursorDatabase string, sources agentapi.SourcesLookup, previews agentapi.PreviewsLookup, limits PreviewLimits) (TranscriptPreview, error) {
@@ -46,7 +46,9 @@ func PreviewLocalTranscript(ctx context.Context, home string, reg archive.Sessio
 		return TranscriptPreview{}, err
 	}
 	// A session label (a Codex thread name) reaches the full read as
-	// evidence, not from the transcript, so such a session is read whole.
+	// evidence, not from the transcript. The preview takes the same label
+	// from the same evidence, filtered as the full read filters it, and
+	// names the session from it as the harness's parser would.
 	var evidence []archive.SupplementalEvidence
 	published, err := store.LoadPublishedState(reg.ArchiveSessionID)
 	if errors.Is(err, state.ErrDurableStorageRecovery) {
@@ -58,9 +60,11 @@ func PreviewLocalTranscript(ctx context.Context, home string, reg archive.Sessio
 		}
 	}
 	if req, found, err := store.LoadRequest(reg.ArchiveSessionID); err == nil && found {
-		evidence = append(evidence, req.HookEvidence...)
+		evidence = mergeSupplementalEvidence(evidence, req.HookEvidence)
 	}
-	if slices.ContainsFunc(evidence, func(e archive.SupplementalEvidence) bool { return e.Kind == archive.EvidenceKindSessionLabels }) {
+	label, labeled, err := archive.SessionLabelFor(reg, evidence)
+	namer, names := previewer.(agentapi.SessionLabelNamer)
+	if err != nil || (labeled && !names) {
 		return TranscriptPreview{}, ErrPreviewUnavailable
 	}
 	source, ok := newSourceReader(reg, Options{CursorDatabase: cursorDatabase, Sources: sources})
@@ -69,7 +73,11 @@ func PreviewLocalTranscript(ctx context.Context, home string, reg archive.Sessio
 		return TranscriptPreview{}, ErrPreviewUnavailable
 	}
 	reader.preview = true
-	return reader.previewTranscript(ctx, previewer, limits, reg.NativeSessionID)
+	preview, err := reader.previewTranscript(ctx, previewer, limits, reg.NativeSessionID)
+	if err == nil && labeled {
+		preview.Name = archive.CollapseSessionTitle(namer.SessionLabelName(label, preview.Name))
+	}
+	return preview, err
 }
 
 // previewTranscript opens the source as filter does, with the same read

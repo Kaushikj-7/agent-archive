@@ -174,7 +174,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts *hand
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 		return "", "", false, 1
 	}
-	picker := handoffPicker{localLabels: make(map[localLabelKey]localLabelResult), ctx: ctx, env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil, activity: activity, activityRead: activityRead}
+	picker := handoffPicker{localLabels: make(map[localLabelKey]localLabelResult), wholeReads: newWholeLabelReads(), ctx: ctx, env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil, activity: activity, activityRead: activityRead}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByDay: true, Numbered: true, Children: childCounts(archived),
 		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
 	choices = pagedHandoffChoices(scope, format, picker, regs, archived)
@@ -361,6 +361,9 @@ type handoffPicker struct {
 	readLimit int
 	// reads holds the label reads rows started ahead of its row loop.
 	reads *labelReads
+	// wholeReads, from newWholeLabelReads, lets one label read at a time
+	// read a transcript whole; nil leaves them unbounded.
+	wholeReads wholeLabelReads
 }
 
 // withContext preserves picker policy while using the current operation's context.
@@ -640,15 +643,21 @@ func (p handoffPicker) readLocalMetadata(reg archive.SessionRegistration, active
 // transcript is previewed from its filtered head and tail windows when its
 // head holds a prompt (its title); the name, branch and pull requests then
 // come from those windows, which hold all of a transcript up to their
-// combined size. Any other transcript, or one a preview cannot stand in for,
-// is read whole: filtering and parsing a large one took seconds, and the
-// first draw waits for every label read.
+// combined size, and a thread name from its label evidence. Any other
+// transcript, or one a preview cannot stand in for, is read whole, one at a
+// time: filtering and parsing a large one took seconds and up to its 64 MiB
+// read limit, and the first draw waits for every label read.
 func (p handoffPicker) readLocalLabels(reg archive.SessionRegistration) (archive.Labels, bool, error) {
 	preview, err := collector.PreviewLocalTranscript(p.ctx, p.home, reg, p.env.cursorDatabase(), registryFor(p.env), previewsFor(p.env),
 		collector.PreviewLimits{HeadBytes: nativeWindowBytes, TailBytes: nativeWindowBytes, RecordBytes: nativeWindowBytes})
 	if err == nil && preview.Title != "" {
 		return archive.Labels{Name: preview.Name, Title: preview.Title, Branch: preview.Branch, PullRequests: preview.PullRequests}, true, nil
 	}
+	release, err := p.wholeReads.acquire(p.ctx)
+	if err != nil {
+		return archive.Labels{}, false, err
+	}
+	defer release()
 	bundle, err := collector.ReadLocalBundle(p.ctx, p.home, reg, p.env.now().UTC(), p.env.cursorDatabase(), registryFor(p.env))
 	if err != nil {
 		return archive.Labels{}, false, err

@@ -9,9 +9,30 @@ import (
 )
 
 // handoffLabelReaders bounds the native label reads the handoff picker runs
-// at once. Each read filters and parses a whole transcript, so reading the
-// rows one after another kept the picker blank for the sum of their times.
+// at once. Most preview a transcript's bounded windows, and the rest read it
+// whole, so reading the rows one after another kept the picker blank for the
+// sum of their times.
 const handoffLabelReaders = 4
+
+// wholeLabelReads is a picker's one slot for a label read that reads a
+// transcript whole, so concurrent label reads hold at most one transcript in
+// memory, up to its read limit, beside their bounded previews.
+type wholeLabelReads chan struct{}
+
+func newWholeLabelReads() wholeLabelReads { return make(wholeLabelReads, 1) }
+
+// acquire waits for the slot, or for ctx to end. A nil slot is never full.
+func (w wholeLabelReads) acquire(ctx context.Context) (release func(), err error) {
+	if w == nil {
+		return func() {}, nil
+	}
+	select {
+	case w <- struct{}{}:
+		return func() { <-w }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
 
 type labelReadFunc func(context.Context, archive.SessionRegistration, time.Time) (archive.Metadata, bool, error)
 

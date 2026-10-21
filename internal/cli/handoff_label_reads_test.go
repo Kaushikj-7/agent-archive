@@ -4,18 +4,23 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/catalog"
 )
 
-// Each label read filters a whole transcript, so the picker reads several at
-// once. Every read here waits until handoffLabelReaders are in flight: reading
-// them one after another would leave the bubble durably blocked.
+// A label read can take as long as reading a transcript's windows, so the
+// picker reads several at once. Every read here waits until
+// handoffLabelReaders are in flight: reading them one after another would
+// leave the bubble durably blocked.
 func TestPickerModelReadsLabelsConcurrently(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var mu sync.Mutex
@@ -198,4 +203,68 @@ func TestLabelWantsLeaveCursorChatsToTheRowLoop(t *testing.T) {
 	if got := ids(m.labelWants(st, 10, 1)); len(got) != 0 {
 		t.Errorf("the Cursor read still spends the model budget: %q", got)
 	}
+}
+
+// Label reads that read a transcript whole, because its head holds no prompt,
+// take turns while the picker reads several labels at once, so their read
+// limits are not held in memory together. Each parse here holds a fake
+// second: started together, all of them would be in flight at once.
+func TestHandoffPickerReadsOneTranscriptWholeAtATime(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := newPickerFixture(t)
+		parser := &peakParser{}
+		var bindings []builtin.Integration
+		for _, d := range productionAgents.Catalog().All() {
+			binding, ok := productionAgents.Lookup(string(d.ID))
+			if !ok {
+				t.Fatal("missing builtin")
+			}
+			binding.Descriptor = agentmeta.Descriptor{ID: d.ID}
+			if d.ID == agentmeta.Claude {
+				parser.TranscriptParser = binding.Parser
+				binding.Parser = parser
+			}
+			bindings = append(bindings, binding)
+		}
+		var err error
+		f.env.Agents, err = builtin.New(agentmeta.Builtins(), bindings)
+		must(t, err)
+		var ids []string
+		for i := range handoffLabelReaders {
+			native := fmt.Sprintf("claude-late-%d", i)
+			active := f.env.now().Add(time.Duration(3+i) * time.Hour)
+			ids = append(ids, f.addSession(t, "claude", native, "placeholder", active))
+			f.rewriteLargeClaudeTranscript(t, native, active, nil,
+				[]string{`{"type":"user","uuid":"u1","sessionId":"` + native + `","timestamp":"2026-01-02T00:00:00Z","message":{"role":"user","content":"Prompt past the head"}}`}, nil)
+		}
+		out, errOut, code := runPicker(t, f.env, "q\n")
+		for _, id := range ids {
+			if line := pickerLine(t, out, id); code != 0 || !strings.Contains(line, "Prompt past the head") {
+				t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+			}
+		}
+		if parser.parses < handoffLabelReaders || parser.peak != 1 {
+			t.Fatalf("%d whole reads, %d at once", parser.parses, parser.peak)
+		}
+	})
+}
+
+// peakParser counts the parses in flight, each held for a fake second.
+type peakParser struct {
+	agentapi.TranscriptParser
+	mu                     sync.Mutex
+	inFlight, peak, parses int
+}
+
+func (p *peakParser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.Analysis, error) {
+	p.mu.Lock()
+	p.inFlight++
+	p.parses++
+	p.peak = max(p.peak, p.inFlight)
+	p.mu.Unlock()
+	time.Sleep(time.Second)
+	p.mu.Lock()
+	p.inFlight--
+	p.mu.Unlock()
+	return p.TranscriptParser.Parse(ctx, bundle)
 }
