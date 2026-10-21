@@ -130,16 +130,22 @@ func indexFirstPass(home string, cfg config.Config, opts contentSearchOptions, p
 	if errors.Is(err, context.Canceled) {
 		return errors.New("interrupted")
 	}
-	if coverage != nil && coverage.Known > 0 && coverage.Indexed >= coverage.Known {
-		terminal.Printf(stdout, "%s Background indexing is on; %s indexed.\n", p.style.okMark(), sessionsText(coverage.Known))
-		return nil
-	}
-	if coverage != nil && coverage.Known > 0 {
-		terminal.Printf(stdout, "%s Background indexing is on; %d of %d sessions indexed, the rest within minutes.\n", p.style.okMark(), coverage.Indexed, coverage.Known)
-		return nil
-	}
-	terminal.Printf(stdout, "%s Background indexing is on. Results fill in over the next few minutes.\n", p.style.okMark())
+	terminal.Printf(stdout, "%s Background indexing is on%s\n", p.style.okMark(), firstPassCoverage(coverage))
 	return nil
+}
+
+// firstPassCoverage ends the line after the first index pass: the sessions
+// indexed, and whether any work is left, which complete coverage alone rules
+// out (a gap or a pending replacement can leave every session counted).
+func firstPassCoverage(coverage *contentSearchCoverage) string {
+	switch {
+	case coverage == nil || coverage.Known == 0:
+		return ". Results fill in over the next few minutes."
+	case coverage.Complete:
+		return "; " + sessionsText(coverage.Known) + " indexed."
+	default:
+		return fmt.Sprintf("; %d of %d sessions indexed so far.", coverage.Indexed, coverage.Known)
+	}
 }
 
 // promptSearchQuery asks for the words bare search runs on a terminal.

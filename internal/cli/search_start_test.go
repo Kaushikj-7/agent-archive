@@ -77,10 +77,27 @@ func TestFirstIndexPassWaitsForBackgroundJobThenIndexes(t *testing.T) {
 	if err := indexFirstPass(home, cfg, contentSearchOptions{}, newPrompter(strings.NewReader(""), &out), env); err != nil {
 		t.Fatal(err)
 	}
-	// Every known session indexed: the line says so, with nothing left to
-	// fill in.
-	if !strings.Contains(out.String(), "Background indexing is on; 1 session indexed.\n") || strings.Contains(out.String(), "the rest") {
+	// The fixture's bucket has no catalog, so discovery, and with it
+	// coverage, is never complete; the count says what is indexed so far.
+	if !strings.Contains(out.String(), "Background indexing is on; 1 of 1 sessions indexed so far.\n") {
 		t.Fatalf("busy job was not waited out: %s", out.String())
+	}
+}
+
+func TestFirstIndexPassReportsRemainingWorkUnlessCoverageIsComplete(t *testing.T) {
+	for _, tc := range []struct {
+		coverage *contentSearchCoverage
+		want     string
+	}{
+		{nil, ". Results fill in over the next few minutes."},
+		{&contentSearchCoverage{Known: 3, Indexed: 3, Complete: true}, "; 3 sessions indexed."},
+		{&contentSearchCoverage{Known: 3, Indexed: 1}, "; 1 of 3 sessions indexed so far."},
+		// Every session counted, but a gap leaves coverage incomplete.
+		{&contentSearchCoverage{Known: 3, Indexed: 3, Unsupported: 1}, "; 3 of 3 sessions indexed so far."},
+	} {
+		if got := firstPassCoverage(tc.coverage); got != tc.want {
+			t.Errorf("%+v: got %q, want %q", tc.coverage, got, tc.want)
+		}
 	}
 }
 

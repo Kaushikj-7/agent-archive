@@ -120,7 +120,7 @@ func TestDeclinedIndexingSearchesTheBucketNewestFirst(t *testing.T) {
 		t.Fatalf("%d %s %s", code, errOut, out)
 	}
 	for _, want := range []string{
-		"! Without an index, search reads your S3 bucket, newest first; only titles are kept here.\n" +
+		"! Without an index, search reads your S3 bucket, newest first; it caches metadata such as titles, not conversation text.\n" +
 			"  All 3 sessions: about a minute, pausing after 60 minutes. To search instantly, run:\n" +
 			"  agent-archive setup --yes --search-indexing on\n",
 		"Searched all 3 sessions · 2 matching sessions",
