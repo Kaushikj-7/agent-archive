@@ -258,6 +258,8 @@ const chargedInFull int64 = -1
 // beside it until the rename. Settled published state (charge >= 0) is cache
 // outside the quota apart from its charge, so it needs only the transient copy,
 // covered first by the old file's atomic-copy allowance, and its new charge.
+// A copy left by an interrupted write holds the census in recovery until it
+// is swept, whatever was reserved for it.
 func (q *durableQuota) publishedAdditional(ctx context.Context, path string, old os.FileInfo, n, charge int64) (int64, error) {
 	if n < 0 || n > durableStorageQuota/2 {
 		return 0, ErrDurableStorageCapacity

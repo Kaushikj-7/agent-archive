@@ -187,3 +187,33 @@ func TestSavedAccountingFactChargesLikeAFreshClassification(t *testing.T) {
 		})
 	}
 }
+
+// An interrupted published write's temporary holds the durable quota in
+// recovery until it is swept, whatever room was reserved for it, so a settled
+// rewrite need not reserve its copy at the temporary's double census rate.
+func TestLeftoverPublishedTemporaryHoldsQuotaInRecovery(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	sparseDurable(t, filepath.Join(s.home, "published", ".pending-0123456789abcdef0123456789abcdef"), 1)
+	if err := config.WithPublicationComposition(s.home, func(c config.PublicationCompositionGuard) error {
+		g, e := c.Storage(s.home)
+		if e != nil {
+			return e
+		}
+		q, e := s.openDurableQuota(g)
+		if e != nil {
+			return e
+		}
+		defer func() {
+			if err := q.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+		if _, e = q.usageContext(t.Context()); !errors.Is(e, ErrDurableStorageRecovery) {
+			t.Fatal("leftover temporary admitted by census:", e)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
