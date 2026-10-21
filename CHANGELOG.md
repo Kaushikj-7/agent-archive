@@ -19,8 +19,8 @@ follow [Semantic Versioning](https://semver.org/).
 - `agent-archive search` output is shorter. After the first index pass it
   says when every session is indexed instead of "the rest fill in". A No to
   indexing that cannot be saved says so once and that search asks again,
-  without suggesting a full setup. The direct-search warning is two lines and
-  the command, and a missing index prints `agent-archive search --refresh` on
+  without suggesting a full setup. The direct-search warning is three short
+  lines and the command, and a missing index prints `agent-archive search --refresh` on
   its own line.
 
 - `agent-archive search` covers every project by default. Use `--project` to
