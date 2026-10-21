@@ -15,6 +15,12 @@ follow [Semantic Versioning](https://semver.org/).
   Before a local search index exists, it asks once whether to index in the
   background (Yes by default) and saves the answer. A Yes indexes for up to 30
   seconds before the query, so the first search covers some of your sessions.
+- Search results on a terminal look like `agent-archive list`: one colored row
+  per session with its project and date, best match first, and under the list
+  the highlighted session's matching passage with the matched words
+  highlighted. Coverage is one line under the heading. `n`/`p` step through a
+  session's matches, `/` asks for a new query, `Tab` switches between all
+  projects and the current repository, and `h` hands off from the list.
 - After you answer No to search indexing, a search on a terminal with no local
   index reads the bucket directly instead of returning nothing. It warns first,
   downloads sessions in scope newest first and matches them in memory, keeping

@@ -67,9 +67,21 @@ type sessionBrowser struct {
 }
 
 func (b *sessionBrowser) run(ctx context.Context, choices *scopeChoices) error {
+	action := "show"
+	if b.search != nil {
+		action = "read"
+	}
 	for {
 		b.screen.clear()
-		row, ok, err := b.list.pickScopedContext(ctx, b.prompt, b.stdout, choices, "show")
+		row, ok, err := b.list.pickScopedContext(ctx, b.prompt, b.stdout, choices, action)
+		if err == nil && !ok && b.search != nil && b.search.request == searchRequestQuery {
+			b.search.request = searchRequestNone
+			quit, err := b.newSearchQuery(ctx)
+			if err != nil || quit {
+				return err
+			}
+			continue
+		}
 		if err != nil || !ok {
 			return err
 		}
@@ -535,6 +547,11 @@ func (l *sessionPicker) pickScopedContext(ctx context.Context, p *prompter, stdo
 			}
 			return choices.headingWith(choices.current, c.scopeView, c.constants, headingOptions{Verb: l.verb, Words: words, Matches: matches, Filtering: l.filtering && l.keys != nil, Hidden: hidden})
 		}
+		if s := l.contentSearch; s != nil {
+			// A content search names its own scope, query and coverage, and
+			// Tab (a by lines) reruns the query in the other scope.
+			l.heading, l.headingFor, l.toggles = s.heading(l.keys != nil), nil, false
+		}
 		l.stopOperations()
 		l.search, l.searchContext, l.searched, l.searchRead = c.search, c.searchContext, nil, false
 		l.searchFailure = nil
@@ -633,16 +650,28 @@ func (l *sessionPicker) lineCommand(answer string) lineCommand {
 // columns wide (0 when its size is unknown).
 func (l *sessionPicker) printHeading(stdout io.Writer, width int) {
 	if l.shown != "" {
-		terminal.Println(stdout, oneRow(l.shown, width))
+		terminal.Print(stdout, headingLines(l.shown, width))
 	}
 }
 
-// headRows is how many terminal rows the heading takes: one, cut to fit.
+// headRows is how many terminal rows the heading takes: one a line, each cut
+// to fit.
 func (l *sessionPicker) headRows() int {
 	if l.shown == "" {
 		return 0
 	}
-	return 1
+	return strings.Count(l.shown, "\n") + 1
+}
+
+// headingLines is a heading of one or more lines, each cut to one row of a
+// terminal width columns wide, ending in a line break. A heading that ends in
+// a line break ends in a blank line.
+func headingLines(heading string, width int) string {
+	var b strings.Builder
+	for line := range strings.SplitSeq(heading, "\n") {
+		b.WriteString(oneRow(line, width) + "\n")
+	}
+	return b.String()
 }
 
 // pickerPage is the rows [start, end) of the table, in its top-to-bottom
@@ -777,10 +806,20 @@ func (l *sessionPicker) pickRowsContext(ctx context.Context, p *prompter, stdout
 }
 
 func (l *sessionPicker) loadFromLine(answer string) bool {
-	if l.contentSearch != nil && strings.EqualFold(answer, "r") {
-		l.contentSearch.rerun = true
-		l.loadedOlder = true
-		return true
+	if s := l.contentSearch; s != nil {
+		switch {
+		case strings.EqualFold(answer, "r"):
+			s.rerun = true
+			l.loadedOlder = true
+			return true
+		case answer == "/" && s.canNewSearch():
+			s.request = searchRequestQuery
+			return true
+		case strings.EqualFold(answer, "a") && s.canToggleScope():
+			s.rerun, s.toggleScope = true, true
+			l.loadedOlder = true
+			return true
+		}
 	}
 	if l.olderLine(answer) {
 		l.loadedOlder = true
@@ -937,7 +976,8 @@ func (l *sessionPicker) split(groups []sessionTableGroup, format listFormatOptio
 func (l *sessionPicker) tableLines(groups []sessionTableGroup, format listFormatOptions, pg pickerPage, width int) int {
 	l.rendered += pg.end - pg.start
 	page := pageSessionGroups(groups, pg)
-	if width > 0 && !format.Verbose && !format.Search {
+	// A search result read by lines has its passage under it.
+	if width > 0 && !format.Verbose && (!format.Search || format.Cursor) {
 		return sessionLines(page)
 	}
 	var buf bytes.Buffer
@@ -1236,7 +1276,10 @@ func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browse
 	if !ok {
 		return browseBack, nil
 	}
-	ref := hit.Reference
+	// The passage opens on the match the strip showed, and n and p move the
+	// strip's match too.
+	state := s.matchState(hit)
+	ref := state.ref
 	var out search.Surrounding
 	notice := ""
 	read := func(offset int) {
@@ -1253,7 +1296,6 @@ func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browse
 	if ref != nil {
 		read(ref.Start)
 	}
-	navigation := searchMatchNavigation{position: -1}
 	top := 0
 	for {
 		if b.list.operationQuit {
@@ -1305,14 +1347,16 @@ func (b *sessionBrowser) searchDetails(ctx context.Context, row listRow) (browse
 			if answer == searchActionPrevious {
 				direction = -1
 			}
-			selected, err := s.moveMatch(ctx, hit, ref, direction, &navigation)
-			if err != nil {
+			if err := s.stepMatch(ctx, hit, state, direction); err != nil {
 				notice = err.Error()
 				continue
 			}
-			ref = selected
+			ref = state.ref
 			notice = ""
-			read(ref.Start)
+			out = search.Surrounding{}
+			if ref != nil {
+				read(ref.Start)
+			}
 			top = 0
 		default:
 			notice = searchDetailsQuestion
@@ -1347,7 +1391,7 @@ func (b *sessionBrowser) searchDetailAction(screen *detailsScreen) (contentSearc
 		return searchActionQuit, nil
 	case keyRune:
 		return contentSearchAction(strings.ToLower(string(k.r))), nil
-	case keyEscape, keyResize, keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyLeft, keyRight:
+	case keyEscape, keyResize, keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyLeft, keyRight, keyTab:
 	}
 	return searchActionNone, nil
 }

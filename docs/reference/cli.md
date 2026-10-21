@@ -662,11 +662,12 @@ first local index exists, search asks once whether to index in the background.
 After No, with no local index, a terminal search downloads sessions in scope
 from the bucket, newest first, and matches them in memory. It pauses after 2
 minutes to ask whether to go on; Esc stops and shows what was found.
-Browse ranked snippets and exact bounded context.
-Scrolling past the last result loads the next results. Use n/p for matching
-body passages, r to rerun the fixed query, and h to hand off the current
-session through existing gates. Metadata / filtering is
-disabled. JSON and piped output remain bounded documents.
+Results open in the session browser, best match first, with the highlighted
+session's matching passage under the list and its matched words highlighted.
+Use n/p for the session's other matches, Enter to read the passage, / for a
+new query, Tab to switch between all projects and the current one, r to rerun,
+and h to hand off the session through existing gates. Scrolling past the last
+result loads the next results. JSON and piped output remain bounded documents.
   --json              Print one versioned bounded JSON document
   --refresh           Run a bounded verified archive refresh
   --session SESSION_ID  Exact refresh target; requires --harness
