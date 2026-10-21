@@ -12,7 +12,7 @@ import run_ci_tier as tier
 from test_go_cache_context import metadata
 
 PROOF = {'source': 'a'*40, 'tree': 'b'*40}
-CONTEXT = {'GOOS': 'darwin', 'CGO_ENABLED': '1', 'GOVERSION': 'go1.27.2'}
+CONTEXT = {'GOOS': 'darwin', 'CGO_ENABLED': '1', 'GOVERSION': 'go1.27.3'}
 
 
 
@@ -22,7 +22,7 @@ def canonical_context():
     go.update(GOOS='darwin', GOHOSTOS='darwin', GOARCH='arm64', GOHOSTARCH='arm64', GOENV='off')
     def run(argv):
         if argv == ['go', 'version']:
-            return b'go version go1.27.2 darwin/arm64\n'
+            return b'go version go1.27.3 darwin/arm64\n'
         if argv == ['go', 'env', '-json', *tier.cache_keys.GO_FIELDS]:
             return json.dumps(go).encode()
         return ('synthetic unit metadata: '+' '.join(argv)).encode()
@@ -239,7 +239,7 @@ class NativeSmokeTest(unittest.TestCase):
         linux = copy.deepcopy(CANONICAL)
         linux.pop('sdk')
         linux['go'].update(GOOS='linux', GOHOSTOS='linux')
-        linux.update(version='go version go1.27.2 linux/arm64', runner_os='Linux')
+        linux.update(version='go version go1.27.3 linux/arm64', runner_os='Linux')
         with mock.patch.object(tier.cache_keys, 'runtime_context', return_value=linux):
             with self.assertRaisesRegex(tier.Failure, 'requires Darwin'):
                 tier.native_host_context()
