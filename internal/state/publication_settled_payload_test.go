@@ -204,7 +204,7 @@ func publishedUsage(t *testing.T, s *Store, id string, n int64) (u durableUsage,
 		if e != nil {
 			return e
 		}
-		additional, e = q.publishedAdditional(t.Context(), path, info, n)
+		additional, e = q.publishedAdditional(t.Context(), path, info, n, chargedInFull)
 		return e
 	}); err != nil {
 		t.Fatal(err)

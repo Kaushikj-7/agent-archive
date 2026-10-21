@@ -54,6 +54,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Updating a session's local record of its last upload no longer needs free
+  room for twice the record's size under the 1 GiB limit on pending local
+  work. A large record that counts nothing at rest now needs room only for
+  its temporary copy, so it is no longer refused with "durable publication
+  capacity exhausted" when the limit is nearly full.
 - `status --issues` counts a subagent that could not be captured as a
   subagent, as the last error's summary does, instead of as a session.
   `status --json` adds `collector.subagent_issues`.
