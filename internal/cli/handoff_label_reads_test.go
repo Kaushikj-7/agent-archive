@@ -252,8 +252,10 @@ func TestHandoffPickerReadsOneTranscriptWholeAtATime(t *testing.T) {
 // peakParser counts the parses in flight, each held for a fake second.
 type peakParser struct {
 	agentapi.TranscriptParser
-	mu                     sync.Mutex
-	inFlight, peak, parses int
+	mu       sync.Mutex
+	inFlight int
+	peak     int
+	parses   int
 }
 
 func (p *peakParser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.Analysis, error) {

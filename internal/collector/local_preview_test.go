@@ -245,7 +245,11 @@ func TestLocalPreviewNamesALabeledCodexSessionAsTheFullRead(t *testing.T) {
 // whose label names another session, is read whole.
 func TestLocalPreviewLeavesLabelsItCannotApplyToTheFullRead(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ name, harness, native string }{
+	for _, tc := range []struct {
+		name    string
+		harness string
+		native  string
+	}{
 		{"no namer", "claude", "native-large"},
 		{"another session's label", "codex", "native-other"},
 	} {
