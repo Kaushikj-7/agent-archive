@@ -8,6 +8,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `agent-archive status` prints the command that fixes its problem when it
+  knows one, on its own line: `agent-archive setup` when background
+  collection is not scheduled or belongs to another installation,
+  `agent-archive setup --refresh` when the installed collector is missing,
+  and `agent-archive sync` when there is no recent collection result or
+  storage access failed. `status --issues` prints a group's `agent-archive
+  sync` on its own line too, and lists groups that need you before those
+  with nothing to do.
+
 - `agent-archive search` covers every project by default. Use `--project` to
   narrow it; `--all-projects` is still accepted. Outside a project, search no
   longer refuses to run.
@@ -45,6 +54,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `status --issues` counts a subagent that could not be captured as a
+  subagent, as the last error's summary does, instead of as a session.
+  `status --json` adds `collector.subagent_issues`.
 - The `handoff` picker appears sooner when sessions are not uploaded yet. To
   title each, it filters and parses only the first and last 256 KiB of its
   transcript instead of the whole transcript, which took seconds for a large

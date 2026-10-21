@@ -96,7 +96,7 @@ func readStatusOverview(env Env) (view statusOverview, err error) {
 		view.readSetupRecovery(root.Root)
 		return view, nil
 	}
-	view.configured, view.state, view.next = true, overviewUnknown, "agent-archive status --issues"
+	view.configured, view.state, view.next = true, overviewUnknown, overviewIssues
 	view.background, view.lastCheck = "Unknown", "No saved check yet"
 	view.uploads, view.queue = "No saved upload yet", "Unknown"
 	now, id := env.now(), statusConfigurationID(cfg)
@@ -106,7 +106,7 @@ func readStatusOverview(env Env) (view statusOverview, err error) {
 	if valid {
 		view.applySummary(summary, now)
 	} else {
-		view.problem = "No current summary; the next collection records one."
+		view.problem, view.next = "No current summary; the next collection records one.", overviewSync
 	}
 	view.readAgents(root.Root, cfg, env, now)
 	view.readLiveness(ctx, root.Root, home, cfg, env, now, id)
@@ -127,7 +127,7 @@ func (view *statusOverview) applySummary(summary statusSummary, now time.Time) {
 		view.queue = fmt.Sprintf("%d pending at last check", summary.Pending)
 	}
 	if summary.CompletedAt.IsZero() || now.Sub(summary.CompletedAt) > scanStaleAfter {
-		view.problem = "No recent collection result; current health is unknown."
+		view.problem, view.next = "No recent collection result; current health is unknown.", overviewSync
 		if summary.PendingKnown {
 			view.queue = "Unknown now; " + view.queue
 		}
@@ -135,10 +135,23 @@ func (view *statusOverview) applySummary(summary statusSummary, now time.Time) {
 		view.state = overviewWorking
 	}
 	if summary.Problem != statusProblemNone {
-		view.state, view.problem = overviewAttention, statusProblemText(summary.Problem)
+		view.attention(statusProblemText(summary.Problem), overviewIssues)
 	} else if summary.VerificationFailures > 0 {
-		view.state, view.problem = overviewAttention, "Some uploads have unresolved read-back failures."
+		view.attention("Some uploads have unresolved read-back failures.", overviewIssues)
 	}
+}
+
+// The overview's next steps: the issues view, when the fix depends on what
+// it shows, and sync, which runs a collection and prints its own errors.
+const (
+	overviewIssues = "agent-archive status --issues"
+	overviewSync   = "agent-archive sync"
+)
+
+// attention records a problem that needs the user and the command that
+// fixes it, replacing any earlier problem and its command.
+func (view *statusOverview) attention(problem, next string) {
+	view.state, view.problem, view.next = overviewAttention, problem, next
 }
 
 func (view *statusOverview) readAgents(root *os.Root, cfg config.Config, env Env, now time.Time) {
@@ -173,11 +186,11 @@ func (view *statusOverview) readLiveness(ctx context.Context, root *os.Root, hom
 	case scheduler.Running:
 		view.background = "On · starting collection"
 	case scheduler.Missing:
-		view.background, view.state = "Not scheduled", overviewAttention
-		view.problem = "Background collection is not scheduled."
+		view.background = "Not scheduled"
+		view.attention("Background collection is not scheduled.", "agent-archive setup")
 	case scheduler.AnotherInstallation:
-		view.background, view.state = "Another installation", overviewAttention
-		view.problem = "The background job belongs to another installation."
+		view.background = "Another installation"
+		view.attention("The background job belongs to another installation.", "agent-archive setup")
 	case scheduler.Unknown:
 		view.background = "Could not confirm within the status budget"
 		if view.state != overviewAttention {
@@ -196,7 +209,7 @@ func (view *statusOverview) readLiveness(ctx context.Context, root *os.Root, hom
 			}
 			view.readProgress(root, record, now, id)
 			if now.Sub(record.Since) > collectLockStuckAfter {
-				view.state, view.problem = overviewAttention, "Collection has exceeded its expected lifetime."
+				view.attention("Collection has exceeded its expected lifetime.", overviewIssues)
 			}
 		default:
 			view.background = "Waiting for another operation"
@@ -208,10 +221,10 @@ func (view *statusOverview) readLiveness(ctx context.Context, root *os.Root, hom
 		}
 	}
 	if job.Program != "" && executableProblem(job.Program) != "" {
-		view.state, view.problem = overviewAttention, "The installed collector executable is unavailable."
+		view.attention("The installed collector executable is unavailable.", "agent-archive setup --refresh")
 	}
 	if job.DefinitionErr != nil || len(job.Degraded) > 0 {
-		view.state, view.problem = overviewAttention, "Background collection needs attention."
+		view.attention("Background collection needs attention.", overviewIssues)
 	}
 }
 
@@ -298,26 +311,25 @@ func (view *statusOverview) readHealth(root *os.Root, cfg config.Config, now tim
 		//lint:ignore LV1001 storageHealth.State is an untyped legacy string shared with collection and verification
 		switch health.State {
 		case "credentials_unavailable", "credentials_expired", "authentication_failed", "storage_unavailable":
-			view.state, view.problem = overviewAttention, "Storage access failed on the last attempt."
+			view.attention("Storage access failed on the last attempt.", overviewSync)
 			view.uploads = "Access failed · " + view.uploads
 		}
 	}
 	if currentBucketPrivacy(cfg, now).State == "public_or_risky" {
-		view.state, view.problem = overviewAttention, "The saved storage check found public or risky access."
+		view.attention("The saved storage check found public or risky access.", overviewIssues)
 	}
 }
 
 func (view *statusOverview) applyConfiguration(root *os.Root, cfg config.Config) {
 	if len(cfg.Harnesses) == 0 {
-		view.state, view.problem = overviewAttention, "No coding agents are enabled for archiving."
+		view.attention("No coding agents are enabled for archiving.", overviewIssues)
 	}
 	if cfg.Paused {
 		view.state, view.background, view.next = overviewPaused, "Paused", "agent-archive resume"
 		view.problem = "Collection is paused."
 	}
 	if cfg.InstalledExecutable != "" && executableProblem(cfg.InstalledExecutable) != "" {
-		view.state, view.problem = overviewAttention, "The installed archive executable is unavailable."
-		view.next = "agent-archive setup --refresh"
+		view.attention("The installed archive executable is unavailable.", "agent-archive setup --refresh")
 	}
 	if !cfg.Archive.Enabled {
 		view.state, view.problem, view.next = overviewUninstalled, "Local archive data is retained.", "agent-archive setup"
@@ -356,7 +368,7 @@ func printStatusOverview(out io.Writer, view statusOverview, now time.Time) {
 		terminal.Println(out, s.cmd(view.next))
 	}
 	if view.configured {
-		if view.next != "agent-archive status --issues" || view.state == overviewWorking || view.state == overviewProcessing {
+		if view.next != overviewIssues || view.state == overviewWorking || view.state == overviewProcessing {
 			terminal.Println(out, s.cmd("agent-archive status --issues"))
 		}
 		terminal.Println(out, s.cmd("agent-archive status --verbose"))

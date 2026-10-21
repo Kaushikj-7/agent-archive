@@ -50,11 +50,15 @@ var issueCodes = []string{
 // headline is the problem status leads with when this kind is the most
 // pressing one the last pass recorded; it is empty for a storage kind, which
 // keeps status's storage headline, and for a kind with nothing to do, which
-// needs no headline.
+// needs no headline. command, when set, is the one command the next step
+// runs, and groupNext the rest of the step without it: status --issues
+// prints the command on its own line under the group.
 type issueLabel struct {
-	what     string
-	next     string
-	headline string
+	what      string
+	next      string
+	headline  string
+	command   string
+	groupNext string
 }
 
 var issueLabels = map[string]issueLabel{
@@ -63,8 +67,10 @@ var issueLabels = map[string]issueLabel{
 		next: "check the credentials with agent-archive setup (choose storage), then run agent-archive sync",
 	},
 	issueStorageUnavailable: {
-		what: "failed to reach storage (network or service unavailable)",
-		next: "check the network and the storage service, then run agent-archive sync (the next pass also retries)",
+		what:      "failed to reach storage (network or service unavailable)",
+		next:      "check the network and the storage service, then run agent-archive sync (the next pass also retries)",
+		command:   "agent-archive sync",
+		groupNext: "check the network and the storage service, then run",
 	},
 	// No error of this version carries it: the collector records a rewritten
 	// transcript as a transcript_rewritten capture gap instead. It is kept so
@@ -85,9 +91,11 @@ var issueLabels = map[string]issueLabel{
 		headline: "Some local state could not be read",
 	},
 	issueRetentionFailed: {
-		what:     "couldn't be removed after the retention period",
-		next:     "the next pass retries, or run agent-archive sync for details",
-		headline: "Some sessions couldn't be removed after the retention period",
+		what:      "couldn't be removed after the retention period",
+		next:      "the next pass retries, or run agent-archive sync for details",
+		headline:  "Some sessions couldn't be removed after the retention period",
+		command:   "agent-archive sync",
+		groupNext: "the next pass retries, or for details run",
 	},
 	// Only subagents carry it, so its count reads "1 subagent". Only the pass
 	// that rejected the subagent reports it, so a later sync has no details
@@ -97,9 +105,11 @@ var issueLabels = map[string]issueLabel{
 		next: "nothing to do, its parent session records the link as unavailable",
 	},
 	issueCaptureFailed: {
-		what:     "failed to capture or upload",
-		next:     "run agent-archive sync for details",
-		headline: "Some sessions could not be captured",
+		what:      "failed to capture or upload",
+		next:      "run agent-archive sync for details",
+		headline:  "Some sessions could not be captured",
+		command:   "agent-archive sync",
+		groupNext: "for details run",
 	},
 }
 
@@ -194,12 +204,13 @@ func issueSummary(tallies map[string]issueTally) string {
 }
 
 // sessionIssues is what a pass's failed sessions come to: each one's issue
-// code and recognized reason, and the count of each code, sessions and
-// subagents apart.
+// code and recognized reason, which of them are subagents, and the count of
+// each code, sessions and subagents apart.
 type sessionIssues struct {
-	codes   map[string]string
-	reasons map[string]string
-	tallies map[string]issueTally
+	codes     map[string]string
+	reasons   map[string]string
+	subagents map[string]bool
+	tallies   map[string]issueTally
 }
 
 // add records one session's code and reason and counts the code.
@@ -210,6 +221,7 @@ func (i sessionIssues) add(id, code, reason string, subagent bool) {
 	}
 	tally := i.tallies[code]
 	if subagent {
+		i.subagents[id] = true
 		tally.subagents++
 	} else {
 		tally.sessions++
@@ -222,7 +234,7 @@ func (i sessionIssues) add(id, code, reason string, subagent bool) {
 // candidate's failure says so itself, since a candidate never became a
 // registration.
 func classifySessions(sessionErrs map[string]error, isSubagent func(string) bool) sessionIssues {
-	issues := sessionIssues{codes: make(map[string]string, len(sessionErrs)), reasons: map[string]string{}, tallies: map[string]issueTally{}}
+	issues := sessionIssues{codes: make(map[string]string, len(sessionErrs)), reasons: map[string]string{}, subagents: map[string]bool{}, tallies: map[string]issueTally{}}
 	for id, sessionErr := range sessionErrs {
 		code := sessionIssueCode(sessionErr)
 		issues.add(id, code, sessionIssueReason(sessionErr, code), errors.Is(sessionErr, collector.ErrSubagentCandidate) || isSubagent(id))
@@ -235,8 +247,8 @@ func classifySessions(sessionErrs map[string]error, isSubagent func(string) bool
 // for, because it held them until their next attempt: each keeps the issue
 // its last attempt recorded, which the collector carried into
 // current.SessionIssues (capture_failed, which every such failure is, when
-// it carried none) with its reason, and counts in the summary as it did
-// then, so status still shows it failing.
+// it carried none) with its reason and subagent mark, and counts in the
+// summary as it did then, so status still shows it failing.
 func (i sessionIssues) carryRetrying(current state.Status, isSubagent func(string) bool) {
 	for id := range current.NextRetryAt {
 		if _, failed := i.codes[id]; failed {
@@ -246,7 +258,7 @@ func (i sessionIssues) carryRetrying(current state.Status, isSubagent func(strin
 		if code == "" {
 			code = issueCaptureFailed
 		}
-		i.add(id, code, current.SessionIssueReasons[id], isSubagent(id))
+		i.add(id, code, current.SessionIssueReasons[id], current.SubagentIssues[id] || isSubagent(id))
 	}
 }
 
@@ -296,7 +308,7 @@ func (i sessionIssues) carryCodes(status state.Status, isSubagent func(string) b
 		if _, recorded := i.codes[id]; recorded {
 			continue
 		}
-		i.add(id, code, status.SessionIssueReasons[id], isSubagent(id))
+		i.add(id, code, status.SessionIssueReasons[id], status.SubagentIssues[id] || isSubagent(id))
 	}
 }
 
@@ -305,6 +317,10 @@ func saveSessionIssues(localStore *state.Store, current state.Status, issues ses
 	current.SessionIssueReasons = nil
 	if len(issues.reasons) > 0 {
 		current.SessionIssueReasons = issues.reasons
+	}
+	current.SubagentIssues = nil
+	if len(issues.subagents) > 0 {
+		current.SubagentIssues = issues.subagents
 	}
 	current.IssueCounts = make(map[string]int, len(issues.tallies))
 	for code, tally := range issues.tallies {
@@ -364,6 +380,14 @@ func issueHeadline(status state.Status) (problem, next string, ok bool) {
 	return "", "", true
 }
 
+// boolRank orders true after false.
+func boolRank(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // issueGroupExamples is how many session IDs status --issues names for
 // each group of failed sessions; the rest are in status --json.
 const issueGroupExamples = 3
@@ -377,19 +401,35 @@ type issueGroup struct {
 	tally  issueTally
 }
 
-// text words a group: its count (sessions and subagents apart, as in the
-// last error's summary), what happened, its reason, and the next step.
-func (g issueGroup) text() string {
+// label is the group's issueLabel; a code this version does not write gets
+// capture_failed's.
+func (g issueGroup) label() issueLabel {
 	label, ok := issueLabels[g.code]
 	if !ok {
 		label = issueLabels[issueCaptureFailed]
 	}
+	return label
+}
+
+// text words a group: its count (sessions and subagents apart, as in the
+// last error's summary), what happened, its reason, and the next step, less
+// the command (see command).
+func (g issueGroup) text() string {
+	label := g.label()
 	reason := g.reason
 	if reason == "" {
 		reason = "error not recognized"
 	}
-	return fmt.Sprintf("%s %s: %s — %s", g.tally, label.what, reason, label.next)
+	next := label.next
+	if label.command != "" {
+		next = label.groupNext
+	}
+	return fmt.Sprintf("%s %s: %s — %s", g.tally, label.what, reason, next)
 }
+
+// command is the command the group's next step runs, printed on its own
+// line, or "" when the step names none or names it within its text.
+func (g issueGroup) command() string { return g.label().command }
 
 // actionable reports whether the group needs something from the user: a
 // storage kind, or a kind with a headline of its own. The others (a
@@ -411,7 +451,8 @@ func (g issueGroup) examples() string {
 }
 
 // issueGroups groups the last pass's failed sessions by code and reason,
-// the largest group first, then in issueCodes order, so hundreds of
+// the groups that need something from the user first, then the largest
+// first, then in issueCodes order, so hundreds of
 // sessions that failed alike read as one line. isSubagent reports whether a
 // session is a subagent, which the group counts apart.
 func issueGroups(status state.Status, isSubagent func(string) bool) []issueGroup {
@@ -447,6 +488,7 @@ func issueGroups(status state.Status, isSubagent func(string) bool) []issueGroup
 	}
 	slices.SortFunc(groups, func(a, b issueGroup) int {
 		return cmp.Or(
+			cmp.Compare(boolRank(b.actionable()), boolRank(a.actionable())),
 			cmp.Compare(len(b.ids), len(a.ids)),
 			cmp.Compare(rank(a.code), rank(b.code)),
 			strings.Compare(a.code, b.code),

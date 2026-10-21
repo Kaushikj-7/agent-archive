@@ -962,6 +962,7 @@ func (p *pass) saveStatus() error {
 		SessionIssues:    carriedIssues(previous.SessionIssues, p.retryAt, p.result.Errors),
 		// Each carried issue keeps the reason recorded beside it.
 		SessionIssueReasons: carriedIssues(previous.SessionIssueReasons, p.retryAt, p.result.Errors),
+		SubagentIssues:      carriedIssues(previous.SubagentIssues, p.retryAt, p.result.Errors),
 		UnreachedSessions:   p.result.Unreached,
 		WaitingSubagents:    len(p.result.WaitingSubagents),
 		RunningSubagents:    len(p.result.RunningSubagents),
@@ -979,19 +980,20 @@ func (p *pass) saveStatus() error {
 	return nil
 }
 
-// carriedIssues is the previous pass's issue (or reason) for each session on
-// the lookup allowance's backoff schedule (retrying) that this pass recorded
-// no failure for (failed): it held the session (Result.RetryLater), or ended
-// with its attempt in flight, so the failure the last attempt recorded still
-// stands.
+// carriedIssues is the previous pass's issue (or reason, or subagent mark)
+// for each session on the lookup allowance's backoff schedule (retrying)
+// that this pass recorded no failure for (failed): it held the session
+// (Result.RetryLater), or ended with its attempt in flight, so the failure
+// the last attempt recorded still stands.
 // The caller records this pass's own failures beside them (internal/cli's
 // recordSessionIssues).
-func carriedIssues(previous map[string]string, retrying map[string]time.Time, failed map[string]error) map[string]string {
-	var issues map[string]string
+func carriedIssues[T comparable](previous map[string]T, retrying map[string]time.Time, failed map[string]error) map[string]T {
+	var issues map[string]T
+	var zero T
 	for id := range retrying {
-		if code := previous[id]; code != "" && failed[id] == nil {
+		if code := previous[id]; code != zero && failed[id] == nil {
 			if issues == nil {
-				issues = map[string]string{}
+				issues = map[string]T{}
 			}
 			issues[id] = code
 		}

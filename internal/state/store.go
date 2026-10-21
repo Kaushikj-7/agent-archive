@@ -1208,6 +1208,11 @@ type Status struct {
 	// transcript content, path, or anything a credential_process printed.
 	// A session whose error was not recognized has no entry.
 	SessionIssueReasons map[string]string `json:"session_issue_reasons,omitempty"`
+	// SubagentIssues marks the SessionIssues that are subagents: a
+	// registered child, or a candidate the pass rejected or failed before
+	// it was ever registered, which no registration can tell apart from a
+	// top-level session afterward.
+	SubagentIssues map[string]bool `json:"subagent_issues,omitempty"`
 	// IssueCounts counts SessionIssues by code, subagents included: the
 	// numbers the last error's summary of failed sessions is built from. It
 	// is cleared when a later failure replaces that summary, so status can
