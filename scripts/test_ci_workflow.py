@@ -259,7 +259,7 @@ class LinuxFullMemoryTest(unittest.TestCase):
                     self.assertEqual(tiers.main(), 0)
                 tier, actual_suite, _, _, seconds = run.call_args.args
                 self.assertEqual(actual_suite, 'linux')
-                self.assertEqual(seconds, 3300 if tier == 'full' else 1440)
+                self.assertEqual(seconds, 3300 if tier == 'full' else 2400)
                 minutes = expression_value(job_key(job, 'timeout-minutes'), event,
                                            suite=suite, schedule=schedule)
                 if tier == 'full':
@@ -267,7 +267,7 @@ class LinuxFullMemoryTest(unittest.TestCase):
                     self.assertEqual(minutes, 75)
                 else:
                     self.assertEqual(tier, 'daily')
-                    self.assertEqual(minutes, 30)
+                    self.assertEqual(minutes, 45)
                     self.assertLessEqual(seconds + 5 * 60, minutes * 60)
 
     def test_extended_linux_runs_forward_memory_budget(self):

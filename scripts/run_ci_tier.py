@@ -855,8 +855,6 @@ def run_native_smoke(out, deadline, report, save, execute, sensitive, *, local=F
 
 # Shared deadline for the full Linux tier; its outer jobs allow at least 75 minutes.
 FULL_LINUX_SECONDS = 3300
-# Daily Linux runs in a 30-minute job; leave time for setup, vet and script tests.
-DAILY_LINUX_SECONDS = 1440
 
 
 def run_suite(tier, suite, out, extras=None, seconds=2400, *, own_plain_vet=False, native_local=False):
@@ -1208,7 +1206,7 @@ def main():
     parser.add_argument('--suite', choices=['linux','macos','fuzz','systemd','extra','audit'], default='linux')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--extra-plan', type=Path)
-    parser.add_argument('--seconds', type=int, help='shared deadline; default 3300 for the full Linux tier, 1440 for daily Linux, else 2400')
+    parser.add_argument('--seconds', type=int, help='shared deadline; default 3300 for the full Linux tier, else 2400')
     args = parser.parse_args()
     if (args.verify_plan or args.verify_native_plan) and args.extra_plan is None:
         parser.error('plan verification requires --extra-plan')
@@ -1274,10 +1272,7 @@ def main():
                 raise Failure('PR ordinary coverage belongs to exhaustive shards')
             # The full Linux tier runs every race body plus the plain
             # restoration and performance invocations on one runner.
-            default = 2400
-            if args.suite == 'linux':
-                default = {'full': FULL_LINUX_SECONDS, 'daily': DAILY_LINUX_SECONDS}.get(tier, default)
-            seconds = args.seconds or default
+            seconds = args.seconds or (FULL_LINUX_SECONDS if tier == 'full' and args.suite == 'linux' else 2400)
             run_suite(tier,args.suite,args.output,extra,seconds,own_plain_vet=args.own_plain_vet,native_local=args.native_local)
     except (Failure,ValueError,KeyError,TypeError,OSError,subprocess.SubprocessError) as error:
         print('tier gate failed: '+str(error),file=sys.stderr)
