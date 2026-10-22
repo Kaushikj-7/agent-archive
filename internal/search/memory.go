@@ -77,3 +77,14 @@ func (s *Store) DropSessionText(ctx context.Context, harness, session string, ke
 	}
 	return tx.Commit()
 }
+
+// Size is how many bytes the store's pages in use hold, full-text index
+// included: for a store opened with OpenMemory, how much its kept sessions
+// take. A database in memory keeps the pages that dropped text freed, for
+// later sessions to reuse, so the memory it holds is the most it ever used,
+// which can exceed Size by the largest session dropped.
+func (s *Store) Size(ctx context.Context) (int64, error) {
+	var size int64
+	err := s.db.QueryRowContext(ctx, "SELECT (page_count-freelist_count)*page_size FROM pragma_page_count(),pragma_freelist_count(),pragma_page_size()").Scan(&size)
+	return size, err
+}

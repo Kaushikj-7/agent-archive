@@ -178,7 +178,10 @@ projects unless `--project`; harness, dates, replays and children) before
 downloading anything, then reads the matching sessions newest first. Each
 session's verified sources go through the same parser visibility and privacy
 rules as indexing, into an in-memory database that is never written to disk.
-Only matching sessions keep their passages, until the command exits. A progress
+Only matching sessions keep their passages, until the command exits. Once
+their text and its full-text index fill 256 MiB of memory, as a common word
+across a large archive can, the search stops and shows the results so far,
+with the command that turns indexing on; more specific words reach further. A progress
 line counts the sessions searched and matching, and each matching session is
 printed as it is found; the summary also counts sessions that could not be
 read. If 5 sessions in a row cannot be read, as when the network drops, it

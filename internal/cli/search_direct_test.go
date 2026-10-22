@@ -378,6 +378,58 @@ func TestDirectSearchNarrowingCountsOnlyTheProject(t *testing.T) {
 	}
 }
 
+// Once matching sessions fill the memory a direct search may keep, it stops
+// and shows what it found instead of reading on.
+func TestDirectSearchStopsWhenMatchesFillItsMemory(t *testing.T) {
+	t.Parallel()
+	env, objects, ids, sources := directSearchFixture(t, []directSession{
+		{"native-old", 0, "checksum in the oldest"},
+		{"native-miss", 0, "nothing relevant"},
+		{"native-new", 0, "checksum in the newest"},
+	})
+	env.directSearchMemory = 1
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 0 {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	for _, want := range []string{
+		"Stopped after the newest 1 of 3 sessions · 1 matching session",
+		"! Matches filled the memory a search without an index may use.\n  Search for more specific words, or to search every session, run:\n  agent-archive setup --yes --search-indexing on\n",
+		shortSessionID(ids[2]) + "  1 match",
+		"Searched the newest 1 of 3 sessions in the bucket",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if slices.Contains(objects.directReads(), sources[1]) || slices.Contains(objects.directReads(), sources[0]) {
+		t.Fatalf("read on after memory was full: %v", objects.directReads())
+	}
+	assertNoSearchIndex(t, env)
+}
+
+// Esc just after a match is shown ends the stretch as a stop, not as an
+// error from reading how much memory the matches fill.
+func TestDirectSearchEscAfterAMatchStopsCleanly(t *testing.T) {
+	t.Parallel()
+	env, objects, _, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}, {"native-2", 0, "checksum two"}})
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	index, err := search.OpenMemory(t.Context(), "test/context")
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, memory: directSearchMemoryCap, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}, sent: cancel}
+	why, err := scan.run(ctx, make(chan directMatch, len(listed)))
+	if err != nil || why == directScanDone {
+		t.Fatalf("%s %v", why, err)
+	}
+	if searched, matching := scan.counts(); searched != 1 || matching != 1 {
+		t.Fatalf("searched %d, %d matching, want the one shown", searched, matching)
+	}
+}
+
 func TestDirectSearchCountsSessionsThatCouldNotBeRead(t *testing.T) {
 	t.Parallel()
 	env, objects, _, sources := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}, {"native-2", 0, "checksum two"}})
