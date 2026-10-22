@@ -19,11 +19,27 @@ type searchCommandDependencies interface {
 	handoffCommandDependencies
 	now() time.Time
 	newCommandFlags(string, io.Writer) *commandFlags
+	setSearchIndexing(bool, io.Writer) bool
+	directSearchBudget() time.Duration
+	directSearchMemoryCap() int64
 }
 
 type contentSearchOptions struct {
-	stdin       io.Reader
-	automatic   bool
+	stdin     io.Reader
+	automatic bool
+	// ask is bare search on a terminal: the query is asked for once the
+	// configuration is known, and flags that need a query are allowed.
+	ask bool
+	// direct is set when the results come from a direct bucket search, to
+	// what it searched ("Searched the newest 104 of 2,350 sessions"). Its
+	// store holds only the matching text of the scope it scanned, so the
+	// browser offers no new query or wider scope over it.
+	direct string
+	// prompt is the terminal prompter startInteractiveSearch asked through,
+	// or nil when nothing was asked; it keeps the answers typed ahead.
+	prompt *prompter
+	// indexing is automatic indexing's saved choice, for the missing-index line.
+	indexing    bool
 	query       search.Query
 	refresh     bool
 	session     string
@@ -45,8 +61,8 @@ type contentSearchOptions struct {
 func runSearchCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env searchCommandDependencies) int {
 	fs := env.newCommandFlags("search", stderr)
 	harness := fs.String("harness", "", "session harness")
-	project := fs.String("project", "", "directory or configured project name")
-	all := fs.Bool("all-projects", false, "search every project's indexed sessions")
+	project := fs.String("project", "", "directory or configured project name (default every project)")
+	all := fs.Bool("all-projects", false, "search every project's indexed sessions (the default)")
 	since := fs.String("since", "", "inclusive capture date, RFC3339 time or age")
 	until := fs.String("until", "", "inclusive capture date, RFC3339 time or age")
 	replay := fs.String("replays", "hide", replaysFlagUsage)
@@ -73,6 +89,9 @@ func runSearchCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, 
 		return fs.usageError("%s", harnessFlagError(*harness))
 	}
 	opts := contentSearchOptions{query: search.Query{Text: text, Harness: canonical, Limit: *limit, Cursor: *cursor}, refresh: *refresh, session: *session, read: *read, offset: *offset, maxBytes: *maxBytes, project: *project, all: *all, hasQuery: given, json: *jsonMode, rebuild: *rebuild, wait: *wait, outputBytes: *outputBytes, before: *before, after: *after}
+	if !given && !opts.refresh && opts.read == "" && opts.session == "" && !opts.json && browseInteractive(env, stdin, stdout) {
+		opts.ask, opts.hasQuery = true, true
+	}
 
 	seen := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { seen[f.Name] = true })
@@ -185,8 +204,10 @@ func validateContentSearchRead(fs *commandFlags, opts *contentSearchOptions, see
 		if offset < 0 {
 			offset = opts.reference.Start
 		}
-		if offset < opts.reference.Start || offset > opts.reference.End {
-			return fs.usageError("--offset is outside referenced passage")
+		// An offset past the passage reads on in its message, as next_offset
+		// does; the read checks it belongs to that message.
+		if offset < opts.reference.Start {
+			return fs.usageError("--offset is before the referenced passage")
 		}
 	}
 
@@ -231,7 +252,7 @@ func validateContentSearchIdentities(fs *commandFlags, opts *contentSearchOption
 			return fs.usageError("invalid session ID: %v", err)
 		}
 	}
-	if opts.hasQuery {
+	if opts.hasQuery && !opts.ask {
 		if _, err := search.MatchExpression(opts.query.Text); err != nil {
 			return fs.usageError("%v", err)
 		}

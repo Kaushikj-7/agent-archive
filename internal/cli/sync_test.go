@@ -40,10 +40,10 @@ func TestSyncEndToEndFromHookThroughPublish(t *testing.T) {
 	}
 
 	stdout.Reset()
-	if code := runStatusCommand(nil, &stdout, &stderr, env); code != 0 {
+	if code := runStatusCommand([]string{"--verbose"}, &stdout, &stderr, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "reachable · uploaded just now") {
+	if !strings.Contains(stdout.String(), "reachable") || !strings.Contains(stdout.String(), "uploaded just now") {
 		t.Fatalf("status did not reflect the publish: %s", stdout.String())
 	}
 }

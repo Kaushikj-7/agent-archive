@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"slices"
 	"time"
 )
 
@@ -10,11 +11,17 @@ type RecordPreview struct {
 	NameSource   SessionNameSource
 	NameNativeID string
 	Title        string
-	Branch       string
-	Activity     time.Time
-	Gaps         []CaptureGap
-	Kind         TurnKind
-	Command      string
+	// Branch is the record's git branch as recorded, unvalidated: as for a
+	// full parse, only the last one recorded is validated, by
+	// PreviewAccumulator.ValidBranch.
+	Branch   string
+	Activity time.Time
+	Gaps     []CaptureGap
+	Kind     TurnKind
+	Command  string
+	// PullRequest is the pull request a pr-link record names; its Number is
+	// 0 for any other record.
+	PullRequest PullRequestLink
 }
 
 // PreviewAccumulator keeps only filtered display facts and one pending slash
@@ -36,6 +43,11 @@ func (a *PreviewAccumulator) AddFacts(p RecordPreview, head bool) {
 	}
 	if p.Branch != "" {
 		a.Labels.Branch = p.Branch
+	}
+	if p.PullRequest.Number > 0 && len(a.Labels.PullRequests) < MaxPullRequests && !slices.ContainsFunc(a.Labels.PullRequests, func(prior PullRequestLink) bool {
+		return prior.Repository == p.PullRequest.Repository && prior.Number == p.PullRequest.Number
+	}) {
+		a.Labels.PullRequests = append(a.Labels.PullRequests, p.PullRequest)
 	}
 	if p.Activity.After(a.Activity) {
 		a.Activity = p.Activity
@@ -70,6 +82,16 @@ func (a *PreviewAccumulator) AddFacts(p RecordPreview, head bool) {
 			a.Gaps = append(a.Gaps, CaptureGap{Code: g.Code})
 		}
 	}
+}
+
+// ValidBranch is the last branch the records recorded, validated as
+// LabelsFromAnalysis validates a full parse's: "" when it is not a valid
+// branch name or is HEAD.
+func (a *PreviewAccumulator) ValidBranch() string {
+	if branch := validBranch(a.Labels.Branch); branch != "HEAD" {
+		return branch
+	}
+	return ""
 }
 
 // SessionNameSource identifies native title precedence without interpreting raw records.

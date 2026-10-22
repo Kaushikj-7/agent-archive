@@ -68,7 +68,7 @@ func (s *Store) readBudgetedContext(ctx context.Context, path string, value any,
 	reservation := s.readReservation()
 	if s.resourceBudget == nil {
 		if _, published := value.(*publishedState); !published {
-			return local.Read(path, value)
+			return s.readRegistrationJSON(path, value)
 		}
 	}
 	if s.resourceBudget != nil {
@@ -138,11 +138,15 @@ func (s *Store) readBudgetedContext(ctx context.Context, path string, value any,
 	return nil
 }
 
-func (s *Store) writeCompact(path string, value any) error {
+func (s *Store) writeCompactAt(root *os.Root, path string, value any) error {
+	return s.writeCompactUsing(filepath.Join(s.home, path), value, func() error { return local.RootedWrite(root, path, value) })
+}
+
+func (s *Store) writeCompactUsing(path string, value any, write func() error) error {
 	s.invalidatePublishedAccounting(path)
 	reservation := s.readReservation()
 	if s.resourceBudget == nil {
-		return local.WriteCompact(path, value)
+		return write()
 	}
 	const scratch = 32 << 10
 	if !reservation.Reserve(scratch) {
@@ -161,7 +165,7 @@ func (s *Store) writeCompact(path string, value any) error {
 		return errStateBudget
 	}
 	defer reservation.Release(n + 1)
-	return local.WriteCompact(path, value)
+	return write()
 }
 
 // unmarshalOwned charges an additional decoded view of bytes already owned by
@@ -347,10 +351,10 @@ func (s *Store) decodePublicationOwned(ctx context.Context, data []byte, value a
 		err = decodePendingPublication(data, p, ctx, s.resourceBudget, s.readReservation())
 	default:
 		// Protected state types took the explicit-context branches above.
-		return json.Unmarshal(data, value)
+		return decodeRegistrationJSON(data, value)
 	}
 	if err != nil && !json.Valid(data) {
-		return json.Unmarshal(data, value)
+		return decodeRegistrationJSON(data, value)
 	}
 	if _, published := value.(*publishedState); published && err == nil && s.publishedReadDigest != nil {
 		*s.publishedReadDigest = sha256.Sum256(data)

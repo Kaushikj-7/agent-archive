@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"reflect"
@@ -109,11 +110,7 @@ func (s *Store) mintSettledPrivacy(p publishedState) (publishedState, error) {
 	}()
 	projection := &SettledPrivacyPreparation{NativeTarget: a.NativeTarget, Inputs: make([]SettledPrivacyInput, 0, len(a.Inputs)), Version: 1, OriginalPreparationSHA256: a.SHA256, Kind: a.Kind, SessionID: origin.SessionID, NativeSessionID: origin.NativeSessionID, ProjectID: origin.ProjectID, MachineID: origin.MachineID, Harness: origin.Harness, Origin: origin.Origin, ImportedAt: origin.ImportedAt, StartedAtSource: origin.StartedAtSource, PreviousGenerationID: origin.PreviousGenerationID, StartedAt: origin.StartedAt.UTC(), OwnerSHA256: a.OwnerSHA256, DestinationID: a.DestinationID, AdmissionContext: a.AdmissionContext, PolicyContext: a.PolicyContext, Purpose: a.Purpose, Predecessor: a.Predecessor, PredecessorSHA256: a.PredecessorSHA256, PreviousSetSHA256: previousSet, OriginMetadataSHA256: a.OriginMetadataSHA256, OriginSetSHA256: a.OriginSetSHA256, MetadataSHA256: p.Commit.MetadataSHA256, SourceSetSHA256: p.Commit.SourceSetSHA256, PayloadSetSHA256: p.Commit.PayloadSetSHA256, PrivacySHA256: p.Commit.PrivacySHA256}
 	for _, input := range a.Inputs {
-		inlineSHA, inlineSize := "", 0
-		if input.Payload.Kind == PublicationInline {
-			inlineSHA = publicationSHA256(input.Payload.Inline)
-			inlineSize = len(input.Payload.Inline)
-		}
+		inlineSHA, inlineSize := payloadInlineBinding(PublicationSource{Reference: input.Reference, Selection: input.Selection, Payload: input.Payload}, nil)
 		fact := SettledPrivacyInput{ParentSessionID: input.ParentSessionID, NativeChild: input.NativeChild, InlineSHA256: inlineSHA, InlineSize: inlineSize, Hook: publicationHookFacts(input.HookObservations), Reference: input.Reference, Selection: input.Selection, FilterVersion: input.FilterVersion, AdapterVersion: input.AdapterVersion, SkillPolicy: input.SkillPolicy, PayloadKind: input.Payload.Kind, Stage: input.Payload.Stage, PayloadSHA256: payloadSetSHA([]PublicationSource{{Reference: input.Reference, Selection: input.Selection, Payload: input.Payload}})}
 		projection.Inputs = append(projection.Inputs, fact)
 	}
@@ -224,7 +221,9 @@ func (s *Store) publicationValidationLoan(p publishedState) (func(), error) {
 	return func() { reservation.Release(n) }, nil
 }
 
-func (s *Store) validateSelectingPublishedBudgeted(p publishedState) error {
+func (s *Store) validateSelectingPublishedBudgeted(ctx context.Context, p publishedState) error {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	release, err := s.publicationValidationLoan(p)
 	if err != nil {
 		return err
@@ -234,7 +233,7 @@ func (s *Store) validateSelectingPublishedBudgeted(p publishedState) error {
 	if p.Preparation != nil {
 		count += len(p.Preparation.Inputs)
 	}
-	facts, end, e := newPayloadDigestFacts(s.durableContext(), s.resourceBudget, count)
+	facts, end, e := newPayloadDigestFacts(ctx, s.resourceBudget, count)
 	if e != nil {
 		return e
 	}

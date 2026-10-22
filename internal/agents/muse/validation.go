@@ -242,7 +242,7 @@ func validFields(r retained) bool {
 	}
 	for k, v := range f {
 		switch fieldName(k) {
-		case fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence, fieldModelCallIndex:
+		case fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence, fieldObservedAtSequence, fieldModelCallIndex:
 			if _, ok := v.(json.Number); !ok {
 				return false
 			}
@@ -256,7 +256,7 @@ func validFields(r retained) bool {
 			}
 		case fieldResume:
 		case fieldPreviousName:
-		case fieldPrompt, fieldText, fieldNewName, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldObservedModel:
+		case fieldPrompt, fieldText, fieldNewName, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldObservedModel, fieldSkillContentSHA, fieldSkillContentEvidence:
 			fallthrough
 		default:
 			if _, ok := v.(string); !ok {
@@ -473,6 +473,9 @@ func fieldsRuntimeSession(r retained) (int64, []string, bool) {
 	}
 	ek := runtimeEvent(str(f["event_kind"]))
 	names = []string{"kind", "event_kind"}
+	if kind == roleRun && ek == eventSkillReadObserved {
+		return schema, skillReadNames(f), skillReadFields(r)
+	}
 	if kind == roleRun && enrichedTools(f) {
 		if ek == eventAssistantToolCallsCommitted {
 			return schema, []string{"kind", "event_kind", "run_id", "source_run_record_id", "source_run_record_sequence", "message_id", "tool_calls"}, toolFields(r)

@@ -39,6 +39,11 @@ check_not_out() { # DESCRIPTION PATTERN COMMAND...: the output does not match
   # shellcheck disable=SC2001  # a prefix on every line is a sed job
   if grep -Eq -- "$pattern" <<<"$out"; then bad "$what (found /$pattern/ in:"; echo "$out" | sed 's/^/      /'; echo "    )"; else ok "$what"; fi
 }
+# shellcheck disable=SC2329  # called through check_out and check_not_out
+views() { # COMMAND... (ending in status): its default view, then --issues, which carries every warning
+  "$@"
+  "$@" --issues
+}
 wait_for() { # DESCRIPTION SECONDS COMMAND...
   local what=$1 limit=$2 i
   shift 2
@@ -109,7 +114,9 @@ as_ada mkdir -p "$(dirname "$CURSOR_DB")" $XDG_CONFIG/Cursor/User/workspaceStora
 # sudo's umask may allow group writes; the synthetic cache home must be private.
 install -d -o ada -g ada -m 0700 "$XDG_CACHE"
 echo "   guest umask: $(umask); cache home: $(stat -c '%a %U:%G' "$XDG_CACHE")"
-CREATED_MS=$(($(date +%s) * 1000 - 3600000))
+# Ten days old: setup imports only the last 7 days, so the chat is left for
+# backfill (section 4) to import.
+CREATED_MS=$(($(date +%s) * 1000 - 10 * 86400000))
 cat >/tmp/cursor-chat.sql <<EOF
 PRAGMA journal_mode=WAL;
 CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB);
@@ -128,6 +135,7 @@ install -o ada -g ada -m 0755 /acceptance/agent-archive /home/ada/.local/bin/age
 check_out "the binary runs" '^dev|^v?[0-9]' aa --version
 
 echo "== 2. setup --yes (S3 to MinIO), from a shell with XDG_CONFIG_HOME and XDG_CACHE_HOME set"
+check "no cache directory exists before the first copy" test ! -e $XDG_CACHE/agent-archive
 aa_xdg setup --yes --provider s3 --bucket "$BUCKET" --aws-profile minio --region us-east-1 \
   --project $PROJECT --apps claude,cursor 2>&1 | tail -25
 check "setup wrote the service unit" test -f $UNITS/$REF.service
@@ -139,13 +147,13 @@ check_out "the unit records XDG_CACHE_HOME" "Environment=XDG_CACHE_HOME=$XDG_CAC
 check_out "the unit's PATH is the shell's entries then systemd's default" 'Environment=PATH=/home/ada/\.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin$' cat $UNITS/$REF.service
 check_out "the unit's logs append to the data directory" "StandardOutput=append:$DATA/collector.log" cat $UNITS/$REF.service
 check_out "the timer is enabled and waiting" 'active \(waiting\)' as_ada systemctl --user status $REF.timer --no-pager
-check_out "config.json records the systemd backend" '"background_backend": "systemd"' cat $DATA/config.json
-check_out "config.json records this machine's host ID" '"host_id": "[0-9a-f]{64}"' cat $DATA/config.json
+check_out "config.json records the systemd backend" '"background_backend": ?"systemd"' cat $DATA/config.json
+check_out "config.json records this machine's host ID" '"host_id": ?"[0-9a-f]{64}"' cat $DATA/config.json
 check_not_out "the host ID is not the machine ID itself" "$(tr -d '\n' </etc/machine-id)" cat $DATA/config.json
 check_out "the manager's service environment has the recorded PATH" '/home/ada/\.local/bin' as_ada systemctl --user show $REF.service -p Environment
 check_out "status says the job is loaded" '"background": "loaded"' aa status --json
-check_not_out "status has no warning about XDG or another machine from the setup shell" 'XDG_|different machine' aa_xdg status
-check_not_out "status sees no network filesystem (the home is on the machine's own disk)" 'network filesystem' aa status
+check_not_out "status has no warning about XDG or another machine from the setup shell" 'XDG_|different machine' views aa_xdg status
+check_not_out "status sees no network filesystem (the home is on the machine's own disk)" 'network filesystem' views aa status
 check_not_out "config.json records no network-home opt-in" 'allow_network_home' cat $DATA/config.json
 
 echo "== 3. a synthetic Claude Code session through the installed hook command"
@@ -170,17 +178,19 @@ send Stop ',"stop_hook_active":false'
 send SessionEnd ',"reason":"other"'
 EOF
 HOOKED=$(date +%s)
-check_out "status counts the session the hooks registered" 'Claude Code.* hooks installed +1 session' aa_xdg status
+check_out "status counts the session the hooks registered" 'Claude Code.* hooks installed +1 session' aa_xdg status --verbose
 echo "   (not running sync: the timer's collector must publish it)"
 wait_for "the timer-started collector published the session (list shows it)" 240 bash -c 'sudo -u ada -H env '"${ADA_ENV[*]}"' agent-archive list | grep -q "file the bugs"'
-check_out "list shows the session" 'file the bugs and run the tests.*claude.*widget' aa list
-ID8=$(aa list 2>/dev/null | awk '/file the bugs/ {print $NF}' | head -1)
+# One project's sessions name it in a PROJECT column or, with several, in the
+# heading ("2 sessions · widget").
+check_out "list shows the session" '^[^ ]+ +claude +(widget +)?[0-9a-f]{8} +file the bugs and run the tests$' aa list
+check_out "list names the session's project" '^[^ ]+ +claude +widget +[0-9a-f]{8} |^[0-9]+ sessions? · widget$' aa list
+ID8=$(aa list 2>/dev/null | awk '/file the bugs/ { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9a-f]{8}$/) { print $i; exit } }')
 check_out "show reads the session back" 'Claude Code 2\.1\.275' aa show "$ID8"
 check_out "show's transcript has the synthetic prompt" 'file the bugs and run the tests' aa show "$ID8" --harness claude --transcript
 check_out "the journal shows the service ran after the hooks, started by the timer" 'Finished agent-archive-collector' as_ada journalctl --user -u $REF.service --no-pager --since "@$HOOKED"
 
 echo "== 4. Cursor: a backfill from the shell reads the chat from a copy under XDG_CACHE_HOME"
-check "no cache directory exists before the first copy" test ! -e $XDG_CACHE/agent-archive
 out=$(aa_xdg backfill --harness cursor --project $PROJECT --yes 2>&1)
 echo "$out" | tail -8
 check_out "backfill imported the Cursor chat (1 session)" '^Registered 1 session as import ' echo "$out"
@@ -194,41 +204,42 @@ check "nothing was made in the default cache directory" test ! -e /home/ada/.cac
 # backfill uploads what it imports, so this is normally there at once; the wait
 # covers an upload left for the collector.
 wait_for "the imported Cursor chat is in the bucket (list shows it)" 240 bash -c 'sudo -u ada -H env '"${ADA_ENV[*]}"' agent-archive list --harness cursor | grep -q "synthetic cursor question"'
-check_out "status shows the imported Cursor chat, uploaded, collector on" 'Cursor +hooks installed +no sessions yet .* 1 imported' aa_xdg status
+check_out "status shows the imported Cursor chat, uploaded, collector on" 'Cursor +hooks installed +no sessions yet .* 1 imported' aa_xdg status --verbose
 pkill -u ada sqlite3 || true
 
 echo "== 5. the shell's XDG directories drifting from the collector's"
 check_out "status warns when the shell's XDG_CACHE_HOME differs" "This shell's XDG_CACHE_HOME is ~/elsewhere and the background collector's is ~/xdg/cache" \
-  as_ada env XDG_CONFIG_HOME=$XDG_CONFIG XDG_CACHE_HOME=/home/ada/elsewhere agent-archive status
+  as_ada env XDG_CONFIG_HOME=$XDG_CONFIG XDG_CACHE_HOME=/home/ada/elsewhere agent-archive status --issues
 check_not_out "status says nothing about XDG_CONFIG_HOME when only the cache differs" "XDG_CONFIG_HOME" \
-  as_ada env XDG_CONFIG_HOME=$XDG_CONFIG XDG_CACHE_HOME=/home/ada/elsewhere agent-archive status
-check_out "status warns when the shell has neither" "This shell's XDG_CONFIG_HOME is not set .* and the background collector's is ~/xdg/config" aa status
-check_not_out "status is quiet when the shell matches" 'XDG_' aa_xdg status
+  views as_ada env XDG_CONFIG_HOME=$XDG_CONFIG XDG_CACHE_HOME=/home/ada/elsewhere agent-archive status
+check_out "status warns when the shell has neither" "This shell's XDG_CONFIG_HOME is not set .* and the background collector's is ~/xdg/config" aa status --issues
+check_not_out "status is quiet when the shell matches" 'XDG_' views aa_xdg status
 
 echo "== 6. a copy of the data directory on another machine (its machine ID differs)"
 OLD_ID=$(cat /etc/machine-id)
-HOST_ID_RECORDED=$(grep -o '"host_id": "[0-9a-f]*"' $DATA/config.json)
-check_not_out "status is quiet on the machine that was set up" 'different machine' aa_xdg status
+HOST_ID_RECORDED=$(grep -Eo '"host_id": ?"[0-9a-f]{64}"' $DATA/config.json)
+check "config.json's host ID was read for the checks below" test -n "$HOST_ID_RECORDED"
+check_not_out "status is quiet on the machine that was set up" 'different machine' views aa_xdg status
 echo "0123456789abcdef0123456789abcdef" >/etc/machine-id
-check_out "status says the data directory was set up on a different machine" 'set up on a different machine' aa_xdg status
-check_out "status names the fix" 'uninstall --delete-local-data' aa_xdg status
+check_out "status says the data directory was set up on a different machine" 'set up on a different machine' aa_xdg status --issues
+check_out "status names the fix" 'uninstall --delete-local-data' aa_xdg status --issues
 check_out "status --json carries the warning too" 'different machine' aa status --json
 check_out "setup run on the copy warns before it changes anything" 'set up on a different machine' \
   aa_xdg setup --yes --provider s3 --bucket "$BUCKET" --aws-profile minio --region us-east-1 --project $PROJECT --apps claude,cursor
 check "setup run on the copy kept the recorded host ID (the warning cannot be silenced by running setup again)" \
   grep -q -- "$HOST_ID_RECORDED" $DATA/config.json
-check_out "the copy's warning is still there after that setup" 'set up on a different machine' aa_xdg status
+check_out "the copy's warning is still there after that setup" 'set up on a different machine' aa_xdg status --issues
 # A container (or a read-only root) that bind-mounts a machine ID over
 # /etc/machine-id has the mounting system's ID, not its own: the adapter reads
 # no ID there, so there is nothing to compare and no warning.
 echo "$OLD_ID" >/etc/machine-id
 echo "fedcba9876543210fedcba9876543210" >/run/aa-bound-machine-id
 mount --bind /run/aa-bound-machine-id /etc/machine-id
-check_not_out "a bind-mounted machine ID (another ID) is not read, so status stays quiet" 'different machine' aa_xdg status
+check_not_out "a bind-mounted machine ID (another ID) is not read, so status stays quiet" 'different machine' views aa_xdg status
 umount /etc/machine-id
 rm -f /run/aa-bound-machine-id
 if grep -q ' /etc/machine-id ' /proc/self/mountinfo; then bad "the bind mount over /etc/machine-id is gone"; else ok "the bind mount over /etc/machine-id is gone"; fi
-check_not_out "restoring the machine ID silences it" 'different machine' aa_xdg status
+check_not_out "restoring the machine ID silences it" 'different machine' views aa_xdg status
 
 echo "== 7. setup --refresh after the binary moved"
 as_ada bash -c 'mkdir -p ~/bin && cp ~/.local/bin/agent-archive ~/bin/agent-archive'

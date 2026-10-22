@@ -180,7 +180,7 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 		return state.PendingPublication{}, err
 	}
 	next.SkillEvidence = string(s.opts.skillEvidence())
-	if err := s.transformStricterHistoryInputs(&next, &metadata, inputs, finalMetadata, finalBody, finalInputs, acknowledged, acknowledgedBody, ackInputs, adapter, pendingSkillMode(p.SkillEvidence)); err != nil {
+	if err := s.transformStricterHistoryInputs(&next, &metadata, inputs, finalMetadata, finalBody, finalInputs, acknowledged, acknowledgedBody, ackInputs, adapter, p, committed, prior); err != nil {
 		return state.PendingPublication{}, err
 	}
 	if err := retireStricterHistoryReferences(&next, metadata, append(append(append([]state.HistoryInput(nil), inputs...), finalInputs...), ackInputs...), s.now); err != nil {
@@ -207,6 +207,28 @@ func (s *sessionScan) stricterHistorySuccessor(p state.PendingPublication, commi
 	}
 	err = next.ValidateHistoryBudgeted(s.id(), s.readBudget())
 	return next, err
+}
+
+// stricterHistoryInputCeiling bounds each original input by the policy of the
+// oldest uncommitted selection that the Store retained, when that selection
+// produced or selected the input and nothing has committed since. Every other
+// input, and any committed baseline, keeps the immediate pending ceiling.
+func (s *sessionScan) stricterHistoryInputCeiling(p state.PendingPublication, committed bool, prior state.PublicationPredecessor) (func(state.HistoryInput) config.SkillEvidence, error) {
+	immediate := pendingSkillMode(p.SkillEvidence)
+	limit := func(state.HistoryInput) config.SkillEvidence { return immediate }
+	if committed {
+		return limit, nil
+	}
+	origin, found, err := s.local.PublicationPrivacyOrigin(s.id(), p, prior)
+	if err != nil || !found || !skillPolicyBroadens(origin.Policy, immediate) {
+		return limit, err
+	}
+	return func(input state.HistoryInput) config.SkillEvidence {
+		if origin.HistoryAuthorizes(input.RevisionID, input.Reference) {
+			return origin.Policy
+		}
+		return immediate
+	}, nil
 }
 
 // pendingManifestInputs upgrades original parent provenance before verifying the
@@ -404,7 +426,7 @@ func (s *sessionScan) retainedHistoryMaintenanceNeeded(authority archive.Metadat
 	return projectRenamed || nativeParentResolved(s.reg, bundle) || nativeChildMarkerPending(s.reg, bundle) || bundle.Capture.FilterVersion != archive.FilterVersion || bundle.Capture.AdapterVersion != adapterVersion || !sourceEvidenceWithinPolicy(bundle.SupplementalEvidence, s.opts.skillEvidence()) || authority.Parser.Version != s.parserVersion() || s.reg.RetainedOnly() && s.req.Token != "" || headFingerprint(s.reg.LastHead) != s.publishedLastHead()
 }
 
-func (s *sessionScan) prepareStricterHistoryInput(next *state.PendingPublication, index int, input state.HistoryInput, finalMetadata archive.Metadata, finalBody []byte, finalInputs []state.HistoryInput, acknowledged archive.Metadata, acknowledgedBody []byte, ackInputs []state.HistoryInput, adapter agentapi.TranscriptFilter, ceiling config.SkillEvidence, total *int) (archive.SourceBundle, archive.SourceReference, state.PendingSource, func(), error) {
+func (s *sessionScan) prepareStricterHistoryInput(next *state.PendingPublication, index int, input state.HistoryInput, finalMetadata archive.Metadata, finalBody []byte, finalInputs []state.HistoryInput, acknowledged archive.Metadata, acknowledgedBody []byte, ackInputs []state.HistoryInput, adapter agentapi.TranscriptFilter, ceiling, inputCeiling config.SkillEvidence, total *int) (archive.SourceBundle, archive.SourceReference, state.PendingSource, func(), error) {
 	frozen := next.Preparation.Inputs[index]
 	reader := publicationPrivacyReader{scan: s}
 	raw, closeBytes, err := reader.ReadPublicationPrivacySource(s.ctx, frozen)
@@ -433,7 +455,7 @@ func (s *sessionScan) prepareStricterHistoryInput(next *state.PendingPublication
 	if err = s.unmarshalRetained(next.Preparation.OriginMetadata, &origin); err != nil {
 		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, nil, err
 	}
-	filtered, packed, ref, proof, closeFactory, err := state.RefilterCoveredPublicationInput(s.ctx, s.reg, adapter, origin, next.Preparation.OriginMetadata, frozen, index, raw, state.PublicationContext{NativeTarget: next.Preparation.NativeTarget, DestinationID: s.reg.DestinationID, AdmissionContext: s.publicationAdmission()}, state.PublicationPolicy{FilterVersion: frozen.FilterVersion, AdapterVersion: frozen.AdapterVersion, SkillEvidence: pendingSkillMode(frozen.SkillPolicy)}, state.PublicationPolicy{FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(), SkillEvidence: s.opts.skillEvidence()}, ceiling, s.readBudget(), reader, alternatives)
+	filtered, packed, ref, proof, closeFactory, err := state.RefilterCoveredPublicationInput(s.ctx, s.reg, adapter, origin, next.Preparation.OriginMetadata, frozen, index, raw, state.PublicationContext{NativeTarget: next.Preparation.NativeTarget, DestinationID: s.reg.DestinationID, AdmissionContext: s.publicationAdmission()}, state.PublicationPolicy{FilterVersion: frozen.FilterVersion, AdapterVersion: frozen.AdapterVersion, SkillEvidence: pendingSkillMode(frozen.SkillPolicy)}, state.PublicationPolicy{FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(), SkillEvidence: s.opts.skillEvidence()}, inputCeiling, s.readBudget(), reader, alternatives)
 	if err != nil {
 		return archive.SourceBundle{}, archive.SourceReference{}, state.PendingSource{}, nil, err
 	}
@@ -455,11 +477,24 @@ func (s *sessionScan) prepareStricterHistoryInput(next *state.PendingPublication
 	return filtered, ref, stage, receiptRelease, nil
 }
 
+func (s *sessionScan) nativeParentRequestCovered(headerMaintenance bool) bool {
+	return headerMaintenance && s.reg.NativeChild && s.reg.ParentSessionID != "" &&
+		s.req.Token != "" && len(s.req.Reasons) == 1 && s.req.Reasons[0] == "native-parent-linked" &&
+		len(s.req.HookEvidence) == 0
+}
+
 func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bundle archive.SourceBundle, adapterVersion string) (state.PendingPublication, error) {
 	// Header maintenance transforms the exact committed current input through
 	// the same frozen receipt factory as preserved inputs. Pre-freeze hook
 	// normalization must not replace that original reference.
 	headerMaintenance := nativeParentResolved(s.reg, bundle) || nativeChildMarkerPending(s.reg, bundle)
+	// Determine covered work before updating the retained header. Live requests
+	// still owe native reads unless this exact request contains only the proven
+	// relationship repair. A newer hook token remains protected by request CAS.
+	requestToken := ""
+	if s.reg.RetainedOnly() || s.nativeParentRequestCovered(headerMaintenance) {
+		requestToken = s.req.Token
+	}
 	inputs, err := s.retainedManifestInputs(authority, nil)
 	if err != nil {
 		return state.PendingPublication{}, err
@@ -483,11 +518,6 @@ func (s *sessionScan) freezeRetainedMaintenance(authority archive.Metadata, bund
 	}
 	if nativeChildMarkerPending(s.reg, bundle) {
 		bundle.NativeChild = true
-	}
-	// Live requests still owe native reads; frozen requests cover retained observations.
-	requestToken := ""
-	if s.reg.RetainedOnly() {
-		requestToken = s.req.Token
 	}
 	p := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), Bundle: bundle, MetadataKey: key, MetadataBytes: append([]byte(nil), s.published.Metadata()...), RequestToken: requestToken, ReadyAt: s.now, History: &state.PendingHistory{Version: 1, Preparing: true, Inputs: inputs, FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion, ExpectedMetadataSHA256: metadataSHA(s.published.Metadata())}}
 	if err := s.local.SweepPendingSources(s.id()); err != nil {
@@ -720,11 +750,16 @@ func ownedPublicationHookObservations(evidence []archive.SupplementalEvidence) [
 	return hookObservations
 }
 
-func (s *sessionScan) transformStricterHistoryInputs(next *state.PendingPublication, metadata *archive.Metadata, inputs []state.HistoryInput, finalMetadata archive.Metadata, finalBody []byte, finalInputs []state.HistoryInput, acknowledged archive.Metadata, acknowledgedBody []byte, ackInputs []state.HistoryInput, adapter agentapi.TranscriptFilter, ceiling config.SkillEvidence) error {
+func (s *sessionScan) transformStricterHistoryInputs(next *state.PendingPublication, metadata *archive.Metadata, inputs []state.HistoryInput, finalMetadata archive.Metadata, finalBody []byte, finalInputs []state.HistoryInput, acknowledged archive.Metadata, acknowledgedBody []byte, ackInputs []state.HistoryInput, adapter agentapi.TranscriptFilter, p state.PendingPublication, committed bool, prior state.PublicationPredecessor) error {
+	ceiling := pendingSkillMode(p.SkillEvidence)
+	inputCeiling, err := s.stricterHistoryInputCeiling(p, committed, prior)
+	if err != nil {
+		return err
+	}
 	var total int
 	for index, input := range inputs {
 		mark := len(s.retainedReleases)
-		filtered, ref, stage, receiptRelease, err := s.prepareStricterHistoryInput(next, index, input, finalMetadata, finalBody, finalInputs, acknowledged, acknowledgedBody, ackInputs, adapter, ceiling, &total)
+		filtered, ref, stage, receiptRelease, err := s.prepareStricterHistoryInput(next, index, input, finalMetadata, finalBody, finalInputs, acknowledged, acknowledgedBody, ackInputs, adapter, ceiling, inputCeiling(input), &total)
 		if err != nil {
 			return err
 		}

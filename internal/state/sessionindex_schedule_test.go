@@ -757,6 +757,30 @@ func TestRecoveryInterruptionKeepsJoinedFilesystemFailure(t *testing.T) {
 	}
 }
 
+// A real recovery refusal joined with expiry is not an ordinary interruption.
+func TestRecoveryInterruptionKeepsDurableFailure(t *testing.T) {
+	t.Parallel()
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		err := errors.Join(ErrDurableStorageRecovery, cause)
+		if SessionIndexRecoveryInterrupted(err) || !errors.Is(err, ErrDurableStorageRecovery) || !errors.Is(err, cause) {
+			t.Fatalf("joined durable refusal suppressed: %v", err)
+		}
+	}
+}
+
+// A positive application allowance does not turn a real expired-context
+// durable-root refusal into a harmless scheduling interruption.
+func TestScheduledRecoveryPreservesDurableDeadline(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	ctx, cancel := context.WithDeadline(t.Context(), time.Unix(1, 0))
+	defer cancel()
+	complete, err := store.RecoverSessionIndexScheduled(ctx, SessionIndexRecoverySlice)
+	if complete || !errors.Is(err, ErrDurableStorageRecovery) || !errors.Is(err, context.DeadlineExceeded) || SessionIndexRecoveryInterrupted(err) {
+		t.Fatalf("scheduled recovery lost joined refusal: complete=%t err=%v", complete, err)
+	}
+}
+
 func TestRecoveryCensusDoesNotInheritOmittedRegistrationFields(t *testing.T) {
 	s := newTestStore(t)
 	first := migrationRegistration(agentmeta.SessionKey{Agent: agentmeta.Codex, NativeID: "first"}, "a")

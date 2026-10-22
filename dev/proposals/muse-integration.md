@@ -26,7 +26,25 @@ unpriced summary. Local snapshots supply exact content proofs and provisional
 startup facts; protected binding v2 supports prepared validation checkpoints,
 while real capture and empty-locator resolution remain unavailable.
 Source/Filter, Parser, Runtime and local handoff Discovery/NativeHeaders/Preview
-are bound. Collection remains
+are bound. Installed-version inspection uses a fixed bounded update-disabled
+CLI probe and exact release/R-build grammar; it does not stamp child versions or
+supply a binary SHA. Skills share the existing managed installation and bounded
+installed-only inventory for exact injected config/shared/foreign/project roots,
+the qualified builtin data-home location and the supported native-local plugin
+registry subset. A closed own native `skill_read_observed`/`read_skill_tool`
+report now derives existing `native_invocation` evidence independently of eligible
+inventory. Its original-file digest is validated then erased; this reports a
+native harness read, not tool-result success. A narrow content-only companion
+can retain the existing safe digest of an actual authorized observer read whose
+whole bytes are a marker-free `RedactText` fixed point. It does not alias native
+IDs to installed names or infer origin/eligibility; unmatched or redacted-content
+reads remain hashless. The existing producer-evidence trust boundary applies,
+without authenticated/coherent-forgery claims. This implementation checkpoint
+requires fresh review, deterministic checks and actual consumer qualification. The pinned
+controlled source passed complete Source/Filter, bundle Parse/refilter and metadata
+on production commit `44c6bd87`. Native skill trust, activation, eligibility and general redacted-content
+product read-hash association remain unavailable. Exact thread identity,
+children and replay remain separately unqualified. Collection remains
 refused before native reads/filtering/PUT, including injected registrations.
 No durable binding or consent is created. The synthetic 1.4.9 exec held-out has
 two own turns; 1.4.9 MSP root evidence has zero turns. Conversational MSP
@@ -436,8 +454,18 @@ Muse child facts map to existing `SessionRegistration` fields:
 | Stream identity, original creation, root revision and locator | `NativeSourceBinding`, persisted as the new `native_binding` |
 | Delegated, workflow or observer role, and child coverage | No field yet; add versioned role and coverage fields only if existing outputs cannot represent them, and never as a consent shortcut |
 
-`native_binding` is the only new registration field; `codex_binding` keeps its
-current shape and Codex keeps writing it. Today `validateNativeChild` rejects
+`native_binding` preserves native identity and source continuity. Live root
+admission additionally carries the independent closed `native_admission` proof.
+Explicit historical imports instead carry `native_import`, contract
+`muse-historical-import-v1`: one creating-batch receipt for the confirmed durable
+batch instance, resolved scope and exact selected source checkpoint. Its singular
+membership is attached or detached; duplicate batches cannot claim an existing
+owner. Confirmation is historical authority only and cannot manufacture a live
+window. Exact receipt CAS undo detaches only batch-owned effects and preserves
+independent ownership, frozen publication, retained evidence and native files.
+Configuration and both recovery-journal forms preserve the sticky exact import
+capability described in [versions](../maintainers/versions.md). `codex_binding`
+keeps its current shape and Codex keeps writing it. Today `validateNativeChild` rejects
 `NativeChild` on any agent but Codex; relaxing it belongs with qualified child
 admission. Validation alone does not protect every old mutation or maintenance
 entrypoint: registration loads do not validate. An older JSON writer can drop

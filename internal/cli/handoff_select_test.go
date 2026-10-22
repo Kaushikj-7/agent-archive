@@ -717,3 +717,67 @@ func TestHandoffPickerFilterKeepsTheTableNumbersOfSessionsActiveSince(t *testing
 		t.Fatalf("the filter renumbered %s: %q", f.both[:minShortSessionID], line)
 	}
 }
+
+// rewriteLargeClaudeTranscript replaces a Claude session's transcript with
+// head, filler replies past both preview windows, then tail, and dates it
+// active.
+func (f handoffFixture) rewriteLargeClaudeTranscript(t *testing.T, native string, active time.Time, head, middle, tail []string) {
+	t.Helper()
+	reply, err := json.Marshal(map[string]any{"type": "assistant", "sessionId": native, "timestamp": "2026-01-02T00:00:01Z", "message": map[string]any{"role": "assistant", "content": strings.Repeat("widget work ", 1000)}})
+	must(t, err)
+	var b strings.Builder
+	for _, line := range head {
+		b.WriteString(line + "\n")
+	}
+	for b.Len() < 2*int(nativeWindowBytes) {
+		b.WriteString(string(reply) + "\n")
+	}
+	for _, line := range middle {
+		b.WriteString(line + "\n")
+	}
+	for b.Len() < 4*int(nativeWindowBytes) {
+		b.WriteString(string(reply) + "\n")
+	}
+	for _, line := range tail {
+		b.WriteString(line + "\n")
+	}
+	transcript := filepath.Join(f.project, native+".jsonl")
+	must(t, os.WriteFile(transcript, []byte(b.String()), 0o600))
+	must(t, os.Chtimes(transcript, active, active))
+}
+
+// A large transcript not yet uploaded is labeled from the filtered windows at
+// its head and tail, not read whole: its prompt, and the name, branch and pull
+// request its last records hold. A name given only in its unread middle is
+// not shown.
+func TestHandoffPickerLabelsALargeTranscriptFromItsWindows(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	active := f.env.now().Add(3 * time.Hour)
+	id := f.addSession(t, "claude", "claude-large", "placeholder", active)
+	f.rewriteLargeClaudeTranscript(t, "claude-large", active,
+		[]string{`{"type":"user","uuid":"u1","sessionId":"claude-large","timestamp":"2026-01-02T00:00:00Z","message":{"role":"user","content":"Fix the widget with key sk-abcdefghijklmnopqrstuv"}}`},
+		[]string{`{"type":"custom-title","customTitle":"Unread middle name","sessionId":"claude-large"}`},
+		[]string{`{"type":"pr-link","sessionId":"claude-large","prNumber":"213","prRepository":"example-org/widget-tools","prUrl":"https://github.com/example-org/widget-tools/pull/213"}`,
+			`{"type":"assistant","sessionId":"claude-large","timestamp":"2026-01-02T01:00:00Z","gitBranch":"widget-fix","message":{"role":"assistant","content":"Done"}}`})
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	line := pickerLine(t, out, id)
+	if code != 0 || !strings.Contains(line, "Fix the widget") || !strings.Contains(line, "#213") || strings.Contains(out, "sk-abcdefghijklmnopqrstuv") || strings.Contains(line, "Unread middle name") {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// A large transcript whose head holds no prompt is read whole, so a prompt
+// past the head still titles its row.
+func TestHandoffPickerReadsALargeTranscriptWholeWhenItsHeadHasNoPrompt(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	active := f.env.now().Add(3 * time.Hour)
+	id := f.addSession(t, "claude", "claude-late", "placeholder", active)
+	f.rewriteLargeClaudeTranscript(t, "claude-late", active, nil,
+		[]string{`{"type":"user","uuid":"u1","sessionId":"claude-late","timestamp":"2026-01-02T00:00:00Z","message":{"role":"user","content":"Prompt past the head"}}`}, nil)
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	if line := pickerLine(t, out, id); code != 0 || !strings.Contains(line, "Prompt past the head") {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}

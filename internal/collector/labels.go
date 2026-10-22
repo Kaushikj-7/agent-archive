@@ -168,7 +168,7 @@ func (p *pass) labelProvider(reg archive.SessionRegistration, providers map[stri
 }
 
 func (p *pass) labelEligible(reg archive.SessionRegistration) bool {
-	if reg.HistoricalProject != nil || reg.CaptureFrozen || p.unreadable[reg.ArchiveSessionID] || (p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg)) {
+	if reg.RetainedOnly() || p.unreadable[reg.ArchiveSessionID] || (p.opts.AcceptSession != nil && !p.opts.AcceptSession(reg)) {
 		return false
 	}
 	if p.local.GenerationCaptureAllowed(reg) != nil {

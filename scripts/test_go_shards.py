@@ -94,10 +94,10 @@ def synthetic_vet_context(image='unit1'):
     """Synthetic unit identity; never evidence of hosted/native execution."""
     import go_cache_context
     go = dict.fromkeys(go_cache_context.GO_FIELDS, '')
-    go.update(GOVERSION='go1.27.2', GOOS='linux', GOHOSTOS='linux', GOARCH='amd64',
+    go.update(GOVERSION='go1.27.3', GOOS='linux', GOHOSTOS='linux', GOARCH='amd64',
               GOHOSTARCH='amd64', CGO_ENABLED='1', GOTOOLCHAIN='local', GOWORK='off',
               GOFLAGS='-mod=readonly')
-    return {'go': go, 'version': 'go version go1.27.2 linux/amd64', 'runner_os': 'Linux',
+    return {'go': go, 'version': 'go version go1.27.3 linux/amd64', 'runner_os': 'Linux',
             'runner_arch': 'X64', 'image': {'ImageOS': 'ubuntu24', 'ImageVersion': image},
             'os_release': 'a'*64, 'cc': {'binary': 'b'*64, 'version': 'c'*64},
             'cxx': {'binary': 'd'*64, 'version': 'e'*64},

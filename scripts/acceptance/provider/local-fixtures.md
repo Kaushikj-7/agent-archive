@@ -5,7 +5,7 @@ journal 2 and staged parent/child publication journal 3 against a real loopback
 MinIO service. They preserve modern selection proofs, stage ownership and storage
 capabilities. They add no production capture route and enable no workflow.
 
-Build the two exact sources using Go 1.27.2 with normal SumDB verification:
+Build the two exact sources using Go 1.27.3 with normal SumDB verification:
 
 ```sh
 GOBIN=/absolute/private/tools CGO_ENABLED=0 go install github.com/minio/minio@v0.0.0-20260212201848-7aac2a2c5b7c

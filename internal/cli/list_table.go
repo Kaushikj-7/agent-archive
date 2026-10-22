@@ -68,8 +68,10 @@ func sessionTableGroups(rows []listRow, opts listFormatOptions) []sessionTableGr
 // group's heading when it has one. The verbose table keeps its own columns
 // under one header: sessionTableGroups never groups it.
 func printSessionGroups(w io.Writer, groups []sessionTableGroup, opts listFormatOptions) error {
-	if opts.Search {
-		return printContentSearchRows(w, groups, opts.Width)
+	if opts.Search && opts.Width <= 0 {
+		// Only the line layout shows a search result's passage, so a terminal
+		// of unknown size gets 80 columns, as search output always had.
+		opts.Width = 80
 	}
 	if opts.Width > 0 && !opts.Verbose {
 		return printSessionLines(w, groups, opts)
@@ -126,6 +128,12 @@ func printSessionLines(w io.Writer, groups []sessionTableGroup, opts listFormatO
 		for _, r := range group.rows {
 			b.WriteString(layout.renderRow(r, opts.Style))
 			b.WriteString("\n")
+			// Read by lines, a search result has no detail strip: its
+			// matching passage goes under it.
+			if opts.Search && !opts.Cursor && r.searchSnippet != "" {
+				b.WriteString(oneRow(strings.Repeat(" ", layout.leadWidth()+columnGap)+r.searchSnippet, opts.Width))
+				b.WriteString("\n")
+			}
 		}
 	}
 	_, err := io.WriteString(w, b.String())
@@ -375,6 +383,9 @@ type sessionLayout struct {
 	prW      int
 	// whenW is the widest WHEN cell (whenText).
 	whenW int
+	// search lays out content search results: the project and the time
+	// dim, and the highlighted row's title bold.
+	search bool
 }
 
 // newSessionLayout lays rows out for a terminal opts.Width columns wide,
@@ -386,8 +397,8 @@ type sessionLayout struct {
 func newSessionLayout(rows []listRow, opts listFormatOptions) sessionLayout {
 	l := sessionLayout{
 		width: opts.Width, numbered: opts.Numbered, cursor: opts.Cursor,
-		agent: !opts.HideHarness, agentName: !opts.HideHarness,
-		project: !opts.HideProject, pr: opts.ShowPR,
+		agent: !opts.HideHarness, agentName: !opts.HideHarness && !opts.Search,
+		project: !opts.HideProject, pr: opts.ShowPR, search: opts.Search,
 	}
 	for _, r := range rows {
 		l.numW = max(l.numW, len(rowNumber(r)))
@@ -507,16 +518,27 @@ func (l sessionLayout) renderRow(r listRow, style textStyle) string {
 		}
 		cells = append(cells, cell)
 	}
-	cells = append(cells, l.titleCell(r, style))
+	title := l.titleCell(r, style)
+	if l.search && r.Highlight {
+		title = style.bold(title)
+	}
+	cells = append(cells, title)
 	if l.project {
-		cells = append(cells, padRight(cutAtWord(r.Project, l.projectW), l.projectW))
+		project := padRight(cutAtWord(r.Project, l.projectW), l.projectW)
+		if l.search {
+			project = style.dim(project)
+		}
+		cells = append(cells, project)
 	}
 	if l.pr {
 		cells = append(cells, padRight(r.PR, l.prW))
 	}
 	when := padLeft(whenText(r), l.whenW)
-	if r.Live {
+	switch {
+	case r.Live:
 		when = style.ok(when)
+	case l.search:
+		when = style.dim(when)
 	}
 	cells = append(cells, when)
 	line := strings.Join(cells, strings.Repeat(" ", columnGap))

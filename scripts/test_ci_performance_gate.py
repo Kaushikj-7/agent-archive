@@ -23,7 +23,7 @@ def worker(index):
     return {'schema': 1, 'kind': 'worker-timing', 'shard': index, 'success': True,
             'source': 'a'*40, 'run_id': '12', 'run_attempt': '1', 'observation_kind': 'normal',
             'compiled_inventory_sha256': 'd'*64, 'configuration_sha256': 'e'*64,
-            'cohort': {'cache_state': 'prefix', 'runner_image': 'image1', 'compiler': {'GOVERSION': 'go1.27.2'}},
+            'cohort': {'cache_state': 'prefix', 'runner_image': 'image1', 'compiler': {'GOVERSION': 'go1.27.3'}},
             'phases': [{'phase': 'worker_total_seconds', 'seconds': 2}],
             'fixture_metrics': [], 'tests': [{'test_id': PREFIX + 'Test' + str(index),
                 'own_elapsed_seconds': 1, 'parent_wall_seconds': 1,
@@ -928,7 +928,7 @@ class GateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             package = PREFIX.split('::')[0]
-            manifest = {'catalog': {'source': 'a'*40, 'configuration': {'GOVERSION': 'go1.27.2'},
+            manifest = {'catalog': {'source': 'a'*40, 'configuration': {'GOVERSION': 'go1.27.3'},
                                    'units': [package], 'cli': [], 'parents': {}},
                         'settings': {}, 'shard': 0, 'success': True,
                         'phases': {'worker_total_seconds': 95},

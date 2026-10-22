@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -15,14 +15,13 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // Batch is one confirmed import, kept as imports/<id>.json under the archive
-// home. It is local bookkeeping and is never uploaded. It holds no native ID
-// and no path: projects are named by project ID and sessions by archive
-// session ID. Registrations point back to it through ImportBatch.
+// home. It is never uploaded. Ordinary progress names archive session IDs.
+// The optional closed native confirmation retains selected native IDs and
+// source digests, without paths or source text.
 type Batch struct {
 	stagedResult *stagedBatchResult
 
@@ -77,22 +76,13 @@ type Batch struct {
 	// it over. A batch written before this field has no entry, and then any
 	// import with sessions there takes it over.
 	ProjectsKeptFor map[string][]string `json:"projects_kept_for,omitempty"`
+	// NativeImport is immutable reviewed intent, never first-owner proof.
+	NativeImport *archive.NativeImportBatchConfirmation `json:"native_import,omitempty"`
 }
 
 // BatchFilters are the filters and --include-* flags a batch was run with.
 // A --project directory is recorded by its project ID.
-type BatchFilters struct {
-	MappingDigest  string   `json:"mapping_digest,omitempty"`
-	Harnesses      []string `json:"harnesses"`
-	ProjectIDs     []string `json:"project_ids"`
-	Since          string   `json:"since,omitempty"`
-	Until          string   `json:"until,omitempty"`
-	SinceArg       string   `json:"since_arg,omitempty"`
-	UntilArg       string   `json:"until_arg,omitempty"`
-	IncludeHome    bool     `json:"include_home"`
-	IncludeTemp    bool     `json:"include_temp"`
-	IncludeRemoved bool     `json:"include_removed"`
-}
+type BatchFilters archive.ImportBatchFilters
 
 // BatchFilters records the plan's filters without paths. A --project
 // directory is named by the project ID of its resolved path, as the plan
@@ -154,6 +144,9 @@ func (b *Batch) Reconcile(store *state.Store) error {
 // Matches reports whether a run with these filters and destination
 // continues the batch.
 func (b *Batch) Matches(filters BatchFilters, destinationID string) bool {
+	if b.NativeImport != nil {
+		return b.NativeImport.Validate(context.Background()) == nil && reflect.DeepEqual(b.Filters, filters) && b.DestinationID == destinationID
+	}
 	return b.Filters.equal(filters) && b.DestinationID == destinationID
 }
 
@@ -260,11 +253,10 @@ func batchDir(home string) string { return filepath.Join(home, "imports") }
 
 // batchIDPattern is the form OpenBatch gives an import ID: its local date
 // and the day's count from 1.
-var batchIDPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}-[1-9][0-9]{0,5}$`)
 
 // ValidBatchID reports whether id has the form OpenBatch gives import IDs.
 // An empty ID never does.
-func ValidBatchID(id string) bool { return batchIDPattern.MatchString(id) }
+func ValidBatchID(id string) bool { return archive.ValidImportBatchID(id) }
 
 // validate checks what LoadBatches relies on in a batch read from the file
 // named stem.json: an ID of the form OpenBatch gives, that file's own name,
@@ -304,7 +296,7 @@ func LoadBatches(home string) ([]Batch, error) {
 		}
 		var b Batch
 		stem := strings.TrimSuffix(e.Name(), ".json")
-		if err := local.Read(filepath.Join(batchDir(home), e.Name()), &b); err != nil {
+		if err := readBatch(filepath.Join(batchDir(home), e.Name()), &b); err != nil {
 			unreadable = append(unreadable, fmt.Errorf("read import %q: %w", stem, err))
 			continue
 		}
@@ -328,10 +320,7 @@ func SaveBatch(home string, b Batch) error {
 	if !ValidBatchID(b.ID) {
 		return fmt.Errorf("import ID %q is not valid", b.ID)
 	}
-	if err := local.Write(batchPath(home, b.ID), b); err != nil {
-		return fmt.Errorf("save import %s: %w", b.ID, err)
-	}
-	return nil
+	return saveBatchControl(context.Background(), home, b)
 }
 
 // ErrUnreadableImport wraps OpenBatch's error when an import's batch file

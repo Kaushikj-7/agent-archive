@@ -264,6 +264,44 @@ class NativeFullTest(unittest.TestCase):
             with self.assertRaises((native.Failure, native.tier.Failure)):
                 native.full.coverage(stream(events), {OTHER:True}, selected, native.tier.body_evidence)
 
+    def test_plain_owned_child_skips_in_workers_and_passes_in_plain_obligation(self):
+        catalog = copy.deepcopy(CATALOG)
+        catalog['restorations'][1]['plain_children'] = ['large']
+        mock = patch.object(native.tier, 'catalog', return_value=catalog)
+        mock.start()
+        self.addCleanup(mock.stop)
+        plan_out = self.out/'native-plan'
+        self.plan = native.plan_value(plan_out, PROOF, ENV)
+        native.save(plan_out, 'plan.json', self.plan)
+        receipt = json.loads((plan_out/'receipt.json').read_text())
+        native.save(plan_out, 'receipt.json', dict(receipt, plan_sha256=native.full.shards.digest(self.plan)))
+        self.complete()
+        for index, units in enumerate(self.plan['schedule']['commands']):
+            out = self.out/f'native-worker-{index}'
+            report = json.loads((out/'receipt.json').read_text())
+            for record, unit in zip(report['invocations'], units):
+                events = []
+                for e in map(json.loads, (out/record['log']).read_text().splitlines()):
+                    if e.get('Test') == 'TestFull/large' and e['Action'] == 'pass':
+                        events.append(dict(Package=CLI, Test='TestFull/large', Action='output', Output='    x_test.go:1: '+native.tier.PLAIN_RESTORATION_SKIP+'\n'))
+                        e = dict(e, Action='skip')
+                    events.append(e)
+                (out/record['log']).write_text(stream(events))
+                subset = {p:self.packages[p] for p in unit['selected']}
+                record['evidence'] = native.full.coverage(stream(events), subset, unit['selected'], native.tier.body_evidence)
+            native.save(out, 'receipt.json', report)
+        with self.assertRaisesRegex(native.Failure, 'obligations missing'):
+            native.reconcile(self.out, self.needs)
+        command, selected, _ = native.tier.plain_restoration()
+        text = bodies(selected, {CLI: True})
+        out = self.out/'native-obligations'
+        (out/'plain-restoration.jsonl').write_text(text)
+        self.edit_receipt('native-obligations', lambda v: v['invocations'].append(dict(
+            command=command, log='plain-restoration.jsonl', completed=True, performance_enabled=False,
+            real_systemd_enabled=False, evidence=native.tier.body_evidence(text, False))))
+        verdict = native.reconcile(self.out, self.needs)
+        self.assertIn('plain restoration', verdict['obligations'])
+
     def test_platform_skip_retained_but_restoration_child_skip_fails(self):
         selected = {CLI:['TestFull']}
         text = bodies(selected,{CLI:True}).replace('"Action": "pass", "Test": "TestFull/large"', '"Action": "skip", "Test": "TestFull/large"')

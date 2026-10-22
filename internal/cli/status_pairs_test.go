@@ -302,7 +302,7 @@ func TestStatusSuggestsCursorCaptureOnceFreshStartIsProvable(t *testing.T) {
 		t.Fatalf("status did not ask for the session that would prove capture: %q", view.Next)
 	}
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 || strings.Contains(out.String(), "New sessions can't be captured yet") {
+	if code := runStatusCommand([]string{"--verbose"}, &out, os.Stderr, env); code != 0 || strings.Contains(out.String(), "New sessions can't be captured yet") {
 		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
 }

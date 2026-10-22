@@ -44,7 +44,7 @@ func TestStatusReportsTheRecordSizeLimitAsAGap(t *testing.T) {
 		t.Fatalf("gaps = %+v", gaps)
 	}
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 || strings.Contains(out.String(), "Last error") || !strings.Contains(out.String(), "1 session has capture gaps") {
+	if code := runStatusCommand([]string{"codex"}, &out, os.Stderr, env); code != 0 || strings.Contains(out.String(), "Last error") || !strings.Contains(out.String(), "1 session has capture gaps") {
 		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
 }
@@ -143,7 +143,7 @@ func TestBlockedCaptureIsNotPendingAndStatusReportsGap(t *testing.T) {
 		t.Fatalf("status=%+v", after)
 	}
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 {
+	if code := runStatusCommand([]string{"codex"}, &out, os.Stderr, env); code != 0 {
 		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "1 session has capture gaps") || strings.Contains(out.String(), "Last error") {
@@ -178,7 +178,7 @@ func TestStatusReportsDeletedTranscriptAsGapNotError(t *testing.T) {
 		t.Fatalf("gaps=%+v", gaps)
 	}
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 || strings.Contains(out.String(), "Last error") || !strings.Contains(out.String(), "1 session has capture gaps") {
+	if code := runStatusCommand([]string{"codex"}, &out, os.Stderr, env); code != 0 || strings.Contains(out.String(), "Last error") || !strings.Contains(out.String(), "1 session has capture gaps") {
 		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
 }

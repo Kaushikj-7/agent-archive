@@ -5,6 +5,94 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 32
+
+Global and Muse adapter 0.32.0 accompany this change. Parsers, source and
+metadata schemas, and native filtering rules are unchanged.
+
+- A retained skill-evidence policy successor of uncommitted ordinary or
+  complete current/preserved history work is bounded by the policy of the
+  oldest uncommitted ready selection, not by the immediately preceding pending
+  policy. A body → none → body sequence before upload therefore restores the
+  originally authorized skill evidence; every output stays limited by the
+  current mode as well. Only the Store-owned privacy original linked to the
+  installed journal qualifies, and only while the remote position equals the
+  one that original was prepared against. A committed narrower selection, an
+  unlinked or missing original, or unreadable retained original bytes keep the
+  immediate ceiling. Current native files and live skill folders are never
+  read for this.
+
+## Source filter version 31
+
+Global and Muse adapter 0.31.0 accompany this change. Muse parser0.7.0
+separately derives optional installed declaration identities; other parsers stay unchanged.
+
+- Muse's exact own `skill_read_observed`/`read_skill_tool` event retains a
+  bounded canonical native skill ID, owning run/source provenance and a
+  self-source sequence. Only an already materialized own run with unique,
+  increasing source identity can derive existing `native_invocation` evidence.
+  This means the native harness explicitly reports a skill read; it does not
+  establish eligibility, activation or a successful tool-result join. The
+  native `sha256:<64lowerhex>` digest is validated then erased because it
+  hashes original bytes while shared snapshots hash redacted bytes. A separate
+  leased content-only join may retain safe SHA256 only for actual authorized
+  observer bytes unchanged by RedactText and containing no literal replacement
+  marker. Secret-bearing guesses and marker fixed points cannot enter the join;
+  only the existing safe observer digest is compared, with no original observer
+  hash, native-name alias, origin or eligibility inference. Prior exact-event
+  proof restores before activity without I/O; new proof finalizes only at the
+  existing active observation gate. Private safe digests are operation-scoped
+  through that callback's finalization/error; pass caches keep evidence only.
+  Cache hits do not supply a digest or reread files. Optional capacity refusal
+  discards the whole current companion and keeps ordinary evidence/restored
+  output; required restoration and source/output/cancellation failures remain
+  strict. Closed eight/ten-field retained variants require null causation and
+  follow the existing producer-evidence trust model, not authentication against
+  coherent retained forgery. Unknown tags, keys, types, aliases and changed private identity
+  refuse. Older strict Muse readers refuse this new closed variant. The same
+  unreleased Muse parser0.7.0 derives this evidence without changing other
+  parsers, shared source/metadata/history schemas or pending provenance.
+
+- An approval-free exact native committed `read_skill` start with exact
+  `broad_read` profile can retain the separate omission-only marker
+  `effect_join: committed_broad_read_v1`. It requires earlier own committed
+  call/run identity, a known native task and no prior/later approval overlap.
+  Retained readers independently check prior own call/materialized run and
+  start/terminal tuple order. Erased native names/tasks are not reconstructed.
+  This retains no skill name, arguments, body/hash or eligibility/use fact;
+  existing file-read classification bytes stay unchanged. Older strict Muse
+  readers refuse the new closed enum.
+- Muse validates the exact native omitted-body profile `{kind: broad_read}`.
+  Extra keys and unknown tags refuse. Its tag is erased and cannot satisfy
+  the separate committed file-read lane or infer eligibility, invocation/use.
+- Shared skill-directory acquisition for Claude, Codex, Cursor and Muse now
+  reads at most 257 directory entries once, before sorting or body inspection.
+  Complete roots with at most 256 entries retain their existing order/output.
+  Overflowing roots yield the existing empty unreadable/incomplete inventory,
+  without prefix snapshots, content digests or an exact omitted total. Only
+  opening a missing root proves absence; acquired read/close failures stay
+  incomplete, including ENOENT. Frozen pending bytes keep their actual provenance.
+- Muse supplemental skill evidence now uses the existing bounded shared
+  filesystem inventory and privacy-filtered snapshots, according to the selected
+  `none`, `metadata` or `body` mode. Imports receive no current skill inventory.
+- Installation uses the shared `.agents/skills` destination. Inventory covers
+  shared, project, Claude-foreign and exact injected Muse config/Codex roots.
+  Unknown, empty or invalid configured roots are unavailable. The caller-qualified
+  data home supplies the exact bundled root and version1 native-local plugin
+  registry. Cache paths are derived from validated installed records; manifest
+  hashes join declared confined skills. Unsupported records remain incomplete.
+  Raw paths, package/manifest hashes, activation/trust fields and other package
+  capabilities remain local. No native subprocess runs during observation.
+- Coverage stays `installed_only`; inventory does not establish trust,
+  activation, eligibility, invocation, read inference or observed-no-use.
+  Existing secret redaction, filtered-body hashes and snapshot limits apply.
+  Capture authority does not change. Optional metadata
+  installed identities preserve distinct bounded logical scope/id pairs within
+  existing content groups; absent-identity bytes remain unchanged. Source2,
+  metadata1 and history2 remain additive-compatible with ordinary typed readers;
+  old strict metadata schemas refuse the optional field. Previously frozen
+  pending bytes retain their original provenance.
+
 ## Source filter version 30
 
 Global and Muse adapter 0.30.0 accompany this change; Muse parser is 0.6.0.

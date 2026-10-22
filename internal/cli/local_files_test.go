@@ -38,7 +38,7 @@ var damagedFileCommands = []struct {
 	args  []string
 	stdin string
 }{
-	{[]string{"status"}, ""},
+	{[]string{"status", "--issues"}, ""},
 	{[]string{"status", "--json"}, ""},
 	{[]string{"setup"}, strings.Repeat("\n", 20)},
 	{[]string{"pause"}, ""},
@@ -122,7 +122,7 @@ func TestSetupOffersToMoveAnUnusableDraftAside(t *testing.T) {
 		must(t, os.WriteFile(path, []byte(draft), 0o600))
 
 		var out, errOut bytes.Buffer
-		if code := Run([]string{"status"}, nil, &out, &errOut, env); code != 0 || !strings.Contains(out.String(), path) || !strings.Contains(out.String(), "move it aside") {
+		if code := Run([]string{"status", "--issues"}, nil, &out, &errOut, env); code != 0 || !strings.Contains(out.String(), path) || !strings.Contains(out.String(), "move it aside") {
 			t.Fatalf("status exit %d:\n%s%s", code, &out, &errOut)
 		}
 		output := setupRun(t, env, "n\n", 1)

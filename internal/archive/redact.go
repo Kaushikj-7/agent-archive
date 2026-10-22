@@ -183,6 +183,14 @@ func RedactText(text string) string {
 	return out
 }
 
+// MarkerFreeRedactionFixedPoint qualifies only the singleton-preimage subset
+// of RedactText. Every changed credential-redaction output contains the marker;
+// literal markers are excluded even when redacting them changes nothing.
+// redacted must be the caller's full RedactText(original), before truncation.
+func MarkerFreeRedactionFixedPoint(original, redacted string) bool {
+	return original == redacted && !strings.Contains(redacted, redactedMarker)
+}
+
 // maxRedactPasses bounds redactSensitive's passes. Every pass is complete,
 // so the result is redacted however many ran.
 const maxRedactPasses = 4

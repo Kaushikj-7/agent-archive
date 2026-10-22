@@ -117,6 +117,40 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	return result, err
 }
 
+// admitPassSessionIndexRecovery gives local identity recovery part of the
+// remaining pass budget. Local identity recovery and admission must not depend
+// on credentials or storage availability. Source observation retains its own
+// short budget. The complete authority census precedes the application
+// allowance. Give it part of the remaining pass budget so a census slower than
+// four seconds does not consume every future slice before any owner can be
+// applied.
+func admitPassSessionIndexRecovery(ctx context.Context, localStore *state.Store, started time.Time, stop func() bool) error {
+	if stop() {
+		return nil
+	}
+	recoveryBudget := (collectSoftDeadline - time.Since(started)) / 2
+	if recoveryBudget <= 0 {
+		return nil
+	}
+	return recoverPassSessionIndex(ctx, localStore, recoveryBudget)
+}
+
+// recoverPassSessionIndex runs only after the caller admits a positive soft
+// budget. It preserves real recovery failures for the pass status.
+func recoverPassSessionIndex(ctx context.Context, localStore *state.Store, recoveryBudget time.Duration) error {
+	applicationBudget := min(state.SessionIndexRecoverySlice, recoveryBudget) * 3 / 4
+	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, recoveryBudget)
+	_, recoveryErr := localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, applicationBudget))
+	if errors.Is(recoveryErr, context.DeadlineExceeded) && state.SessionIndexRecoveryInterrupted(recoveryErr) && ctx.Err() == nil {
+		recoveryErr = nil
+	}
+	if recoveryErr != nil {
+		recordPreflightError(localStore, recoveryErr)
+	}
+	recoveryCancel()
+	return recoveryErr
+}
+
 func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passChanges) (result collector.Result, resultErr error) {
 	// Read-only until the configuration is found: sync before setup leaves
 	// no data directory behind.
@@ -160,6 +194,8 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 	if err != nil {
 		return collector.Result{}, err
 	}
+	statusProgress := beginStatusProgress(home, cfg, env)
+	defer func() { statusProgress.finish(cfg, resultErr, pass.importBatch == "") }()
 
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), collectHardDeadline)
@@ -171,22 +207,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		recordPreflightError(localStore, err)
 		return collector.Result{}, err
 	}
-	// Local identity recovery and admission must not depend on credentials or
-	// storage availability. Source observation retains its own short budget.
-	// The complete authority census precedes the application allowance. Give it
-	// part of the remaining pass budget so a census slower than four seconds
-	// does not consume every future slice before any owner can be applied.
-	recoveryBudget := max(time.Nanosecond, (collectSoftDeadline-time.Since(started))/2)
-	applicationBudget := min(state.SessionIndexRecoverySlice, recoveryBudget) * 3 / 4
-	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, recoveryBudget)
-	_, recoveryErr := localStore.RecoverSessionIndexScheduled(recoveryCtx, max(time.Nanosecond, applicationBudget))
-	if errors.Is(recoveryErr, context.DeadlineExceeded) && state.SessionIndexRecoveryInterrupted(recoveryErr) && ctx.Err() == nil {
-		recoveryErr = nil
-	}
-	if recoveryErr != nil {
-		recordPreflightError(localStore, recoveryErr)
-	}
-	recoveryCancel()
+	recoveryErr := admitPassSessionIndexRecovery(ctx, localStore, started, stop)
 	rollouts, readHomes, err := collectorRollouts(ctx, localStore, cfg, env, pass)
 	if err != nil {
 		recordPreflightError(localStore, err)
@@ -221,6 +242,10 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 	if pass.importBatch != "" {
 		selectSession = func(reg archive.SessionRegistration) bool { return reg.InBatch(pass.importBatch) }
 	}
+	statusProgress.phase(statusCollecting)
+
+	skillPass := newSkillObservationPass(env, cfg.EffectiveSkillEvidence())
+	defer skillPass.Close()
 	result, err = collector.Run(ctx, localStore, objectStore, collector.Options{
 		CollectorGuard:           guard,
 		CatalogDestination:       config.DestinationID(cfg.Storage),
@@ -237,7 +262,8 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		Sources:                  registryFor(env),
 		Decoders:                 env.agentRegistry(),
 		MachineID:                cfg.MachineID,
-		SupplementalEvidence:     skillObserver(env, cfg.EffectiveSkillEvidence()),
+		SupplementalEvidence:     skillPass.Observe,
+		SupplementalSkillContent: skillPass.ObserveWithContent,
 		SkillEvidence:            cfg.EffectiveSkillEvidence(),
 		AcceptSession:            cfg.AcceptSession,
 		SelectSession:            selectSession,
@@ -245,7 +271,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		HistoricalProjectLabel:   cfg.HistoricalProjectLabel,
 		Now:                      env.Now,
 		RequireSkillUse:          cfg.RequireSkillUse,
-		Progress:                 pass.progress,
+		Progress:                 statusProgress.observe(pass.progress),
 		Stop:                     stop,
 		CursorDatabase:           env.cursorDatabase(),
 		RepoKey:                  env.repoKey,
@@ -267,11 +293,14 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		return result, recordImportPass(home, cfg, env, localStore, quietOnBusy, result, previous)
 	}
 
-	summary, verifyErr, err := verifyAndRecordPass(ctx, home, cfg, env, localStore, objectStore, quietOnBusy, result)
+	statusProgress.phase(statusVerifying)
+	verification, summary, verifyErr, err := verifyAndRecordPass(ctx, home, cfg, env, localStore, objectStore, quietOnBusy, result)
+	statusProgress.verified(verification)
 	if err != nil {
 		return result, err
 	}
 
+	statusProgress.phase(statusFinishing)
 	return finishPassWithRetention(home, env, cfg, localStore, objectStore, previous.LastScanAt, result, summary, verifyErr)
 }
 
@@ -322,22 +351,23 @@ func collectorNeedsGuard(cfg config.Config) bool {
 // verifyAndRecordPass performs read-back verification and records per-session
 // failures, returning the summary it recorded for them ("" when none failed).
 // Verification is returned separately so retention still runs first.
-func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, env Env, localStore *state.Store, objectStore storage.ObjectStore, quietOnBusy bool, result collector.Result) (summary string, verifyErr error, err error) {
+func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, env Env, localStore *state.Store, objectStore storage.ObjectStore, quietOnBusy bool, result collector.Result) (verification verificationSummary, summary string, verifyErr error, err error) {
 	// A read-back verification failure is reported after the retention
 	// sweep: it is no reason to skip cleanup.
-	if _, err := verifyPublicationsWithin(ctx, home, cfg, env, localStore, objectStore); err != nil {
+	verification, err = verifyPublicationsWithin(ctx, home, cfg, env, localStore, objectStore)
+	if err != nil {
 		verifyErr = fmt.Errorf("read-back verification: %w", err)
 	}
 	if health := passStorageHealth(result); health != "not_checked" {
 		if err := recordStorageHealth(home, cfg, env, quietOnBusy, health); err != nil {
-			return "", verifyErr, err
+			return verification, "", verifyErr, err
 		}
 	}
 	summary, err = recordPassSessionIssues(localStore, result)
 	if err != nil {
-		return "", verifyErr, err
+		return verification, "", verifyErr, err
 	}
-	return summary, verifyErr, nil
+	return verification, summary, verifyErr, nil
 }
 
 // recordPassSessionIssues preserves per-owner failures for both scoped import
@@ -628,37 +658,211 @@ func configuredArchiveStore(format destination.ArchiveFormat, remote storage.Obj
 //
 // An imported session gets no observation: today's skills attached to a
 // session that ran before them would be false evidence.
-func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegistration, time.Time) ([]archive.SupplementalEvidence, error) {
+// Evidence alone shares this pass lifetime. Optional content witnesses belong
+// only to a cache-miss observation and end with the returned callback view.
+type skillObservationPass struct {
+	observe func(context.Context, archive.SessionRegistration, time.Time, *agentapi.NativeReadBudget, bool) (skillObservationViews, func(), error)
+	closed  bool
+}
+
+func (p *skillObservationPass) read(ctx context.Context, options evidence.SkillOptions, budget *agentapi.NativeReadBudget, content bool) (agentapi.SkillContentObservation, func(), error) {
+	if content {
+		return evidence.ObserveSkillsWithContent(ctx, options, budget)
+	}
+	items, err := evidence.ObserveSkills(options)
+	return agentapi.SkillContentObservation{Evidence: items}, func() {}, err
+}
+
+func (p *skillObservationPass) Observe(reg archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
+	if p.closed {
+		return nil, agentapi.ErrClosed
+	}
+	out, release, err := p.observe(context.Background(), reg, at, nil, false)
+	release()
+	return out.Evidence, err
+}
+
+type skillObservationViews struct {
+	Evidence []archive.SupplementalEvidence
+	user     []agentapi.SkillContentDigest
+	project  []agentapi.SkillContentDigest
+}
+
+func (p *skillObservationPass) ObserveWithContent(ctx context.Context, reg archive.SessionRegistration, at time.Time, budget *agentapi.NativeReadBudget) (out agentapi.SkillContentObservation, release func(), err error) {
+	release = func() {}
+	if p.closed {
+		return out, release, agentapi.ErrClosed
+	}
+	view, releasePrivate, err := p.observe(ctx, reg, at, budget, true)
+	if err != nil {
+		releasePrivate()
+		return out, release, err
+	}
+	out.Evidence = view.Evidence
+	if err := ctx.Err(); err != nil {
+		releasePrivate()
+		return agentapi.SkillContentObservation{}, release, err
+	}
+	n := int64(len(view.user)+len(view.project)) * 32
+	if n == 0 {
+		releasePrivate()
+		return out, release, nil
+	}
+	n += 128 // scoped combined slice/header and its terminal release closure
+	reservation := budget.Reservation()
+	if n > reservation.Available() {
+		releasePrivate()
+		if err := ctx.Err(); err != nil {
+			return agentapi.SkillContentObservation{}, release, err
+		}
+		return out, release, nil
+	}
+	if !reservation.Reserve(n) {
+		releasePrivate()
+		return out, release, agentapi.ReadBudgetLimit(errors.New("skill content view changed during serialized reservation"))
+	}
+	out.Digests = append(append(make([]agentapi.SkillContentDigest, 0, len(view.user)+len(view.project)), view.user...), view.project...)
+	digests := out.Digests
+	release = func() { clear(digests); digests = nil; reservation.Release(n); n = 0; releasePrivate() }
+	return out, release, nil
+}
+
+func (p *skillObservationPass) Close() {
+	if p.closed {
+		return
+	}
+	p.closed = true
+	p.observe = nil
+}
+
+func newSkillObservationPass(env Env, mode config.SkillEvidence) *skillObservationPass {
+	pass := &skillObservationPass{}
 	userCache := map[string][]archive.SupplementalEvidence{}
 	projectCache := map[string][]archive.SupplementalEvidence{}
-	return func(reg archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
-		if reg.Imported() || mode == config.SkillEvidenceNone {
-			return nil, nil
+	var museEnvironment *agentapi.RuntimeEnvironment
+	var museDataHome string
+	var museDataHomeSet bool
+	pass.observe = func(ctx context.Context, reg archive.SessionRegistration, at time.Time, budget *agentapi.NativeReadBudget, content bool) (view skillObservationViews, release func(), err error) {
+		releaseUser, releaseProject := func() {}, func() {}
+		release = func() { releaseProject(); releaseUser() }
+		defer func() {
+			if err != nil {
+				release()
+			}
+		}()
+		if err := ctx.Err(); err != nil {
+			return view, release, err
 		}
-		userScope, ok := userCache[reg.Harness.Name]
+		if pass.closed {
+			return view, release, agentapi.ErrClosed
+		}
+		if reg.Imported() || mode == config.SkillEvidenceNone {
+			return view, release, nil
+		}
+		harness := reg.Harness.Name
+		if archive.CanonicalHarness(harness) == "muse" {
+			harness = "muse"
+			if museEnvironment == nil {
+				museEnvironment = skillRootEnvironment(env)
+			}
+		}
+		if harness != "muse" {
+			content = false
+		}
+		userEvidence, ok := userCache[harness]
+		var userDigests []agentapi.SkillContentDigest
 		if !ok {
 			userHome, err := env.userHomeDir()
 			if err != nil {
-				return nil, err
+				return view, release, err
 			}
-			userScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, UserHome: userHome, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, reg.Harness.Name, agentapi.SkillLocations{UserHome: userHome})})
+			dataHome := ""
+			if harness == "muse" {
+				if !museDataHomeSet {
+					museDataHome = env.nativeDataHome(userHome)
+					museDataHomeSet = true
+				}
+				dataHome = museDataHome
+			}
+			options := skillUserObservationOptions(env, harness, userHome, dataHome, museEnvironment, at, mode)
+			var observed agentapi.SkillContentObservation
+			observed, releaseUser, err = pass.read(ctx, options, budget, content)
 			if err != nil {
-				return nil, err
+				return view, release, err
 			}
-			userCache[reg.Harness.Name] = userScope
+			userEvidence, userDigests = observed.Evidence, observed.Digests
+			userCache[harness] = userEvidence
 		}
-		projectKey := reg.Harness.Name + "\x00" + reg.ProjectRoot
-		projectScope, ok := projectCache[projectKey]
+		projectKey := harness + "\x00" + reg.ProjectRoot
+		projectEvidence, ok := projectCache[projectKey]
+		var projectDigests []agentapi.SkillContentDigest
 		if !ok {
-			var err error
-			projectScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, ProjectRoot: reg.ProjectRoot, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, reg.Harness.Name, agentapi.SkillLocations{ProjectRoot: reg.ProjectRoot})})
+			var observed agentapi.SkillContentObservation
+			observed, releaseProject, err = pass.read(ctx, evidence.SkillOptions{Harness: harness, ProjectRoot: reg.ProjectRoot, ObservedAt: at, Mode: mode, Locations: skillEvidenceRoots(env, harness, agentapi.SkillLocations{ProjectRoot: reg.ProjectRoot, Environment: museEnvironment})}, budget, content)
 			if err != nil {
-				return nil, err
+				return view, release, err
 			}
-			projectCache[projectKey] = projectScope
+			projectEvidence, projectDigests = observed.Evidence, observed.Digests
+			projectCache[projectKey] = projectEvidence
 		}
-		return append(append([]archive.SupplementalEvidence(nil), userScope...), projectScope...), nil
+		if err := ctx.Err(); err != nil {
+			return view, release, err
+		}
+		return skillObservationViews{Evidence: append(append([]archive.SupplementalEvidence(nil), userEvidence...), projectEvidence...), user: userDigests, project: projectDigests}, release, nil
 	}
+	return pass
+}
+
+// This is the existing user-root/interpreter declaration composition, without
+// observation or private witness state. The pass snapshots its inputs once.
+func skillUserObservationOptions(env Env, harness, userHome, dataHome string, environment *agentapi.RuntimeEnvironment, at time.Time, mode config.SkillEvidence) evidence.SkillOptions {
+	locations := agentapi.SkillLocations{UserHome: userHome, DataHome: dataHome, Environment: environment}
+	roots := skillEvidenceRoots(env, harness, locations)
+	var inventory agentapi.SkillInventoryInterpreter
+	var inventoryInput agentapi.SkillInventoryInput
+	if provider, found := env.agentRegistry().LookupSkills(harness); found {
+		if interpreter, implemented := provider.(agentapi.SkillInventoryInterpreter); implemented {
+			if input, available := interpreter.InventoryInput(locations); available {
+				inventory = interpreter
+				inventoryInput = input
+			}
+		}
+	}
+	return evidence.SkillOptions{Harness: harness, UserHome: userHome, ObservedAt: at, Mode: mode, Locations: roots, Inventory: inventory, InventoryInput: inventoryInput}
+}
+
+type skillEnvironmentKey string
+
+const (
+	skillXDGConfigHome skillEnvironmentKey = "XDG_CONFIG_HOME"
+	skillCodexHome     skillEnvironmentKey = "CODEX_HOME"
+	skillXDGDataHome   skillEnvironmentKey = "XDG_DATA_HOME"
+)
+
+// skillRootEnvironment snapshots only the two configurable skill-root variables.
+// Invalid/oversized observations remain set-but-unavailable; they never become
+// known-unset fallbacks. The snapshot is shared across the complete pass.
+func skillRootEnvironment(env Env) *agentapi.RuntimeEnvironment {
+	xdg, xdgSet := env.lookupEnv(string(skillXDGConfigHome))
+	codex, codexSet := env.lookupEnv(string(skillCodexHome))
+	if len(xdg) > 4096 {
+		xdg = ""
+	}
+	if len(codex) > 4096 {
+		codex = ""
+	}
+	return &agentapi.RuntimeEnvironment{LookupEnv: func(key string) (string, bool) {
+		switch skillEnvironmentKey(key) {
+		case skillXDGConfigHome:
+			return xdg, xdgSet
+		case skillCodexHome:
+			return codex, codexSet
+		case skillXDGDataHome:
+			// Data home is supplied separately; this config snapshot excludes it.
+			return "", false
+		}
+		return "", false
+	}}
 }
 
 func skillEvidenceRoots(env Env, name string, l agentapi.SkillLocations) []agentapi.SkillRoot {

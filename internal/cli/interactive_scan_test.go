@@ -134,6 +134,7 @@ var promptSites = classifiedCalls{
 	"show_resolve.go":     {"newPrompter": 1},                  // the ambiguity picker, after browseInteractive
 	"handoff.go":          {"newPrompter": 1},                  // "Continue in:": offersDestinations requires browseInteractive
 	"handoff_match.go":    {"newPrompter": 1},                  // "Hand off this session?" for a repository-only match: gateRepoMatch refuses without browseInteractive
+	"search_start.go":     {"newPrompter": 1},                  // the indexing offer and query: startInteractiveSearch requires browseInteractive
 	"handoff_worktree.go": {"newPrompter": 1},                  // the active-source y/N/w question: checkActiveSource asks only when env.interactive(stdin) and (stderr)
 }
 
@@ -141,6 +142,9 @@ var promptSites = classifiedCalls{
 // through a prompter. A read of standard input that waits for a person must
 // be refused when interaction is off; a read of a file need not be.
 var inputReads = classifiedCalls{
+	"capabilities.go":        {"io.Copy": 1},                           // fixed version subprocess stdout through the 4096-byte capped writer; never terminal input
+	"eval_replay_plan.go":    {"io.ReadAll": 1},                        // Explicit bounded machine-wire planner input, never an implicit terminal question.
+	"status_summary.go":      {"io.ReadAll": 1},                        // Bounded regular local observation files; never standard input.
 	"codex_label_host.go":    {"bufio.NewReaderSize": 1, "io.Copy": 1}, // bounded native process stdout/stderr only; never terminal input or an approval prompt
 	"setup_project_scope.go": {"json.NewDecoder": 1, "io.ReadAll": 1},  // explicit JSON or --yes file/stdin scope, never an implicit prompt
 	"pairing_receive.go":     {"io.ReadAll": 1, "bufio.NewReader": 1},  // bounded bundle input and buffered first-run answers; code/review preserve the checked terminal

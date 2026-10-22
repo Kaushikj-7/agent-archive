@@ -442,7 +442,7 @@ what was not](install.md#platforms)).
 - **Lingering.** Without it, the user manager exists only while you are logged
   in, so the collector stops when you log out. Hooks keep recording sessions
   and the next pass after you log in uploads them, but nothing uploads while
-  you are away. `status` and `status --json` (`background_warnings`) say so
+  you are away. `status --issues` and `status --json` (`background_warnings`) say so
   while the job is otherwise working; `loginctl enable-linger` fixes it. A
   server or a machine you reach over SSH wants lingering on.
 - **Where the units go.** Always `~/.config/systemd/user`, whatever

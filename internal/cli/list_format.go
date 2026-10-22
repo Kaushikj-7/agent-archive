@@ -21,8 +21,9 @@ const minShortSessionID = 8
 
 // listRow is one session as the human list table renders it.
 type listRow struct {
+	// searchSnippet is a content search result's matching passage, one line
+	// with its terms highlighted, shown under the row when read by lines.
 	searchSnippet   string
-	searchMatches   int
 	pickerSelection *handoffPickerSelection
 	selectionKey    string
 	Index           int
@@ -362,8 +363,9 @@ func (opts listFormatOptions) withColumns(rows []listRow) (laid listFormatOption
 		return laid, nil
 	}
 	laid.ShowPR = slices.ContainsFunc(rows, func(r listRow) bool { return r.PR != "" })
-	// One row says nothing by sharing a value with itself.
-	if len(rows) < 2 {
+	// One row says nothing by sharing a value with itself, and a search
+	// result names its agent and project on every row.
+	if len(rows) < 2 || opts.Search {
 		return laid, nil
 	}
 	same := func(value func(listRow) string) (string, bool) {

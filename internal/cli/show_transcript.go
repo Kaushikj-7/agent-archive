@@ -150,7 +150,8 @@ func renderPrompt(w io.Writer, text string, s textStyle) {
 
 // splitColumns cuts line into rows at most width columns wide, never
 // splitting a character; a wide character that would straddle the edge
-// starts the next row. A width of 0 or less keeps the line whole.
+// starts the next row. A color code takes no columns and is never split. A
+// width of 0 or less keeps the line whole.
 func splitColumns(line string, width int) []string {
 	if width <= 0 || visibleWidth(line) <= width {
 		return []string{line}
@@ -159,6 +160,13 @@ func splitColumns(line string, width int) []string {
 	var row strings.Builder
 	column := 0
 	for line != "" {
+		if line[0] == '\x1b' {
+			if loc := ansiEscape.FindStringIndex(line); loc != nil && loc[0] == 0 {
+				row.WriteString(line[:loc[1]])
+				line = line[loc[1]:]
+				continue
+			}
+		}
 		r, size := utf8.DecodeRuneInString(line)
 		w := runeWidthBefore(r, line[size:])
 		if column > 0 && column+w > width {

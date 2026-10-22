@@ -227,7 +227,7 @@ func TestStatusReportsAnOutdatedSkillUntilSetupRefreshesIt(t *testing.T) {
 		t.Fatalf("agent_skills = %#v", got)
 	}
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"status"}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"status", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatal(errOut.String())
 	}
 	if !strings.Contains(out.String(), "The /handoff skill at ~/.claude/skills/handoff/SKILL.md is out of date. Run agent-archive setup --refresh to refresh it.") {

@@ -1,0 +1,934 @@
+package cli
+
+import (
+	"cmp"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/search"
+	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
+)
+
+// directSearchPause is how long a direct search reads the bucket before it
+// asks whether to go on.
+const directSearchPause = 2 * time.Minute
+
+// directSearchRate is about how many sessions a minute a direct search
+// reads. It is the basis of the warning's estimate only. With sources
+// downloaded ahead, each session's metadata recheck is the serial step: a
+// fake store taking 250ms per metadata read and 900ms per source read
+// searched 222 sessions a minute (52 one at a time); this leaves room for
+// larger sessions.
+const directSearchRate = 150
+
+// directSearchReaders is how many sessions a direct search downloads at once,
+// ahead of the one it is matching. Matching and keeping the results stay one
+// session at a time, in order.
+const directSearchReaders = 6
+
+// directPrefetchTimeout bounds one session's download ahead of its turn, as
+// Run bounds a pass that downloads it in turn.
+const directPrefetchTimeout = 30 * time.Second
+
+func (e Env) directSearchBudget() time.Duration {
+	if e.directSearchPause != nil {
+		return e.directSearchPause()
+	}
+	return directSearchPause
+}
+
+// directSearchMemoryCap is how many bytes of matching sessions' text, with
+// its full-text index, a direct search keeps in memory. Past it the search
+// stops and shows the results so far: a query matching most of a large
+// bucket would otherwise hold most of its text.
+const directSearchMemoryCap = 256 << 20
+
+func (e Env) directSearchMemoryCap() int64 {
+	if e.directSearchMemory > 0 {
+		return e.directSearchMemory
+	}
+	return directSearchMemoryCap
+}
+
+// wantsDirectSearch reports whether a query reads the bucket directly: on a
+// terminal (startInteractiveSearch left its prompter), after the indexing
+// offer was declined, with no usable local index in dir (none, or one whose
+// first creation was interrupted, as searchIndexMissing decides). JSON, piped
+// output, refresh and cursors keep reporting the missing index.
+func wantsDirectSearch(cfg config.Config, opts contentSearchOptions, dir, namespace string) bool {
+	return searchIndexingDeclined(cfg) && opts.prompt != nil && opts.hasQuery && !opts.json && !opts.refresh && opts.query.Cursor == "" && searchIndexMissing(dir, namespace)
+}
+
+// directSearchCandidate applies the query's scope and filters to a session's
+// metadata, as Search applies them to indexed sessions, so nothing outside
+// them is downloaded.
+func directSearchCandidate(m archive.Metadata, q search.Query, scope sessionScope) bool {
+	included := func(want search.Inclusion, is bool) bool {
+		return want == search.IncludeAll || (want == search.Only) == is
+	}
+	switch {
+	case q.Harness != "" && m.Harness.Name != q.Harness:
+		return false
+	case !q.From.IsZero() && m.CapturedAt.Before(q.From), !q.To.IsZero() && m.CapturedAt.After(q.To):
+		return false
+	case !included(q.Replay, m.Replay != nil), !included(q.Children, m.NativeChild || m.ParentSessionID != ""):
+		return false
+	}
+	return scope.contains(m, nil)
+}
+
+// directScanStop is why one stretch of a direct search ended.
+type directScanStop string
+
+const (
+	directScanDone        directScanStop = "done"
+	directScanPaused      directScanStop = "paused"
+	directScanStopped     directScanStop = "stopped"
+	directScanInterrupted directScanStop = "interrupted"
+	// directScanFull is a search whose matches filled the memory it may
+	// keep.
+	directScanFull directScanStop = "full"
+)
+
+// directMatch is a session found to match while a direct search runs.
+type directMatch struct {
+	metadata archive.Metadata
+	count    int
+}
+
+// directScan reads sessions newest first into a store held in memory. Only
+// matching sessions keep their passages, for the results browser.
+type directScan struct {
+	index   *search.Store
+	objects storage.ObjectStore
+	parsers agentapi.ParsersLookup
+	query   search.Query
+	now     func() time.Time
+	budget  time.Duration
+	// memory is how many bytes the store may hold before the search
+	// stops; zero sets no limit.
+	memory   int64
+	sessions []archive.Metadata
+	total    int
+
+	mu       sync.Mutex
+	searched int
+	matching int
+	failed   int
+	// failedInRow is how many of the latest sessions searched could not
+	// be read for a reason of the bucket's, since the last one that could.
+	// A session too large or too slow to read is unread for its own reason:
+	// it neither adds to the count nor resets it.
+	failedInRow int
+	// matched and unread are the sessions searched that matched and that
+	// could not be read, by harness/session, so narrowing keeps only the
+	// counts of sessions in the narrowed scope.
+	matched map[string]bool
+	unread  map[string]bool
+
+	// ran, when set, runs after each session's index pass, before its
+	// matches are counted.
+	ran func()
+	// prefetchBytes, when set, replaces directPrefetchBytes.
+	prefetchBytes int
+	// sent, when set, runs after each match is sent, before the memory
+	// it fills is checked.
+	sent func()
+}
+
+// directSessionKey identifies a session among those a direct search reads.
+func directSessionKey(m archive.Metadata) string { return m.Harness.Name + "/" + m.SessionID }
+
+// searchedText says how much of the bucket the results cover, for the
+// results browser's coverage line.
+func (s *directScan) searchedText() string {
+	searched, _ := s.counts()
+	if searched >= s.total {
+		return "Searched all " + sessionsText(s.total) + " in the bucket"
+	}
+	return "Searched the newest " + countText(searched) + " of " + sessionsText(s.total) + " in the bucket"
+}
+
+// unreadable is how many sessions searched so far could not be read.
+func (s *directScan) unreadable() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failed
+}
+
+func (s *directScan) counts() (searched, matching int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.searched, s.matching
+}
+
+// directSearchFailureLimit is how many sessions in a row may fail to read
+// before a direct search stops: past it the bucket, not a session, is the
+// likely problem.
+const directSearchFailureLimit = 5
+
+// errDirectSearchUnreadable ends a direct search whose sessions stopped being
+// readable.
+var errDirectSearchUnreadable = errors.New("sessions in a row could not be read")
+
+// errDirectSessionSlow is a session that took longer to read than one index
+// pass allows.
+var errDirectSessionSlow = errors.New("reading the session took too long")
+
+// unreadOnItsOwn reports that a session could not be read for a reason of its
+// own, not the bucket's: it is too large to index, or slower than a pass
+// allows. Such sessions do not count toward directSearchFailureLimit.
+func unreadOnItsOwn(unread error) bool {
+	return errors.Is(unread, storage.ErrObjectTooLarge) || errors.Is(unread, archive.ErrSourceTooLarge) || errors.Is(unread, errDirectSessionSlow)
+}
+
+// session indexes one session through the same verified loading, authority
+// recheck and parser visibility as refresh, and reports its matches. Its text
+// is dropped unless it matches. A session that could not be read reports why
+// as unread; one deleted or changed since the listing reports neither.
+//
+// Sources prefetched for the session are staged for Run to reuse; Run reads
+// any it lacks, so a session whose prefetch failed is read again in turn and
+// fails, or not, as it would have.
+func (s *directScan) session(ctx context.Context, m archive.Metadata, prefetched *search.Prefetched) (count int, unread error, err error) {
+	at := s.now()
+	if err = s.index.Observe(ctx, m, s.parsers, at, 0); err != nil {
+		return 0, nil, err
+	}
+	if prefetched != nil {
+		if err = s.index.Stage(ctx, *prefetched); err != nil {
+			return 0, nil, err
+		}
+	}
+	// The second session lets a session changed since the listing be read
+	// again as it now is.
+	progress, err := s.index.Run(ctx, s.objects, s.parsers, at, search.Budget{Sources: 1000, Sessions: 2, VerifyCurrent: true})
+	if s.ran != nil {
+		s.ran()
+	}
+	switch {
+	case err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded):
+		// Run bounds each pass; a session slower than that is unread.
+		unread = fmt.Errorf("%w: %w", errDirectSessionSlow, err)
+	case err != nil:
+		return 0, nil, err
+	case progress.Committed == 0 && progress.Failed > 0:
+		unread = progress.Failure
+		if unread == nil {
+			unread = errors.New("source unavailable")
+		}
+	}
+	if progress.Committed == 0 {
+		// An unreadable source is counted, not retried: the next search
+		// reads it again.
+		return 0, unread, s.index.ForgetSession(ctx, m.Harness.Name, m.SessionID)
+	}
+	count, err = s.index.SessionMatches(ctx, s.query, m.Harness.Name, m.SessionID)
+	if err != nil {
+		return 0, nil, err
+	}
+	return count, nil, s.index.DropSessionText(ctx, m.Harness.Name, m.SessionID, count > 0)
+}
+
+// run reads sessions until none is left or the budget is spent, sending each
+// match on found. It returns when ctx ends too, and with an error once
+// directSearchFailureLimit sessions in a row could not be read. It does not
+// pause while the latest sessions are failing, so a dropped connection ends
+// in that error rather than a question. The budget is
+// measured from the wall clock; tests set it to zero or far beyond the
+// fixture.
+func (s *directScan) run(ctx context.Context, found chan<- directMatch) (directScanStop, error) {
+	started := time.Now()
+	s.mu.Lock()
+	ahead := s.sessions[s.searched:]
+	s.mu.Unlock()
+	// Downloads start only while the budget lasts, so few run past a
+	// pause; those that do are dropped with the stretch and read again if
+	// the search goes on.
+	prefetch := s.prefetch(ctx, ahead, func() bool { return time.Since(started) < s.budget })
+	defer prefetch.stop()
+	for read := 0; ; read++ {
+		s.mu.Lock()
+		next, failing := s.searched, s.failedInRow > 0
+		s.mu.Unlock()
+		if next >= len(s.sessions) {
+			return directScanDone, nil
+		}
+		// Each stretch reads at least one session, so going on always
+		// makes progress.
+		if read > 0 && !failing && time.Since(started) >= s.budget {
+			return directScanPaused, nil
+		}
+		m := s.sessions[next]
+		count, unread, err := s.session(ctx, m, prefetch.take(ctx, read))
+		select {
+		case <-ctx.Done():
+			// Esc or a signal: the session cut short is not counted, so
+			// none of its text may stay for the results.
+			if e := s.index.ForgetSession(context.WithoutCancel(ctx), m.Harness.Name, m.SessionID); e != nil {
+				return directScanStopped, e
+			}
+			return directScanStopped, nil
+		default:
+		}
+		if err != nil {
+			return directScanStopped, err
+		}
+		s.mu.Lock()
+		s.searched++
+		if count > 0 {
+			s.matching++
+			s.matched[directSessionKey(m)] = true
+		}
+		switch {
+		case unread == nil:
+			s.failedInRow = 0
+		case !unreadOnItsOwn(unread):
+			s.failedInRow++
+		}
+		if unread != nil {
+			s.failed++
+			s.unread[directSessionKey(m)] = true
+		}
+		inRow := s.failedInRow
+		s.mu.Unlock()
+		if inRow >= directSearchFailureLimit {
+			return directScanStopped, fmt.Errorf("%d %w: %w", inRow, errDirectSearchUnreadable, unread)
+		}
+		if count > 0 {
+			select {
+			case found <- directMatch{metadata: m, count: count}:
+			case <-ctx.Done():
+				return directScanStopped, nil
+			}
+			if s.sent != nil {
+				s.sent()
+			}
+			if s.memory > 0 {
+				// Esc may end ctx now; the session is counted, so its
+				// size is still read and the stretch ends as it would.
+				size, err := s.index.Size(context.WithoutCancel(ctx))
+				if err != nil {
+					return directScanStopped, err
+				}
+				if size >= s.memory {
+					return directScanFull, nil
+				}
+			}
+		}
+	}
+}
+
+// directPrefetch downloads the sessions a stretch searches next,
+// directSearchReaders at a time, while the one before them is matched. Each
+// session's download holds a slot and its bytes until its turn comes, so no
+// more than directSearchReaders sessions, and about directPrefetchBytes, are
+// held or downloading at once.
+type directPrefetch struct {
+	cancel context.CancelFunc
+	slots  chan struct{}
+	// ready has one entry per session, in order: what was prefetched,
+	// nil when the download failed, or closed when none was started.
+	ready []chan *search.Prefetched
+	wg    sync.WaitGroup
+
+	mu sync.Mutex
+	// held is the bytes of sessions started and not yet taken: each
+	// session's search.PrefetchCost while it downloads, then its size.
+	held int
+	// freed wakes a producer waiting for held to fall.
+	freed chan struct{}
+	// limit is the bytes held ahead, directPrefetchBytes unless a test
+	// sets it.
+	limit int
+}
+
+// directPrefetchBytes is about how many bytes of sessions a direct search
+// holds ahead of the one it is matching. A session larger than this alone is
+// still read ahead, by itself.
+const directPrefetchBytes = 64 << 20
+
+// prefetch starts downloading sessions in order while more reports there is
+// time to search them.
+func (s *directScan) prefetch(ctx context.Context, sessions []archive.Metadata, more func() bool) *directPrefetch {
+	ctx, cancel := context.WithCancel(ctx)
+	p := &directPrefetch{cancel: cancel, slots: make(chan struct{}, directSearchReaders), ready: make([]chan *search.Prefetched, len(sessions)), freed: make(chan struct{}, 1), limit: cmp.Or(s.prefetchBytes, directPrefetchBytes)}
+	for i := range p.ready {
+		p.ready[i] = make(chan *search.Prefetched, 1)
+	}
+	p.wg.Go(func() {
+		started := 0
+		defer func() {
+			for _, unstarted := range p.ready[started:] {
+				close(unstarted)
+			}
+		}()
+		for i, m := range sessions {
+			select {
+			case p.slots <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			cost := search.PrefetchCost(m)
+			if !p.reserve(ctx, cost) || !more() {
+				return
+			}
+			started = i + 1
+			p.wg.Go(func() {
+				read, cancel := context.WithTimeout(ctx, directPrefetchTimeout)
+				defer cancel()
+				got, err := s.index.Prefetch(read, s.objects, s.parsers, m)
+				if err != nil {
+					p.release(cost)
+					p.ready[i] <- nil
+					return
+				}
+				p.adjust(got.Size() - cost)
+				p.ready[i] <- &got
+			})
+		}
+	})
+	return p
+}
+
+// reserve waits until cost more bytes fit under the limit, or
+// nothing is held, and holds them. It reports false once ctx ends.
+func (p *directPrefetch) reserve(ctx context.Context, cost int) bool {
+	for {
+		p.mu.Lock()
+		if p.held == 0 || p.held+cost <= p.limit {
+			p.held += cost
+			p.mu.Unlock()
+			return true
+		}
+		p.mu.Unlock()
+		select {
+		case <-p.freed:
+		case <-ctx.Done():
+			return false
+		}
+	}
+}
+
+// adjust changes the bytes held by delta, waking a waiting producer when
+// they fall.
+func (p *directPrefetch) adjust(delta int) {
+	p.mu.Lock()
+	p.held += delta
+	p.mu.Unlock()
+	if delta < 0 {
+		select {
+		case p.freed <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (p *directPrefetch) release(n int) { p.adjust(-n) }
+
+// take waits for the i-th session's download and frees its slot and bytes.
+// It returns nil, for the session to be read in turn, when the download
+// failed, was never started, or ctx ended first.
+func (p *directPrefetch) take(ctx context.Context, i int) *search.Prefetched {
+	if i >= len(p.ready) {
+		return nil
+	}
+	select {
+	case got, started := <-p.ready[i]:
+		if started {
+			<-p.slots
+		}
+		if got != nil {
+			p.release(got.Size())
+		}
+		return got
+	case <-ctx.Done():
+		return nil
+	}
+}
+
+// stop ends the downloads not yet taken and waits for them.
+func (p *directPrefetch) stop() {
+	p.cancel()
+	p.wg.Wait()
+}
+
+// directResults is what a direct search found, for the results browser: the
+// store in memory, which the browser closes, its first page, and the options
+// as narrowed at a pause.
+type directResults struct {
+	index *search.Store
+	page  search.Page
+	opts  contentSearchOptions
+}
+
+// runDirectSearch searches the bucket itself when indexing was declined and
+// no local index exists: sessions in scope, newest first, read into memory
+// and matched there, pausing after a budget to ask whether to go on. It
+// returns what was found for the results browser, or nil and the exit code
+// when there is nothing to browse.
+func runDirectSearch(ctx context.Context, cfg config.Config, namespace string, scope sessionScope, opts contentSearchOptions, stdout, stderr io.Writer, env searchCommandDependencies) (*directResults, int) {
+	p := opts.prompt
+	objects, err := env.openStore(cfg)
+	if err != nil {
+		return nil, searchCommandError(stderr, err)
+	}
+	listed, escaped, err := listDirectSessions(ctx, p, stdout, env, func(ctx context.Context) ([]archive.Metadata, error) {
+		return reader.ListMetadataWithOptions(ctx, objects, archiveSessionsPrefix, reader.Filter{Harness: opts.query.Harness}, reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "search")})
+	})
+	if ctx.Err() != nil {
+		return nil, directSearchInterrupted(stderr)
+	}
+	if escaped {
+		return nil, 0
+	}
+	if err != nil {
+		return nil, searchCommandError(stderr, err)
+	}
+	var sessions []archive.Metadata
+	for _, m := range listed {
+		if directSearchCandidate(m, opts.query, scope) {
+			sessions = append(sessions, m)
+		}
+	}
+	scopeLabel := "all projects"
+	if !opts.all {
+		scopeLabel = archive.DisplayLine(scope.Label)
+	}
+	if len(sessions) == 0 {
+		terminal.Printf(stdout, "No archived sessions to search in %s.\n", scopeLabel)
+		return nil, 0
+	}
+	index, err := search.OpenMemory(ctx, namespace)
+	if err != nil {
+		return nil, searchCommandError(stderr, err)
+	}
+	browsing := false
+	defer func() {
+		if !browsing {
+			_ = index.Close()
+		}
+	}()
+	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: opts.query, now: env.now, budget: env.directSearchBudget(), memory: env.directSearchMemoryCap(), sessions: sessions, total: len(sessions), matched: map[string]bool{}, unread: map[string]bool{}}
+	printDirectSearchWarning(p, cfg, scan)
+
+	// The project the working directory is in, offered at a pause when the
+	// search covers every project.
+	var narrow sessionScope
+	if opts.all && scope.Label != "" {
+		narrow = scope.only()
+	}
+	for {
+		why, err := scan.scan(ctx, p, stdout, env, scopeLabel)
+		if why == directScanInterrupted {
+			return nil, directSearchInterrupted(stderr)
+		}
+		if errors.Is(err, errDirectSearchUnreadable) {
+			code := searchCommandError(stderr, err)
+			terminal.Println(stderr, "Check your network connection and bucket access, then search again. To check storage, run:")
+			terminal.Println(stderr, "  agent-archive status")
+			return nil, code
+		}
+		if err != nil {
+			return nil, searchCommandError(stderr, err)
+		}
+		if !printDirectSearchStretch(p, stdout, scan, why) {
+			break
+		}
+		choice, err := askDirectSearchPause(ctx, p, scan, narrow)
+		if err != nil {
+			return nil, searchCommandError(stderr, err)
+		}
+		if choice == directPauseResults {
+			break
+		}
+		if choice == directPauseStop {
+			return nil, 0
+		}
+		if choice == directPauseProject {
+			scan.narrow(narrow)
+			opts.all, scopeLabel = false, archive.DisplayLine(narrow.Label)
+			opts.query.Scope = search.Scope{Restricted: true, Named: narrow.Dir == "", RepoKey: narrow.RepoKey, ProjectName: narrow.Label, ProjectIDs: narrow.ProjectIDs}
+			narrow = sessionScope{}
+		}
+	}
+	if _, matching := scan.counts(); matching == 0 {
+		return nil, 0
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	page, err := index.Search(queryCtx, opts.query)
+	if err != nil {
+		return nil, searchCommandError(stderr, err)
+	}
+	browsing = true
+	opts.direct = scan.searchedText()
+	return &directResults{index: index, page: page, opts: opts}, 0
+}
+
+// directSearchInterrupted ends a direct search that a signal interrupted.
+func directSearchInterrupted(stderr io.Writer) int {
+	terminal.Println(stderr, "agent-archive: search: interrupted")
+	return 130
+}
+
+// narrow keeps the sessions in scope, those already searched first, and
+// counts only those: a session searched before narrowing that is outside the
+// scope is neither searched nor matching any more, as the results leave it
+// out.
+func (s *directScan) narrow(scope sessionScope) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var kept []archive.Metadata
+	searched, matching, failed := 0, 0, 0
+	for i, m := range s.sessions {
+		if !scope.contains(m, nil) {
+			continue
+		}
+		kept = append(kept, m)
+		if i < s.searched {
+			searched++
+			if s.matched[directSessionKey(m)] {
+				matching++
+			}
+			if s.unread[directSessionKey(m)] {
+				failed++
+			}
+		}
+	}
+	s.sessions, s.total = kept, len(kept)
+	s.searched, s.matching, s.failed = searched, matching, failed
+}
+
+// printDirectSearchStretch summarizes a stretch of the search as it ended,
+// and reports whether it paused to ask how to go on.
+func printDirectSearchStretch(p *prompter, stdout io.Writer, scan *directScan, why directScanStop) (paused bool) {
+	searched, matching := scan.counts()
+	unread := ""
+	if n := scan.unreadable(); n > 0 {
+		unread = " · " + countText(n) + " could not be read"
+	}
+	switch {
+	case why == directScanPaused:
+		terminal.Printf(stdout, "%s Searched the newest %s of %s · %s%s\n", p.style.okMark(), countText(searched), sessionsText(scan.total), matchingSessionsText(matching), unread)
+		return true
+	case searched >= scan.total:
+		terminal.Printf(stdout, "%s Searched all %s · %s%s\n", p.style.okMark(), sessionsText(scan.total), matchingSessionsText(matching), unread)
+	case searched == 0:
+		terminal.Printf(stdout, "%s Stopped before searching any of the %s\n", p.style.okMark(), sessionsText(scan.total))
+	default:
+		terminal.Printf(stdout, "%s Stopped after the newest %s of %s · %s%s\n", p.style.okMark(), countText(searched), sessionsText(scan.total), matchingSessionsText(matching), unread)
+	}
+	if why == directScanFull && searched < scan.total {
+		printDirectSearchFull(p)
+	}
+	return false
+}
+
+// printDirectSearchFull says why a search stopped short of the bucket's
+// end, and the command that searches all of it.
+func printDirectSearchFull(p *prompter) {
+	terminal.Printf(p.out, "%s Matches filled the memory a search without an index may use.\n", p.style.warnMark())
+	terminal.Println(p.out, "  Search for more specific words, or to search every session, run:")
+	terminal.Println(p.out, "  "+p.style.cmd("agent-archive setup --yes --search-indexing on"))
+}
+
+// printDirectSearchWarning says what a direct search costs before it starts,
+// and the command that makes the next search instant.
+func printDirectSearchWarning(p *prompter, cfg config.Config, scan *directScan) {
+	provider := "R2"
+	if strings.EqualFold(strings.TrimSpace(cfg.Storage.Provider), credentials.ProviderS3) {
+		provider = "S3"
+	}
+	terminal.Printf(p.out, "%s Without an index, search reads your %s bucket, newest first, pausing after %s.\n", p.style.warnMark(), provider, durationText(scan.budget))
+	terminal.Println(p.out, "  It caches metadata such as titles, not conversation text.")
+	minutes := (scan.total + directSearchRate - 1) / directSearchRate
+	terminal.Printf(p.out, "  Searching all %s takes %s. To search instantly, run:\n", sessionsText(scan.total), aboutMinutes(minutes))
+	terminal.Println(p.out, "  "+p.style.cmd("agent-archive setup --yes --search-indexing on"))
+	terminal.Println(p.out)
+}
+
+// scan runs one stretch of the search: it reads keys for Esc while the
+// sessions are read, keeps the progress line on stdout, and prints each
+// match found through the prompter.
+func (s *directScan) scan(ctx context.Context, p *prompter, stdout io.Writer, env searchCommandDependencies, scopeLabel string) (directScanStop, error) {
+	esc := watchEsc(p, env)
+	defer esc.close()
+	hint := esc.hint(p)
+	label := func() string {
+		searched, matching := s.counts()
+		return fmt.Sprintf("Searching the bucket · %s · %s of %s, newest first · %s so far%s", scopeLabel, countText(searched), sessionsText(s.total), matchingText(matching), hint)
+	}
+	spin := p.style.spinLabelEvery(stdout, label, spinnerInterval)
+	defer func() { spin.stop() }()
+
+	scanCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	found := make(chan directMatch)
+	type outcome struct {
+		why directScanStop
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		why, err := s.run(scanCtx, found)
+		done <- outcome{why, err}
+	}()
+	escaped := false
+	for {
+		select {
+		case m := <-found:
+			spin.stop()
+			printDirectMatch(p, m)
+			spin = p.style.spinLabelEvery(stdout, label, spinnerInterval)
+			continue
+		case result := <-done:
+			if ctx.Err() != nil {
+				return directScanInterrupted, nil
+			}
+			if escaped && result.why == directScanDone {
+				result.why = directScanStopped
+			}
+			return result.why, result.err
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return directScanInterrupted, nil
+		case <-esc.poll():
+		}
+		if esc.pressed() && !escaped {
+			escaped = true
+			cancel()
+		}
+	}
+}
+
+// listDirectSessions lists the bucket's sessions under a spinner, reading
+// keys so Esc stops the listing as it stops the search. It reports whether
+// Esc was pressed, having said so; Ctrl-C ends ctx instead.
+func listDirectSessions(ctx context.Context, p *prompter, stdout io.Writer, env searchCommandDependencies, list func(context.Context) ([]archive.Metadata, error)) ([]archive.Metadata, bool, error) {
+	esc := watchEsc(p, env)
+	defer esc.close()
+	spin := p.style.spin(stdout, "Listing the bucket's sessions"+esc.hint(p))
+	defer spin.stop()
+	listCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type outcome struct {
+		listed []archive.Metadata
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		listed, err := list(listCtx)
+		done <- outcome{listed, err}
+	}()
+	for {
+		select {
+		case result := <-done:
+			return result.listed, false, result.err
+		case <-ctx.Done():
+			cancel()
+			result := <-done
+			return nil, false, result.err
+		case <-esc.poll():
+		}
+		if esc.pressed() {
+			cancel()
+			<-done
+			spin.stop()
+			terminal.Printf(stdout, "%s Stopped while listing the bucket\n", p.style.okMark())
+			return nil, true, nil
+		}
+	}
+}
+
+// escWatch reads keys for Esc while a direct search waits on the bucket.
+// Without a terminal to read keys from it never polls, and Ctrl-C still
+// interrupts.
+type escWatch struct {
+	keys    *keyInput
+	release func()
+	ready   chan struct{}
+}
+
+func watchEsc(p *prompter, env searchCommandDependencies) *escWatch {
+	term, ok := env.openKeyTerminal(p.source)
+	if !ok {
+		return &escWatch{release: func() {}}
+	}
+	// The keys answer Ctrl-Z while they are read; the prompter's own stop
+	// handling, left from the questions before, stands aside so the
+	// process is stopped once, with the terminal restored first.
+	release := p.suspendPrompts(true)
+	keys := startKeys(term)
+	if keys == nil {
+		release()
+		return &escWatch{release: func() {}}
+	}
+	ready := make(chan struct{})
+	close(ready)
+	return &escWatch{keys: keys, release: release, ready: ready}
+}
+
+// hint is the progress line's note that Esc stops, when keys are read.
+func (w *escWatch) hint(p *prompter) string {
+	if w.keys == nil {
+		return ""
+	}
+	return " · " + p.style.dim("Esc stop")
+}
+
+// poll is ready while keys can be read, and never otherwise.
+func (w *escWatch) poll() <-chan struct{} {
+	if w.keys == nil {
+		return nil
+	}
+	return w.ready
+}
+
+// pressed waits briefly for a key and reports whether it was Esc. Once keys
+// cannot be read it stops reading them.
+func (w *escWatch) pressed() bool {
+	if w.keys == nil {
+		return false
+	}
+	k, err := w.keys.nextWait(100 * time.Millisecond)
+	if err != nil {
+		w.keys.close()
+		w.keys = nil
+		return false
+	}
+	return k.kind == keyEscape
+}
+
+// close restores line input and the prompter's own stop handling.
+func (w *escWatch) close() {
+	if w.keys != nil {
+		w.keys.close()
+		w.keys = nil
+	}
+	w.release()
+	w.release = func() {}
+}
+
+// printDirectMatch prints a matching session as it is found: its agent's
+// dot, its title, and how many passages match.
+func printDirectMatch(p *prompter, m directMatch) {
+	dot, _ := agentLabel(m.metadata.Harness.Name)
+	title := archive.DisplayLine(archive.DisplayTitle(m.metadata))
+	if strings.TrimSpace(title) == "" {
+		title = shortSessionID(m.metadata.SessionID)
+	}
+	if p.style.width > 20 {
+		title = truncateVisible(title, p.style.width-16)
+	}
+	matches := "1 match"
+	if m.count != 1 {
+		matches = strconv.Itoa(m.count) + " matches"
+	}
+	terminal.Printf(p.out, "  %s %s  %s\n", p.style.agent(m.metadata.Harness.Name, dot), title, p.style.dim(matches))
+}
+
+// directPauseChoice is an answer to the question a direct search asks when
+// its budget is spent.
+type directPauseChoice string
+
+const (
+	directPauseKeep    directPauseChoice = "keep"
+	directPauseProject directPauseChoice = "project"
+	directPauseResults directPauseChoice = "results"
+	directPauseStop    directPauseChoice = "stop"
+)
+
+// askDirectSearchPause asks how to go on once the budget is spent: keep
+// going, narrow to the working directory's project when the search covers
+// every project, show what was found, or stop. Signals end the process at
+// the question, as at any other.
+func askDirectSearchPause(ctx context.Context, p *prompter, scan *directScan, narrow sessionScope) (directPauseChoice, error) {
+	options := []option{{string(directPauseKeep), "Keep going"}}
+	if narrow.Label != "" {
+		count := 0
+		for _, m := range scan.sessions {
+			if narrow.contains(m, nil) {
+				count++
+			}
+		}
+		options = append(options, option{string(directPauseProject), fmt.Sprintf("Only %s (%s)", archive.DisplayLine(narrow.Label), sessionsText(count))})
+	}
+	options = append(options, option{string(directPauseResults), "Show the results so far"}, option{string(directPauseStop), "Stop"})
+	if owner := readPhase(ctx); owner != nil {
+		owner.Pause()
+		defer owner.Resume()
+	}
+	answer, err := p.guidedChoice(promptModel{Question: "Keep searching the bucket?", Default: string(directPauseKeep), Receipt: "Search:", Primary: options})
+	return directPauseChoice(answer), err
+}
+
+// countText is n with its thousands grouped: 2,350.
+func countText(n int) string {
+	digits := strconv.Itoa(n)
+	if n < 0 {
+		return digits
+	}
+	var b strings.Builder
+	for i, r := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func sessionsText(n int) string {
+	if n == 1 {
+		return "1 session"
+	}
+	return countText(n) + " sessions"
+}
+
+func matchingText(n int) string { return countText(n) + " matching" }
+
+func matchingSessionsText(n int) string {
+	if n == 1 {
+		return "1 matching session"
+	}
+	return countText(n) + " matching sessions"
+}
+
+// durationText is a budget in whole minutes when it is one, else as Go
+// prints it.
+func durationText(d time.Duration) string {
+	switch {
+	case d == time.Minute:
+		return "1 minute"
+	case d > 0 && d%time.Minute == 0:
+		return strconv.Itoa(int(d/time.Minute)) + " minutes"
+	}
+	return d.String()
+}
+
+// aboutMinutes is a rough length of time, rounded the way a person says it.
+func aboutMinutes(minutes int) string {
+	switch {
+	case minutes <= 1:
+		return "about a minute"
+	case minutes < 50:
+		return "about " + strconv.Itoa(minutes) + " minutes"
+	case minutes < 90:
+		return "about an hour"
+	}
+	return "about " + strconv.Itoa((minutes+30)/60) + " hours"
+}

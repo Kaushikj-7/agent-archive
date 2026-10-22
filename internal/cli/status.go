@@ -278,6 +278,10 @@ type statusView struct {
 	// them.
 	lastErrorProblem string
 	lastErrorByIssue bool
+	// subagentIssues are the subagents among the collector's SessionIssues
+	// (state.Status.SubagentIssues, or a registration's parent), which
+	// status counts apart from sessions.
+	subagentIssues map[string]bool
 	// importedApps are apps whose sessions were imported without hooks
 	// (config.ImportedHarnesses), with their import counts.
 	importedApps []appStatus
@@ -287,6 +291,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("status", stderr)
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document")
 	verbose := fs.Bool("verbose", false, "also print the codes, exact times and evidence behind each line")
+	issues := fs.Bool("issues", false, "inspect problems, missing captures and recovery details")
 	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
 	appArg, ok := fs.parseWithArgument(args)
 	if !ok {
@@ -298,6 +303,12 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	if app != "" && *jsonOut {
 		return fs.usageError("an app and --json can't be combined; status --json lists every app under applications")
+	}
+	if *issues && (app != "" || *jsonOut || *verbose) {
+		return fs.usageError("--issues cannot be combined with APP, --json or --verbose")
+	}
+	if app == "" && !*jsonOut && !*verbose && !*issues {
+		return runStatusOverview(stdout, stderr, env)
 	}
 	view, err := readStatus(env)
 	if err != nil {
@@ -311,6 +322,10 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	sc := statusScreen{style: styleFor(stdout), now: env.now(), home: view.userHome, verbose: *verbose}
 	code := 0
 	if err := withPager(context.Background(), stdout, stderr, env, *noPager, func(w io.Writer) error {
+		if *issues {
+			printStatusIssues(w, view, sc)
+			return nil
+		}
 		if app != "" {
 			code = printAppStatus(w, stderr, view, app, sc)
 			return nil
@@ -616,6 +631,9 @@ type statusSessions struct {
 	// nextRetry is when each session on the Codex lookup allowance's
 	// backoff schedule is next attempted (state.Status.NextRetryAt).
 	nextRetry map[string]time.Time
+	// issueReasons is each failed session's recognized reason
+	// (state.Status.SessionIssueReasons).
+	issueReasons map[string]string
 }
 
 // readSessionStatus reads the collector's status, the pending count, and the
@@ -629,6 +647,20 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	}
 	regs, reqs, stateWarnings := statusState(home, store)
 	view.Warnings = append(view.Warnings, stateWarnings...)
+	// status.json marks the subagents among its failed sessions, including
+	// candidates that were never registered; a status file from before that
+	// mark has its codes and the registrations.
+	view.subagentIssues = map[string]bool{}
+	for id := range view.Collector.SessionIssues {
+		if subagentIssue(view.Collector, id) {
+			view.subagentIssues[id] = true
+		}
+	}
+	for _, reg := range regs {
+		if _, failed := view.Collector.SessionIssues[reg.ArchiveSessionID]; failed && reg.ParentSessionID != "" {
+			view.subagentIssues[reg.ArchiveSessionID] = true
+		}
+	}
 	// A session whose own files cannot be read is left out of every count
 	// below, with one warning naming it.
 	skipped := map[string]bool{}
@@ -709,7 +741,7 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 	if len(batches) > 0 {
 		view.LastImport = batches[len(batches)-1].ID
 	}
-	return statusSessions{store: store, regs: regs, skip: skip, owed: owed, deferred: view.Collector.DeferredSessions, unreached: view.Collector.UnreachedSessions, nextRetry: view.Collector.NextRetryAt}
+	return statusSessions{store: store, regs: regs, skip: skip, owed: owed, deferred: view.Collector.DeferredSessions, unreached: view.Collector.UnreachedSessions, nextRetry: view.Collector.NextRetryAt, issueReasons: view.Collector.SessionIssueReasons}
 }
 
 // appStatus is one configured app's capture evidence: its sessions, per
@@ -922,7 +954,7 @@ func (s statusSessions) addSession(app *appStatus, pair *projectCaptureStatus, r
 		pair.HookObserved = true
 	}
 	if issue := issues[reg.ArchiveSessionID]; issue != "" {
-		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: issue, Detail: issueGapDetail(issue)})
+		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: issue, Detail: issueGapDetail(issue, s.issueReasons[reg.ArchiveSessionID])})
 	}
 	if reg.Harness.Version != "" && !containsString(app.HarnessVersions, reg.Harness.Version) {
 		app.HarnessVersions = append(app.HarnessVersions, reg.Harness.Version)
@@ -1757,17 +1789,7 @@ func (sc statusScreen) captureRows(view statusView) []statusRow {
 	for _, app := range view.importedApps {
 		rows = append(rows, sc.importedAppRow(app, uploadingRowsShown))
 	}
-	for _, diagnostic := range view.CaptureDiagnostics {
-		location := ""
-		if diagnostic.ProjectRoot != "" {
-			location = " in " + sc.path(diagnostic.ProjectRoot)
-		}
-		what := "skipped a session"
-		if capture.DiagnosticPartial(diagnostic.Code) {
-			what = "left out part of a session"
-		}
-		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{fmt.Sprintf("%s %s%s %s: %s", appName(diagnostic.Harness), what, location, relativeAge(sc.now, diagnostic.ObservedAt), capture.DiagnosticMessage(diagnostic.Code))}})
-	}
+	rows = append(rows, sc.diagnosticRows(view.CaptureDiagnostics)...)
 	if !sc.verbose {
 		return rows
 	}
@@ -2182,6 +2204,7 @@ func (sc statusScreen) storageRows(view statusView) []statusRow {
 		rows = append(rows, statusRow{mark: mark, cells: []string{text}})
 	}
 	if sc.verbose {
+		rows = append(rows, sc.issueGroupRows(view)...)
 		uploads := fmt.Sprintf("Last upload: %s · %d pending", sc.ago(view.Collector.LastPublishedAt), view.Collector.PendingCount)
 		rows = append(rows, statusRow{mark: sc.info(), cells: []string{uploads}})
 	}

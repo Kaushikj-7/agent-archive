@@ -1,5 +1,5 @@
 $ agent-archive status
-\e[1mAgent Archive\e[0m  \e[33m● Not set up\e[0m
+\e[1mAgent Archive\e[0m  \e[1mNot set up\e[0m
 
-  Run \e[36magent-archive setup\e[0m to get started.
+\e[36magent-archive setup\e[0m
 [exit 0]

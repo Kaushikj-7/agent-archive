@@ -133,6 +133,10 @@ func (s *Store) durableStorageObligations(ctx context.Context) (out []DurableSto
 		return out, errors.Join(ErrDurableStorageRecovery, e, appendErr)
 	}
 	visited := used
+	if e := inspectImportLocks(ctx, home, &visited); e != nil {
+		out, appendErr := s.appendDurableObligations(out, DurableStorageObligation{Namespace: UnavailableStorage})
+		return out, errors.Join(ErrDurableStorageRecovery, e, appendErr)
+	}
 	for _, base := range []string{"sessions", "publication-evidence", deletionDirectory} {
 		out, err = s.inspectStorageObligationRoot(ctx, home, base, &visited, out)
 		if err != nil {

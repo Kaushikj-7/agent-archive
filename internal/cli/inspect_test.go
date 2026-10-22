@@ -21,10 +21,17 @@ import (
 // returns the archive session ID `list`/`show` address the session by.
 func publishedFixture(t *testing.T) (Env, *storagetest.MemoryStore, string) {
 	t.Helper()
+	return publishedFixtureWith(t, writeCodexTranscript)
+}
+
+// publishedFixtureWith is publishedFixture with the Codex transcript that
+// write puts in the project directory it is given.
+func publishedFixtureWith(t *testing.T, write func(*testing.T, string) string) (Env, *storagetest.MemoryStore, string) {
+	t.Helper()
 	home := t.TempDir()
 	dir := t.TempDir()
 	setUpTestConfig(t, home, dir, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	transcript := writeCodexTranscript(t, dir)
+	transcript := write(t, dir)
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": dir, "transcript_path": transcript}
 	if err := handleTestHookEvent(home, "codex", payload, now); err != nil {

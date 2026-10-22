@@ -185,7 +185,7 @@ def generate(archive, expected_sha256, source, root):
                 raise full.shards.Failure('historical native restoration undiscovered')
             required.setdefault(p,[]).append(entry['test'])
             children[(p,entry['test'])]=entry.get('full_children',[])
-        tier.verify_selected(actual,required,children)
+        tier.verify_selected(actual,required,children,plain_owned=full.plain_owned(catalog['restorations']))
     if set(package_costs) != set(packages)-{full.CLI} or set(cli_costs)!=set(names[full.CLI]):
         raise full.shards.Failure('historical native timing units incomplete')
     return {'schema':1,'packages':package_costs,'cli':cli_costs,'restorations':catalog['restorations'],

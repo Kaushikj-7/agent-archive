@@ -1,6 +1,8 @@
 """Synthetic API and command fixtures: no credentials, Apple calls or publication."""
+import contextlib
 import copy
 import hashlib
+import io
 import json
 import os
 import re
@@ -116,7 +118,9 @@ class CandidateTest(unittest.TestCase):
         rc.stage(self.gh, TAG, COMMIT, self.dist, self.security)
 
     def promote(self):
-        rc.promote(self.gh, TAG, COMMIT, self.acceptance, self.security, lambda *args: None)
+        self.output = io.StringIO()
+        with contextlib.redirect_stdout(self.output):
+            rc.promote(self.gh, TAG, COMMIT, self.acceptance, self.security, lambda *args: None)
 
     def mutations(self):
         return [c for c in self.gh.calls if c[0] == 'create' or (c[0] == 'api' and c[2] is not None)]
@@ -253,6 +257,47 @@ class CandidateTest(unittest.TestCase):
             self.promote()
         self.assertEqual(self.mutations(), [])
 
+    def test_skipped_check_with_reason_promotes_and_logs_the_gap(self):
+        self.ready()
+        row = self.acceptance['checks'][rc.ROWS[0]]
+        row.update(result='skipped', evidence='', reason='no Intel Mac\navailable')
+        self.promote()
+        self.assertEqual(self.mutations(), [('api', 'releases/2', {'prerelease': False, 'make_latest': 'true'})])
+        self.assertEqual(self.output.getvalue(),
+                         f'acceptance: 1 of {len(rc.ROWS)} checks skipped\n  {rc.ROWS[0]}: no Intel Mac available\n')
+
+    def test_skipped_check_without_reason_tester_utc_or_https_evidence_refused(self):
+        for key, value in [('reason', None), ('reason', ' '), ('tester', ''), ('utc', ''), ('evidence', 'http://x.test')]:
+            with self.subTest(key=key, value=value):
+                self.ready()
+                row = self.acceptance['checks'][rc.ROWS[0]]
+                row.update(result='skipped', reason='provider outage')
+                if value is None:
+                    row.pop(key)
+                else:
+                    row[key] = value
+                with self.assertRaises((RuntimeError, ValueError)):
+                    self.promote()
+        self.assertEqual(self.mutations(), [])
+
+    def test_failed_check_refused(self):
+        self.ready()
+        self.acceptance['checks'][rc.ROWS[0]].update(result='failed', reason='install broke')
+        with self.assertRaisesRegex(RuntimeError, 'failed'):
+            self.promote()
+        self.assertEqual(self.mutations(), [])
+
+    def test_ci_rows_cannot_be_skipped(self):
+        for workflow in rc.CI_JOBS:
+            with self.subTest(workflow=workflow):
+                self.ready()
+                saved = copy.deepcopy(self.acceptance['ci'][workflow])
+                self.acceptance['ci'][workflow].update(result='skipped', reason='slow')
+                with self.assertRaisesRegex(RuntimeError, 'missing or pending'):
+                    self.promote()
+                self.acceptance['ci'][workflow] = saved
+        self.assertEqual(self.mutations(), [])
+
     def test_pending_missing_or_unattributed_acceptance_refused(self):
         for key, value in [('result', 'pending'), ('tester', ''), ('evidence', ''), ('utc', '2026-10-04')]:
             with self.subTest(key=key):
@@ -282,7 +327,7 @@ class CandidateTest(unittest.TestCase):
             bindings[name] = ports
         self.assertEqual(set(bindings), set(identities))
         capture_ports = ('Sources:', 'Filter:', 'Parser:', 'Decoder:', 'Hooks:')
-        muse_dormant = ('Decoder: muse.Decoder(), Hooks: muse.Hooks(), NativeHeaders: muse.NativeHeaders{}, Discovery: muse.NativeHeaders{}, '
+        muse_dormant = ('Launcher: muse.Launcher{}, Decoder: muse.Decoder(), Hooks: muse.Hooks(), Skills: muse.Skills(), Version: muse.VersionInspector{}, NativeHeaders: muse.NativeHeaders{}, Discovery: muse.NativeHeaders{}, '
                       'Preview: muse.Previewer{}, Runtime: muse.RuntimeDetector{}, '
                       'Sources: muse.SourceProvider{}, Filter: muse.Filter{}, Parser: muse.Parser{}')
         for name, ports in bindings.items():
@@ -592,7 +637,10 @@ class AcceptancePathTest(unittest.TestCase):
     def test_untracked_record_is_rejected_and_pending_template_is_not_a_pass(self):
         template = Path(__file__).resolve().parent.parent/'dev/maintainers/release-evidence/example.json'
         value = json.loads(template.read_text())
-        for row in list(value['checks'].values()) + list(value['ci'].values()):
+        for row in value['checks'].values():
+            with self.assertRaisesRegex(RuntimeError, 'pending'):
+                rc.evidence_row(row, skippable=True)
+        for row in value['ci'].values():
             with self.assertRaisesRegex(RuntimeError, 'pending'):
                 rc.evidence_row(row)
         with patch.object(rc, 'run', side_effect=subprocess.CalledProcessError(1,['git'])):

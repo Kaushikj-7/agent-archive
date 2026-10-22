@@ -58,6 +58,23 @@ func (s *Store) clearPendingObservation() {
 // state. The observation is optional, charged before allocation, and retained
 // only by the exact read owner until that owner's existing close.
 func (s *Store) writeObservedPending(ctx context.Context, g config.DurableStorageGuard, id string, p PendingPublication) error {
+	if q := p.StagedProof(); q != nil && q.Core.NativeImportAuthority != "" {
+		guard, err := s.nativeImportStagedCommit(ctx, id, &p, nil)
+		if err != nil {
+			return err
+		}
+		return s.writeDurableGuardWitnessed(ctx, g, filepath.Join("pending", id+".json"), publicationWire(p), guard)
+	}
+	if p.Bundle.Capture.Harness.Name == "muse" && p.JournalVersion == 5 && p.Preparation != nil {
+		guard, err := s.nativeImportPublicationCommit(ctx, id, nativeImportPendingTarget(p))
+		if err != nil {
+			return err
+		}
+		if guard != nil {
+			return s.writeDurableGuardWitnessed(ctx, g, filepath.Join("pending", id+".json"), publicationWire(p), guard)
+		}
+	}
+
 	if s.resourceBudget == nil || s.resourceReleases == nil || *s.resourceReleases == nil || s.resourceContext == nil || !reflect.ValueOf(s.resourceContext).Comparable() || !ordinaryPendingObservation(p) {
 		return s.writeDurableGuard(ctx, g, filepath.Join("pending", id+".json"), publicationWire(p))
 	}

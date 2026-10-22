@@ -306,28 +306,39 @@ func ParseCursor(ctx context.Context, b archive.SourceBundle) (archive.Analysis,
 }
 
 func collectPullRequest(f *archive.NativeFacts, r map[string]any) {
-	if firstString(r, "type") == "pr-link" && len(f.PullRequests) < archive.MaxPullRequests {
-		repository := firstString(r, "prRepository")
-		owner, name, ok := splitRepository(repository)
-		number, numberOK := claudePRNumber(r["prNumber"])
-		if ok && numberOK {
-			var url string
-			if firstString(r, "prUrl") == claudePRURL(owner, name, number) {
-				url = claudePRURL(owner, name, number)
-			}
-			link := archive.PullRequestLink{Repository: repository, Number: number, URL: url}
-			seen := false
-			for _, prior := range f.PullRequests {
-				if prior.Repository == link.Repository && prior.Number == link.Number {
-					seen = true
-					break
-				}
-			}
-			if !seen {
-				f.PullRequests = append(f.PullRequests, link)
-			}
+	if len(f.PullRequests) >= archive.MaxPullRequests {
+		return
+	}
+	link, ok := pullRequestLink(r)
+	if !ok {
+		return
+	}
+	for _, prior := range f.PullRequests {
+		if prior.Repository == link.Repository && prior.Number == link.Number {
+			return
 		}
 	}
+	f.PullRequests = append(f.PullRequests, link)
+}
+
+// pullRequestLink is the pull request a filtered pr-link record names. ok is
+// false for any other record, and for one whose repository or number is not
+// valid.
+func pullRequestLink(r map[string]any) (archive.PullRequestLink, bool) {
+	if firstString(r, "type") != "pr-link" {
+		return archive.PullRequestLink{}, false
+	}
+	repository := firstString(r, "prRepository")
+	owner, name, ok := splitRepository(repository)
+	number, numberOK := claudePRNumber(r["prNumber"])
+	if !ok || !numberOK {
+		return archive.PullRequestLink{}, false
+	}
+	var url string
+	if firstString(r, "prUrl") == claudePRURL(owner, name, number) {
+		url = claudePRURL(owner, name, number)
+	}
+	return archive.PullRequestLink{Repository: repository, Number: number, URL: url}, true
 }
 
 // collectExportFacts retains the initial branch and native start semantics used by export.

@@ -425,7 +425,8 @@ func TestDurableInspectionCompletesAcrossWindowsAndRefusesUnsafeEntries(t *testi
 		}
 	}()
 	visited := durableEntryLimit
-	entries, _, err := s.inspectPendingRoot(t.Context(), held, "pending", &visited, false, true)
+	matched := false
+	entries, _, err := s.inspectPendingRoot(t.Context(), held, "pending", &visited, false, true, &matched)
 	if err != nil || visited != durableEntryLimit+2 || len(entries) != 2 {
 		t.Fatalf("inspection stopped at allocation window: count=%d entries=%d err=%v", visited, len(entries), err)
 	}

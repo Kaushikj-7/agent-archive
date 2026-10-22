@@ -65,10 +65,10 @@ func TestUnreadablePublicationPeerPaysFullQuotaWithoutReplacementCredit(t *testi
 		if err != nil || usage.physical != info.Size() || usage.charged != 2*info.Size() {
 			t.Fatal("unreadable peer was not fully charged", usage, err)
 		}
-		if _, err := q.publishedProtocol(t.Context(), path, info); !errors.Is(err, os.ErrPermission) {
+		if _, _, err := q.publishedProtocol(t.Context(), path, info); !errors.Is(err, os.ErrPermission) {
 			t.Fatal("accounting fabricated readable classification", err)
 		}
-		if _, err := q.publishedAdditional(t.Context(), path, info, 1); !errors.Is(err, os.ErrPermission) {
+		if _, err := q.publishedAdditional(t.Context(), path, info, 1, chargedInFull); !errors.Is(err, os.ErrPermission) {
 			t.Fatal("unreadable peer gained replacement credit", err)
 		}
 		if err := os.Chmod(filepath.Join(s.home, path), 0600); err != nil {

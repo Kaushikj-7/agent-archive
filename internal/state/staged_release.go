@@ -430,25 +430,22 @@ func (s *Store) loadStagedReleaseState(ctx context.Context, id string) (out stag
 		return out, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	out.selection = published.state.LastPublished.StagedProof()
-	err = s.readStagedControl(id, stagedReleaseReceiptName, &out.receipt)
-	if err == nil {
-		out.receiptFound = true
-		if !sameStagedSelection(out.receipt.Selection, *out.selection) {
-			return out, ErrDurableStorageRecovery
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return out, err
-	}
-	err = s.readStagedControl(id, stagedReleaseProgressName, &out.progress)
-	if err == nil {
-		out.progressFound = true
-		if !out.receiptFound || out.progress.Version != out.receipt.Version || out.progress.ReceiptSHA256 != out.receipt.SHA256 {
-			return out, ErrDurableStorageRecovery
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := s.readStagedReleaseControls(id, &out); err != nil {
 		return out, err
 	}
 	if out.progressFound && out.progress.Phase == stagedReleaseReleased {
+		reg, found, err := s.LoadRegistration(id)
+		if err != nil {
+			return out, err
+		}
+		if found && reg.NativeImport != nil {
+			original, err := s.nativeImportReleasedSelection(ctx, reg)
+			if err != nil || !sameStagedSelection(original, *out.selection) {
+				return out, errors.Join(ErrDurableStorageRecovery, err)
+			}
+			out.released = true
+			return out, nil
+		}
 		if err := s.checkReleasedStageAbsent(ctx, id); err != nil {
 			return out, err
 		}
@@ -467,6 +464,31 @@ func (s *Store) loadStagedReleaseState(ctx context.Context, id string) (out stag
 		return out, ErrDurableStorageRecovery
 	}
 	return out, nil
+}
+
+// readStagedReleaseControls reads the release receipt and progress for
+// out.selection. Either may be absent; a receipt for another selection, or
+// progress without its receipt, is inconsistent durable state.
+func (s *Store) readStagedReleaseControls(id string, out *stagedReleaseState) error {
+	err := s.readStagedControl(id, stagedReleaseReceiptName, &out.receipt)
+	if err == nil {
+		out.receiptFound = true
+		if !sameStagedSelection(out.receipt.Selection, *out.selection) {
+			return ErrDurableStorageRecovery
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	err = s.readStagedControl(id, stagedReleaseProgressName, &out.progress)
+	if err == nil {
+		out.progressFound = true
+		if !out.receiptFound || out.progress.Version != out.receipt.Version || out.progress.ReceiptSHA256 != out.receipt.SHA256 {
+			return ErrDurableStorageRecovery
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func (s *Store) checkReleasedStageAbsent(ctx context.Context, id string) error {
@@ -591,6 +613,9 @@ func (s *Store) validateFinalStagedAuthority(ctx context.Context, id string, q *
 	if err != nil || !registered || !cfg.AcceptSession(reg) || reg.StagedImportSHA256 != q.StageSHA256 {
 		return errors.Join(ErrReadySelectionFrozen, err)
 	}
+	if err := validateNativeImportSelectionAuthority(reg, q.Core); err != nil {
+		return err
+	}
 	admission, err := s.readyDigest(ctx, reg)
 	if err != nil || admission != q.Core.AdmissionContext {
 		return errors.Join(ErrReadySelectionFrozen, err)
@@ -690,6 +715,13 @@ func (s *Store) resumeStagedOwner(ctx context.Context, id string, remote StagedR
 		return err
 	}
 	if !published.TypedStagedPublished() {
+		reg, found, err := s.LoadRegistration(id)
+		if err != nil {
+			return err
+		}
+		if found && reg.NativeImport != nil {
+			return published.validateNativeImportAuthority(ctx, reg)
+		}
 		return nil
 	}
 	return s.VerifyAndBeginStagedRelease(ctx, id, remote, guard)

@@ -131,15 +131,15 @@ func TestContentSearchRebuildAndHiddenPass(t *testing.T) {
 	}
 }
 
-func TestContentSearchOutsideProjectRequiresExplicitQueryScope(t *testing.T) {
+func TestContentSearchOutsideProjectSearchesAllProjects(t *testing.T) {
 	env, _, _ := publishedFixture(t)
 	env.WorkingDir = func() (string, error) { return "", errors.New("no cwd") }
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
-		t.Fatal("scope refusal opened storage")
+		t.Fatal("query opened storage")
 		return nil, errors.New("offline")
 	}
 	code, doc, diag := searchJSONRun(t, env, "visible")
-	if code != 1 || doc.Error == nil || doc.Error.Code != "scope_required" {
+	if code != 0 || doc.Error != nil || doc.Scope == nil || !doc.Scope.All {
 		t.Fatalf("scope %d %+v %s", code, doc, diag)
 	}
 	var out bytes.Buffer

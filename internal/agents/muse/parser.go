@@ -14,7 +14,7 @@ import (
 type Parser struct{}
 
 // Version identifies the Muse retained analysis policy.
-func (Parser) Version() string { return "0.6.0" }
+func (Parser) Version() string { return "0.7.0" }
 
 // Parse interprets the complete validated Muse ordinary/omission union.
 func (Parser) Parse(ctx context.Context, b archive.SourceBundle) (archive.Analysis, error) {
@@ -126,17 +126,15 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 					return view, nil, errFormat
 				}
 			case eventAssistantMessageCommitted:
-				if observeConversationSource(f, run, joined, lastSequence, sourceRecords) != nil {
+				if observeAssistantMessage(r, i, ts, joined, lastSequence, sourceRecords, messages, &view) != nil {
 					return view, nil, errFormat
 				}
-				key := runIdentity{run, str(f["message_id"])}
-				if str(f["message_id"]) == "" || str(f["response_id"]) == "" || messages[key] {
-					return view, nil, errFormat
-				}
-				messages[key] = true
-				view.Turns = append(view.Turns, archive.NormalizedTurn{RecordIndex: i, Role: "assistant", Kind: archive.TurnKindAssistant, Text: str(f["text"]), ID: r.ID, MessageID: str(f["message_id"]), TurnID: run, Timestamp: ts.Format(time.RFC3339Nano)})
 			case eventModelCompleted:
 				if observeCompletion(r, joined, lastSequence, sourceRecords, &observations) != nil {
+					return view, nil, errFormat
+				}
+			case eventSkillReadObserved:
+				if observeSkillRead(r, joined, lastSequence, sourceRecords, &view) != nil {
 					return view, nil, errFormat
 				}
 			case eventAssistantToolCallsCommitted, eventToolResultBatchCommitted:
@@ -166,6 +164,21 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 	}
 	sort.Slice(view.Turns, func(i, j int) bool { return view.Turns[i].RecordIndex < view.Turns[j].RecordIndex })
 	return view, observations.Summary(), nil
+}
+
+func observeAssistantMessage(r retained, index int, ts time.Time, joined map[string]bool, last map[string]int64, seen, messages map[runIdentity]bool, view *archive.NormalizedView) error {
+	f := r.Fields
+	run := str(f["run_id"])
+	if observeConversationSource(f, run, joined, last, seen) != nil {
+		return errFormat
+	}
+	key := runIdentity{run, str(f["message_id"])}
+	if str(f["message_id"]) == "" || str(f["response_id"]) == "" || messages[key] {
+		return errFormat
+	}
+	messages[key] = true
+	view.Turns = append(view.Turns, archive.NormalizedTurn{RecordIndex: index, Role: "assistant", Kind: archive.TurnKindAssistant, Text: str(f["text"]), ID: r.ID, MessageID: str(f["message_id"]), TurnID: run, Timestamp: ts.Format(time.RFC3339Nano)})
+	return nil
 }
 
 func materializedTurn(r retained, rows []retained, accepted map[string]retained, started map[string]int, materialized, consumed map[string]bool) (*archive.NormalizedTurn, string, error) {

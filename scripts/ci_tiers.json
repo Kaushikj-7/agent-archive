@@ -122,6 +122,9 @@
         "17",
         "513"
       ],
+      "plain_children": [
+        "513"
+      ],
       "full_fixture": "513 mixed native child, fork and ordinary sessions; actual confirmed CLI publication/readback, exact logical ownership, unchanged native input and bounded owned staging"
     },
     {

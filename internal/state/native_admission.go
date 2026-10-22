@@ -80,7 +80,12 @@ func (s *Store) PrepareNativeAdmission(ctx context.Context, candidate NativeAdmi
 		return nil, errors.New("native source does not belong to intended physical project")
 	}
 	now := time.Now().UTC()
-	reg := archive.SessionRegistration{NativeSessionID: observed.NativeSessionID, Harness: archive.Harness{Name: "muse"}, NativeAdmission: observed.NativeAdmission, NativeBinding: binding, TranscriptPath: binding.Path, ProjectRoot: candidate.ProjectRoot, ProjectID: candidate.ProjectID, DestinationID: observed.DestinationID, SessionStartedAt: binding.NativeCreatedAt, RegisteredAt: now, AdmittedAt: now, HookObservedAt: observed.ObservedAt, Origin: archive.SessionOriginHook, StartedAtSource: archive.StartedAtSourceTranscript}
+	var replay *archive.Replay
+	if observed.Replay != nil {
+		marker := *observed.Replay
+		replay = &marker
+	}
+	reg := archive.SessionRegistration{Replay: replay, NativeSessionID: observed.NativeSessionID, Harness: archive.Harness{Name: "muse"}, NativeAdmission: observed.NativeAdmission, NativeBinding: binding, TranscriptPath: binding.Path, ProjectRoot: candidate.ProjectRoot, ProjectID: candidate.ProjectID, DestinationID: observed.DestinationID, SessionStartedAt: binding.NativeCreatedAt, RegisteredAt: now, AdmittedAt: now, HookObservedAt: observed.ObservedAt, Origin: archive.SessionOriginHook, StartedAtSource: archive.StartedAtSourceTranscript}
 	p := &PreparedNativeAdmission{store: s, candidate: candidate, snapshot: snapshot, input: input, content: content, lookup: lookup, selection: selection, closePass: closePass, reg: reg}
 	if err := p.checkPolicy(ctx, now); err != nil {
 		return nil, err
@@ -380,7 +385,7 @@ func nativeStartupBindingMatches(binding *archive.NativeSourceBinding, candidate
 
 func nativeAdmissionWindowMatches(cfg config.Config, found bool, reg archive.SessionRegistration, i agentapi.AdmissionIntent, at time.Time) bool {
 	window, b := cfg.MuseCapture, reg.NativeBinding
-	return found && cfg.NativeAdmissionProtection && cfg.NativeAuthorityProtection && !cfg.Paused && window != nil && cfg.Archive.Enabled && slices.Contains(cfg.Harnesses, "muse") && cfg.DestinationID() == i.DestinationID && cfg.PauseGeneration == i.PauseGeneration && nativeDestinationConfigured(cfg.Storage) && at.Sub(i.ObservedAt) <= 24*time.Hour && !i.ObservedAt.After(at.Add(time.Minute)) && !b.NativeCreatedAt.After(i.ObservedAt) && !b.NativeCreatedAt.Before(window.Since) && !i.ObservedAt.Before(window.Since) && cfg.NativeValidationInCurrentDestination(reg, b)
+	return (i.Replay == nil || cfg.NativeReplayProtection) && found && cfg.NativeAdmissionProtection && cfg.NativeAuthorityProtection && !cfg.Paused && window != nil && cfg.Archive.Enabled && slices.Contains(cfg.Harnesses, "muse") && cfg.DestinationID() == i.DestinationID && cfg.PauseGeneration == i.PauseGeneration && nativeDestinationConfigured(cfg.Storage) && at.Sub(i.ObservedAt) <= 24*time.Hour && !i.ObservedAt.After(at.Add(time.Minute)) && !b.NativeCreatedAt.After(i.ObservedAt) && !b.NativeCreatedAt.Before(window.Since) && !i.ObservedAt.Before(window.Since) && cfg.NativeValidationInCurrentDestination(reg, b)
 }
 
 func nativeAdmissionInputs(snapshot agentapi.SourceSnapshot, input agentapi.NativeInput, filter agentapi.TranscriptFilter) (agentapi.VerifiedContentSnapshot, agentapi.LeasedTranscriptFilter, agentapi.SourceAdmissionEvidence, bool) {

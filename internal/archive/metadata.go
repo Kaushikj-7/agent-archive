@@ -567,23 +567,9 @@ func deriveHookModels(bundle SourceBundle, metadata *Metadata) {
 
 func deriveSkills(bundle SourceBundle, nativeSkillUses []SkillUse, metadata *Metadata) {
 	available := map[string]SkillSnapshot{}
+	installedIdentities := map[string]*installedSkillIdentitySet{}
+	identityGap := false
 	used := map[string]SkillUse{}
-	recordUse := func(entry SkillUse) {
-		if entry.SHA256 == "" {
-			for _, existing := range used {
-				if existing.Name == entry.Name && existing.SHA256 != "" {
-					return
-				}
-			}
-		} else {
-			delete(used, entry.Name+"\x00")
-		}
-		key := entry.Name + "\x00" + entry.SHA256
-		if existing, ok := used[key]; ok && existing.Evidence == SkillUseEvidenceNativeInvocation {
-			return
-		}
-		used[key] = entry
-	}
 	for _, evidence := range bundle.SupplementalEvidence {
 		name := firstString(evidence.Payload, "name")
 		if name == "" && evidence.Kind != EvidenceKindSkillInventory {
@@ -598,17 +584,25 @@ func deriveSkills(bundle SourceBundle, nativeSkillUses []SkillUse, metadata *Met
 					if skill, ok := raw.(map[string]any); ok {
 						n, h := firstString(skill, "name"), firstString(skill, "sha256")
 						if n != "" {
-							available[n+"\x00"+h] = SkillSnapshot{Name: n, SHA256: h, Coverage: coverage}
+							key := n + "\x00" + h
+							available[key] = SkillSnapshot{Name: n, SHA256: h, Coverage: coverage}
+							if recordInstalledSkillIdentity(installedIdentities, bundle.Capture.Harness.Name, key, evidence, skill, coverage) {
+								identityGap = true
+							}
 						}
 					}
 				}
 			} else {
-				available[name+"\x00"+hash] = SkillSnapshot{Name: name, SHA256: hash, Coverage: coverage}
+				key := name + "\x00" + hash
+				available[key] = SkillSnapshot{Name: name, SHA256: hash, Coverage: coverage}
+				if recordInstalledSkillIdentity(installedIdentities, bundle.Capture.Harness.Name, key, evidence, evidence.Payload, coverage) {
+					identityGap = true
+				}
 			}
 		case EvidenceKindSkillInvocation:
-			recordUse(SkillUse{Name: name, SHA256: hash, Evidence: SkillUseEvidenceNativeInvocation})
+			recordDerivedSkillUse(used, SkillUse{Name: name, SHA256: hash, Evidence: SkillUseEvidenceNativeInvocation})
 		case EvidenceKindSkillRead:
-			recordUse(SkillUse{Name: name, SHA256: hash, Evidence: SkillUseEvidenceReadInference})
+			recordDerivedSkillUse(used, SkillUse{Name: name, SHA256: hash, Evidence: SkillUseEvidenceReadInference})
 		case EvidenceKindLifecycleHook, EvidenceKindFinalResponse, EvidenceKindExplicitFeedback,
 			EvidenceKindLinkedSession, EvidenceKindCaptureGap, EvidenceKindSessionLabels:
 		}
@@ -617,10 +611,35 @@ func deriveSkills(bundle SourceBundle, nativeSkillUses []SkillUse, metadata *Met
 	// the native parser's per-record walk, rather than a
 	// second traversal of bundle.NativeRecords here.
 	for _, entry := range nativeSkillUses {
-		recordUse(entry)
+		recordDerivedSkillUse(used, entry)
 	}
-	for _, entry := range available {
+	for key, entry := range available {
+		if set := installedIdentities[key]; set != nil && !set.omitted {
+			for identity := range set.values {
+				entry.InstalledIdentities = append(entry.InstalledIdentities, identity)
+			}
+			sort.Slice(entry.InstalledIdentities, func(i, j int) bool {
+				a, b := entry.InstalledIdentities[i], entry.InstalledIdentities[j]
+				if a.Scope == b.Scope {
+					return a.ID < b.ID
+				}
+				return a.Scope < b.Scope
+			})
+		}
 		metadata.SkillsAvailable = append(metadata.SkillsAvailable, entry)
+	}
+	if identityGap {
+		const code = "installed_skill_identity_incomplete"
+		present := false
+		for _, gap := range metadata.CaptureGaps {
+			if gap.Code == code {
+				present = true
+				break
+			}
+		}
+		if !present {
+			metadata.CaptureGaps = append(metadata.CaptureGaps, CaptureGap{Code: code, Detail: "Installed skill declaration identities are incomplete; content inventory is retained."})
+		}
 	}
 	for _, entry := range used {
 		metadata.SkillsUsed = append(metadata.SkillsUsed, entry)
@@ -778,4 +797,21 @@ func analyzedCounts(analysis Analysis, prompts, messages, shellCommands int) Cou
 		CacheReadTokens: view.Tokens.CacheRead, CacheWriteTokens: view.Tokens.CacheWrite,
 		ReasoningTokens: view.Tokens.Reasoning, ToolErrors: toolErrors,
 	}
+}
+
+func recordDerivedSkillUse(used map[string]SkillUse, entry SkillUse) {
+	if entry.SHA256 == "" {
+		for _, existing := range used {
+			if existing.Name == entry.Name && existing.SHA256 != "" {
+				return
+			}
+		}
+	} else {
+		delete(used, entry.Name+"\x00")
+	}
+	key := entry.Name + "\x00" + entry.SHA256
+	if existing, ok := used[key]; ok && existing.Evidence == SkillUseEvidenceNativeInvocation {
+		return
+	}
+	used[key] = entry
 }

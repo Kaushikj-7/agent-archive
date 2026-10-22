@@ -19,6 +19,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // CacheStatus distinguishes why a bundle sits in the local published cache,
@@ -390,10 +391,12 @@ func (p publishedState) next(bundle archive.SourceBundle, publishedAt time.Time,
 // each of them. It assumes it is that file's only writer while in use, which
 // the collector lock guarantees for a pass.
 type Published struct {
-	store *Store
-	id    string
-	state publishedState
-	found bool
+	observedWireSHA256 [32]byte
+	observedHome       os.FileInfo
+	store              *Store
+	id                 string
+	state              publishedState
+	found              bool
 }
 
 func (s *Store) publishedPath(archiveSessionID string) string {
@@ -454,7 +457,26 @@ func (s *Store) loadPublishedStateContext(ctx context.Context, archiveSessionID 
 	s.preparePublicationAccounting(ctx, archiveSessionID)
 	publishedStateLoads.Add(1)
 	p := &Published{store: s, id: archiveSessionID}
-	found, err := s.readPublishedOwned(s.publishedPath(archiveSessionID), &p.state)
+	observedHome, err := os.Stat(s.home)
+	if errors.Is(err, os.ErrNotExist) {
+		return p, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	p.observedHome = observedHome
+	reader := *s
+	reader.publishedReadDigest = &p.observedWireSHA256
+	found, err := reader.readPublishedOwned(s.publishedPath(archiveSessionID), &p.state)
+	if err == nil {
+		currentHome, e := os.Stat(s.home)
+		if e != nil || !os.SameFile(observedHome, currentHome) {
+			return nil, errors.Join(ErrDurableStorageRecovery, e)
+		}
+	}
+	if err == nil && s.publishedReadDigest != nil {
+		*s.publishedReadDigest = p.observedWireSHA256
+	}
 	if err != nil {
 		// In a collector pass a corrupt file was moved aside: reported once,
 		// then the session is one that never published (quarantineInPass).
@@ -486,7 +508,9 @@ func (s *Store) loadPublishedStateContext(ctx context.Context, archiveSessionID 
 	return p, nil
 }
 
-func (p *Published) write(next publishedState) error {
+func (p *Published) write(next publishedState) error { return p.writeWithStaged(next, nil) }
+
+func (p *Published) writeWithStaged(next publishedState, staged *PendingPublication) error {
 	if err := p.preserveStagedPublished(p.store.durableContext(), &next); err != nil {
 		return err
 	}
@@ -509,7 +533,10 @@ func (p *Published) write(next publishedState) error {
 		}
 	}()
 	if next.PublicationVersion == 5 {
-		if err := p.store.validateSelectingPublishedBudgeted(next); err != nil {
+		// The commit has settled: its digests, not a second and third copy of
+		// the uploaded source, are what later passes and recovery compare.
+		next = releaseSettledInline(next)
+		if err := p.store.validateSelectingPublishedBudgeted(p.store.durableContext(), next); err != nil {
 			return err
 		}
 		writeErr = config.WithPublicationComposition(p.store.home, func(g config.PublicationCompositionGuard) error {
@@ -524,13 +551,21 @@ func (p *Published) write(next publishedState) error {
 					return e
 				}
 			}
+			var guard func(*local.AtomicWriteWitness, func() error) error
+			if next.Bundle.Capture.Harness.Name == "muse" && next.Commit != nil {
+				var e error
+				guard, e = p.store.nativeImportPublicationCommit(p.store.durableContext(), p.id, nativeImportPublicationTarget{Admission: next.Commit.AdmissionContext, Destination: next.Commit.DestinationID, Policy: next.Commit.PolicyContext, Adapter: next.Bundle.Capture.AdapterVersion, Predecessor: next.Commit.PredecessorSHA256, Metadata: next.Commit.MetadataSHA256, Preparation: next.Commit.PreparationSHA256})
+				if e != nil {
+					return e
+				}
+			}
 			path := filepath.Join("published", p.id+".json")
-			sum, n, e := p.store.writeDurableGuardDigest(p.store.durableContext(), storage, path, next)
+			sum, n, e := p.store.writeDurableGuardDigestChecked(p.store.durableContext(), storage, path, next, guard, publishedCharge(next, 2, durableStorageQuota))
 			if e != nil {
 				return e
 			}
 			savedDigest = sum
-			candidate, binding, releaseCandidate, e = p.store.savedAccountingCandidate(storage, path, sum, n)
+			candidate, binding, releaseCandidate, e = p.store.savedAccountingCandidate(storage, path, sum, n, publishedCharge(next, 2, n))
 			if e != nil {
 				return e
 			}
@@ -543,8 +578,16 @@ func (p *Published) write(next publishedState) error {
 			}
 			return nil
 		})
+	} else if nativeImportTypedPublished(next) {
+		guard, err := p.store.nativeImportStagedCommit(p.store.durableContext(), p.id, staged, &next)
+		if err != nil {
+			return err
+		}
+		writeErr = config.WithDurableStorage(p.store.home, func(g config.DurableStorageGuard) error {
+			return p.store.writeDurableGuardWitnessed(p.store.durableContext(), g, filepath.Join("published", p.id+".json"), next, guard)
+		})
 	} else {
-		writeErr = p.store.writeCompact(p.store.publishedPath(p.id), next)
+		savedDigest, writeErr = p.writeLegacyPublished(next)
 	}
 	if err := writeErr; err != nil {
 		return err
@@ -555,10 +598,15 @@ func (p *Published) write(next publishedState) error {
 		}
 	}
 	p.state, p.found = next, true
+	p.observedWireSHA256 = savedDigest
 	if next.PublicationVersion == 5 {
 		p.store.cacheSavedSummary(p.id, summary, savedDigest)
 	}
 	return nil
+}
+
+func nativeImportTypedPublished(next publishedState) bool {
+	return next.PublicationVersion == 3 && next.LastPublished != nil && next.LastPublished.StagedProof() != nil && next.LastPublished.StagedProof().Core.NativeImportAuthority != ""
 }
 
 // Found reports whether anything has been saved for the session.
