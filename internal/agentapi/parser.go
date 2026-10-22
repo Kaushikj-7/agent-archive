@@ -23,6 +23,14 @@ type RecordPreviewer interface {
 	PreviewRecord(context.Context, []byte) (archive.RecordPreview, error)
 }
 
+// SessionLabelNamer is a RecordPreviewer whose harness's parser names a
+// session from its session label evidence. SessionLabelName is the name that
+// parser gives a session whose current filtered label is label and whose
+// records name it name.
+type SessionLabelNamer interface {
+	SessionLabelName(label archive.SessionLabel, name string) string
+}
+
 // PreviewsLookup supplies a bounded preview operation without a full parser.
 type PreviewsLookup interface {
 	LookupPreview(name string) (RecordPreviewer, bool)

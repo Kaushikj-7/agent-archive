@@ -13,3 +13,9 @@ type Previewer struct{}
 func (Previewer) PreviewRecord(ctx context.Context, record []byte) (archive.RecordPreview, error) {
 	return nativecodec.Preview(ctx, nativecodec.CodexAdapter{}, record)
 }
+
+// SessionLabelName names a previewed session from its thread name as Parser
+// names it.
+func (Previewer) SessionLabelName(label archive.SessionLabel, name string) string {
+	return sessionLabelName(label, name)
+}

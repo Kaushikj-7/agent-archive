@@ -87,8 +87,10 @@ follow [Semantic Versioning](https://semver.org/).
   one, and it reads up to four of them at once instead of one after another.
   Its title still comes from the first prompt; its name, branch and pull
   request come from those records, so in a transcript over 512 KiB a rename
-  that only appears in the middle shows after the session uploads. A
-  transcript whose first 256 KiB holds no prompt is still read whole.
+  that only appears in the middle shows after the session uploads. A Codex
+  thread name comes from the name agent-archive already recorded, as it does
+  after upload. A transcript whose first 256 KiB holds no prompt is still
+  read whole, one such transcript at a time.
 - Uploads no longer stop for good after about 500 sessions. Each session's
   local record of its last upload counted against the 1 GiB limit on pending
   local work, so once those records filled it every later session failed with

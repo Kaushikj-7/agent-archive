@@ -105,7 +105,7 @@ func boundedHandoffChoices(ctx context.Context, env handoffSelectDependencies, s
 	if err != nil {
 		return nil, nil, nil, true, fmt.Errorf("read first handoff page: %w", err)
 	}
-	p := handoffPicker{ctx: ctx, env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: true}
+	p := handoffPicker{wholeReads: newWholeLabelReads(), ctx: ctx, env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: true}
 	model := &pickerModel{archive: snapshot, regs: slices.Clone(regs), observeActivity: func(ctx context.Context, regs []archive.SessionRegistration) (map[pickerIdentity]time.Time, error) {
 		return pickerActivitiesResult(ctx, env, regs)
 	}, source: opts.source, harness: opts.harness, pageSize: defaultListLimit, labelBudget: defaultListLimit, label: func(ctx context.Context, r archive.SessionRegistration, t time.Time) (archive.Metadata, bool, error) {
@@ -244,7 +244,7 @@ func (r handoffResolver) selectedPicker(sel *handoffPickerSelection) (handoffTar
 // boundedLocalHandoffChoices preserves offline auto/local selection while
 // withholding uploaded/absent claims when archive association is unknown.
 func boundedLocalHandoffChoices(ctx context.Context, env handoffSelectDependencies, home string, opts handoffOptions, scope sessionScope, regs []archive.SessionRegistration, format listFormatOptions, _ io.Writer) (*scopeChoices, *pickerModel, error) {
-	p := handoffPicker{ctx: ctx, env: env, home: home, harness: opts.harness, source: opts.source, localLabels: map[localLabelKey]localLabelResult{}}
+	p := handoffPicker{wholeReads: newWholeLabelReads(), ctx: ctx, env: env, home: home, harness: opts.harness, source: opts.source, localLabels: map[localLabelKey]localLabelResult{}}
 	m := &pickerModel{absenceUnknown: true, regs: slices.Clone(regs), observeActivity: func(ctx context.Context, regs []archive.SessionRegistration) (map[pickerIdentity]time.Time, error) {
 		return pickerActivitiesResult(ctx, env, regs)
 	}, source: opts.source, harness: opts.harness, pageSize: defaultListLimit, labelBudget: defaultListLimit, label: func(ctx context.Context, r archive.SessionRegistration, at time.Time) (archive.Metadata, bool, error) {
