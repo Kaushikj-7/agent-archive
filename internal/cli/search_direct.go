@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -25,9 +26,21 @@ import (
 const directSearchPause = 2 * time.Minute
 
 // directSearchRate is about how many sessions a minute a direct search
-// reads, as an explicit refresh does. It is the basis of the warning's
-// estimate only.
-const directSearchRate = 50
+// reads. It is the basis of the warning's estimate only. With sources
+// downloaded ahead, each session's metadata recheck is the serial step: a
+// fake store taking 250ms per metadata read and 900ms per source read
+// searched 222 sessions a minute (52 one at a time); this leaves room for
+// larger sessions.
+const directSearchRate = 150
+
+// directSearchReaders is how many sessions a direct search downloads at once,
+// ahead of the one it is matching. Matching and keeping the results stay one
+// session at a time, in order.
+const directSearchReaders = 6
+
+// directPrefetchTimeout bounds one session's download ahead of its turn, as
+// Run bounds a pass that downloads it in turn.
+const directPrefetchTimeout = 30 * time.Second
 
 func (e Env) directSearchBudget() time.Duration {
 	if e.directSearchPause != nil {
@@ -128,6 +141,8 @@ type directScan struct {
 	// ran, when set, runs after each session's index pass, before its
 	// matches are counted.
 	ran func()
+	// prefetchBytes, when set, replaces directPrefetchBytes.
+	prefetchBytes int
 	// sent, when set, runs after each match is sent, before the memory
 	// it fills is checked.
 	sent func()
@@ -183,10 +198,19 @@ func unreadOnItsOwn(unread error) bool {
 // recheck and parser visibility as refresh, and reports its matches. Its text
 // is dropped unless it matches. A session that could not be read reports why
 // as unread; one deleted or changed since the listing reports neither.
-func (s *directScan) session(ctx context.Context, m archive.Metadata) (count int, unread error, err error) {
+//
+// Sources prefetched for the session are staged for Run to reuse; Run reads
+// any it lacks, so a session whose prefetch failed is read again in turn and
+// fails, or not, as it would have.
+func (s *directScan) session(ctx context.Context, m archive.Metadata, prefetched *search.Prefetched) (count int, unread error, err error) {
 	at := s.now()
 	if err = s.index.Observe(ctx, m, s.parsers, at, 0); err != nil {
 		return 0, nil, err
+	}
+	if prefetched != nil {
+		if err = s.index.Stage(ctx, *prefetched); err != nil {
+			return 0, nil, err
+		}
 	}
 	// The second session lets a session changed since the listing be read
 	// again as it now is.
@@ -227,6 +251,14 @@ func (s *directScan) session(ctx context.Context, m archive.Metadata) (count int
 // fixture.
 func (s *directScan) run(ctx context.Context, found chan<- directMatch) (directScanStop, error) {
 	started := time.Now()
+	s.mu.Lock()
+	ahead := s.sessions[s.searched:]
+	s.mu.Unlock()
+	// Downloads start only while the budget lasts, so few run past a
+	// pause; those that do are dropped with the stretch and read again if
+	// the search goes on.
+	prefetch := s.prefetch(ctx, ahead, func() bool { return time.Since(started) < s.budget })
+	defer prefetch.stop()
 	for read := 0; ; read++ {
 		s.mu.Lock()
 		next, failing := s.searched, s.failedInRow > 0
@@ -240,7 +272,7 @@ func (s *directScan) run(ctx context.Context, found chan<- directMatch) (directS
 			return directScanPaused, nil
 		}
 		m := s.sessions[next]
-		count, unread, err := s.session(ctx, m)
+		count, unread, err := s.session(ctx, m, prefetch.take(ctx, read))
 		select {
 		case <-ctx.Done():
 			// Esc or a signal: the session cut short is not counted, so
@@ -297,6 +329,140 @@ func (s *directScan) run(ctx context.Context, found chan<- directMatch) (directS
 			}
 		}
 	}
+}
+
+// directPrefetch downloads the sessions a stretch searches next,
+// directSearchReaders at a time, while the one before them is matched. Each
+// session's download holds a slot and its bytes until its turn comes, so no
+// more than directSearchReaders sessions, and about directPrefetchBytes, are
+// held or downloading at once.
+type directPrefetch struct {
+	cancel context.CancelFunc
+	slots  chan struct{}
+	// ready has one entry per session, in order: what was prefetched,
+	// nil when the download failed, or closed when none was started.
+	ready []chan *search.Prefetched
+	wg    sync.WaitGroup
+
+	mu sync.Mutex
+	// held is the bytes of sessions started and not yet taken: each
+	// session's search.PrefetchCost while it downloads, then its size.
+	held int
+	// freed wakes a producer waiting for held to fall.
+	freed chan struct{}
+	// limit is the bytes held ahead, directPrefetchBytes unless a test
+	// sets it.
+	limit int
+}
+
+// directPrefetchBytes is about how many bytes of sessions a direct search
+// holds ahead of the one it is matching. A session larger than this alone is
+// still read ahead, by itself.
+const directPrefetchBytes = 64 << 20
+
+// prefetch starts downloading sessions in order while more reports there is
+// time to search them.
+func (s *directScan) prefetch(ctx context.Context, sessions []archive.Metadata, more func() bool) *directPrefetch {
+	ctx, cancel := context.WithCancel(ctx)
+	p := &directPrefetch{cancel: cancel, slots: make(chan struct{}, directSearchReaders), ready: make([]chan *search.Prefetched, len(sessions)), freed: make(chan struct{}, 1), limit: cmp.Or(s.prefetchBytes, directPrefetchBytes)}
+	for i := range p.ready {
+		p.ready[i] = make(chan *search.Prefetched, 1)
+	}
+	p.wg.Go(func() {
+		started := 0
+		defer func() {
+			for _, unstarted := range p.ready[started:] {
+				close(unstarted)
+			}
+		}()
+		for i, m := range sessions {
+			select {
+			case p.slots <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			cost := search.PrefetchCost(m)
+			if !p.reserve(ctx, cost) || !more() {
+				return
+			}
+			started = i + 1
+			p.wg.Go(func() {
+				read, cancel := context.WithTimeout(ctx, directPrefetchTimeout)
+				defer cancel()
+				got, err := s.index.Prefetch(read, s.objects, s.parsers, m)
+				if err != nil {
+					p.release(cost)
+					p.ready[i] <- nil
+					return
+				}
+				p.adjust(got.Size() - cost)
+				p.ready[i] <- &got
+			})
+		}
+	})
+	return p
+}
+
+// reserve waits until cost more bytes fit under the limit, or
+// nothing is held, and holds them. It reports false once ctx ends.
+func (p *directPrefetch) reserve(ctx context.Context, cost int) bool {
+	for {
+		p.mu.Lock()
+		if p.held == 0 || p.held+cost <= p.limit {
+			p.held += cost
+			p.mu.Unlock()
+			return true
+		}
+		p.mu.Unlock()
+		select {
+		case <-p.freed:
+		case <-ctx.Done():
+			return false
+		}
+	}
+}
+
+// adjust changes the bytes held by delta, waking a waiting producer when
+// they fall.
+func (p *directPrefetch) adjust(delta int) {
+	p.mu.Lock()
+	p.held += delta
+	p.mu.Unlock()
+	if delta < 0 {
+		select {
+		case p.freed <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (p *directPrefetch) release(n int) { p.adjust(-n) }
+
+// take waits for the i-th session's download and frees its slot and bytes.
+// It returns nil, for the session to be read in turn, when the download
+// failed, was never started, or ctx ended first.
+func (p *directPrefetch) take(ctx context.Context, i int) *search.Prefetched {
+	if i >= len(p.ready) {
+		return nil
+	}
+	select {
+	case got, started := <-p.ready[i]:
+		if started {
+			<-p.slots
+		}
+		if got != nil {
+			p.release(got.Size())
+		}
+		return got
+	case <-ctx.Done():
+		return nil
+	}
+}
+
+// stop ends the downloads not yet taken and waits for them.
+func (p *directPrefetch) stop() {
+	p.cancel()
+	p.wg.Wait()
 }
 
 // directResults is what a direct search found, for the results browser: the

@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A direct bucket search (after you decline indexing) downloads up to 6
+  sessions at once, holding about 64 MiB of them, ahead of the one it is
+  matching, so it reads about three times as many sessions before each
+  pause. Matches still appear newest first, each session is still rechecked
+  against the bucket before its text is searched, and the warning's time
+  estimate is shorter to match.
 - `agent-archive status` prints the command that fixes its problem when it
   knows one, on its own line: `agent-archive setup` when background
   collection is not scheduled,
@@ -63,6 +69,7 @@ follow [Semantic Versioning](https://semver.org/).
   of matching sessions' text in memory. When a common word fills that, it
   stops, says so with the command that turns indexing on, and shows the
   results so far, instead of holding most of a large bucket's text.
+  Sessions downloaded ahead of matching are held besides that.
 - Esc stops a direct bucket search while it is still listing the bucket's
   sessions, as it does once sessions are being read. Before, only Ctrl-C
   worked until the listing finished.

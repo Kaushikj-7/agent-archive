@@ -296,8 +296,7 @@ func (s *Store) runItem(ctx context.Context, objects storage.ObjectStore, parser
 		compressed += req.Reference.CompressedBytes
 	}
 	projections := make([]Projection, 0, len(reqs))
-	totalText := 0
-	totalPassages := 0
+	var totals sessionTotals
 	for _, req := range reqs {
 		var p Projection
 		var data []byte
@@ -335,15 +334,8 @@ func (s *Store) runItem(ctx context.Context, objects storage.ObjectStore, parser
 		if p.Gap != nil {
 			progress.Gaps = append(progress.Gaps, *p.Gap)
 		}
-		if len(p.Passages) > maxSessionPassages-totalPassages {
-			return false, storage.ErrObjectTooLarge
-		}
-		totalPassages += len(p.Passages)
-		for _, passage := range p.Passages {
-			if len(passage.Text) > maxSessionBytes-totalText {
-				return false, storage.ErrObjectTooLarge
-			}
-			totalText += len(passage.Text)
+		if err = totals.add(p); err != nil {
+			return false, err
 		}
 		if loadedNew {
 			data, err = json.Marshal(p)
@@ -362,6 +354,29 @@ func (s *Store) runItem(ctx context.Context, objects storage.ObjectStore, parser
 		}
 	}
 	return s.commitWork(ctx, at, item, reqs, projections, false, progress)
+}
+
+// sessionTotals counts a session's passages and text across its sources,
+// against the limits of one session in the index.
+type sessionTotals struct {
+	passages int
+	text     int
+}
+
+// add counts p's passages and text, or fails with storage.ErrObjectTooLarge
+// once the session passes maxSessionPassages or maxSessionBytes.
+func (t *sessionTotals) add(p Projection) error {
+	if len(p.Passages) > maxSessionPassages-t.passages {
+		return storage.ErrObjectTooLarge
+	}
+	t.passages += len(p.Passages)
+	for _, passage := range p.Passages {
+		if len(passage.Text) > maxSessionBytes-t.text {
+			return storage.ErrObjectTooLarge
+		}
+		t.text += len(passage.Text)
+	}
+	return nil
 }
 
 func (s *Store) commitWork(ctx context.Context, at time.Time, item workItem, reqs []sourceRequest, projections []Projection, metadataOnly bool, progress *Progress) (bool, error) {

@@ -1,9 +1,12 @@
 package search
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 func TestMemoryStoreSearchesWithoutFilesAndDropsUnmatchedText(t *testing.T) {
@@ -47,6 +50,26 @@ func TestMemoryStoreSearchesWithoutFilesAndDropsUnmatchedText(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("memory store wrote %v %v", entries, err)
+	}
+}
+
+// A session's sources together stay within one session's limits, however
+// many there are: the totals carry from each source to the next.
+func TestSessionTotalsSpanSources(t *testing.T) {
+	t.Parallel()
+	_, p := testProjection("s", "")
+	p.Passages = make([]Passage, maxSessionPassages/2+1)
+	var totals sessionTotals
+	if err := totals.add(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := totals.add(p); !errors.Is(err, storage.ErrObjectTooLarge) {
+		t.Fatalf("second source past the passage limit: %v", err)
+	}
+	totals = sessionTotals{text: maxSessionBytes - 1}
+	_, p = testProjection("s", "ab")
+	if err := totals.add(p); !errors.Is(err, storage.ErrObjectTooLarge) {
+		t.Fatalf("text past the limit: %v", err)
 	}
 }
 
