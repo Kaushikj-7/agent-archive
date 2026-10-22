@@ -267,13 +267,14 @@ class LinuxFullMemoryTest(unittest.TestCase):
                     self.assertEqual(minutes, 75)
                 else:
                     self.assertEqual(tier, 'daily')
-                    self.assertEqual(minutes, 45)
-                    self.assertLessEqual(seconds + 5 * 60, minutes * 60)
+                    self.assertEqual(minutes, 50)
+                    self.assertLessEqual(seconds + 10 * 60, minutes * 60)
 
     def test_extended_linux_runs_forward_memory_budget(self):
         step = next(step for workflow, step in self.consumers() if workflow == 'extended')
-        for schedule, expected in [(tiers.catalog()['weekly_cron'], '3GiB'),
-                                   (tiers.catalog()['daily_cron'], '3GiB')]:
+        for schedule, runs_full_tier in [(tiers.catalog()['weekly_cron'], True),
+                                         (tiers.catalog()['daily_cron'], False)]:
+            expected = '3GiB'
             with self.subTest(schedule=schedule):
                 result, calls = self.execute_consumer(step, event='schedule', schedule=schedule)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -281,7 +282,7 @@ class LinuxFullMemoryTest(unittest.TestCase):
                           if tool == 'python3' and 'scripts/run_ci_tier.py' in args]
                 self.assertEqual(len(runner), 1)
                 self.assertEqual(runner[0][1], expected)
-                if schedule == tiers.catalog()['weekly_cron']:
+                if runs_full_tier:
                     self.assertIn(['go', ['test', 'full-linux-fixture'], expected], calls)
                 else:
                     self.assertFalse(any(tool == 'go' for tool, _, _ in calls))
@@ -428,6 +429,15 @@ class CandidateCampaignTest(unittest.TestCase):
 
 
 class CadenceTest(unittest.TestCase):
+    def test_native_workers_stop_before_their_hosted_job_limit(self):
+        for name in ('extended.yml', 'release.yml'):
+            text = (ROOT / '.github' / 'workflows' / name).read_text()
+            lines = [line for line in text.splitlines() if 'run_native_full.py worker' in line]
+            self.assertTrue(lines, name)
+            for line in lines:
+                seconds = int(re.search(r'--seconds (\d+)', line).group(1))
+                self.assertLessEqual(seconds + 5 * 60, 60 * 60, name)
+
     def test_full_fuzz_job_outlives_tier_deadline_and_keeps_daily_limit(self):
         job = jobs(EXTENDED_YML.read_text())['fuzz']
         step = next(step for step in steps(job) if '--suite fuzz' in step)

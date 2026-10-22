@@ -355,8 +355,9 @@ published writer, actual systemd scheduler/setup/timer/uninstall, five seconds
 of mutations on every discovered fuzz target and expanded purge cases. Daily
 Linux short race bodies use the full tier's compiled CLI split with `-short`,
 because one short CLI process reached the 20-minute package timeout; all its
-invocations overlap in one batch to fit the daily job's 45-minute limit and
-must record every assigned parent. Weekly
+invocations overlap in one batch to fit the daily job's 50-minute limit and
+must record every assigned parent. Extended Linux exports `GOMEMLIMIT=3GiB` for every event; native macOS workers run
+with `--seconds 3000` so their receipt uploads inside the 60-minute job. Weekly
 runs complete default Linux and Darwin race suites, plain full-size performance
 assertions, exhaustive purge products and 30 seconds per fuzz target. Security
 advisory/workflow audits remain fresh daily in Levenshtein, including the

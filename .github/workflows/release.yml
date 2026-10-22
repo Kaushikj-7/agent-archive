@@ -114,7 +114,7 @@ jobs:
       - name: Run assigned complete native bodies on this independent host
         env:
           WORKER: ${{ matrix.worker }}
-        run: python3 -B scripts/run_native_full.py worker --worker "$WORKER" --plan native-plan --output "native-worker-$WORKER"
+        run: python3 -B scripts/run_native_full.py worker --worker "$WORKER" --plan native-plan --seconds 3000 --output "native-worker-$WORKER"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
