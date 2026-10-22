@@ -100,7 +100,7 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, 
 	}
 	rows = append(rows, reviewRow{label: "Projects", values: projects})
 	rows = append(rows, codexConsentRows(cfg)...)
-	if cfg.SearchLifecycleProtection {
+	if cfg.SearchLifecycleProtection || cfg.SearchIndexingDeclined {
 		choice := "Off"
 		if cfg.SearchIndexing {
 			choice = "On"

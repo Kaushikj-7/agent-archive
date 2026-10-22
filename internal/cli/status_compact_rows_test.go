@@ -117,7 +117,7 @@ func TestStatusIssueHeadlineEndToEnd(t *testing.T) {
 	}
 	env := pairStatusEnv(t, home, userHome, now, "codex")
 	env.Now = func() time.Time { return now }
-	text := statusOutput(t, env)
+	text := statusOutput(t, env, "codex")
 	if !strings.Contains(text, "  ! Some sessions could not be captured\n") || strings.Contains(text, "on the last pass") || strings.Contains(text, "✗") {
 		t.Fatalf("status:\n%s", text)
 	}
@@ -143,7 +143,7 @@ func TestStatusWithoutAppsSaysSo(t *testing.T) {
 		t.Fatal(err)
 	}
 	saveImportedSession(t, store, now, "imported", project)
-	text := statusOutput(t, pairStatusEnv(t, home, userHome, now))
+	text := statusOutput(t, pairStatusEnv(t, home, userHome, now), "--verbose")
 	if !strings.Contains(text, "\nCapture\n  · No apps selected · 1 pending\n") || strings.Contains(text, "imported only") {
 		t.Fatalf("status:\n%s", text)
 	}

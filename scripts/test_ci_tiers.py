@@ -140,6 +140,22 @@ class EvidenceTest(unittest.TestCase):
                     {'Action':'pass','Package':pkg,'Test':name})
         tier.verify_selected(tier.body_evidence(full,False)['actual'],{pkg:[name]},required)
 
+    def test_plain_owned_race_skip_requires_the_ownership_diagnostic_as_its_only_reason(self):
+        pkg=tier.MODULE+'internal/cli';name='TestBackfillConfirmedCompletesMixedNativeWindows';child=name+'/513'
+        def actual(*lines):
+            text=events(dict(Action='run',Package=pkg,Test=name),dict(Action='run',Package=pkg,Test=child),
+                        *[dict(Action='output',Package=pkg,Test=child,Output=line+'\n') for line in lines],
+                        dict(Action='skip',Package=pkg,Test=child),dict(Action='pass',Package=pkg,Test=name))
+            return tier.body_evidence(text,False)['actual']
+        owned={(pkg,name):['513']}
+        frames=('=== RUN   '+child,'--- SKIP: '+child+' (0.00s)')
+        tier.verify_selected(actual(frames[0],'    backfill_confirmed_test.go:202: '+tier.PLAIN_RESTORATION_SKIP,frames[1]),{pkg:[name]},{(pkg,name):['513']},plain_owned=owned)
+        for lines in ((frames[0],'    x_test.go:9: unrelated skip','    backfill_confirmed_test.go:202: '+tier.PLAIN_RESTORATION_SKIP,frames[1]),
+                      (frames[0],'    x_test.go:9: unrelated skip; '+tier.PLAIN_RESTORATION_SKIP,frames[1]),
+                      frames):
+            with self.assertRaises(tier.Failure):
+                tier.verify_selected(actual(*lines),{pkg:[name]},{(pkg,name):['513']},plain_owned=owned)
+
     def test_selected_skip_missing_run_or_duplicate_terminal_fails(self):
         pkg='p';name='TestA'
         with self.assertRaises(tier.Failure):tier.verify_selected([{'package':pkg,'test':name,'status':'skip'}],{pkg:[name]})
@@ -333,8 +349,8 @@ class SourceProofTest(unittest.TestCase):
 
 class PlainVetTest(unittest.TestCase):
     proof={'source':'a'*40,'tree':'b'*40}
-    context={'version':'go version go1.27.2 linux/amd64','runner_os':'Linux','runner_arch':'X64',
-             'race':False,'tags':[],'go':{'GOVERSION':'go1.27.2','GOOS':'linux','GOHOSTOS':'linux',
+    context={'version':'go version go1.27.3 linux/amd64','runner_os':'Linux','runner_arch':'X64',
+             'race':False,'tags':[],'go':{'GOVERSION':'go1.27.3','GOOS':'linux','GOHOSTOS':'linux',
              'GOARCH':'amd64','GOHOSTARCH':'amd64','CGO_ENABLED':'1','GOTOOLCHAIN':'local',
              'GOWORK':'off','GOFLAGS':'-mod=readonly'}}
 
@@ -494,43 +510,90 @@ class SourceAuditTest(unittest.TestCase):
 
 class ExecutionPlanTest(unittest.TestCase):
     def test_daily_executes_all_short_and_five_exact_full_bodies_with_expected_children(self):
+        import re
         entries=[e for e in tier.catalog()['restorations'] if e['restore']=='daily']
+        cli=tier.full_race.CLI
+        isolated=sorted(tier.full_race.ISOLATED_CLI)
+        packages=sorted({tier.MODULE+e['package'] for e in entries}|{tier.SOURCE_AUDIT_PACKAGE})
+        def names(pkg):
+            found=[e['test'] for e in entries if tier.MODULE+e['package']==pkg]
+            if pkg==tier.SOURCE_AUDIT_PACKAGE:found.append(tier.SOURCE_AUDIT_TEST)
+            if pkg==cli:found+=isolated
+            return sorted(found)
+        batches=[]
         def command(args,output,deadline,env=None):
             if args == tier.SOURCE_AUDIT_COMMAND:
                 text = SourceAuditTest().raw(); output.write_text(text); return text
+            if args[:3]==['go','list','-json']:
+                self.assertEqual(args[3:],['./...'])
+                text='\n'.join(json.dumps({'ImportPath':pkg,'TestGoFiles':['x_test.go']}) for pkg in packages)
+                output.write_text(text);return text
+            whole='./...' in args
             lines=[]
-            for pkg in sorted({tier.MODULE+e['package'] for e in entries}):
-                selected=[e for e in entries if tier.MODULE+e['package']==pkg]
+            for pkg in packages:
+                if not whole and './'+pkg[len(tier.MODULE):] not in args and pkg not in args:continue
                 if '-list' in args:
                     self.assertIn('-count=1',args);self.assertIn('-race',args)
-                    lines += [{'Action':'output','Package':pkg,'Output':e['test']+'\n'} for e in selected]
+                    listed=names(pkg) if whole else [e['test'] for e in entries if tier.MODULE+e['package']==pkg]
+                    lines += [{'Action':'output','Package':pkg,'Output':n+'\n'} for n in listed]
                     lines.append({'Action':'pass','Package':pkg});continue
                 pattern=args[args.index('-run')+1] if '-run' in args else None
-                if pattern and './'+pkg[len(tier.MODULE):] not in args:continue
-                for e in selected:
-                    if pattern and not __import__('re').fullmatch(pattern,e['test']):continue
-                    children=e.get('full_children',[])
+                pattern,_,child_pattern=(pattern or '').partition('/')
+                skip=args[args.index('-skip')+1] if '-skip' in args else None
+                for name in names(pkg):
+                    if pattern and not re.fullmatch(pattern,name):continue
+                    if skip and re.fullmatch(skip,name):continue
+                    if name==tier.SOURCE_AUDIT_TEST:
+                        self.assertIn('-short',args);self.assertEqual(env[tier.SOURCE_AUDIT_ENV], '1')
+                        lines += [{'Action':'run','Package':pkg,'Test':name},{'Action':'output','Package':pkg,'Test':name,'Output':tier.SOURCE_AUDIT_SKIP},{'Action':'skip','Package':pkg,'Test':name}]
+                        continue
+                    entry=next((e for e in entries if tier.MODULE+e['package']==pkg and e['test']==name),{})
+                    children=entry.get('full_children',[])
                     if '-short' in args:
                         if children==['128','512']:
                             children=['128']
-                        elif e['test']=='TestBackfillConfirmedCompletesMixedNativeWindows':
+                        elif name=='TestBackfillConfirmedCompletesMixedNativeWindows':
                             children=['3','17']
+                    if child_pattern:
+                        self.assertNotIn('-race',args)
+                        children=[c for c in children if re.fullmatch(child_pattern,c)]
                     for child in children:
-                        lines.append({'Action':'pass','Package':pkg,'Test':e['test']+'/'+child})
-                    lines.append({'Action':'pass','Package':pkg,'Test':e['test']})
+                        test=name+'/'+child
+                        if '-race' in args and child in entry.get('plain_children',[]):
+                            lines += [{'Action':'output','Package':pkg,'Test':test,'Output':'    x_test.go:1: '+tier.PLAIN_RESTORATION_SKIP+'\n'},
+                                      {'Action':'skip','Package':pkg,'Test':test}]
+                            continue
+                        lines.append({'Action':'pass','Package':pkg,'Test':test})
+                    lines.append({'Action':'pass','Package':pkg,'Test':name})
                 lines.append({'Action':'pass','Package':pkg})
-            if '-short' in args:
-                self.assertEqual(env[tier.SOURCE_AUDIT_ENV], '1')
-                lines += [{'Action':'run','Package':tier.SOURCE_AUDIT_PACKAGE,'Test':tier.SOURCE_AUDIT_TEST}, {'Action':'output','Package':tier.SOURCE_AUDIT_PACKAGE,'Test':tier.SOURCE_AUDIT_TEST,'Output':tier.SOURCE_AUDIT_SKIP}, {'Action':'skip','Package':tier.SOURCE_AUDIT_PACKAGE,'Test':tier.SOURCE_AUDIT_TEST}, {'Action':'pass','Package':tier.SOURCE_AUDIT_PACKAGE}]
             text=events(*lines);output.write_text(text);return text
-        with tempfile.TemporaryDirectory() as d,mock.patch.object(tier.full_race,'source_proof',return_value=SourceAuditTest.proof),mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'checked',side_effect=command),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}):
+        def many(commands,deadline):
+            batches.append([output.name for _,output,_ in commands])
+            for args,output,env in commands:command(args,output,deadline,env)
+        with tempfile.TemporaryDirectory() as d,mock.patch.object(tier.full_race,'source_proof',return_value=SourceAuditTest.proof),mock.patch.object(tier,'git',return_value='a'*40),mock.patch.object(tier,'checked',side_effect=command),mock.patch.object(tier,'checked_many',side_effect=many),mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40}),contextlib.redirect_stdout(io.StringIO()):
             tier.run_suite('daily','linux',Path(d))
             report=json.loads((Path(d)/'tier.json').read_text())
-            self.assertTrue(report['success']);self.assertEqual(len(report['invocations']),5)
+            self.assertTrue(report['success']);self.assertEqual(len(report['invocations']),8)
             self.assertEqual(report['invocations'][0]['command'], tier.SOURCE_AUDIT_COMMAND)
-            self.assertIn('-short',report['invocations'][1]['command'])
-            self.assertTrue(all('-short' not in i['command'] for i in report['invocations'][2:]))
-            restored={r['test'] for i in report['invocations'][2:] for r in i['evidence']['actual'] if '/' not in r['test']}
+            self.assertEqual(report['invocations'][-1]['command'], tier.plain_restoration()[0])
+            plain=[r for r in report['invocations'][-1]['evidence']['actual']]
+            self.assertEqual({(r['test'],r['status']) for r in plain},{('TestBackfillConfirmedCompletesMixedNativeWindows','pass'),('TestBackfillConfirmedCompletesMixedNativeWindows/513','pass')})
+            # The full tier's CLI split runs short, all invocations overlapping.
+            race=report['invocations'][1:4]
+            self.assertEqual([i['log'] for i in race],['race-0.jsonl','race-1.jsonl','race-2.jsonl'])
+            self.assertEqual(batches,[['race-0.jsonl','race-1.jsonl','race-2.jsonl']])
+            self.assertTrue(all(i['command'][:8]==tier.full_race.COMMON+['-short'] for i in race))
+            self.assertIn('./...',race[0]['command']);self.assertIn('-skip',race[0]['command'])
+            self.assertEqual(race[2]['command'][-3:],['-run',tier.full_race.shards.selector(isolated),cli])
+            ran={(r['package'],r['test']) for i in race for r in i['evidence']['actual'] if '/' not in r['test']}
+            self.assertEqual(ran,{(pkg,n) for pkg in packages for n in names(pkg)})
+            self.assertTrue(all(e['full_body']=='NOT RUN' for i in race for e in i['evidence']['full_restorations']))
+            self.assertTrue(all('-short' not in i['command'] for i in report['invocations'][4:]))
+            # A parent dropped from its assigned invocation fails the daily gate.
+            raw=(Path(d)/'race-1.jsonl').read_text()
+            (Path(d)/'race-1.jsonl').write_text(events(*[json.loads(l) for l in raw.splitlines() if '"Test"' not in l]))
+            with self.assertRaises(tier.Failure):tier.verify_daily_race(Path(d),report['daily_schedule'])
+            restored={r['test'] for i in report['invocations'][4:] for r in i['evidence']['actual'] if '/' not in r['test']}
             self.assertEqual(restored,{e['test'] for e in entries})
 
     def test_real_manager_is_enabled_only_for_dedicated_bodies_not_race_perf_listing(self):
@@ -622,7 +685,7 @@ class ExecutionPlanTest(unittest.TestCase):
                 with mock.patch.object(tier,'run_suite') as run, mock.patch.object(sys,'argv',['run_ci_tier','--tier','full','--suite',suite,'--output',d]):
                     self.assertEqual(tier.main(),0)
                     self.assertEqual(run.call_args.args[:2],('full',suite))
-                    self.assertEqual(run.call_args.args[4],2400)
+                    self.assertEqual(run.call_args.args[4],3300 if suite == 'linux' else 2400)
                 with mock.patch.object(tier,'verify_full') as verify, mock.patch.object(sys,'argv',['run_ci_tier','--verify','--tier','full','--suite',suite,'--extra-plan',str(output),'--output',d]):
                     self.assertEqual(tier.main(),0)
                     self.assertEqual(verify.call_args.kwargs,{'expected_suite':suite})
@@ -700,6 +763,39 @@ class FullRaceTest(unittest.TestCase):
         (directory/'tier.json').write_text(json.dumps(report))
         with mock.patch.dict(os.environ,{'GITHUB_SHA':'a'*40,'GITHUB_EVENT_NAME':'local','GITHUB_REF':'','CI_SCHEDULE':''}),mock.patch.object(tier.full_race,'source_proof',return_value={'source':'a'*40,'tree':'b'*40}),mock.patch.object(tier,'catalog',return_value={'restorations':restorations or []}),contextlib.redirect_stdout(io.StringIO()):
             tier.verify_full(directory,report['extras'])
+
+    def test_plain_owned_child_skips_under_race_and_passes_only_in_its_plain_invocation(self):
+        restorations=[{'package':'internal/cli','test':'TestRestore','restore':'daily','full_children':['512'],'plain_children':['512']}]
+        with mock.patch.object(tier,'catalog',return_value={'restorations':restorations}):
+            command=tier.plain_restoration()[0]
+        self.assertNotIn('-race',command)
+        self.assertEqual(command[-3:],['-run','^(TestRestore)$/^(512)$','./internal/cli'])
+        cli=tier.full_race.CLI;child='TestRestore/512'
+        def build(directory,reason,plain_status):
+            with mock.patch.object(tier,'catalog',return_value={'restorations':restorations}):
+                return built(directory,reason,plain_status)
+        def built(directory,reason,plain_status):
+            report=self.fixture(directory)
+            for invocation in report['invocations']:
+                path=directory/invocation['log']
+                if not invocation['log'].startswith('race') or child not in path.read_text():continue
+                rows=[]
+                for row in map(json.loads,path.read_text().splitlines()):
+                    if row.get('Test')==child and row['Action']=='pass':
+                        rows.append(dict(Action='output',Package=cli,Test=child,Output='    x_test.go:1: '+reason+'\n'));row=dict(row,Action='skip')
+                    rows.append(row)
+                text=events(*rows);path.write_text(text);invocation['evidence']=tier.body_evidence(text,False)
+            if plain_status:
+                text=events(dict(Action='run',Package=cli,Test='TestRestore'),dict(Action='run',Package=cli,Test=child),
+                            dict(Action=plain_status,Package=cli,Test=child),dict(Action='pass',Package=cli,Test='TestRestore'),dict(Action='pass',Package=cli))
+                (directory/'plain-restoration.jsonl').write_text(text)
+                report['invocations'].append(dict(command=command,log='plain-restoration.jsonl',evidence=tier.body_evidence(text,False),performance_enabled=False,real_systemd_enabled=False))
+            return report
+        with tempfile.TemporaryDirectory() as d:
+            self.verify(Path(d),build(Path(d),tier.PLAIN_RESTORATION_SKIP,'pass'),restorations)
+        for reason,status in ((tier.PLAIN_RESTORATION_SKIP,None),(tier.PLAIN_RESTORATION_SKIP,'skip'),('unrelated skip','pass')):
+            with tempfile.TemporaryDirectory() as d,self.assertRaises(tier.Failure):
+                self.verify(Path(d),build(Path(d),reason,status),restorations)
 
     def test_verdict_fixture_isolates_hosted_workflow_identity(self):
         hosted={'GITHUB_SHA':'c'*40,'GITHUB_EVENT_NAME':'pull_request','GITHUB_REF':'refs/pull/493/merge','CI_SCHEDULE':'17 8 * * 0'}

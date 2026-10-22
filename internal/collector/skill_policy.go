@@ -20,6 +20,27 @@ func pendingSkillMode(value string) config.SkillEvidence {
 	return config.SkillEvidence(value)
 }
 
+// skillPolicyRank orders skill-evidence ceilings from narrowest to broadest.
+// An unrecognised policy ranks narrowest, so it never outranks a known one.
+func skillPolicyRank(mode config.SkillEvidence) int {
+	switch mode {
+	case config.SkillEvidenceNone:
+		return 0
+	case config.SkillEvidenceMetadata:
+		return 1
+	case config.SkillEvidenceBody:
+		return 2
+	}
+	return 0
+}
+
+// skillPolicyBroadens reports whether an origin policy authorizes more skill
+// evidence than the current ceiling. An unrecognised policy on either side
+// keeps the current ceiling.
+func skillPolicyBroadens(origin, current config.SkillEvidence) bool {
+	return config.ValidSkillEvidence(origin) && config.ValidSkillEvidence(current) && skillPolicyRank(origin) > skillPolicyRank(current)
+}
+
 // limitSkillEvidence also removes skill evidence retained in an older local
 // candidate. Otherwise a policy change would re-upload cached snapshots.
 func limitSkillEvidence(in []archive.SupplementalEvidence, mode config.SkillEvidence) []archive.SupplementalEvidence {

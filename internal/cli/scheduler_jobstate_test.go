@@ -73,7 +73,7 @@ func TestStatusBackgroundForEveryJobState(t *testing.T) {
 			t.Errorf("%s: status --json background = %v, want %s", job.file, decoded["background"], job.want)
 		}
 		var human strings.Builder
-		if code := Run([]string{"status"}, strings.NewReader(""), &human, os.Stderr, env); code != 0 {
+		if code := Run([]string{"status", "--verbose"}, strings.NewReader(""), &human, os.Stderr, env); code != 0 {
 			t.Fatalf("status exit %d", code)
 		}
 		// One print for each of the two runs, and nothing else.

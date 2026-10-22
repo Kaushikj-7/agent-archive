@@ -47,7 +47,7 @@ jobs:
     needs: preflight
     if: needs.preflight.outputs.exists == 'false'
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
     env:
@@ -70,12 +70,12 @@ jobs:
           fi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
-      - name: Require Go 1.27.2 (go.mod's toolchain line)
+      - name: Require Go 1.27.3 (go.mod's toolchain line)
         run: |
           go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+          go version | grep -q ' go1\.27\.3 ' || { echo "expected go1.27.3, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Compile the exhaustive native catalog and assign three workers
         run: python3 -B scripts/run_native_full.py plan --output native-plan
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -88,7 +88,7 @@ jobs:
   macos-workers:
     needs: macos-plan
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
     strategy:
@@ -101,12 +101,12 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
-      - name: Require Go 1.27.2 (go.mod's toolchain line)
+      - name: Require Go 1.27.3 (go.mod's toolchain line)
         run: |
           go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+          go version | grep -q ' go1\.27\.3 ' || { echo "expected go1.27.3, matching go.mod's toolchain line" >&2; exit 1; }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: native-plan
@@ -114,7 +114,7 @@ jobs:
       - name: Run assigned complete native bodies on this independent host
         env:
           WORKER: ${{ matrix.worker }}
-        run: python3 -B scripts/run_native_full.py worker --worker "$WORKER" --plan native-plan --output "native-worker-$WORKER"
+        run: python3 -B scripts/run_native_full.py worker --worker "$WORKER" --plan native-plan --seconds 3000 --output "native-worker-$WORKER"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -125,7 +125,7 @@ jobs:
   macos-obligations:
     needs: macos-plan
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -134,12 +134,12 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
-      - name: Require Go 1.27.2 (go.mod's toolchain line)
+      - name: Require Go 1.27.3 (go.mod's toolchain line)
         run: |
           go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+          go version | grep -q ' go1\.27\.3 ' || { echo "expected go1.27.3, matching go.mod's toolchain line" >&2; exit 1; }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: native-plan
@@ -193,14 +193,14 @@ jobs:
       # go.mod's toolchain line; the next step checks that.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           # No module cache: a release builds signed binaries, and a cache
           # restored from another workflow run could poison them.
           cache: false
-      - name: Require Go 1.27.2 (go.mod's toolchain line)
+      - name: Require Go 1.27.3 (go.mod's toolchain line)
         run: |
           go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+          go version | grep -q ' go1\.27\.3 ' || { echo "expected go1.27.3, matching go.mod's toolchain line" >&2; exit 1; }
 
       # Reconcile this run's native plan, workers and obligations on the exact
       # tagged commit. Reconcile requires exactly those three jobs' results,
@@ -271,8 +271,8 @@ jobs:
     # both cross-compile on one Linux runner with no C toolchain, and the
     # x86-64 one runs natively here for the version check.
     runs-on: ubuntu-24.04
-    # Headroom over the full tier's 2400-second deadline.
-    timeout-minutes: 60
+    # Headroom over the full Linux tier's 3300-second deadline.
+    timeout-minutes: 80
     permissions:
       contents: read
     env:
@@ -307,13 +307,13 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           # No module cache, as in the build job.
           cache: false
-      - name: Require Go 1.27.2 (go.mod's toolchain line)
+      - name: Require Go 1.27.3 (go.mod's toolchain line)
         run: |
           go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+          go version | grep -q ' go1\.27\.3 ' || { echo "expected go1.27.3, matching go.mod's toolchain line" >&2; exit 1; }
 
       # Repeat exhaustive candidate coverage, including full-size performance,
       # on the exact tagged commit before building.
@@ -323,7 +323,7 @@ jobs:
           python3 -B scripts/run_ci_tier.py --plan --tier full --output release-tier-results/plan.json
           # Soft Go-managed memory target; race/native allocations also need headroom.
           export GOMEMLIMIT=3GiB
-          python3 -B scripts/run_ci_tier.py --tier full --suite linux --seconds 2400 --output release-tier-results
+          python3 -B scripts/run_ci_tier.py --tier full --suite linux --seconds 3300 --output release-tier-results
           python3 -B scripts/run_ci_tier.py --verify --tier full --suite linux --extra-plan release-tier-results/plan.json --output release-tier-results
           python3 scripts/test_release_signing.py
           python3 scripts/test_release_assets.py

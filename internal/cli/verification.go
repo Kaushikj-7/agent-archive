@@ -90,6 +90,12 @@ type verificationSummary struct {
 	// this pass, because their backoff has not elapsed or the per-pass cap
 	// was reached.
 	Deferred int
+	// UnresolvedFailures counts failed or mismatched current publications,
+	// including those deferred by backoff, the pass cap or its deadline.
+	UnresolvedFailures int
+	// Enumerated is set once registrations were listed, so the counts above
+	// cover this destination's publications rather than none of them.
+	Enumerated bool
 }
 
 type storageHealth struct {
@@ -251,6 +257,7 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 	if err != nil {
 		return summary, err
 	}
+	summary.Enumerated = true
 	now := env.now().UTC()
 	type candidate struct {
 		reg   archive.SessionRegistration
@@ -290,6 +297,9 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 		if prior.ConfigurationID == verificationConfigurationID && prior.PublishedAt.Equal(at) {
 			if !prior.VerifiedAt.IsZero() {
 				continue
+			}
+			if prior.failed() {
+				summary.UnresolvedFailures++
 			}
 			if now.Before(prior.NextRetryAt) {
 				summary.Deferred++
@@ -345,6 +355,12 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 			}
 		}
 		record := verificationEvidence{ConfigurationID: c.cfgID, PublishedAt: c.at, SourceSHA256: sha, Attempts: c.prior.Attempts + 1, SourceSetDigest: setDigest, MetadataDigest: metadataDigest}
+		if c.prior.failed() {
+			summary.UnresolvedFailures--
+		}
+		if err != nil {
+			summary.UnresolvedFailures++
+		}
 		switch {
 		case err == nil:
 			summary.Verified++
@@ -366,6 +382,10 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 		}
 	}
 	return summary, errors.Join(localErrs...)
+}
+
+func (e verificationEvidence) failed() bool {
+	return e.Outcome == verificationOutcomeFailed || e.Outcome == verificationOutcomeMismatch
 }
 
 // verificationTimeout bounds one session's read-back (within the caller's own

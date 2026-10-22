@@ -1,5 +1,5 @@
 $ agent-archive status
-Agent Archive  ● Not set up
+Agent Archive  Not set up
 
-  Run agent-archive setup to get started.
+agent-archive setup
 [exit 0]

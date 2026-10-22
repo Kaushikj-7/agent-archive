@@ -8,6 +8,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/sourcefacts"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -77,12 +78,16 @@ func TestRetainedHintsKeepTwoThousandWarmSourcesAndFreshProgress(t *testing.T) {
 		t.Skip("full 2000 warm-source retention; weekly and exact candidates")
 	}
 	t.Parallel()
-	testRetainedHintsWarmSourcesAndFreshProgress(t, 2000)
+	// The pass budget follows synctest's clock, so slow file I/O under load
+	// cannot expire the checkpoint deadline.
+	synctest.Test(t, func(t *testing.T) { testRetainedHintsWarmSourcesAndFreshProgress(t, 2000) })
 }
 
 func TestRetainedHintsKeepSmallWarmSourcesAndFreshProgress(t *testing.T) {
 	t.Parallel()
-	testRetainedHintsWarmSourcesAndFreshProgress(t, 64)
+	// The pass budget follows synctest's clock, so slow file I/O under load
+	// cannot expire the checkpoint deadline.
+	synctest.Test(t, func(t *testing.T) { testRetainedHintsWarmSourcesAndFreshProgress(t, 64) })
 }
 
 func testRetainedHintsWarmSourcesAndFreshProgress(t *testing.T, count int) {

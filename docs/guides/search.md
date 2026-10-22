@@ -2,9 +2,14 @@
 
 Content search finds indexed titles and visible user/assistant messages in
 supported filtered retained sources, including supported preserved revisions.
-It keeps private local searchable text. Ordinary queries read only an existing
+It keeps private local searchable text. Cached queries read only an existing
 local index; they never discover archives, download sources or index content.
-A missing index returns partial empty results without creating files.
+A missing index returns partial empty results without creating files. There
+are two exceptions on a terminal. A Yes to interactive search's one-time
+indexing question turns indexing on through setup and runs a first refresh
+(see below). After indexing was declined, a search with no local index reads
+the bucket directly, in memory, and creates no index files (see
+[searching the bucket directly](#search-the-bucket-directly)).
 
 ```sh
 agent-archive search --refresh
@@ -14,9 +19,10 @@ agent-archive search 'check*' --project my-project --since 7d
 agent-archive search --refresh --session SESSION_ID --harness codex
 ```
 
-Search defaults to the current repository/project using existing worktree-aware
-repository identity and configured project fallback. Broaden with --all-projects;
-empty project results never broaden automatically. Replays and child sessions
+Search covers every project's indexed sessions. Narrow with `--project DIR|NAME`,
+which uses existing worktree-aware repository identity and configured project
+fallback; empty project results never broaden automatically. `--all-projects`
+is accepted and is the default. Replays and child sessions
 are hidden by default; --replays include and --children include reveal them.
 Scope/date/harness/replay/child filters apply before ranking and limiting.
 Namespace refresh discovery is independent of the query's project filters.
@@ -37,7 +43,9 @@ agent-archive search --read REF --offset NEXT_OFFSET --max-bytes 4096 --json
 
 References bind exact source membership, bytes, interpretation and message
 location, never rendered line numbers. Reads never silently substitute newer
-content. A next_offset of null means that referenced passage is complete.
+content. A next_offset of null means the referenced message is complete; one
+past the reference's passage reads on into the message's next passage. An
+offset past the message's end fails with `invalid_offset` and exit 2.
 Each context slice identifies its own reference and raw UTF-8 offsets.
 The existing plain read prints an escaped quoted string and continuation on
 stderr. --limit defaults to 20 (1–100); --cursor continues the same query/filters
@@ -53,8 +61,9 @@ backoff; oversized work discards staging and blocks until its desired state chan
 
 The private index is under AGENT_ARCHIVE_HOME/search/, partitioned by archive
 destination, installation, destination activation and privacy version. It is
-separate from the metadata cache. No automatic indexing job is installed by these
-commands. Uninstall retains local archive data. To discard searchable text,
+separate from the metadata cache. Refresh, JSON and piped queries never install an
+automatic indexing job; only a Yes to interactive search's one-time question does,
+through setup. Uninstall retains local archive data. To discard searchable text,
 disable automatic indexing with `setup --yes --search-indexing off`, stop explicit
 refresh commands, and remove that search directory; archive sources remain.
 See [privacy](../security/privacy.md) and
@@ -66,7 +75,6 @@ See [privacy](../security/privacy.md) and
 [the search output schema](../../schemas/search-output.schema.json). Result and
 context text contain conversation content. stdout holds the document; diagnostics
 use stderr. Cached queries return success even with missing or partial coverage.
-Outside a known project, choose `--project NAME` or `--all-projects` explicitly.
 An older local schema requires explicit `search --refresh`; cached readers never
 create an index or acquire SQLite writer admission to upgrade one.
 
@@ -145,11 +153,83 @@ false. Unknown matching totals always remain null.
 
 ## Browse matches on a terminal
 
-When stdin and stdout are terminals, a content query opens the shared session
-browser. JSON and piped output stay bounded ordinary output. The original FTS
-query remains fixed, including phrase spacing. Metadata `/` filtering is disabled
-in this mode. Results preserve engine relevance and the requested scope; no
-project regrouping or automatic scope widening occurs.
+On a terminal, `agent-archive search` with no query asks what to search for.
+Before the first local index exists, search asks once whether to index in the
+background (Yes by default). Either answer is saved through the same setup step
+as `setup --yes --search-indexing on|off`, so search does not ask again; change
+it later with that command. Turning indexing on runs one bounded pass before
+the query. Declining makes terminal searches read the bucket directly.
+
+## Search the bucket directly
+
+After you decline indexing, a search on a terminal with no local index reads
+the bucket itself. It first warns that it downloads sessions from your R2 or S3
+bucket, keeps no conversation text on this machine (session titles are cached
+as for `list`), pauses after 2 minutes, and roughly how
+long a full search of the sessions in scope takes (at about 50 sessions a
+minute). It prints the command that makes the next search instant:
+
+```sh
+agent-archive setup --yes --search-indexing on
+```
+
+It lists the archive's metadata, applies the query's scope and filters (all
+projects unless `--project`; harness, dates, replays and children) before
+downloading anything, then reads the matching sessions newest first,
+downloading up to 6 at once, and about 64 MiB, ahead of the one being
+matched. Each session's verified sources go through the same parser visibility and privacy
+rules as indexing, into an in-memory database that is never written to disk.
+Only matching sessions keep their passages, until the command exits. Once
+their text and its full-text index fill 256 MiB of memory, as a common word
+across a large archive can, the search stops and shows the results so far,
+with the command that turns indexing on; more specific words reach further.
+Sessions downloaded ahead, up to about 64 MiB, are held besides that. A progress
+line counts the sessions searched and matching, and each matching session is
+printed as it is found; the summary also counts sessions that could not be
+read. If 5 sessions in a row cannot be read, as when the network drops, it
+stops, prints the error, and exits with status 1; a session too large or too
+slow to read is counted but neither adds to nor resets that count. Esc stops early, also while the bucket is still being listed. After 2 minutes, unless the latest sessions are failing to read, it asks whether to keep going, search
+only the project you are in (with its session count, and counting from then on
+only that project's sessions), show the results so far, or stop. The results open in the same browser as indexed
+search; reading a passage downloads its source again. Ctrl-C exits.
+
+Direct search never runs for `--json`, piped output, `--refresh` or
+`--cursor`, and a local index, such as one made by `search --refresh`, is
+always used instead.
+
+When stdin and stdout are terminals, a content query opens the same session
+browser as `list` and `show`. JSON and piped output stay bounded ordinary output.
+
+```text
+All projects · "read performance" · 2 sessions, best match first · Tab webapp only
+Indexed 105 of 211 · catching up
+
+▸ 1  ●  docs: propose sublinear read paths for list/show/handoff   webapp          Oct 16
+  2  ●  Picker slowness on large buckets                           monitoring-cli  Oct 10
+────────────────────────────────────────────────────────────────────────────────
+you › match 1 of 3 in this session
+The list and show commands feel slow on the big bucket. Can you check the read
+performance of our archive commands?
+● Claude Code · webapp · Oct 16, 09:12 · id 0a13656b
+────────────────────────────────────────────────────────────────────────────────
+↑↓ move   Enter read   n/p match   / new search   Tab scope   h hand off   q quit   1–2 of 2
+```
+
+The heading names the scope, the query and how many sessions match, and the
+line under it sums up the index's coverage; `--json` has the full counts.
+Results keep the engine's relevance order and the requested scope; there are no
+day groups and the scope never widens by itself. Each row shows its agent's
+colored dot, its title, its project and when it was captured. Under the list,
+the highlighted session's matching passage is quoted as indexed, with who wrote
+it and every matched query word highlighted. Highlighting reads words as the
+index does: case-insensitive, split at punctuation, and a trailing `*` matches
+a word's start. Characters Unicode added after version 6.1 (newer emoji, say)
+can split words differently from the index. `n`/`p` show the session's next or
+previous match; a title match comes first.
+
+`/` asks for a new query in place and runs it in the scope shown. `Tab` switches
+between all projects and the current repository and reruns the same query; it
+is offered only inside a known project, or with `--project`.
 
 Common-word queries can be expensive even with a small --limit; prefer more
 selective terms and project scope. Match navigation can also cost more when a
@@ -157,22 +237,51 @@ session's indexed membership is spread across older revisions. Small retained
 pages and the finite query timeout do not imply work proportional to the 20
 references retained for navigation.
 
-Each row shows the best snippet and any known other indexed title/body matches.
-These are indexed passages, including overlap, rather than text occurrences.
-The shared highlight and detail strip follow the arrow, page, Home and End keys;
-Enter opens the highlighted hit. A listed number or unique short ID also opens
-its exact source-bound context.
+Match counts are indexed passages, including overlap, rather than text
+occurrences. The highlight and the passage under the list follow the arrow,
+page, Home and End keys; Enter opens the passage shown. A listed number or
+unique short ID also opens its exact source-bound context.
 The number resolves the full harness/session identity even when short IDs collide.
-A title match has no body reference and explains that instead of opening an
-unrelated transcript. In details, `n`/`p` navigate matching **body** passages,
-`m` follows the displayed raw-byte continuation in the current message, arrows
-and page keys scroll the current bounded text, `b` returns, and `q` exits.
-The line fallback accepts the same letter actions and pgup/pgdn, up/down,
-home/end to scroll the current text. Long unbroken Unicode text wraps into
+
+Enter opens the passage as `show` lays out a session:
+
+```text
+docs: propose sublinear read paths for list/show/handoff
+Claude Code · webapp · Oct 16, 09:12                                match 1 of 3
+
+  claude › Merged #633. The listing benchmark is in dev/bench.
+
+  you ›    The list and show commands feel slow on the big bucket. Can you
+           check the read performance of our archive commands?
+
+  claude › I'll trace list, show and handoff against the R2 bucket first,
+           then write the proposal in dev/proposals.
+           … 38 more lines (m)
+
+n/p match   ↑↓ scroll   m more   t transcript   h hand off   i details   b back   q quit
+```
+
+The matching message is read from its exact source revision and shown between
+the message before and after it (dim), each labeled with who wrote it; its
+matched words are highlighted. Long neighbors are cut to three lines, and `m`
+shows them whole, then reads on in a matching message longer than one bounded
+read, to its end, then says when a neighbor goes on and `t` shows the rest. A match far down a long message opens scrolled to it. Esc
+cancels a passage still loading, and `m` loads it again. `n`/`p` move to the session's other matches (the list's strip follows),
+`i` shows the source revision, record, text byte range and SHA-256 of the exact reference,
+`t` opens the session's whole transcript in the pager `show --transcript` uses
+(the session as archived now, which may have grown since it was indexed),
+arrows and page keys scroll, `b` returns and `q` exits. A source that changed
+or was deleted since indexing is reported, never replaced by newer text. A
+title match has no message reference and says so instead of opening an
+unrelated transcript.
+Without keys (the line fallback), each result's passage is printed under it,
+`a` switches scope, `/` asks for a new query, and the same letter actions plus
+pgup/pgdn, up/down and home/end scroll the current text. Long unbroken Unicode text wraps into
 physical rows so its tail remains reachable on narrow terminals.
 
-The list's `n`/`p` or page keys page already loaded results. `o` requests the next
-local indexed result page; `r` explicitly reruns the original query. At most
+The list's page keys page already loaded results. Moving past the last result
+(or `o` without keys) requests the next local indexed result page; `r`
+explicitly reruns the query. At most
 three result pages (each bounded by --limit, up to 100) are retained. Match
 navigation retains one page of at most 20 references and uses forward/reverse
 keyset cursors. Context retains only the current bounded selected/neighbor text.
@@ -184,12 +293,14 @@ selects the first hit when that identity is absent.
 Changed, deleted or unavailable exact sources leave an explanatory notice and
 the usable result list.
 
-`h` is labelled **Hand off current session**. It closes browser reads and restores
+`h`, in the list or the passage, hands off the session. It closes browser reads and restores
 the terminal before invoking the ordinary handoff command with the selected
 full harness/session ID and archive source. Existing repository, destination and
 launch gates apply. It hands off the authorized current session, which may differ
-from a historical search match. Searching does not authorize indexing, setup,
-refresh or rebuild.
+from a historical search match. Browsing results never starts indexing, setup,
+refresh or rebuild; only the one-time indexing question, answered Yes, does.
+Browsing the results of a direct bucket search reads exact sources from the
+bucket, as any context read does, but writes no index.
 
 Checksum-verified sources in unsupported immutable formats (including legacy
 source schema 1) become explicit `unsupported_source_schema` coverage gaps.

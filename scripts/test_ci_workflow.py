@@ -180,7 +180,7 @@ class LinuxFullMemoryTest(unittest.TestCase):
                     log.write(json.dumps([tool, args, os.environ.get('GOMEMLIMIT')]) + '\\n')
                 if tool == 'go':
                     if args == ['version']:
-                        print('go version go1.27.2 linux/amd64')
+                        print('go version go1.27.3 linux/amd64')
                     elif args == ['test', 'full-linux-fixture']:
                         if os.environ.get('GOMEMLIMIT') != '3GiB':
                             sys.exit('full Linux child has no 3GiB Go memory budget')
@@ -259,20 +259,22 @@ class LinuxFullMemoryTest(unittest.TestCase):
                     self.assertEqual(tiers.main(), 0)
                 tier, actual_suite, _, _, seconds = run.call_args.args
                 self.assertEqual(actual_suite, 'linux')
-                self.assertEqual(seconds, 2400)
+                self.assertEqual(seconds, 3300 if tier == 'full' else 2400)
                 minutes = expression_value(job_key(job, 'timeout-minutes'), event,
                                            suite=suite, schedule=schedule)
                 if tier == 'full':
                     self.assertGreater(minutes * 60, seconds)
-                    self.assertEqual(minutes, 60)
+                    self.assertEqual(minutes, 75)
                 else:
                     self.assertEqual(tier, 'daily')
-                    self.assertEqual(minutes, 30)
+                    self.assertEqual(minutes, 50)
+                    self.assertLessEqual(seconds + 10 * 60, minutes * 60)
 
-    def test_extended_weekly_full_run_forwards_budget_and_daily_keeps_environment(self):
+    def test_extended_linux_runs_forward_memory_budget(self):
         step = next(step for workflow, step in self.consumers() if workflow == 'extended')
-        for schedule, expected in [(tiers.catalog()['weekly_cron'], '3GiB'),
-                                   (tiers.catalog()['daily_cron'], None)]:
+        for schedule, runs_full_tier in [(tiers.catalog()['weekly_cron'], True),
+                                         (tiers.catalog()['daily_cron'], False)]:
+            expected = '3GiB'
             with self.subTest(schedule=schedule):
                 result, calls = self.execute_consumer(step, event='schedule', schedule=schedule)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -280,7 +282,7 @@ class LinuxFullMemoryTest(unittest.TestCase):
                           if tool == 'python3' and 'scripts/run_ci_tier.py' in args]
                 self.assertEqual(len(runner), 1)
                 self.assertEqual(runner[0][1], expected)
-                if expected:
+                if runs_full_tier:
                     self.assertIn(['go', ['test', 'full-linux-fixture'], expected], calls)
                 else:
                     self.assertFalse(any(tool == 'go' for tool, _, _ in calls))
@@ -427,6 +429,15 @@ class CandidateCampaignTest(unittest.TestCase):
 
 
 class CadenceTest(unittest.TestCase):
+    def test_native_workers_stop_before_their_hosted_job_limit(self):
+        for name in ('extended.yml', 'release.yml'):
+            text = (ROOT / '.github' / 'workflows' / name).read_text()
+            lines = [line for line in text.splitlines() if 'run_native_full.py worker' in line]
+            self.assertTrue(lines, name)
+            for line in lines:
+                seconds = int(re.search(r'--seconds (\d+)', line).group(1))
+                self.assertLessEqual(seconds + 5 * 60, 60 * 60, name)
+
     def test_full_fuzz_job_outlives_tier_deadline_and_keeps_daily_limit(self):
         job = jobs(EXTENDED_YML.read_text())['fuzz']
         step = next(step for step in steps(job) if '--suite fuzz' in step)
@@ -589,7 +600,8 @@ class CadenceTest(unittest.TestCase):
         runner=(ROOT/'scripts/run_ci_tier.py').read_text()
         self.assertIn("if tier == 'full':", runner)
         self.assertIn('full_race.run(packages, out, deadline', runner)
-        self.assertIn("execute(common + ['-short'] + packages, 'race', True, env=short_env)", runner)
+        self.assertIn("schedule = daily_race_schedule(packages, out, deadline, short_env)", runner)
+        self.assertIn("command[width:width] = ['-short']", runner)
         full = (ROOT / 'scripts/full_race.py').read_text()
         self.assertIn("COMMON = ['go', 'test', '-race', '-count=1', '-json', '-timeout', '20m']", full)
         self.assertNotIn("'-short'", full)

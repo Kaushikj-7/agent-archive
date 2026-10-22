@@ -63,18 +63,18 @@ func TestStatusReportsDiscoveredTaskBeforeLocalCapture(t *testing.T) {
 		t.Errorf("JSON lost registration-only evidence: %s", &jsonOut)
 	}
 	for _, verbose := range []bool{false, true} {
-		t.Run(map[bool]string{false: "basic", true: "verbose"}[verbose], func(t *testing.T) {
+		t.Run(map[bool]string{false: "app", true: "verbose"}[verbose], func(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
-			args := []string{}
+			args := []string{"codex"}
 			if verbose {
-				args = append(args, "--verbose")
+				args = []string{"--verbose"}
 			}
 			if code := runStatusCommand(args, &out, &out, env); code != 0 {
 				t.Fatalf("status exit %d: %s", code, &out)
 			}
 			text := out.String()
-			if !strings.Contains(text, "1 session") || strings.Contains(text, "waiting for first session") {
+			if !strings.Contains(text, "1 session") || strings.Contains(strings.SplitN(text, "\nProjects\n", 2)[0], "waiting for first session") {
 				t.Errorf("rendered status contradicts discovered registration: %s", text)
 			}
 			if verbose && (!strings.Contains(text, "session seen, not captured yet") || !strings.Contains(text, "1 registered")) {

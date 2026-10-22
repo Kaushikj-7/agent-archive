@@ -84,7 +84,7 @@ func TestStatusDoesNotPromoteAnAppOnImports(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "discovery off; included projects   no sessions yet · 2 imported · 1 uploading\n") || strings.Contains(out.String(), "Imported:") {
+	if code := runStatusCommand([]string{"codex"}, &out, &out, env); code != 0 || !strings.Contains(out.String(), "discovery off; included projects   no sessions yet · 2 imported · 1 uploading\n") || strings.Contains(out.String(), "Imported:") {
 		t.Fatalf("status text (exit %d):\n%s", code, out.String())
 	}
 	out.Reset()
@@ -153,7 +153,7 @@ func TestStatusReportsImportsWithGapsOrFailedScans(t *testing.T) {
 		t.Fatalf("imported=%d with issues=%d app gaps=%#v", view.ImportedSessions, view.ImportedWithIssues, view.Apps[0].CaptureGaps)
 	}
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "· 2 imported sessions have a capture gap or failed scan\n") {
+	if code := runStatusCommand([]string{"codex"}, &out, &out, env); code != 0 || !strings.Contains(out.String(), "· 2 imported sessions have a capture gap or failed scan\n") {
 		t.Fatalf("status text (exit %d):\n%s", code, out.String())
 	}
 	out.Reset()
@@ -163,6 +163,17 @@ func TestStatusReportsImportsWithGapsOrFailedScans(t *testing.T) {
 	out.Reset()
 	if code := runStatusCommand([]string{"--json"}, &out, &out, env); code != 0 || !strings.Contains(out.String(), `"imported_with_issues": 2`) {
 		t.Fatalf("status --json (exit %d):\n%s", code, out.String())
+	}
+	for _, importedOnly := range []bool{false, true} {
+		if importedOnly {
+			cfg = mustLoadConfig(t, home)
+			cfg.Harnesses, cfg.ImportedHarnesses = []string{"claude"}, []string{"codex"}
+			must(t, config.Save(home, cfg))
+		}
+		out.Reset()
+		if code := runStatusCommand([]string{"--issues"}, &out, &out, env); code != 0 || !strings.Contains(out.String(), "2 imported sessions have a capture gap or failed scan") {
+			t.Fatalf("status --issues importedOnly=%v (exit %d):\n%s", importedOnly, code, &out)
+		}
 	}
 }
 

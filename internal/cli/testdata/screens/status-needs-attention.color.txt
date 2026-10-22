@@ -1,22 +1,16 @@
 $ agent-archive status
-\e[1mAgent Archive\e[0m  \e[33m● Needs attention\e[0m
+\e[1mAgent Archive\e[0m  \e[1mNeeds attention\e[0m
 
-  \e[33m!\e[0m The last sync failed: storage refused access
-    Check storage access and run \e[36magent-archive sync\e[0m.
-    To change credentials, run \e[36magent-archive setup\e[0m and choose storage.
+   Background   On · idle between checks
+   Last check   Completed just now
+   Uploads      Last succeeded just now
+   Queue        0 pending at last check
 
-\e[1mCapture\e[0m
-  \e[32m✓\e[0m Codex   automatic capture; included projects
-    \e[2m1 session · 1 archived (1 verified)\e[0m
-  \e[2m·\e[0m Identity recovery: complete
+\e[1mDetected agents\e[0m
+   Codex   Archiving enabled   \e[2mdetection unavailable\e[0m
 
-\e[1mStorage\e[0m
-  \e[33m!\e[0m s3://team-archive/agent-archive/
-    \e[2mrefused access on the last pass · uploaded just now\e[0m
-  \e[32m✓\e[0m Background collector on            \e[2mlast scan just now\e[0m
-  \e[33m!\e[0m Bucket privacy not verified
-    \e[2mthis storage can't be inspected; see
-    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
+The last collection did not finish successfully.
 
-\e[2mMore: agent-archive status --verbose · agent-archive status codex\e[0m
+\e[36magent-archive status --issues\e[0m
+\e[36magent-archive status --verbose\e[0m
 [exit 0]

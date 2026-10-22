@@ -48,7 +48,7 @@ func TestDurableReadExplicitCancellationOnUnscopedAndWarmStore(t *testing.T) {
 					if err := store.ResumeGenerationRecoveries(ctx); !errors.Is(err, context.Canceled) {
 						t.Fatal("recovery ignored invocation cancellation", err)
 					}
-					if err := store.validateReadyOwner(ctx, PendingPublication{Selection: &ReadySelection{}}); !errors.Is(err, context.Canceled) {
+					if err := store.validateReadyOwner(ctx, PendingPublication{Selection: &ReadySelection{}}, nil); !errors.Is(err, context.Canceled) {
 						t.Fatal("ready owner ignored invocation cancellation", err)
 					}
 					if _, _, _, err := store.stagedContext(ctx, "missing-session"); !errors.Is(err, context.Canceled) {

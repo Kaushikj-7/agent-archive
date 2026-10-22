@@ -239,7 +239,11 @@ are filter-derived text stored in the bucket, not a separate redaction pass.
 
   Change the mode in setup. The change limits subsequent uploads, including
   pending work rebuilt under the new mode, but does not remove copies already
-  on disk or in the bucket. Older source objects can remain after replacement;
+  on disk or in the bucket. Pending work that has not been uploaded keeps the
+  evidence its oldest unuploaded capture was allowed: narrowing and then
+  widening the mode again before upload restores that evidence, never more
+  than the mode it was captured under. Once a narrower upload completes, the
+  removed evidence is not restored from older pending copies. Older source objects can remain after replacement;
   [bucket layout](../reference/bucket-layout.md) describes their lifetime.
 - **Metadata**: the machine ID of the machine that captured it (random, made at
   setup), a project ID (a hash of the project's path, not the path itself),
@@ -721,12 +725,27 @@ content. Search does not send that text to a new service: explicit refresh and
 exact-reference context reads use the configured archive provider and existing
 checksum/ownership verification. Cached queries make no archive requests.
 
+After you decline indexing, a search on a terminal with no local index searches
+the bucket directly. It downloads the verified source bundles of sessions in
+scope from the configured provider, newest first, through the same checksum,
+ownership, parser visibility and privacy-version rules as refresh, and like
+refresh rechecks each session's current metadata before keeping its text, so
+a session deleted since the listing is not searched. Text is
+matched in an in-memory SQLite database that is never written to disk, and only
+matching sessions' passages are held until the command exits; no conversation
+text is kept under `AGENT_ARCHIVE_HOME/search/`. Listing sessions uses the
+existing metadata-only cache that `list` and `show` use, which holds session
+titles (previews of the first prompt), so the warning says so. Each direct search downloads the
+sources again, which your provider may bill.
+
 Coverage reports the last local observation. A remote deletion or stricter
 privacy policy cannot be known until observed by explicit refresh or the opted-in
 periodic worker; context reads
 verify the exact retained reference and never substitute a newer source. Unknown
-privacy provenance is not searchable. No automatic indexing job is installed by
-search commands, and an existing index is not consent to automatic indexing.
+privacy provenance is not searchable. Search installs the automatic indexing job
+only after you answer Yes to its one-time question on a terminal; that answer goes
+through the same setup step as `setup --yes --search-indexing on`. An existing
+index is not consent to automatic indexing.
 Explicit refresh is allowed while capture is paused.
 
 `search --refresh --rebuild` atomically discards searchable derived state and
@@ -740,7 +759,8 @@ this does not delete archived sources. See [search](../guides/search.md) and
 ### Optional background search indexing
 
 Automatic search indexing is a machine-local opt-in, off by default. Pairing,
-refresh and upgrade do not opt in. Enabling installs an independent search job;
+refresh and upgrade do not opt in. Interactive search asks once, before the
+first local index exists; a No is saved and not asked again. Enabling installs an independent search job;
 it reads retained archive metadata and verified source bundles into the private
 local content index under the same extraction/privacy rules as explicit refresh.
 Collection sends at most 256 content-free harness/session candidates per batch,

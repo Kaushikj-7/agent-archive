@@ -148,46 +148,72 @@ in [Local session identity and recovery](../reference/session-identity.md).
 
 ```sh
 agent-archive status
+agent-archive status --issues
 agent-archive status claude
 agent-archive status --verbose
 agent-archive status --json
 ```
 
-Status uses local evidence and a read-only check of the scheduler (launchd, or on Linux the systemd user manager); it never downloads
-conversations. It leads with the overall state and, unless that is Ready,
-the one thing to fix, with each command to run on its own line:
+Default status reads a small saved summary and checks whether the background job
+and collector are alive. It does not enumerate sessions, parse transcripts,
+discover applications, load credentials or contact storage. It prints directly,
+without a pager; the scheduler check has a 150 ms budget. The target for complete
+command startup and output is under 500 ms on local storage, independent of archive
+size. Detailed views intentionally read history and can take longer.
 
 ```text
-Agent Archive  ● Needs attention
+Agent Archive  Working
 
-  ! The last sync failed: storage refused access
-    Check storage access and run agent-archive sync.
-    To change credentials, run agent-archive setup and choose storage.
+   Background   On · idle between checks
+   Last check   Completed 1 minute ago
+   Uploads      Last succeeded 2 minutes ago
+   Queue        0 pending at last check
 
-Capture
-  ✓ Claude Code 2.1.283       hooks installed   212 sessions (+40 subagents) · 200 archived (1 verified) · 48 imported · 3 uploading
-      ~/agent-archive   started 11:12   waiting for its first upload
-      ~/agent-archive   started 11:04
-      ~/styleprofile    started 09:24
-    · 17 sessions have capture gaps
-  ✓ Cursor 3.21.13            hooks installed   14 sessions · 14 archived (14 verified) · 27 imported · 1 uploading
-      ~/personal_website   started 11:40
-  ! Codex 0.155.0-alpha.9.2   hooks installed   no sessions yet
-    Approve the archive hooks with /hooks in Codex.
+Detected agents
+   Codex         Archiving enabled   detected 2 days ago
+   Claude Code   Archiving enabled   detected 2 days ago
+   Cursor        Archiving off       detected 2 days ago
 
-Storage
-  ! r2://agent-archive/agent-archive/   refused access on the last pass · uploaded 2 minutes ago
-  ✓ Background collector on             last scan 1 minute ago
-  ! Bucket privacy not verified         R2 object credentials can't inspect it; see https://developers.cloudflare.com/r2/buckets/public-buckets/
-
-More: agent-archive status --verbose · agent-archive status claude
+agent-archive status --issues
+agent-archive status --verbose
 ```
+
+**Working** means an ordinary collection completed recently, with no recorded
+failure, and the background job is available. **Processing** requires a held
+collector lock and a live process; phase and processed counts appear when that
+process has saved progress. The collector updates progress at phase changes and
+at most every five seconds while completing sessions. A phase's age describes the
+last report, not proof that an individual upload is advancing.
+
+**Status unavailable** means current health cannot be confirmed: a summary is
+missing, incompatible, from a changed configuration, over five minutes old, or
+the scheduler did not answer in time. Status never falls back to scanning history.
+The first ordinary collection after upgrading creates the summary. If necessary,
+run `agent-archive sync`; status itself does not start collection. Queue and upload
+figures describe the last recorded check, rather than work arriving since then.
+**Needs attention** names one recorded failure or a broken background job.
+Under the problem, status prints the command that fixes it when one does:
+`agent-archive setup` for a job that is not scheduled,
+`agent-archive setup --refresh` for a missing installed
+executable, and `agent-archive sync` for a missing or old summary or failed
+storage access. Otherwise it prints `agent-archive status --issues`.
+
+**Detected agents** uses setup's saved observations, including agents with
+archiving off. It shows the detection age. An enabled agent without a usable
+observation says **detection unavailable**. Detection and enablement do not prove
+that an agent has captured or uploaded a session; `status APP` shows that evidence.
+
+`status --issues` opens the separate view of failures, capture gaps, unreadable
+local state and recovery steps. `status --verbose` and `status APP` retain the
+full capture and storage evidence described below. `status --json` retains its
+version-4 detailed document for existing consumers. Detailed text views use
+`$PAGER` on a terminal unless `--no-pager` is given.
 
 **Capture** has a row per app with its version, capture method, and session
 counts. For Codex with automatic discovery enabled, the main row says
 **automatic capture** and names the selected project scope. Waiting or unknown
 capture states remain visible. Optional hooks do not add a setup step to the
-normal status screen. If discovery is unavailable but all published automatic
+detailed status screen. If discovery is unavailable but all published automatic
 sessions have recorded read-back verification, the row says **discovery unknown;
 archive verified at recorded time**. That verification describes the recorded
 publication; restore source access and run `agent-archive sync` to check current
@@ -216,10 +242,10 @@ in the week before discovery was enabled and are not archived, with the
 **Hooks installed** means the hook configuration is present, not that the
 hooks have run or been approved. `status --verbose` reports hook execution
 as observed or not yet observed, separately from hook trust. Codex hook approval
-instructions remain visible in normal status when discovery is disabled and
+instructions remain visible in detailed status when discovery is disabled and
 hook execution has not been observed. With discovery enabled, optional hook
 information, scan counts, and source format diagnostics are available in
-verbose output. Skipped scan observations still show a warning in normal status.
+verbose output. Skipped scan observations still show a warning in detailed status.
 
 **Storage** has a row each for the
 destination with the last upload (! when the last pass failed on storage),
@@ -271,9 +297,18 @@ stays the same length however many projects you include.
   names the limit, and `agent-archive status APP` lists each such session
   with its size and how to keep capturing the work (continue it in a new
   session; `agent-archive handoff` carries the context there).
-  `agent-archive sync` prints each session's own error,
-  and `status --json` has each session's kind as a code
-  (`collector.session_issues`). When no kind is about storage, status
+  `status --issues` and `status --verbose` group the failed sessions by
+  kind and error, one line per group with the command to run on its own
+  line under it, then a few of the sessions, for example "268 sessions
+  failed to capture or upload: durable publication capacity exhausted; … —
+  for details run" followed by `agent-archive sync`. Groups that need you come first, then
+  those with nothing to do, such as subagents that could not be captured,
+  which count as subagents even though they were never registered. The error shown is
+  one of a fixed set agent-archive recognizes, so it never repeats paths
+  or transcript text; any other error reads "error not recognized", and
+  `agent-archive sync` prints each session's own error. `status --json`
+  has each session's kind as a code (`collector.session_issues`) and its
+  recognized error (`collector.session_issue_reasons`). When no kind is about storage, status
   leads with the most pressing one ("Some sessions could not be captured")
   and its next step instead of **The last sync failed**. When everything
   the last pass recorded needs nothing from you (a subagent that could not
@@ -448,7 +483,7 @@ directory, not to the journal.
   WSL without systemd enabled): there is no user manager to reach, and
   agent-archive has no cron or other fallback, so setup cannot install the
   background job there.
-- **Lingering is off.** `status` has a note under Notes, and `status --json`
+- **Lingering is off.** `status --issues` has a note, and `status --json`
   has it in `background_warnings`: the collector runs while you are logged
   in and stops when you log out. Hooks still record sessions and the next
   pass after you log in uploads them. Run `loginctl enable-linger` to keep it

@@ -286,7 +286,7 @@ func TestNothingToDoProblemsAreNotShownAsFailures(t *testing.T) {
 		if err := store.SaveStatus(status); err != nil {
 			t.Fatal(err)
 		}
-		plain := statusOutput(t, env)
+		plain := statusOutput(t, env, "codex")
 		if !strings.Contains(plain, tc.wantRow) || strings.Contains(plain, "✗") || strings.Contains(plain, "Last error") {
 			t.Errorf("%s: status:\n%s", tc.name, plain)
 		}
@@ -304,7 +304,7 @@ func TestNothingToDoProblemsAreNotShownAsFailures(t *testing.T) {
 	// The headline states the failure, so default status doesn't repeat
 	// it; the size-limit notice beside it is still shown, and --verbose
 	// shows both.
-	plain := statusOutput(t, env)
+	plain := statusOutput(t, env, "codex")
 	if !strings.Contains(plain, "! Some sessions could not be captured\n") || strings.Contains(plain, "Last error: 1 session failed to capture") || !strings.Contains(plain, "stopped being captured at a size limit") {
 		t.Errorf("status with a failure:\n%s", plain)
 	}
@@ -375,7 +375,7 @@ func TestStatusShowsMixedSessionIssues(t *testing.T) {
 		}
 	}
 	summary := "1 session failed to capture or upload — run agent-archive sync for details · 1 session couldn't be removed after the retention period — the next pass retries, or run agent-archive sync for details"
-	if plain := statusOutput(t, env); !strings.Contains(plain, "Last error: "+summary+"\n") {
+	if plain := statusOutput(t, env, "codex"); !strings.Contains(plain, "Last error: "+summary+"\n") {
 		t.Errorf("status:\n%s", plain)
 	}
 	if verbose := statusOutput(t, env, "--verbose"); !strings.Contains(verbose, "  Last error:    "+summary+"\n") {

@@ -560,12 +560,12 @@ func (p *Published) writeWithStaged(next publishedState, staged *PendingPublicat
 				}
 			}
 			path := filepath.Join("published", p.id+".json")
-			sum, n, e := p.store.writeDurableGuardDigestChecked(p.store.durableContext(), storage, path, next, guard)
+			sum, n, e := p.store.writeDurableGuardDigestChecked(p.store.durableContext(), storage, path, next, guard, publishedCharge(next, 2, durableStorageQuota))
 			if e != nil {
 				return e
 			}
 			savedDigest = sum
-			candidate, binding, releaseCandidate, e = p.store.savedAccountingCandidate(storage, path, sum, n)
+			candidate, binding, releaseCandidate, e = p.store.savedAccountingCandidate(storage, path, sum, n, publishedCharge(next, 2, n))
 			if e != nil {
 				return e
 			}

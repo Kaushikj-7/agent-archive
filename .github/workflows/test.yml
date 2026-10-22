@@ -33,7 +33,7 @@ jobs:
         run: python3 -B scripts/ci_worker_topology.py --output "$RUNNER_TEMP/worker-topology.json"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
       - name: Set controlled compilation/module paths
         shell: bash
@@ -42,7 +42,7 @@ jobs:
       - name: Restore verified trusted-main compilation seed
         uses: ./.github/actions/verified-go-cache
       - name: Require exact Go version
-        run: go version | grep -q ' go1\.27\.2 '
+        run: go version | grep -q ' go1\.27\.3 '
       - name: Actual plain whole-source audit body
         run: python3 -B scripts/run_ci_tier.py --tier pr --suite audit --own-plain-vet --seconds 780 --output source-audit-results
       - name: Preserve exact-source plain audit evidence
@@ -90,12 +90,12 @@ jobs:
       # go.mod's toolchain line; the next step checks that.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
-      - name: Require Go 1.27.2 (go.mod's toolchain line)
+      - name: Require Go 1.27.3 (go.mod's toolchain line)
         run: |
           go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+          go version | grep -q ' go1\.27\.3 ' || { echo "expected go1.27.3, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Prepare exact-source PR worker cache identity
         id: go-cache-key
         run: python3 -B scripts/go_cache_steps.py prepare
@@ -164,7 +164,7 @@ jobs:
     # PR extras are distinct from the exhaustive representative shards.
     # Focused protocol regressions exercise the real manager for scheduler PRs.
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -185,7 +185,7 @@ jobs:
       - if: github.event_name != 'pull_request' || steps.plan.outputs.linux == 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
       - name: Start real manager for required platform extra coverage
         if: github.event_name == 'pull_request' && steps.plan.outputs.systemd == 'true'
@@ -196,7 +196,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           FULL_LINUX: ${{ steps.plan.outputs.linux }}
         run: |
-          if [ "$EVENT" != pull_request ] || [ "$FULL_LINUX" = true ]; then go version | grep -q ' go1\.27\.2 '; fi
+          if [ "$EVENT" != pull_request ] || [ "$FULL_LINUX" = true ]; then go version | grep -q ' go1\.27\.3 '; fi
           if [ "$EVENT" = pull_request ]; then
             python3 scripts/run_ci_tier.py --tier pr --suite extra --extra-plan "$RUNNER_TEMP/tier-plan/extra-plan.json" --output tier-results --seconds 3300
           else
@@ -494,7 +494,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
       - name: Set controlled compilation/module paths
         shell: bash
@@ -536,7 +536,7 @@ jobs:
         run: python3 -B scripts/run_ci_tier.py --plan --require-pr-proof --output "$RUNNER_TEMP/tier-plan/extra-plan.json"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
       - name: Set controlled compilation/module paths
         shell: bash
@@ -549,10 +549,10 @@ jobs:
         env:
           NATIVE_CACHE_STATE: ${{ steps.native_cache.outputs.restore-state }}
         run: python3 -B scripts/native_smoke_reference.py observe --output native-tier-results/cache-observation.json
-      - name: Require Go 1.27.2 (go.mod's toolchain line)
+      - name: Require Go 1.27.3 (go.mod's toolchain line)
         run: |
           go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+          go version | grep -q ' go1\.27\.3 ' || { echo "expected go1.27.3, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Native production build, smoke and targeted sensitive regressions
         env:
           EVENT: ${{ github.event_name }}
@@ -584,7 +584,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
       - name: Set controlled compilation/module paths
         shell: bash
@@ -592,10 +592,10 @@ jobs:
           printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
         uses: ./.github/actions/verified-go-cache
-      - name: Require Go 1.27.2 (go.mod's toolchain line)
+      - name: Require Go 1.27.3 (go.mod's toolchain line)
         run: |
           go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+          go version | grep -q ' go1\.27\.3 ' || { echo "expected go1.27.3, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Build and vet linux/arm64
         env:
           GOOS: linux
@@ -619,7 +619,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
       - name: Set controlled compilation/module paths
         shell: bash
@@ -627,10 +627,10 @@ jobs:
           printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
         uses: ./.github/actions/verified-go-cache
-      - name: Require Go 1.27.2 (go.mod's toolchain line)
+      - name: Require Go 1.27.3 (go.mod's toolchain line)
         run: |
           go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+          go version | grep -q ' go1\.27\.3 ' || { echo "expected go1.27.3, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Vet darwin without cgo
         env:
           GOOS: darwin
@@ -652,7 +652,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
       - name: Set controlled compilation/module paths
         shell: bash
@@ -660,10 +660,10 @@ jobs:
           printf 'GOCACHE=%s/pr-go-build\nGOMODCACHE=%s/pr-go-modules\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Restore verified trusted-main compilation seed
         uses: ./.github/actions/verified-go-cache
-      - name: Require Go 1.27.2 (go.mod's toolchain line)
+      - name: Require Go 1.27.3 (go.mod's toolchain line)
         run: |
           go version
-          go version | grep -q ' go1\.27\.2 ' || { echo "expected go1.27.2, matching go.mod's toolchain line" >&2; exit 1; }
+          go version | grep -q ' go1\.27\.3 ' || { echo "expected go1.27.3, matching go.mod's toolchain line" >&2; exit 1; }
       - name: Build and check the release's Linux binaries
         env:
           VERSION: v0.0.0-ci
@@ -705,7 +705,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache: false
       - name: Set controlled compilation/module paths
         shell: bash

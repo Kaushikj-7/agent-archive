@@ -67,7 +67,7 @@ func TestStatusAttributesClaudeRecordVersionToVerifiedCapture(t *testing.T) {
 		t.Fatalf("%+v %v", view.Apps[0], err)
 	}
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "Sessions verified so far came from a different Claude Code version.") {
+	if code := runStatusCommand([]string{"--verbose"}, &out, &out, env); code != 0 || !strings.Contains(out.String(), "Sessions verified so far came from a different Claude Code version.") {
 		t.Fatalf("exit %d: %s", code, out.String())
 	}
 }
@@ -96,7 +96,7 @@ func TestStatusSurvivesCorruptApplicationVersions(t *testing.T) {
 		t.Fatalf("%+v", app)
 	}
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "! Installed versions could not be read") {
+	if code := runStatusCommand([]string{"--verbose"}, &out, &out, env); code != 0 || !strings.Contains(out.String(), "! Installed versions could not be read") {
 		t.Fatalf("exit %d: %s", code, out.String())
 	}
 }

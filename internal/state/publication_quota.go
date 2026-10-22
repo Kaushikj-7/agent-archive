@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"io"
 	"os"
@@ -13,39 +14,71 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-// publishedProtocol classifies existing physical state under the held root.
-// Classification only accounts bytes; it supplies no source or deletion authority.
-func (q *durableQuota) publishedProtocol(ctx context.Context, path string, expected os.FileInfo) (mode int, err error) {
+// publishedProtocol classifies existing physical state under the held root,
+// returning its mode and the bytes it counts against the quota (see
+// publishedCharge). Classification only accounts bytes; it supplies no source
+// or deletion authority.
+func (q *durableQuota) publishedProtocol(ctx context.Context, path string, expected os.FileInfo) (mode int, charged int64, err error) {
 	if err = ctx.Err(); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if err = q.guard.CheckHome(q.path); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	if reused, ok, e := q.accountingClassification(path, expected); e != nil {
-		return 0, e
+	if reused, reusedCharge, ok, e := q.accountingClassification(path, expected); e != nil {
+		return 0, 0, e
 	} else if ok {
-		return reused, nil
+		return reused, reusedCharge, nil
 	}
-	mode, _, err = q.store.readPublishedClassification(ctx, q.home, path, expected)
+	mode, charged, _, err = q.store.readPublishedClassification(ctx, q.home, path, expected)
 	if e := q.guard.CheckHome(q.path); e != nil {
-		return 0, errors.Join(err, e)
+		return 0, 0, errors.Join(err, e)
 	}
-	return mode, err
+	return mode, charged, err
 }
 
-func (s *Store) readPublishedClassification(ctx context.Context, home *local.RootedHome, path string, expected os.FileInfo) (mode int, sum [32]byte, err error) {
+func (s *Store) readPublishedClassification(ctx context.Context, home *local.RootedHome, path string, expected os.FileInfo) (mode int, charged int64, sum [32]byte, err error) {
 	var p publishedState
 	sum, release, err := s.readPublishedDecoded(ctx, home, path, expected, &p)
 	defer release()
 	if err != nil {
-		return 0, sum, err
+		return 0, 0, sum, err
 	}
 	mode = publishedAccountingMode(p)
 	if mode == 0 {
-		return 0, sum, ErrDurableStorageRecovery
+		return 0, 0, sum, ErrDurableStorageRecovery
 	}
-	return mode, sum, nil
+	return mode, publishedCharge(p, mode, expected.Size()), sum, nil
+}
+
+// publishedCharge is what a classified published file counts against the
+// durable quota, before the double charge for atomic replacement. A mode-1
+// file is uncharged published cache. A mode-2 (source-set) file is charged
+// only for the source bytes it still holds inline: its cached bundle is the
+// same published cache every other version keeps outside the quota, and
+// settled states release their inline bytes (releaseSettledInline), so
+// charging the whole file would let ordinary history fill the quota and
+// refuse every later publication.
+func publishedCharge(p publishedState, mode int, size int64) int64 {
+	if mode != 2 {
+		return 0
+	}
+	var n int64
+	retained := func(payload PublicationPayload) {
+		if !payload.Released && len(payload.Inline) > 0 {
+			// Charged as encoded on disk.
+			n += int64(base64.StdEncoding.EncodedLen(len(payload.Inline)))
+		}
+	}
+	for _, source := range p.Payloads {
+		retained(source.Payload)
+	}
+	if p.Preparation != nil {
+		for _, input := range p.Preparation.Inputs {
+			retained(input.Payload)
+		}
+	}
+	return min(n, size)
 }
 
 func publishedAccountingMode(p publishedState) int {
@@ -187,9 +220,11 @@ func (q *durableQuota) scanPublished(ctx context.Context, remaining *int, u *dur
 			}
 			path := filepath.Join("published", entry.Name())
 			supportedName := !strings.HasPrefix(entry.Name(), ".pending-") && strings.HasSuffix(entry.Name(), ".json") && safeFileComponent(strings.TrimSuffix(entry.Name(), ".json"))
+			charged := info.Size()
 			if supportedName {
-				version, e := q.publishedProtocol(ctx, path, info)
+				version, c, e := q.publishedProtocol(ctx, path, info)
 				if e != nil {
+					c = info.Size()
 					version, e = q.unreadablePublishedCharge(ctx, path, info, e)
 					if e != nil {
 						return e
@@ -198,14 +233,15 @@ func (q *durableQuota) scanPublished(ctx context.Context, remaining *int, u *dur
 				if version == 1 {
 					continue
 				}
+				charged = c
 			} else {
 				u.recovery = true
 			}
-			if info.Size() > (durableStorageQuota-u.charged)/2 {
+			if charged > (durableStorageQuota-u.charged)/2 {
 				return ErrDurableStorageCapacity
 			}
 			u.physical += info.Size()
-			u.charged += 2 * info.Size()
+			u.charged += 2 * charged
 		}
 		if errors.Is(e, io.EOF) {
 			return nil
@@ -213,7 +249,18 @@ func (q *durableQuota) scanPublished(ctx context.Context, remaining *int, u *dur
 	}
 }
 
-func (q *durableQuota) publishedAdditional(ctx context.Context, path string, old os.FileInfo, n int64) (int64, error) {
+// chargedInFull is the at-rest charge of a new file that counts its whole size.
+const chargedInFull int64 = -1
+
+// publishedAdditional is the quota growth for replacing published path (old,
+// or nil when absent) with n bytes that will count charge at rest. A file
+// charged in full needs room for its own double charge and for the old file
+// beside it until the rename. Settled published state (charge >= 0) is cache
+// outside the quota apart from its charge, so it needs only the transient copy,
+// covered first by the old file's atomic-copy allowance, and its new charge.
+// A copy left by an interrupted write holds the census in recovery until it
+// is swept, whatever was reserved for it.
+func (q *durableQuota) publishedAdditional(ctx context.Context, path string, old os.FileInfo, n, charge int64) (int64, error) {
 	if n < 0 || n > durableStorageQuota/2 {
 		return 0, ErrDurableStorageCapacity
 	}
@@ -223,16 +270,18 @@ func (q *durableQuota) publishedAdditional(ctx context.Context, path string, old
 		if o < 0 || o > durableStorageQuota {
 			return 0, ErrDurableStorageCapacity
 		}
-		version, err := q.publishedProtocol(ctx, path, old)
+		// Credit exactly what scanPublished charged the old file.
+		_, charged, err := q.publishedProtocol(ctx, path, old)
 		if err != nil {
 			return 0, err
 		}
-		if version == 2 {
-			c = 2 * o
-		}
+		c = 2 * charged
 	}
 	// n <= Q/2 and o <= Q: these expressions cannot overflow int64.
-	return max(int64(0), o+n-c, 2*n-c), nil
+	if charge < 0 {
+		return max(int64(0), o+n-c, 2*n-c), nil
+	}
+	return max(int64(0), n-c/2, 2*min(charge, n)-c), nil
 }
 
 func legacyBlockedPublicationControl(p publishedState) bool {

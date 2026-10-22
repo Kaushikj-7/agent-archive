@@ -1,0 +1,778 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/search"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+)
+
+// directReads is every key recorded as read so far.
+func (s *recordingStore) directReads() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.gets)
+}
+
+// directSession is one synthetic session a direct-search fixture publishes.
+type directSession struct {
+	native  string
+	project int
+	text    string
+}
+
+// directSearchFixture publishes sessions in order, an hour apart (so the last
+// is newest), across two configured projects, with indexing declined and no
+// local index. It returns each session's archive ID and source key.
+func directSearchFixture(t *testing.T, sessions []directSession) (Env, *recordingStore, []string, []string) {
+	t.Helper()
+	home := t.TempDir()
+	projects := [2]string{t.TempDir(), t.TempDir()}
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	must(t, os.Chmod(home, 0700))
+	cfg := config.Config{MachineID: "machine-1", Storage: credentialsTestConfig(), SearchIndexingDeclined: true, Archive: archive.Config{SchemaVersion: 1, MachineID: "machine-1", Enabled: true}}
+	for _, root := range projects {
+		cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{ProjectID: archive.ProjectID(root), Root: root, Included: true, ActivatedAt: start})
+	}
+	must(t, config.Save(home, cfg))
+	mem := storagetest.NewMemoryStore()
+	objects := &recordingStore{ObjectStore: mem}
+	var ids, sources []string
+	for i, s := range sessions {
+		at := start.Add(time.Duration(i+1) * time.Hour)
+		dir := t.TempDir()
+		transcript := filepath.Join(dir, "codex.jsonl")
+		record, err := json.Marshal(map[string]any{"type": "response_item", "id": "m1", "payload": map[string]any{"type": "message", "role": "assistant", "content": s.text}})
+		must(t, err)
+		must(t, os.WriteFile(transcript, append([]byte("{\"type\":\"turn_context\",\"model\":\"gpt-test\"}\n"), record...), 0600))
+		payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": s.native, "cwd": projects[s.project], "transcript_path": transcript}
+		must(t, handleTestHookEvent(home, "codex", payload, at))
+		env := testEnv(t, home, at)
+		env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return mem, nil }
+		var out, errOut bytes.Buffer
+		if code := runSyncCommand(nil, &out, &errOut, env); code != 0 {
+			t.Fatalf("sync %s: %d %s", s.native, code, &errOut)
+		}
+		local, err := state.Open(home)
+		must(t, err)
+		regs, err := local.LoadRegistrations()
+		must(t, err)
+		for _, reg := range regs {
+			if reg.NativeSessionID == s.native {
+				ids = append(ids, reg.ArchiveSessionID)
+			}
+		}
+		if len(ids) != i+1 {
+			t.Fatalf("registration of %s missing: %+v", s.native, regs)
+		}
+		key, err := archive.MetadataObjectKey("codex", ids[i])
+		must(t, err)
+		data, err := mem.Get(t.Context(), key)
+		must(t, err)
+		var metadata archive.Metadata
+		must(t, json.Unmarshal(data, &metadata))
+		sources = append(sources, metadata.SourceBundle.Key)
+	}
+	env := testEnv(t, home, start.Add(time.Duration(len(sessions)+1)*time.Hour))
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return objects, nil }
+	env.WorkingDir = func() (string, error) { return projects[0], nil }
+	env.directSearchPause = func() time.Duration { return time.Hour }
+	return env, objects, ids, sources
+}
+
+// assertNoSearchIndex fails when anything was written under the search
+// directory: a direct search keeps no text on this machine.
+func assertNoSearchIndex(t *testing.T, env Env) {
+	t.Helper()
+	home, err := env.readHome()
+	must(t, err)
+	entries, err := os.ReadDir(filepath.Join(home, "search"))
+	if err == nil && len(entries) > 0 || err != nil && !os.IsNotExist(err) {
+		t.Fatalf("direct search wrote %v %v", entries, err)
+	}
+}
+
+func TestDeclinedIndexingSearchesTheBucketNewestFirst(t *testing.T) {
+	t.Parallel()
+	env, objects, ids, _ := directSearchFixture(t, []directSession{
+		{"native-old", 0, "checksum mismatch in the old upload"},
+		{"native-other", 1, "nothing to see"},
+		{"native-new", 0, "a newer checksum failure"},
+	})
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 0 {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	for _, want := range []string{
+		"! Without an index, search reads your S3 bucket, newest first, pausing after 60 minutes.\n" +
+			"  It caches metadata such as titles, not conversation text.\n" +
+			"  Searching all 3 sessions takes about a minute. To search instantly, run:\n" +
+			"  agent-archive setup --yes --search-indexing on\n",
+		"Searched all 3 sessions · 2 matching sessions",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	newer, older := strings.Index(out, shortSessionID(ids[2])+"  1 match"), strings.Index(out, shortSessionID(ids[0])+"  1 match")
+	if newer < 0 || older < 0 || newer > older {
+		t.Fatalf("matches not printed newest first (%d, %d):\n%s", newer, older, out)
+	}
+	if strings.Contains(out, shortSessionID(ids[1])+"  ") {
+		t.Fatalf("printed a session that does not match:\n%s", out)
+	}
+	if !strings.Contains(out, "checksum") || strings.Contains(out, "No search index yet") || strings.Contains(out, "search --refresh") {
+		t.Fatalf("results browser did not open over what was found:\n%s", out)
+	}
+	if len(objects.directReads()) == 0 {
+		t.Fatal("searched without reading the bucket")
+	}
+	assertNoSearchIndex(t, env)
+}
+
+func TestDirectSearchPausesAndNarrowsBeforeDownloadingOtherProjects(t *testing.T) {
+	t.Parallel()
+	env, objects, ids, sources := directSearchFixture(t, []directSession{
+		{"native-a-old", 0, "checksum in project a"},
+		{"native-b", 1, "checksum in project b"},
+		{"native-a-new", 0, "checksum again in project a"},
+	})
+	env.directSearchPause = func() time.Duration { return 0 }
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "2\n", "search", "checksum")
+	if code != 0 {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	for _, want := range []string{"Searched the newest 1 of 3 sessions · 1 matching session", "Keep searching the bucket?", "1) Keep going", "(2 sessions)", "Show the results so far", "Searched all 2 sessions · 2 matching sessions"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if slices.Contains(objects.directReads(), sources[1]) {
+		t.Fatalf("downloaded the other project's source after narrowing: %v", objects.directReads())
+	}
+	for _, i := range []int{0, 2} {
+		if !slices.Contains(objects.directReads(), sources[i]) {
+			t.Fatalf("did not read %s: %v", ids[i], objects.directReads())
+		}
+	}
+	assertNoSearchIndex(t, env)
+}
+
+func TestDirectSearchStopAtPauseEndsWithoutResults(t *testing.T) {
+	t.Parallel()
+	env, _, _, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}, {"native-2", 0, "checksum two"}})
+	env.directSearchPause = func() time.Duration { return 0 }
+	out, errOut, code := runOnTerminal(t, env, nil, "4\n", "search", "checksum")
+	if code != 0 || !strings.Contains(out, "Searched the newest 1 of 2 sessions") || strings.Contains(out, "Searched all") {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+}
+
+// stallingStore never finishes reading the named keys: a read of one waits
+// until its context ends, as a stalled download would.
+type stallingStore struct {
+	storage.ObjectStore
+	stall []string
+}
+
+func (s stallingStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if slices.Contains(s.stall, key) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return s.ObjectStore.Get(ctx, key)
+}
+
+func (s stallingStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if slices.Contains(s.stall, key) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return s.ObjectStore.(storage.LimitedGetter).GetLimited(ctx, key, limit)
+}
+
+func TestDirectSearchEscStopsADownloadInProgress(t *testing.T) {
+	t.Parallel()
+	env, objects, _, sources := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}, {"native-2", 0, "checksum two"}})
+	stalled := stallingStore{ObjectStore: objects.ObjectStore, stall: sources}
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return stalled, nil }
+	// No key while the bucket is listed; Esc once the sessions are read.
+	var opened atomic.Int32
+	env.openKeys = func(io.Reader) (keyTerminal, bool) {
+		if opened.Add(1) == 1 {
+			return newFakeKeys(), true
+		}
+		return newFakeKeys(later(0, "\x1b")), true
+	}
+	out, errOut, code := runOnTerminal(t, env, nil, "", "search", "checksum")
+	if code != 0 || !strings.Contains(out, "Stopped before searching any of the 2 sessions") || strings.Contains(out, "Searched all") {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	assertNoSearchIndex(t, env)
+}
+
+// stalledListing never finishes listing: a list waits until its context
+// ends, as a slow listing of a large bucket would.
+type stalledListing struct{ storage.ObjectStore }
+
+func (s stalledListing) List(ctx context.Context, _ string) ([]storage.Object, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestDirectSearchEscStopsTheListing(t *testing.T) {
+	t.Parallel()
+	env, objects, _, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}})
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return stalledListing{objects.ObjectStore}, nil }
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys(later(0, "\x1b")), "", "search", "checksum")
+	if code != 0 || !strings.Contains(out, "Stopped while listing the bucket") || strings.Contains(out, "Without an index") || errOut != "" {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	assertNoSearchIndex(t, env)
+}
+
+func TestDirectSearchNeverRunsForJSONOrWithAnIndex(t *testing.T) {
+	t.Parallel()
+	env, objects, _, sources := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}})
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"search", "checksum", "--json"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("json %d %s", code, &errOut)
+	}
+	if strings.Contains(out.String(), "Without an index") || slices.Contains(objects.directReads(), sources[0]) {
+		t.Fatalf("JSON searched the bucket: %s %v", &out, objects.directReads())
+	}
+	piped, _, code := runOnTerminal(t, env, nil, "", "search", "checksum", "--json")
+	if code != 0 || strings.Contains(piped, "Without an index") {
+		t.Fatalf("terminal JSON searched the bucket: %d %s", code, piped)
+	}
+	out.Reset()
+	indexing := env
+	indexing.OpenStore = func(config.Config) (storage.ObjectStore, error) { return objects.ObjectStore, nil }
+	if code := Run([]string{"search", "--refresh"}, nil, &out, &errOut, indexing); code != 0 {
+		t.Fatalf("refresh %d %s", code, &errOut)
+	}
+	terminalOut, errText, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 0 || strings.Contains(terminalOut, "Without an index") {
+		t.Fatalf("searched the bucket with an index present: %d %s %s", code, errText, terminalOut)
+	}
+}
+
+// An index whose first creation was interrupted (a schema-zero file) is no
+// index: the search still reads the bucket.
+func TestDirectSearchOverAnInterruptedIndex(t *testing.T) {
+	t.Parallel()
+	env, _, ids, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}})
+	home, err := env.readHome()
+	must(t, err)
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	_, dir := contentSearchLocation(home, cfg)
+	must(t, os.MkdirAll(dir, 0o700))
+	must(t, os.WriteFile(filepath.Join(dir, "content.sqlite"), nil, 0o600))
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 0 || !strings.Contains(out, "Without an index") || !strings.Contains(out, shortSessionID(ids[0])+"  1 match") {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+}
+
+// A machine that turned indexing on and later off has lifecycle protection
+// but no declined flag; that earlier off still means search the bucket.
+func TestDirectSearchAfterIndexingWasTurnedOff(t *testing.T) {
+	t.Parallel()
+	env, _, ids, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}})
+	home, err := env.readHome()
+	must(t, err)
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	cfg.SearchIndexingDeclined, cfg.SearchLifecycleProtection = false, true
+	must(t, config.Save(home, cfg))
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 0 || strings.Contains(out, "Build the search index") || !strings.Contains(out, "Without an index") || !strings.Contains(out, shortSessionID(ids[0])+"  1 match") {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	assertNoSearchIndex(t, env)
+}
+
+func TestDirectSearchFiltersMetadataLikeTheIndex(t *testing.T) {
+	t.Parallel()
+	day := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	base := archive.Metadata{SessionID: "s", ProjectID: "p", Harness: archive.Harness{Name: "codex"}, CapturedAt: day}
+	child, replay, other := base, base, base
+	child.ParentSessionID = "parent"
+	replay.Replay = &archive.Replay{}
+	other.ProjectID = "elsewhere"
+	all := sessionScope{All: true}
+	project := sessionScope{Label: "p", Dir: "/p", ProjectIDs: []string{"p"}}
+	for name, c := range map[string]struct {
+		m     archive.Metadata
+		q     search.Query
+		scope sessionScope
+		want  bool
+	}{
+		"plain":               {base, search.Query{Replay: search.Hide, Children: search.Hide}, all, true},
+		"other harness":       {base, search.Query{Harness: "claude"}, all, false},
+		"before since":        {base, search.Query{From: day.Add(time.Hour)}, all, false},
+		"after until":         {base, search.Query{To: day.Add(-time.Hour)}, all, false},
+		"hidden child":        {child, search.Query{Children: search.Hide}, all, false},
+		"only children":       {base, search.Query{Children: search.Only}, all, false},
+		"included child":      {child, search.Query{}, all, true},
+		"hidden replay":       {replay, search.Query{Replay: search.Hide}, all, false},
+		"only replays":        {replay, search.Query{Replay: search.Only}, all, true},
+		"in project":          {base, search.Query{}, project, true},
+		"outside the project": {other, search.Query{}, project, false},
+	} {
+		if got := directSearchCandidate(c.m, c.q, c.scope); got != c.want {
+			t.Errorf("%s: %v, want %v", name, got, c.want)
+		}
+	}
+	for n, want := range map[int]string{0: "0", 999: "999", 2350: "2,350", 1234567: "1,234,567"} {
+		if got := countText(n); got != want {
+			t.Errorf("countText(%d) = %q", n, got)
+		}
+	}
+	for minutes, want := range map[int]string{1: "about a minute", 5: "about 5 minutes", 47: "about 47 minutes", 60: "about an hour", 180: "about 3 hours"} {
+		if got := aboutMinutes(minutes); got != want {
+			t.Errorf("aboutMinutes(%d) = %q", minutes, got)
+		}
+	}
+}
+
+func TestDirectSearchNarrowingCountsOnlyTheProject(t *testing.T) {
+	t.Parallel()
+	// The other project's session is the newest, so it is searched, and
+	// matches, before the pause narrows to the working directory's project.
+	env, _, ids, _ := directSearchFixture(t, []directSession{
+		{"native-a-old", 0, "checksum in project a"},
+		{"native-a-new", 0, "checksum again in project a"},
+		{"native-b", 1, "checksum in project b"},
+	})
+	env.directSearchPause = func() time.Duration { return 0 }
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "2\n1\n", "search", "checksum")
+	if code != 0 {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	for _, want := range []string{"Searched the newest 1 of 3 sessions · 1 matching session", "(2 sessions)", "Searched all 2 sessions · 2 matching sessions"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, shortSessionID(ids[2])+"  1 match") {
+		t.Fatalf("the other project's match was not printed as found:\n%s", out)
+	}
+}
+
+// Once matching sessions fill the memory a direct search may keep, it stops
+// and shows what it found instead of reading on.
+func TestDirectSearchStopsWhenMatchesFillItsMemory(t *testing.T) {
+	t.Parallel()
+	env, objects, ids, _ := directSearchFixture(t, []directSession{
+		{"native-old", 0, "checksum in the oldest"},
+		{"native-miss", 0, "nothing relevant"},
+		{"native-new", 0, "checksum in the newest"},
+	})
+	env.directSearchMemory = 1
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 0 {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	for _, want := range []string{
+		"Stopped after the newest 1 of 3 sessions · 1 matching session",
+		"! Matches filled the memory a search without an index may use.\n  Search for more specific words, or to search every session, run:\n  agent-archive setup --yes --search-indexing on\n",
+		shortSessionID(ids[2]) + "  1 match",
+		"Searched the newest 1 of 3 sessions in the bucket",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	// Sessions downloaded ahead may have been read, but none past the
+	// newest is matched, shown or kept.
+	if strings.Contains(out, shortSessionID(ids[0])) {
+		t.Fatalf("matched on after memory was full:\n%s", out)
+	}
+	assertNoSearchIndex(t, env)
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	slices.SortFunc(listed, func(a, b archive.Metadata) int { return b.CapturedAt.Compare(a.CapturedAt) })
+	index, err := search.OpenMemory(t.Context(), "test/context")
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, memory: 1, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}}
+	if why, err := scan.run(t.Context(), make(chan directMatch, len(listed))); why != directScanFull || err != nil {
+		t.Fatalf("%s %v", why, err)
+	}
+	if searched, _ := scan.counts(); searched != 1 {
+		t.Fatalf("searched %d sessions, want only the newest", searched)
+	}
+	if count, err := index.SessionMatches(t.Context(), search.Query{Text: "checksum"}, "codex", ids[0]); err != nil || count != 0 {
+		t.Fatalf("the oldest session kept %d matching passages (%v)", count, err)
+	}
+}
+
+// Esc just after a match is shown ends the stretch as a stop, not as an
+// error from reading how much memory the matches fill.
+func TestDirectSearchEscAfterAMatchStopsCleanly(t *testing.T) {
+	t.Parallel()
+	env, objects, _, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}, {"native-2", 0, "checksum two"}})
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	index, err := search.OpenMemory(t.Context(), "test/context")
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, memory: directSearchMemoryCap, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}, sent: cancel}
+	why, err := scan.run(ctx, make(chan directMatch, len(listed)))
+	if err != nil || why == directScanDone {
+		t.Fatalf("%s %v", why, err)
+	}
+	if searched, matching := scan.counts(); searched != 1 || matching != 1 {
+		t.Fatalf("searched %d, %d matching, want the one shown", searched, matching)
+	}
+}
+
+func TestDirectSearchCountsSessionsThatCouldNotBeRead(t *testing.T) {
+	t.Parallel()
+	env, objects, _, sources := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}, {"native-2", 0, "checksum two"}})
+	must(t, objects.Delete(t.Context(), sources[0]))
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 0 || !strings.Contains(out, "Searched all 2 sessions · 1 matching session · 1 could not be read") {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	assertNoSearchIndex(t, env)
+}
+
+// refusingStore fails every read of the named keys with err, or as a
+// dropped network connection would when err is nil.
+type refusingStore struct {
+	storage.ObjectStore
+	fail []string
+	err  error
+}
+
+func (s refusingStore) failure() error {
+	if s.err != nil {
+		return s.err
+	}
+	return errors.New("dial tcp: connection refused")
+}
+
+func (s refusingStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if slices.Contains(s.fail, key) {
+		return nil, s.failure()
+	}
+	return s.ObjectStore.Get(ctx, key)
+}
+
+func (s refusingStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if slices.Contains(s.fail, key) {
+		return nil, s.failure()
+	}
+	return s.ObjectStore.(storage.LimitedGetter).GetLimited(ctx, key, limit)
+}
+
+func TestDirectSearchStopsWhenSessionsKeepFailingToRead(t *testing.T) {
+	t.Parallel()
+	sessions := make([]directSession, directSearchFailureLimit+1)
+	for i := range sessions {
+		sessions[i] = directSession{fmt.Sprintf("native-%d", i), 0, "checksum"}
+	}
+	env, objects, _, sources := directSearchFixture(t, sessions)
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		return refusingStore{ObjectStore: objects.ObjectStore, fail: sources}, nil
+	}
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 1 || strings.Contains(out, "Searched all") {
+		t.Fatalf("kept searching after the bucket stopped answering: %d %s %s", code, errOut, out)
+	}
+	for _, want := range []string{"search: 5 sessions in a row could not be read: dial tcp: connection refused", "Check your network connection", "\n  agent-archive status\n"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("missing %q:\n%s", want, errOut)
+		}
+	}
+}
+
+func TestDirectSearchStopsAtFailuresInARowWithoutPausing(t *testing.T) {
+	t.Parallel()
+	sessions := make([]directSession, directSearchFailureLimit)
+	for i := range sessions {
+		sessions[i] = directSession{fmt.Sprintf("native-%d", i), 0, "checksum"}
+	}
+	env, objects, _, sources := directSearchFixture(t, sessions)
+	// Every session is past the budget, as when each read hangs.
+	env.directSearchPause = func() time.Duration { return 0 }
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		return refusingStore{ObjectStore: objects.ObjectStore, fail: sources}, nil
+	}
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 1 || strings.Contains(out, "Keep searching the bucket?") || !strings.Contains(errOut, "5 sessions in a row could not be read") {
+		t.Fatalf("asked to keep going while the bucket stopped answering: %d %s %s", code, errOut, out)
+	}
+}
+
+func TestDirectSearchGoesOnPastSessionsTooLargeToRead(t *testing.T) {
+	t.Parallel()
+	sessions := make([]directSession, directSearchFailureLimit+1)
+	for i := range sessions {
+		sessions[i] = directSession{fmt.Sprintf("native-%d", i), 0, fmt.Sprintf("checksum %d", i)}
+	}
+	env, objects, _, sources := directSearchFixture(t, sessions)
+	// The newest 5, read first, are too large; the oldest matches.
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		return refusingStore{ObjectStore: objects.ObjectStore, fail: sources[1:], err: storage.ErrObjectTooLarge}, nil
+	}
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 0 || !strings.Contains(out, "Searched all 6 sessions · 1 matching session · 5 could not be read") || strings.Contains(errOut, "Check your network") {
+		t.Fatalf("sessions too large to read stopped the search: %d %s %s", code, errOut, out)
+	}
+}
+
+// A session deleted after the listing was read is rechecked against the
+// bucket before its text is installed, as refresh does.
+func TestDirectSearchSkipsASessionDeletedSinceTheListing(t *testing.T) {
+	t.Parallel()
+	env, objects, ids, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}})
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	key, err := archive.MetadataObjectKey("codex", ids[0])
+	must(t, err)
+	index, err := search.OpenMemory(t.Context(), "test/context")
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	// Its source was downloaded ahead of its turn, before the deletion.
+	prefetched, err := index.Prefetch(t.Context(), objects, parsersFor(env), listed[0])
+	must(t, err)
+	must(t, objects.Delete(t.Context(), key))
+	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}}
+	for _, ahead := range []*search.Prefetched{nil, &prefetched} {
+		count, unread, err := scan.session(t.Context(), listed[0], ahead)
+		if err != nil || unread != nil || count != 0 {
+			t.Fatalf("deleted session searched (prefetched %v): %d matches, unread %v, %v", ahead != nil, count, unread, err)
+		}
+	}
+}
+
+// slowSources takes a second to read each source, on the synctest clock,
+// and records how many reads of each and how many at once.
+type slowSources struct {
+	storage.ObjectStore
+	sources []string
+
+	mu       sync.Mutex
+	reads    map[string]int
+	inFlight int
+	most     int
+}
+
+func (s *slowSources) wait(key string) {
+	if !slices.Contains(s.sources, key) {
+		return
+	}
+	s.mu.Lock()
+	s.reads[key]++
+	s.inFlight++
+	s.most = max(s.most, s.inFlight)
+	s.mu.Unlock()
+	time.Sleep(time.Second)
+	s.mu.Lock()
+	s.inFlight--
+	s.mu.Unlock()
+}
+
+func (s *slowSources) Get(ctx context.Context, key string) ([]byte, error) {
+	s.wait(key)
+	return s.ObjectStore.Get(ctx, key)
+}
+
+func (s *slowSources) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.wait(key)
+	return s.ObjectStore.(storage.LimitedGetter).GetLimited(ctx, key, limit)
+}
+
+// Sessions are downloaded several at a time ahead of their turn, each once,
+// while they are still matched one at a time, in order.
+func TestDirectSearchDownloadsSessionsAheadInParallel(t *testing.T) {
+	t.Parallel()
+	sessions := make([]directSession, 12)
+	for i := range sessions {
+		sessions[i] = directSession{fmt.Sprintf("native-%d", i), 0, fmt.Sprintf("checksum %d", i)}
+	}
+	env, objects, ids, sources := directSearchFixture(t, sessions)
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	slices.SortFunc(listed, func(a, b archive.Metadata) int { return b.CapturedAt.Compare(a.CapturedAt) })
+	synctest.Test(t, func(t *testing.T) {
+		index, err := search.OpenMemory(t.Context(), "test/context")
+		must(t, err)
+		defer func() { _ = index.Close() }()
+		slow := &slowSources{ObjectStore: objects.ObjectStore, sources: sources, reads: map[string]int{}}
+		scan := &directScan{index: index, objects: slow, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}}
+		found := make(chan directMatch, len(listed))
+		started := time.Now()
+		why, err := scan.run(t.Context(), found)
+		elapsed := time.Since(started)
+		if why != directScanDone || err != nil {
+			t.Fatalf("%s %v", why, err)
+		}
+		if searched, matching := scan.counts(); searched != len(ids) || matching != len(ids) {
+			t.Fatalf("searched %d, %d matching, want %d", searched, matching, len(ids))
+		}
+		for i := range listed {
+			if m := <-found; m.metadata.SessionID != listed[i].SessionID {
+				t.Fatalf("match %d is %s, want %s: not in order", i, m.metadata.SessionID, listed[i].SessionID)
+			}
+		}
+		if slow.most < 2 || slow.most > directSearchReaders {
+			t.Fatalf("%d sources read at once, want 2 to %d", slow.most, directSearchReaders)
+		}
+		for _, key := range sources {
+			if slow.reads[key] != 1 {
+				t.Fatalf("source %s read %d times, want once: %v", key, slow.reads[key], slow.reads)
+			}
+		}
+		// One at a time would take a second per session on this clock.
+		if elapsed >= time.Duration(len(ids))*time.Second/2 {
+			t.Fatalf("reading %d sessions took %s on the test clock", len(ids), elapsed)
+		}
+	})
+}
+
+// Sessions held ahead stay within a byte budget: past it, the next download
+// waits for the one before to be matched.
+func TestDirectSearchHoldsAheadWithinItsByteBudget(t *testing.T) {
+	t.Parallel()
+	sessions := make([]directSession, 4)
+	for i := range sessions {
+		sessions[i] = directSession{fmt.Sprintf("native-%d", i), 0, fmt.Sprintf("checksum %d", i)}
+	}
+	env, objects, ids, sources := directSearchFixture(t, sessions)
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		index, err := search.OpenMemory(t.Context(), "test/context")
+		must(t, err)
+		defer func() { _ = index.Close() }()
+		slow := &slowSources{ObjectStore: objects.ObjectStore, sources: sources, reads: map[string]int{}}
+		scan := &directScan{index: index, objects: slow, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, prefetchBytes: 1, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}}
+		if why, err := scan.run(t.Context(), make(chan directMatch, len(listed))); why != directScanDone || err != nil {
+			t.Fatalf("%s %v", why, err)
+		}
+		if searched, _ := scan.counts(); searched != len(ids) {
+			t.Fatalf("searched %d of %d", searched, len(ids))
+		}
+		if slow.most != 1 {
+			t.Fatalf("%d sources read at once past the byte budget, want 1", slow.most)
+		}
+	})
+}
+
+// Esc after a session is read but before it is counted leaves none of its
+// text for the results browser.
+func TestDirectSearchEscAfterAReadKeepsNoUncountedText(t *testing.T) {
+	t.Parallel()
+	env, objects, ids, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}})
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	index, err := search.OpenMemory(t.Context(), "test/context")
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}, ran: cancel}
+	why, err := scan.run(ctx, make(chan directMatch))
+	if why != directScanStopped || err != nil {
+		t.Fatalf("%s %v", why, err)
+	}
+	if searched, _ := scan.counts(); searched != 0 {
+		t.Fatalf("counted the session cut short: %d", searched)
+	}
+	if count, e := index.SessionMatches(t.Context(), search.Query{Text: "checksum"}, "codex", ids[0]); e != nil || count != 0 {
+		t.Fatalf("uncounted session left %d matching passages (%v)", count, e)
+	}
+}
+
+// A session read directly keeps its passages only when it matches.
+func TestDirectSearchDropsTheTextOfSessionsThatDoNotMatch(t *testing.T) {
+	t.Parallel()
+	env, objects, ids, _ := directSearchFixture(t, []directSession{{"native-hit", 0, "checksum mismatch"}, {"native-miss", 0, "nothing relevant"}})
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	index, err := search.OpenMemory(t.Context(), "test/context")
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}}
+	for _, m := range listed {
+		if _, _, err = scan.session(t.Context(), m, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, word := range []string{"mismatch", "relevant"} {
+		count, e := index.SessionMatches(t.Context(), search.Query{Text: word}, "codex", ids[i])
+		if e != nil || count != 1-i {
+			t.Fatalf("%s: %d passages match %q (%v), want %d", ids[i], count, word, e, 1-i)
+		}
+	}
+}
+
+// delegationKeys records whether the prompter had handed Ctrl-Z to the keys
+// when key mode turned on and off.
+type delegationKeys struct {
+	*fakeKeys
+	p   *prompter
+	on  bool
+	off bool
+}
+
+func (k *delegationKeys) keys() error {
+	k.on = k.p.render != nil && k.p.render.delegated > 0
+	return k.fakeKeys.keys()
+}
+
+func (k *delegationKeys) lines() {
+	k.off = k.p.render != nil && k.p.render.delegated > 0
+	k.fakeKeys.lines()
+}
+
+// While a direct search reads keys, they alone answer Ctrl-Z: the prompter
+// left from the questions before would otherwise stop the process too.
+func TestDirectSearchKeysOwnStopsWhileScanning(t *testing.T) {
+	t.Parallel()
+	index, err := search.OpenMemory(t.Context(), "test/context")
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader(""), &out)
+	defer p.close()
+	keys := &delegationKeys{fakeKeys: newFakeKeys(), p: p}
+	env := Env{openKeys: func(io.Reader) (keyTerminal, bool) { return keys, true }}
+	scan := &directScan{index: index, budget: time.Hour, now: time.Now, matched: map[string]bool{}, unread: map[string]bool{}}
+	why, err := scan.scan(t.Context(), p, &out, env, "all projects")
+	if err != nil || why != directScanDone {
+		t.Fatalf("%s %v", why, err)
+	}
+	if !keys.on || !keys.off {
+		t.Fatalf("prompter kept its own stop handling while keys were read (on %v, off %v)", keys.on, keys.off)
+	}
+	if p.render.delegated != 0 {
+		t.Fatalf("prompter still delegates stops after the scan: %d", p.render.delegated)
+	}
+}

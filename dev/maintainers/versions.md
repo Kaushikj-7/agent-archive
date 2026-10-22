@@ -8,8 +8,8 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 31 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.31.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 32 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.32.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
@@ -164,6 +164,26 @@ with mandatory exact prior-metadata and complete-source-set SHA-256 digests.
 Version 1 retains its original replay semantics; it is never upgraded by
 inferring missing authority. Earlier binaries refuse version 2 in replay and
 completed-successor routing. This does not allocate another configuration floor.
+A version 2 successor omits `staged_import_sha256` only when the predecessor's
+committed typed staged selection names that stage and its release progress is
+`released` with no prepared stage left; replay rechecks that release. Any other
+stage link refuses before a journal: an unfinished release as owed, and an
+untyped, mismatched, historical or native-import link as unsupported. Journals that kept the link replay
+unchanged, so the journal format and version do not change; earlier binaries
+refuse to replay a successor without the link.
+On a home with `publication_composition_protection`, replay saves the
+successor pending with an ordinary ready selection (predecessor `absent`, since
+its metadata key belongs to the new ID). Until that pending is saved, each
+replay derives the selection from the journaled registration and publication
+under the current configuration; it is not stored in the journal, so neither
+format changes. Derivation also applies `require_skill_use`, which the
+selection does not bind. Once saved, later replays reuse that exact pending
+after checking every configuration-independent proof field against the
+journaled successor. A successor that cannot take a selection, including one
+with retained history alternatives, refuses before a journal is written. If the configuration changes after the
+journal but before the pending is saved, replay refuses and the recovery stays
+owed until that configuration is restored; when the predecessor was already
+frozen, it stays frozen and hooks stay gated until then.
 
 Recovery adds optional `previous_generation_id` provenance to source headers
 and metadata and a persistent `recovered_generation` coverage gap to successor
@@ -570,3 +590,9 @@ allocates no filter, adapter, parser or permanent writer version.
 Renewing incomplete entries in existing disposable inventory and recognizing
 unambiguous colon-containing filesystem origins add no persisted fields or
 authority formats; the same version assessment applies.
+
+Retained skill-evidence successors bounded by the oldest uncommitted selection's
+policy allocate filter32 and global/Muse adapter0.32.0. They reuse the existing
+privacy-original evidence journal, covered-alternative receipts and pending
+formats; parsers, source/metadata schemas and private writer versions are
+unchanged.

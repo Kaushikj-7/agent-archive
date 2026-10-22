@@ -274,7 +274,7 @@ func (b *statsBrowser) viewKey(k key) (quit bool) {
 		return true
 	case keyRune:
 		return b.viewRune(unicode.ToLower(k.r))
-	case keyEscape, keyEnter, keyBackspace, keyLeft, keyRight, keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyResize:
+	case keyEscape, keyEnter, keyBackspace, keyLeft, keyRight, keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyResize, keyTab:
 		// Scrolled above, or nothing to do.
 	}
 	return false
@@ -349,7 +349,7 @@ func (b *statsBrowser) savingKey(k key) {
 		if unicode.IsPrint(k.r) && utf8.RuneCountInString(b.typed) < maxTypedName {
 			b.typed += string(k.r)
 		}
-	case keyUp, keyDown, keyLeft, keyRight, keyPageUp, keyPageDown, keyHome, keyEnd, keyResize:
+	case keyUp, keyDown, keyLeft, keyRight, keyPageUp, keyPageDown, keyHome, keyEnd, keyResize, keyTab:
 		// Nothing to do at a prompt for a name.
 	}
 }

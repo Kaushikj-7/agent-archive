@@ -117,6 +117,24 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	return result, err
 }
 
+// admitPassSessionIndexRecovery gives local identity recovery part of the
+// remaining pass budget. Local identity recovery and admission must not depend
+// on credentials or storage availability. Source observation retains its own
+// short budget. The complete authority census precedes the application
+// allowance. Give it part of the remaining pass budget so a census slower than
+// four seconds does not consume every future slice before any owner can be
+// applied.
+func admitPassSessionIndexRecovery(ctx context.Context, localStore *state.Store, started time.Time, stop func() bool) error {
+	if stop() {
+		return nil
+	}
+	recoveryBudget := (collectSoftDeadline - time.Since(started)) / 2
+	if recoveryBudget <= 0 {
+		return nil
+	}
+	return recoverPassSessionIndex(ctx, localStore, recoveryBudget)
+}
+
 // recoverPassSessionIndex runs only after the caller admits a positive soft
 // budget. It preserves real recovery failures for the pass status.
 func recoverPassSessionIndex(ctx context.Context, localStore *state.Store, recoveryBudget time.Duration) error {
@@ -176,6 +194,8 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 	if err != nil {
 		return collector.Result{}, err
 	}
+	statusProgress := beginStatusProgress(home, cfg, env)
+	defer func() { statusProgress.finish(cfg, resultErr, pass.importBatch == "") }()
 
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), collectHardDeadline)
@@ -187,18 +207,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		recordPreflightError(localStore, err)
 		return collector.Result{}, err
 	}
-	// Local identity recovery and admission must not depend on credentials or
-	// storage availability. Source observation retains its own short budget.
-	// The complete authority census precedes the application allowance. Give it
-	// part of the remaining pass budget so a census slower than four seconds
-	// does not consume every future slice before any owner can be applied.
-	var recoveryErr error
-	if !stop() {
-		recoveryBudget := (collectSoftDeadline - time.Since(started)) / 2
-		if recoveryBudget > 0 {
-			recoveryErr = recoverPassSessionIndex(ctx, localStore, recoveryBudget)
-		}
-	}
+	recoveryErr := admitPassSessionIndexRecovery(ctx, localStore, started, stop)
 	rollouts, readHomes, err := collectorRollouts(ctx, localStore, cfg, env, pass)
 	if err != nil {
 		recordPreflightError(localStore, err)
@@ -233,6 +242,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 	if pass.importBatch != "" {
 		selectSession = func(reg archive.SessionRegistration) bool { return reg.InBatch(pass.importBatch) }
 	}
+	statusProgress.phase(statusCollecting)
 
 	skillPass := newSkillObservationPass(env, cfg.EffectiveSkillEvidence())
 	defer skillPass.Close()
@@ -261,7 +271,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		HistoricalProjectLabel:   cfg.HistoricalProjectLabel,
 		Now:                      env.Now,
 		RequireSkillUse:          cfg.RequireSkillUse,
-		Progress:                 pass.progress,
+		Progress:                 statusProgress.observe(pass.progress),
 		Stop:                     stop,
 		CursorDatabase:           env.cursorDatabase(),
 		RepoKey:                  env.repoKey,
@@ -283,11 +293,14 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 		return result, recordImportPass(home, cfg, env, localStore, quietOnBusy, result, previous)
 	}
 
-	summary, verifyErr, err := verifyAndRecordPass(ctx, home, cfg, env, localStore, objectStore, quietOnBusy, result)
+	statusProgress.phase(statusVerifying)
+	verification, summary, verifyErr, err := verifyAndRecordPass(ctx, home, cfg, env, localStore, objectStore, quietOnBusy, result)
+	statusProgress.verified(verification)
 	if err != nil {
 		return result, err
 	}
 
+	statusProgress.phase(statusFinishing)
 	return finishPassWithRetention(home, env, cfg, localStore, objectStore, previous.LastScanAt, result, summary, verifyErr)
 }
 
@@ -338,22 +351,23 @@ func collectorNeedsGuard(cfg config.Config) bool {
 // verifyAndRecordPass performs read-back verification and records per-session
 // failures, returning the summary it recorded for them ("" when none failed).
 // Verification is returned separately so retention still runs first.
-func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, env Env, localStore *state.Store, objectStore storage.ObjectStore, quietOnBusy bool, result collector.Result) (summary string, verifyErr error, err error) {
+func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, env Env, localStore *state.Store, objectStore storage.ObjectStore, quietOnBusy bool, result collector.Result) (verification verificationSummary, summary string, verifyErr error, err error) {
 	// A read-back verification failure is reported after the retention
 	// sweep: it is no reason to skip cleanup.
-	if _, err := verifyPublicationsWithin(ctx, home, cfg, env, localStore, objectStore); err != nil {
+	verification, err = verifyPublicationsWithin(ctx, home, cfg, env, localStore, objectStore)
+	if err != nil {
 		verifyErr = fmt.Errorf("read-back verification: %w", err)
 	}
 	if health := passStorageHealth(result); health != "not_checked" {
 		if err := recordStorageHealth(home, cfg, env, quietOnBusy, health); err != nil {
-			return "", verifyErr, err
+			return verification, "", verifyErr, err
 		}
 	}
 	summary, err = recordPassSessionIssues(localStore, result)
 	if err != nil {
-		return "", verifyErr, err
+		return verification, "", verifyErr, err
 	}
-	return summary, verifyErr, nil
+	return verification, summary, verifyErr, nil
 }
 
 // recordPassSessionIssues preserves per-owner failures for both scoped import

@@ -18,38 +18,90 @@ import (
 // contentSearchBrowser owns only bounded local search results and references.
 // The fixed FTS query never enters the metadata picker's filter grammar.
 type contentSearchBrowser struct {
-	env           searchCommandDependencies
-	cfg           config.Config
-	namespace     string
-	index         *search.Store
-	opts          contentSearchOptions
-	page          search.Page
-	hits          []search.Hit
-	byKey         map[string]search.Hit
-	choices       *scopeChoices
-	pages         int
-	stale         bool
-	rerun         bool
+	env       searchCommandDependencies
+	cfg       config.Config
+	namespace string
+	index     *search.Store
+	opts      contentSearchOptions
+	page      search.Page
+	hits      []search.Hit
+	byKey     map[string]search.Hit
+	choices   *scopeChoices
+	pages     int
+	stale     bool
+	rerun     bool
+	// nextText is a new query from /, applied only when its rerun succeeds,
+	// so a failed search leaves the old results with their own query.
+	nextText      string
 	notice        string
 	handoff       *listRow
 	generation    uint64
 	pendingAction contentSearchAction
+	// labels are the configured project labels, read once for hitProject.
+	labels map[string]string
+	// afterRead is an action typed while the passage loaded that applies to
+	// it once read: i, t or m.
+	afterRead contentSearchAction
+	// style and now are the screen's color and clock, for the rows, the
+	// heading and the detail strip.
+	style textStyle
+	now   time.Time
+	// matches is which match of each session the detail strip shows, by the
+	// session's selection key; n and p move it. A rerun starts them again.
+	matches map[string]*searchMatchState
+	// request is what a key asked of the browser that the list cannot do
+	// itself: a new query, asked for in place.
+	request searchRequest
+	// toggleScope, set with rerun, switches between all projects and the
+	// current project before the query runs again.
+	toggleScope bool
+	// coverage, when set, words the coverage line under the heading for the
+	// page shown, in place of the local index's ("Indexed 105 of 211 ·
+	// catching up"): a search that reads no index says what it searched
+	// ("Searched 104 of 2,350 sessions"). It is made safe for one line.
+	coverage func(search.Page) string
 }
 
+// searchRequest is something the results list hands to the browser around
+// it.
+type searchRequest string
+
+const (
+	searchRequestNone  searchRequest = ""
+	searchRequestQuery searchRequest = "query"
+)
+
+// searchStripPassageLines is how many lines of the matching passage the
+// detail strip under the results shows.
+const searchStripPassageLines = 3
+
+// searchStripLines is how many lines the search detail strip takes: a rule,
+// who wrote the match, the passage, the session's details, and a rule. A
+// shorter passage leaves blank lines after it, so the list does not move as
+// the highlight does.
+const searchStripLines = 4 + searchStripPassageLines
+
 func runContentSearchBrowser(ctx context.Context, env searchCommandDependencies, cfg config.Config, namespace string, index *search.Store, page search.Page, opts contentSearchOptions, stdout, stderr io.Writer) (listRow, bool, *typedInput, int) {
-	format := listFormatOptions{Search: true, Numbered: true, HideProject: true, Now: env.now(), NarrowHint: "o next indexed results, or narrow the content query and rerun."}
-	s := &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace, index: index, opts: opts, page: page, hits: page.Hits, pages: 1, choices: rowChoices(nil, format)}
+	style := styleFor(stdout)
+	format := listFormatOptions{Search: true, Numbered: true, Now: env.now(), Style: style, NarrowHint: "o next indexed results, or narrow the content query and rerun."}
+	var coverage func(search.Page) string
+	if opts.direct != "" {
+		coverage = func(search.Page) string { return opts.direct }
+	}
+	s := &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace, index: index, opts: opts, page: page, hits: page.Hits, pages: 1, choices: rowChoices(nil, format), style: style, now: format.Now, coverage: coverage}
 	s.choices.loadOlder = &browserLoadAction{LoadContext: s.load, Available: func() bool { return true }}
 	s.installRows()
 	input := newTypedInput(opts.stdin)
 	p := input.prompter(stdout)
-	query := archive.DisplayLine(opts.query.Text)
-	row, picked, code := runBrowser(ctx, env, p, stdout, stderr, browserSpec{Mode: browseSearch, Search: s, Choices: s.choices, Command: "search", Verb: "Read matching passage", Notice: "Content query: " + query + "; / filtering disabled. r rerun · o next results. Scope never widens.", KeysNotice: "Content query: " + query + "; / filtering disabled. r rerun · ↓ past the end for more results. Scope never widens."})
+	row, picked, code := runBrowser(ctx, env, p, stdout, stderr, browserSpec{Mode: browseSearch, Search: s, Choices: s.choices, Command: "search", Verb: "Read matching passage"})
 	return row, picked, input, code
 }
 
 func (s *contentSearchBrowser) installRows() {
 	s.byKey = make(map[string]search.Hit, len(s.hits))
+	if s.matches == nil {
+		s.matches = map[string]*searchMatchState{}
+	}
 	ids := make([]string, len(s.hits))
 	for i, h := range s.hits {
 		ids[i] = h.SessionID
@@ -59,59 +111,25 @@ func (s *contentSearchBrowser) installRows() {
 	for i, h := range s.hits {
 		key := childKey(h.Harness, h.SessionID)
 		s.byKey[key] = h
-		snippet := archive.DisplayLine(h.Snippet)
-		if len(h.Gaps) > 0 {
-			snippet += " · source coverage gaps"
-		}
+		snippet := s.style.dim(searchRole(h.Role, h.Harness)+" ›") + " " + highlightedLine(s.opts.query.Text, h.Snippet, s.style)
 		title := archive.DisplayLine(h.Title)
 		if strings.TrimSpace(title) == "" {
 			title = shorts[i]
 		}
+		project := s.hitProject(h)
+		if project == "" {
+			project = "-"
+		}
 		// Indexed hits carry capture time, not current session activity. Do not
 		// invent Active or let ordinary activity-day grouping change relevance.
-		rows = append(rows, listRow{selectionKey: key, Index: i + 1, SessionID: h.SessionID, ShortID: shorts[i], HarnessKey: h.Harness, Harness: archive.DisplayLine(h.Harness), Title: title, ListTitle: listTitle(h.Title), When: h.CapturedAt.Format("2006-01-02"), WhenShort: h.CapturedAt.Format("2006-01-02"), Project: "-", searchSnippet: snippet, searchMatches: h.MatchCount})
-	}
-	scope := archive.DisplayLine(s.opts.query.Scope.ProjectName)
-	if s.opts.all {
-		scope = "all indexed projects"
-	}
-	if scope == "" {
-		scope = "original project scope"
-	}
-	var coverage strings.Builder
-	coverage.WriteString("Scope: " + scope + ".\n")
-	observation := s.page.Observation
-	_, _ = fmt.Fprintf(&coverage, "%d indexed / %d locally known.\n%d pending; %d failed.\n%d unsupported sources.\n", observation.Indexed, observation.Known, observation.Pending, observation.Failed, observation.Unsupported)
-	if observation.Complete {
-		coverage.WriteString("Coverage complete at last observation.\n")
-	} else {
-		coverage.WriteString("Coverage incomplete; matching history may be missing.\n")
-	}
-	if observation.Rechecks > 0 {
-		_, _ = fmt.Fprintf(&coverage, "%d identity rechecks pending.\n", observation.Rechecks)
-	}
-	if observation.LastObserved.IsZero() {
-		coverage.WriteString("Archive freshness unknown; no observation recorded.\n")
-	} else {
-		coverage.WriteString("Last observed: " + observation.LastObserved.UTC().Format(time.RFC3339) + ".\n")
-	}
-	coverage.WriteString("Remote changes after observation are unknown.")
-	notice := coverage.String()
-	if s.notice != "" {
-		notice += " " + s.notice
-	}
-	if s.pages == 3 && s.page.Next != "" {
-		notice += " Result retention cap reached (three pages); narrow or rerun the query."
-	}
-	if s.stale {
-		notice += " Index changed; r explicitly reruns this query."
+		rows = append(rows, listRow{selectionKey: key, Index: i + 1, SessionID: h.SessionID, ShortID: shorts[i], HarnessKey: h.Harness, Harness: archive.DisplayLine(h.Harness), Title: title, ListTitle: listTitle(archive.DisplayLine(h.Title)), When: s.longWhen(h.CapturedAt), WhenShort: shortWhen(s.now, h.CapturedAt), Project: project, searchSnippet: snippet})
 	}
 	total, truncated := len(rows), s.page.Next != "" || s.opts.query.Cursor != ""
 	if truncated {
 		total = -1
 	}
 	s.choices.rowsFor = func(sessionScope) scopeView {
-		return scopeView{rows: rows, total: total, truncated: truncated, note: notice}
+		return scopeView{rows: rows, total: total, truncated: truncated}
 	}
 	if loader := s.choices.loadOlder; loader != nil {
 		loader.Label = "next indexed page; r reruns query"
@@ -128,6 +146,99 @@ func (s *contentSearchBrowser) installRows() {
 	s.choices.built = [2]*scopeChoice{}
 }
 
+// longWhen is when a match was captured, for the detail strip: "Oct 16,
+// 09:12", with the year when it is not this year's.
+func (s *contentSearchBrowser) longWhen(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	local := t.In(s.now.Location())
+	if local.Year() == s.now.Year() {
+		return local.Format("Jan 2, 15:04")
+	}
+	return local.Format("Jan 2 2006, 15:04")
+}
+
+// canToggleScope reports whether Tab has another scope to search: the
+// search knows a project (the working directory's, or --project's) to narrow
+// to or widen from.
+func (s *contentSearchBrowser) canToggleScope() bool {
+	return s.opts.query.Scope.ProjectName != "" && s.opts.direct == ""
+}
+
+// canNewSearch reports whether / may ask for another query: a direct bucket
+// search kept only the text that matched its own query, so another query
+// needs another scan.
+func (s *contentSearchBrowser) canNewSearch() bool {
+	return s.opts.direct == ""
+}
+
+// scopeLabel names the scope the query searches.
+func (s *contentSearchBrowser) scopeLabel() string {
+	if !s.opts.query.Scope.Restricted {
+		return allProjectsLabel
+	}
+	return archive.DisplayLine(s.opts.query.Scope.ProjectName)
+}
+
+// heading is the lines above the results: what is searched, for what, and
+// how many sessions match, with the key that switches scope (Tab reading
+// keys, a reading lines); then the index's coverage in one dim line; then a
+// blank line.
+func (s *contentSearchBrowser) heading(keys bool) string {
+	count := plural(len(s.hits), "session")
+	if s.page.Next != "" || s.opts.query.Cursor != "" {
+		count = fmt.Sprintf("%d+ sessions", len(s.hits))
+	}
+	line := s.style.bold(s.scopeLabel()) + " · \"" + archive.DisplayLine(s.opts.query.Text) + "\" · " + count + ", best match first"
+	if s.canToggleScope() {
+		key := "a"
+		if keys {
+			key = "Tab"
+		}
+		other := strings.ToLower(allProjectsLabel)
+		if !s.opts.query.Scope.Restricted {
+			other = archive.DisplayLine(s.opts.query.Scope.ProjectName) + " only"
+		}
+		line += " · " + s.style.dim(key+" "+other)
+	}
+	return line + "\n" + s.style.dim(s.coverageLine()) + "\n"
+}
+
+// coverageLine is the index's coverage in one line ("Indexed 105 of 211 ·
+// catching up", "Index complete"), then what else the person needs to know
+// about these results. The whole coverage is in --json.
+func (s *contentSearchBrowser) coverageLine() string {
+	o := s.page.Observation
+	var parts []string
+	switch {
+	case s.coverage != nil:
+		parts = append(parts, archive.DisplayLine(s.coverage(s.page)))
+	case o.Complete:
+		parts = append(parts, "Index complete")
+	case o.Pending > 0:
+		parts = append(parts, fmt.Sprintf("Indexed %d of %d", o.Indexed, o.Known), "catching up")
+	default:
+		parts = append(parts, fmt.Sprintf("Indexed %d of %d", o.Indexed, o.Known), "coverage incomplete")
+	}
+	if o.Failed > 0 && s.coverage == nil {
+		parts = append(parts, fmt.Sprintf("%d failed", o.Failed))
+	}
+	if o.Unsupported > 0 && s.coverage == nil {
+		parts = append(parts, fmt.Sprintf("%d unsupported", o.Unsupported))
+	}
+	if s.pages == 3 && s.page.Next != "" {
+		parts = append(parts, "result limit reached; narrow or rerun the query")
+	}
+	if s.stale {
+		parts = append(parts, "index changed; r reruns this query")
+	}
+	if s.notice != "" {
+		parts = append(parts, s.notice)
+	}
+	return strings.Join(parts, " · ")
+}
+
 // hasNextPage reports whether load would add the next indexed page rather
 // than only say there is none.
 func (s *contentSearchBrowser) hasNextPage() bool {
@@ -138,6 +249,12 @@ func (s *contentSearchBrowser) load(ctx context.Context) (bool, error) {
 	q := s.opts.query
 	reset := s.rerun
 	s.rerun = false
+	if reset && s.nextText != "" {
+		q.Text = s.nextText
+	}
+	s.nextText = ""
+	toggle := s.toggleScope && reset
+	s.toggleScope = false
 	if !reset && !s.hasNextPage() {
 		s.notice = "No next page in this retained ranking; r explicitly reruns the query."
 		s.installRows()
@@ -147,6 +264,9 @@ func (s *contentSearchBrowser) load(ctx context.Context) (bool, error) {
 		q.Cursor = ""
 	} else {
 		q.Cursor = s.page.Next
+	}
+	if toggle {
+		q.Scope.Restricted = !q.Scope.Restricted
 	}
 	page, err := s.index.Search(ctx, q)
 	if ctx.Err() != nil {
@@ -163,12 +283,14 @@ func (s *contentSearchBrowser) load(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 	if reset {
+		s.opts.query = q
 		s.opts.query.Cursor = ""
+		s.opts.all = !q.Scope.Restricted
 		s.generation++
 		s.hits = nil
 		s.pages = 0
 		s.stale = false
-		s.notice = ""
+		s.matches = nil
 	}
 	s.notice = ""
 	s.hits = append(s.hits, page.Hits...)
@@ -178,9 +300,174 @@ func (s *contentSearchBrowser) load(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+// searchMatchState is the match of one session that the detail strip and the
+// passage show: which of its matches it is, counted from its best (1), the
+// reference of a body match (nil for the title), and its indexed role and
+// text.
+type searchMatchState struct {
+	ordinal int
+	ref     *search.Reference
+	role    string
+	text    string
+	nav     searchMatchNavigation
+}
+
+// matchState is the match the strip shows for hit, its best one until n or p
+// moves it.
+func (s *contentSearchBrowser) matchState(hit search.Hit) *searchMatchState {
+	key := childKey(hit.Harness, hit.SessionID)
+	if s.matches == nil {
+		s.matches = map[string]*searchMatchState{}
+	}
+	if st, ok := s.matches[key]; ok {
+		return st
+	}
+	st := &searchMatchState{ordinal: 1, ref: hit.Reference, role: hit.Role, text: hit.Passage, nav: searchMatchNavigation{position: -1}}
+	s.matches[key] = st
+	return st
+}
+
+// stepMatch moves st to the session's next (direction 1) or previous (-1)
+// match, reading only the local index. A title match comes before the body's.
+func (s *contentSearchBrowser) stepMatch(ctx context.Context, hit search.Hit, st *searchMatchState, direction int) error {
+	if direction < 0 && st.ref != nil && hit.Reference == nil && st.ordinal == 2 {
+		st.ordinal, st.ref, st.role, st.text = 1, nil, hit.Role, hit.Passage
+		st.nav.position = -1
+		return nil
+	}
+	fromTitle := st.ref == nil
+	ref, err := s.moveMatch(ctx, hit, st.ref, direction, &st.nav)
+	if err != nil {
+		return err
+	}
+	st.ref = ref
+	if p := st.nav.position; p >= 0 && p < len(st.nav.page.Passages) {
+		st.role, st.text = st.nav.page.Passages[p].Role, st.nav.page.Passages[p].Text
+	}
+	if fromTitle {
+		st.ordinal = 2
+	} else {
+		st.ordinal = max(st.ordinal+direction, 1)
+	}
+	return nil
+}
+
+// stepStrip moves the detail strip of row to its session's next or previous
+// match, and returns what to say when there is none.
+func (s *contentSearchBrowser) stepStrip(ctx context.Context, row listRow, direction int) string {
+	hit, ok := s.byKey[row.selectionKey]
+	if !ok {
+		return ""
+	}
+	if err := s.stepMatch(ctx, hit, s.matchState(hit), direction); err != nil {
+		return archive.DisplayLine(err.Error())
+	}
+	return ""
+}
+
+// strip is the detail strip under the results for the highlighted row,
+// exactly searchStripLines lines: a rule; dim, who wrote the match and which
+// of the session's matches it is; the passage's text, wrapped to width, with
+// every matched term highlighted; then the agent's colored dot and dim the
+// agent, project, capture time and short ID; and a rule.
+func (s *contentSearchBrowser) strip(r listRow, width int) []string {
+	ruleWidth := width
+	if ruleWidth <= 0 {
+		ruleWidth = unknownRuleWidth
+	}
+	rule := s.style.dim(strings.Repeat("─", ruleWidth))
+	hit, ok := s.byKey[r.selectionKey]
+	if !ok {
+		return append([]string{rule, stripLine(r.Title, width)}, make([]string, searchStripLines-2)...)
+	}
+	st := s.matchState(hit)
+	total := max(hit.MatchCount, st.ordinal)
+	lines := []string{rule, s.style.dim(stripLine(fmt.Sprintf("%s › match %d of %d in this session", searchRole(st.role, hit.Harness), st.ordinal, total), width))}
+	lines = append(lines, passageWindow(s.opts.query.Text, st.text, width, searchStripPassageLines, s.style)...)
+	details := []string{archive.DisplayLine(appName(hit.Harness))}
+	if r.Project != "" && r.Project != "-" {
+		details = append(details, r.Project)
+	}
+	details = append(details, r.When, "id "+archive.DisplayLine(r.ShortID))
+	if len(hit.Gaps) > 0 {
+		details = append(details, "source coverage gaps")
+	}
+	dot, _ := agentLabel(hit.Harness)
+	meta := s.style.agent(hit.Harness, dot) + " " + s.style.dim(stripLine(strings.Join(details, " · "), max(width-2, 0)))
+	lines = append(lines, meta, rule)
+	for len(lines) < searchStripLines {
+		lines = append(lines, "")
+	}
+	return lines
+}
+
+// newSearchQuery asks for another query on the browser's screen, with line
+// input back for the question, then runs it in the scope shown through the
+// browser's cancellable loader, as r and Tab do: it shows that it is
+// searching, and Esc or q still work. quit is set when input ended while
+// reading lines, or q was typed during the search.
+func (b *sessionBrowser) newSearchQuery(ctx context.Context) (quit bool, err error) {
+	text, quit, err := b.askSearchQuery()
+	if err != nil || quit || text == "" {
+		return quit, err
+	}
+	s := b.search
+	s.nextText, s.rerun = text, true
+	if _, err = b.list.loadOlderContext(ctx, b.prompt, b.stdout); err != nil {
+		return false, err
+	}
+	if b.list.operationQuit {
+		return true, nil
+	}
+	b.list.keepSearchSelection("")
+	b.list.olderSpent = ""
+	return false, nil
+}
+
+// askSearchQuery asks for the next query with line input, then gives the
+// keys back. An empty text with no error means Ctrl-D kept the results.
+func (b *sessionBrowser) askSearchQuery() (text string, quit bool, err error) {
+	s := b.search
+	b.screen.clear()
+	if b.keys != nil {
+		// What was typed after / (a paste, or fast typing) begins the query.
+		if b.prompt.handBack != nil {
+			if typed := b.keys.unused(); len(typed) > 0 {
+				b.prompt.handBack(typed)
+			}
+		}
+		end := b.keys.page()
+		defer func() {
+			end()
+			if e := b.keys.resume(); e != nil && err == nil {
+				err = e
+			}
+		}()
+	}
+	opts := s.opts
+	opts.project = ""
+	if opts.query.Scope.Restricted {
+		opts.project = s.scopeLabel()
+	}
+	text, err = promptSearchQuery(b.prompt, opts)
+	if errors.Is(err, io.EOF) {
+		// Ctrl-D at the question goes back to the results it replaced.
+		return "", b.keys == nil, nil
+	}
+	return text, false, err
+}
+
 func (l *sessionPicker) listQuestion(action string) string {
-	if l.contentSearch != nil {
-		return "Enter number (or unique short SESSION_ID) to " + action + ", o next results, r rerun, or q to quit"
+	if s := l.contentSearch; s != nil {
+		scope := ""
+		if s.canToggleScope() {
+			scope = ", a scope"
+		}
+		newSearch := ""
+		if s.canNewSearch() {
+			newSearch = ", / new search"
+		}
+		return "Enter number (or unique short SESSION_ID) to " + action + newSearch + scope + ", o next results, r rerun, or q to quit"
 	}
 	return "Enter number (or unique short SESSION_ID) to " + action + ", words to filter, or q to quit"
 }
@@ -196,12 +483,16 @@ const (
 	searchActionBack     contentSearchAction = "b"
 	searchActionHandoff  contentSearchAction = "h"
 	searchActionRerun    contentSearchAction = "r"
-	searchActionPageDown contentSearchAction = "pgdn"
-	searchActionPageUp   contentSearchAction = "pgup"
-	searchActionDown     contentSearchAction = "down"
-	searchActionUp       contentSearchAction = "up"
-	searchActionHome     contentSearchAction = "home"
-	searchActionEnd      contentSearchAction = "end"
+	// searchActionDetails shows or hides the passage's exact reference.
+	searchActionDetails contentSearchAction = "i"
+	// searchActionTranscript opens the session's transcript.
+	searchActionTranscript contentSearchAction = "t"
+	searchActionPageDown   contentSearchAction = "pgdn"
+	searchActionPageUp     contentSearchAction = "pgup"
+	searchActionDown       contentSearchAction = "down"
+	searchActionUp         contentSearchAction = "up"
+	searchActionHome       contentSearchAction = "home"
+	searchActionEnd        contentSearchAction = "end"
 )
 
 type searchContextResult struct {
@@ -211,9 +502,14 @@ type searchContextResult struct {
 	panicValue any
 }
 
+// searchLoadingNotice says a passage is loading and how to stop it.
+const searchLoadingNotice = "Loading selected passage… Esc cancels"
+
 // readSearchSelection services cancellation while the finite selected-source
-// read runs. The deferred join precedes every return and store/browser cleanup.
-func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Reference, offset int) (search.Surrounding, error) {
+// read runs, saying so on a line of its own unless shown says the caller
+// showed it. The deferred join precedes every return and store/browser
+// cleanup.
+func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Reference, offset int, shown bool) (search.Surrounding, error) {
 	s := b.search
 	s.generation++
 	generation := s.generation
@@ -231,7 +527,7 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 			result.err = err
 			return
 		}
-		result.context, result.err = search.ReadContext(ctx, objects, parsersFor(s.env), ref, offset, 4096, 1, 1, reader.Limits{})
+		result.context, result.err = search.ReadContext(ctx, objects, parsersFor(s.env), ref, offset, searchReadBytes, 1, 1, reader.Limits{})
 	}()
 	joined := false
 	join := func() searchContextResult {
@@ -248,7 +544,9 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 			join()
 		}
 	}()
-	terminal.Println(b.stdout, "Loading selected passage… Esc cancels")
+	if !shown {
+		terminal.Println(b.stdout, searchLoadingNotice)
+	}
 	for {
 		select {
 		case r := <-done:
@@ -256,8 +554,12 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 			if r.panicValue != nil {
 				panic(r.panicValue)
 			}
-			if r.generation != s.generation || ctx.Err() != nil {
+			if r.generation != s.generation {
 				return search.Surrounding{}, context.Canceled
+			}
+			if err := ctx.Err(); err != nil {
+				// Out of time, even when the read ended with the deadline.
+				return search.Surrounding{}, err
 			}
 			return r.context, r.err
 		case <-ctx.Done():
@@ -266,84 +568,23 @@ func (b *sessionBrowser) readSearchSelection(ctx context.Context, ref search.Ref
 		}
 		answer, err := b.searchReadAction()
 		if err != nil {
+			// Esc cancels what was typed for the passage with its read.
+			s.afterRead = searchActionNone
 			return search.Surrounding{}, err
 		}
 		switch answer {
 		case searchActionQuit:
 			b.list.operationQuit = true
 			return search.Surrounding{}, context.Canceled
-		case searchActionNext, searchActionPrevious, searchActionMore, searchActionBack, searchActionHandoff, searchActionRerun:
+		case searchActionNext, searchActionPrevious, searchActionBack, searchActionHandoff, searchActionRerun:
 			s.pendingAction = answer
 			return search.Surrounding{}, context.Canceled
+		case searchActionDetails, searchActionTranscript, searchActionMore:
+			// Applied once the passage is read, which they do not replace.
+			s.afterRead = answer
 		case searchActionNone, searchActionPageDown, searchActionPageUp, searchActionDown, searchActionUp, searchActionHome, searchActionEnd:
 		}
 	}
-}
-
-func searchContextLines(h search.Hit, ref *search.Reference, out search.Surrounding, notice string) []string {
-	var text strings.Builder
-	text.WriteString(archive.DisplayLine(h.Harness) + " / " + archive.DisplayLine(h.SessionID) + "\n" + archive.DisplayLine(h.Title) + "\n")
-	for _, gap := range h.Gaps[:min(len(h.Gaps), 3)] {
-		text.WriteString("Coverage gap: " + oneRow(archive.DisplayLine(gap.RevisionID+": "+gap.Reason), 160) + "\n")
-	}
-	if len(h.Gaps) > 3 {
-		text.WriteString("Additional source coverage gaps are reported in JSON.\n")
-	}
-	if ref == nil {
-		text.WriteString("Title match: no body passage reference. n loads matching body passages if available.\n")
-	} else {
-		revision := "active source"
-		if ref.Source.RevisionID != "" {
-			revision = archive.DisplayLine(ref.Source.RevisionID)
-		}
-		text.WriteString("Source revision: " + revision + "\n")
-		_, _ = fmt.Fprintf(&text, "Reference: message %d · raw bytes %d–%d · source %s\n", ref.Record, ref.Start, ref.End, archive.DisplayLine(ref.Source.Reference.SHA256))
-		for _, v := range out.Before {
-			text.WriteString("[before · " + archive.DisplayLine(v.Role) + "]\n" + searchDisplayText(v.Context.Text) + "\n")
-		}
-		text.WriteString("[selected · " + archive.DisplayLine(out.Role) + "]\n" + searchDisplayText(out.Selected.Text) + "\n")
-		for _, v := range out.After {
-			text.WriteString("[after · " + archive.DisplayLine(v.Role) + "]\n" + searchDisplayText(v.Context.Text) + "\n")
-		}
-		_, _ = fmt.Fprintf(&text, "Passage bytes %d–%d", out.Selected.Start, out.Selected.End)
-		if out.Selected.Next != 0 {
-			_, _ = fmt.Fprintf(&text, "; m more context at raw offset %d", out.Selected.Next)
-		}
-		text.WriteString("\n")
-	}
-	if notice != "" {
-		text.WriteString(archive.DisplayLine(notice) + "\n")
-	}
-	return strings.Split(strings.TrimSuffix(text.String(), "\n"), "\n")
-}
-
-func searchDisplayText(text string) string {
-	lines := strings.Split(text, "\n")
-	for i := range lines {
-		lines[i] = archive.DisplayLine(lines[i])
-	}
-	return strings.Join(lines, "\n")
-}
-
-const searchDetailsQuestion = "↑↓/PgUp/PgDn (or pgup/pgdn) scroll · n next match · p previous match · m more context · h Hand off current session · r rerun · b back · q quit"
-
-func (b *sessionBrowser) drawSearchDetails(lines []string, top int) detailsScreen {
-	if width, _, ok := b.env.terminalSize(b.stdout); ok && width > 0 {
-		var wrapped []string
-		for _, line := range lines {
-			wrapped = append(wrapped, splitColumns(line, width)...)
-		}
-		lines = wrapped
-	}
-	screen, _ := b.measureDetails(lines, top, false, "", browseNotice{})
-	for _, line := range lines[screen.top : screen.top+screen.shown] {
-		terminal.Println(b.stdout, line)
-	}
-	if screen.cut {
-		terminal.Println(b.stdout, scrollIndicator(screen.top, len(lines)-screen.top-screen.shown))
-	}
-	terminal.Println(b.stdout, searchDetailsQuestion)
-	return screen
 }
 
 // searchReadAction consumes only one currently available input action. The
@@ -372,7 +613,7 @@ func (b *sessionBrowser) searchReadAction() (contentSearchAction, error) {
 		return contentSearchAction(strings.ToLower(string(k.r))), nil
 	case keyEnter, keyBackspace:
 		return searchActionBack, nil
-	case keyUp, keyDown, keyLeft, keyRight, keyPageUp, keyPageDown, keyHome, keyEnd, keyResize:
+	case keyUp, keyDown, keyLeft, keyRight, keyPageUp, keyPageDown, keyHome, keyEnd, keyResize, keyTab:
 	}
 	return searchActionNone, nil
 }
@@ -444,38 +685,6 @@ func (s *contentSearchBrowser) moveMatch(ctx context.Context, hit search.Hit, re
 	return &selected, nil
 }
 
-// printContentSearchRows is the finite search presentation of shared browser
-// groups. It bounds each snippet to two physical rows, without widening other
-// columns or changing the layout of existing metadata pickers.
-func printContentSearchRows(out io.Writer, groups []sessionTableGroup, width int) error {
-	if width <= 0 {
-		width = 80
-	}
-	var frame strings.Builder
-	frame.WriteString(oneRow("Ranked content matches", width) + "\n")
-	for _, group := range groups {
-		for _, row := range group.rows {
-			title := fmt.Sprintf("%d. %s", row.Index, row.Title)
-			if row.Highlight {
-				title = cursorMark + " " + title
-			}
-			frame.WriteString(oneRow(title, width) + "\n")
-			frame.WriteString(oneRow(row.Harness+" · "+row.ShortID+" · "+row.When, width) + "\n")
-			snippets := splitColumns(row.searchSnippet, max(width-2, 1))
-			for i, line := range snippets[:min(len(snippets), 2)] {
-				if i == 1 && len(snippets) > 2 {
-					line = oneRow(line+"…", max(width-2, 1))
-				}
-				frame.WriteString("  " + line + "\n")
-			}
-			if row.searchMatches > 1 {
-				frame.WriteString(oneRow(fmt.Sprintf("%d other indexed title/body matches", row.searchMatches-1), width) + "\n")
-			}
-		}
-	}
-	return writeOutput(out, []byte(frame.String()))
-}
-
 func (l *sessionPicker) minimumRows() int {
 	if l.contentSearch != nil {
 		return 1
@@ -500,4 +709,16 @@ func (l *sessionPicker) keepSearchSelection(identity string) {
 	l.keep = identity
 	l.start, l.cursor = 0, 0
 	l.memo, l.cache, l.bottom = nil, nil, nil
+}
+
+// hitProject is the name shown for a hit's project: the metadata's name, or
+// the configured label for its project ID, as list and show name it.
+func (s *contentSearchBrowser) hitProject(h search.Hit) string {
+	if h.Project != "" {
+		return archive.DisplayLine(h.Project)
+	}
+	if s.labels == nil {
+		s.labels = projectLabels(s.cfg)
+	}
+	return archive.DisplayLine(s.labels[h.ProjectID])
 }

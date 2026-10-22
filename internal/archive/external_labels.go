@@ -190,3 +190,33 @@ func labelEvidenceHarness(e SupplementalEvidence) string {
 	}
 	return strings.TrimSuffix(strings.TrimPrefix(e.Provenance, "native:"), ":session_labels")
 }
+
+// SessionLabelFor returns the session label a source bundle NewSourceBundle
+// builds for reg from evidence would carry, so a reader that does not build
+// one names the session as its parser would. ok is false when evidence
+// carries none; err is NewSourceBundle's refusal of the evidence.
+func SessionLabelFor(reg SessionRegistration, evidence []SupplementalEvidence) (label SessionLabel, ok bool, err error) {
+	if err := checkSessionLabelOwner(reg, evidence); err != nil {
+		return SessionLabel{}, false, err
+	}
+	filtered, _, err := FilterSupplementalEvidence(evidence)
+	if err != nil {
+		return SessionLabel{}, false, err
+	}
+	label, _, ok = CurrentSessionLabel(SourceBundle{NativeSessionID: reg.NativeSessionID, Capture: SourceCapture{Harness: reg.Harness}, SupplementalEvidence: filtered})
+	return label, ok, nil
+}
+
+// checkSessionLabelOwner refuses a session label that names a source other
+// than reg's.
+func checkSessionLabelOwner(reg SessionRegistration, evidence []SupplementalEvidence) error {
+	for _, e := range evidence {
+		if e.Kind == EvidenceKindSessionLabels {
+			label, ok := labelFromEvidence(e)
+			if !ok || e.Provenance != labelProvenance(reg.Harness.Name) || label.NativeID != reg.NativeSessionID {
+				return errors.New("session label does not match its owning source")
+			}
+		}
+	}
+	return nil
+}

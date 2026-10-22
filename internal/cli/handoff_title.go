@@ -185,7 +185,7 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 	var local []handoffPickerRow
 	if opts.source != "archive" {
 		stop := startActivity(r.stdout, "Finding sessions…")
-		picker := handoffPicker{ctx: ctx, env: r.env, home: r.home, harness: opts.harness, source: "local"}
+		picker := handoffPicker{wholeReads: newWholeLabelReads(), ctx: ctx, env: r.env, home: r.home, harness: opts.harness, source: "local"}
 		rows, _, truncated := picker.rows(regs, nil, handoffTitleScanLimit)
 		stop()
 		local, scanned = rows, truncated

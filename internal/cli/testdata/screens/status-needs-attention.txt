@@ -1,22 +1,16 @@
 $ agent-archive status
-Agent Archive  ● Needs attention
+Agent Archive  Needs attention
 
-  ! The last sync failed: storage refused access
-    Check storage access and run agent-archive sync.
-    To change credentials, run agent-archive setup and choose storage.
+   Background   On · idle between checks
+   Last check   Completed just now
+   Uploads      Last succeeded just now
+   Queue        0 pending at last check
 
-Capture
-  ✓ Codex   automatic capture; included projects
-    1 session · 1 archived (1 verified)
-  · Identity recovery: complete
+Detected agents
+   Codex   Archiving enabled   detection unavailable
 
-Storage
-  ! s3://team-archive/agent-archive/
-    refused access on the last pass · uploaded just now
-  ✓ Background collector on            last scan just now
-  ! Bucket privacy not verified
-    this storage can't be inspected; see
-    https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+The last collection did not finish successfully.
 
-More: agent-archive status --verbose · agent-archive status codex
+agent-archive status --issues
+agent-archive status --verbose
 [exit 0]

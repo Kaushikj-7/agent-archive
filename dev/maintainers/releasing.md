@@ -37,13 +37,13 @@ draft or mismatched release fails closed before signing.
 Both platforms run the full tier on the tagged commit: every discovered
 Test/Fuzz/Example parent and its children, race, `-count=1`, and each
 invocation's 20-minute package timeout. Linux runs it in `build-linux` with
-`scripts/run_ci_tier.py` under a 2400-second tier deadline (job limit 60
-minutes). macOS no longer fits one runner, so it uses Extended's split with the
+`scripts/run_ci_tier.py` under a 3300-second tier deadline (job limit 80
+minutes), the default for the full Linux tier in Test and Extended too. macOS no longer fits one runner, so it uses Extended's split with the
 same `scripts/run_native_full.py` commands: `macos-plan` (with the tag and
 `main` guard) compiles the catalog and assigns three `macos-workers`, while
 `macos-obligations` runs full-size plain performance and the
-protected-configuration writer check; each job has its own 2400-second
-deadline. `build` reconciles their exact-source/raw-body receipts and job
+protected-configuration writer check; each job has its own 3300-second
+deadline (job limit 60 minutes). `build` reconciles their exact-source/raw-body receipts and job
 results before Build. Separate `release-validation-macos` and
 `release-validation-linux` artifacts are uploaded even on failure. These validation artifacts are separate from the
 release assets; they do not authorize signing or promotion.
@@ -140,15 +140,18 @@ evidence.
 4. Copy [the pending JSON template](release-evidence/example.json) to
    `dev/maintainers/release-evidence/vX.Y.Z.json`. Commit it to main in a reviewed
    documentation-only PR. Fill the tag, exact tagged commit, all six downloaded
-   SHA256 digests, and every check with `result: passed`, actual tester,
-   ISO-8601 UTC timestamp and a durable HTTPS evidence URL. Each evidence record
+   SHA256 digests, and decide every check. Acceptance is best effort: a check
+   is `result: passed` with actual tester, ISO-8601 UTC timestamp and a durable
+   HTTPS evidence URL, or `result: skipped` with tester, UTC timestamp and a
+   non-empty `reason` (evidence optional, HTTPS if present). Each evidence record
    must identify the candidate and describe the actual procedure/result;
    generic links or an earlier release's evidence do not establish acceptance.
    `repository-settings` includes both approval environments, main protection,
    vulnerability reporting, labels and release freeze. `documentation` includes
    command/link/generated reference audits and actual current provider/app
-   versions. Pending, skipped, unavailable or failed checks stay pending and
-   **block promotion**; the example intentionally fails this gate.
+   versions. Pending, missing or failed checks **block promotion**; the example
+   intentionally fails this gate. Promotion prints skipped checks and reasons in
+   the job log before it publishes.
 5. Under `ci`, record exact successful push run IDs for `Test`, `Levenshtein`,
    and `Extended`, with tester, UTC timestamp and evidence URL. Promotion queries
    GitHub and requires the exact repository/SHA/workflow plus successful jobs:
@@ -188,7 +191,8 @@ non-cancelling publication concurrency group.
 
 The human acceptance gate is deliberate: the script checks structure, exact
 identity/digests and CI results, but cannot judge whether a provider/app test
-was honestly performed. Protected reviewers must inspect linked evidence.
+was honestly performed or whether a skip is acceptable. Protected
+`release-promotion` reviewers must inspect linked evidence and skip reasons.
 No live signed-candidate, architecture, provider, application or approval
 setting acceptance is established by this implementation or its fake API tests.
 

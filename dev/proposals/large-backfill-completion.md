@@ -229,7 +229,7 @@ peak RSS and logical charges, disk/stage high water, worker/descriptor cleanup.
 RSS and charged bytes are different measures. Retain small evidence separately
 from compiler caches and remove only task-owned idle scratch.
 
-Use Go 1.27.2, the [testing guide](../contributing/testing.md), current lint,
+Use Go 1.27.3, the [testing guide](../contributing/testing.md), current lint,
 synthetic fixtures and fake homes/services. Each implementation PR starts with
 affected race regressions and appropriate full checks. Parsing/redaction changes
 need the documented two-minute affected fuzz runs and reviewed golden/version

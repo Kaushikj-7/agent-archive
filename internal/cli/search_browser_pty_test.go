@@ -45,7 +45,7 @@ func TestSearchBrowserOnARealTerminal(t *testing.T) {
 }
 
 const searchBrowserPTYScript = ptyKeysHarness + `try:
-    wait_for(b'Content query:')
+    wait_for(b'All projects')
     wait_until(keys_on, 'key mode not on in search')
     if mode == 'interrupt':
         os.write(master, b'\x03')
@@ -55,7 +55,7 @@ const searchBrowserPTYScript = ptyKeysHarness + `try:
         finish(0)
     else:
         os.write(master, b'1\r')
-        wait_for(b'Hand off current session')
+        wait_for(b'i details')
         assert keys_on(), 'key mode off in search context'
         if mode == 'handoff':
             # One burst crosses browser and ordinary destination prompt ownership.
@@ -70,7 +70,7 @@ const searchBrowserPTYScript = ptyKeysHarness + `try:
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 20, 36, 0, 0))
                 signal.signal(signal.SIGTTOU, signal.SIG_DFL)
                 p.send_signal(signal.SIGWINCH)
-                wait_for(b'Hand off current session', start)
+                wait_for(b'n/p match', start)
                 assert keys_on(), 'resize left key mode'
                 os.write(master, b'\x1b[F\x1b[H')
             else:
@@ -82,7 +82,7 @@ const searchBrowserPTYScript = ptyKeysHarness + `try:
                 wait_for(b'no further matching body passage', start)
             start = len(output)
             os.write(master, b'b')
-            wait_for(b'Content query:', start)
+            wait_for(b'All projects', start)
             os.write(master, b'q')
             finish(0)
     assert restored(), ('search terminal modes not restored', hex(before[3]), hex(termios.tcgetattr(slave)[3]))

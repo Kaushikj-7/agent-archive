@@ -1,13 +1,12 @@
 # agent-archive
 ### Session handoffs and backups for Claude Code, Codex, and Cursor
 
-[![Tests](https://github.com/wangjohn/agent-archive/actions/workflows/extended.yml/badge.svg?branch=main&event=schedule)](https://github.com/wangjohn/agent-archive/actions/workflows/extended.yml?query=branch%3Amain+event%3Aschedule)
-[![Go 1.27](https://img.shields.io/badge/go-1.27.2-00ADD8?logo=go)](go.mod)
+[![Go 1.27](https://img.shields.io/badge/go-1.27.3-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Continue a Claude Code session in Codex, or vice-versa. You can pick a session and bring its conversation context into another coding agent. Add your own S3 or R2 bucket for automatic backups and access from other machines.
 
-OpenAI and Anthropic are constantly one-upping each other for the best model and harness, but it's a pain to switch between their coding agents, especially if you have multiple computers and accounts. You lose your conversation history as you switch and then have to search in multiple places to figure out where you working on something. You also can't introspect your sessions as easily.
+OpenAI and Anthropic are constantly one-upping each other for the best model and harness, but it's a pain to switch between their coding agents, especially if you have multiple computers and accounts. You lose your conversation history as you switch and then have to search in multiple places to figure out where you were working on something. You also can't introspect your sessions as easily.
 
 `agent-archive` solves these problems, and can perform the following:
 
@@ -30,10 +29,10 @@ OpenAI and Anthropic are constantly one-upping each other for the best model and
 1. **Install:**
 
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 sh
+   curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.2.2/install.sh | AGENT_ARCHIVE_VERSION=v0.2.2 sh
    ```
 
-   Note the published binaries are macOS only.
+   Release binaries cover macOS (Intel and Apple Silicon) and Linux (x86-64 and arm64).
 
 2. **Continue a session in another agent**:
 
@@ -49,7 +48,7 @@ OpenAI and Anthropic are constantly one-upping each other for the best model and
    agent-archive setup
    ```
 
-  Connect your own S3 or R2 bucket if you want your sessions backed up and available from another computer.
+   Connect your own S3 or R2 bucket if you want your sessions backed up and available from another computer.
 
 
 [Setup guide](docs/getting-started/setup.md) · [Bucket options](docs/getting-started/bucket.md) · [Platforms](docs/getting-started/install.md#platforms) · [Privacy](docs/security/privacy.md) · [Multiple machines](docs/guides/multiple-machines.md)
@@ -75,7 +74,7 @@ Setup edits each included app's hook settings, adds one background job (a Launch
 | Command | What it does | Example |
 | --- | --- | --- |
 | `setup` | Configure apps, projects, and storage. | `agent-archive setup` |
-| `status` | Check capture health and see what to do next; `status claude` shows one app in full. | `agent-archive status` |
+| `status` | Check collection and detected agents; `status --issues` opens problems, and `status claude` shows one app in full. | `agent-archive status` |
 | `sync` | Collect and upload pending sessions now. | `agent-archive sync` |
 | `pause`, `resume` | Pause collection, uploads, and cleanup until you resume ([everyday commands](docs/guides/troubleshooting.md#everyday-commands)). | `agent-archive pause` |
 | `list` | Find archived sessions, by filters or by a few words. | `agent-archive list "retention"` |

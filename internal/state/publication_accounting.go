@@ -25,6 +25,8 @@ type publicationAccountingFact struct {
 	stamp os.FileInfo
 	sha   [32]byte
 	mode  int
+	// charged is publishedCharge for the file this fact classifies.
+	charged int64
 }
 
 type publicationAccountingContext struct {
@@ -340,17 +342,17 @@ func (s *Store) seedPublicationAccounting(a *publicationAccounting, id string) (
 	return nil
 }
 
-func (q *durableQuota) accountingClassification(path string, expected os.FileInfo) (int, bool, error) {
+func (q *durableQuota) accountingClassification(path string, expected os.FileInfo) (int, int64, bool, error) {
 	a := q.store.accountingScope()
 	if a == nil {
-		return 0, false, nil
+		return 0, 0, false, nil
 	}
 	a.mu.Lock()
 	// Inactive facts cannot classify; the authoritative fallback still checks
 	// the actual operation context before reading or granting accounting credit.
 	if !a.active() {
 		a.mu.Unlock()
-		return 0, false, nil
+		return 0, 0, false, nil
 	}
 	binding := a.binding
 	var fact publicationAccountingFact
@@ -362,40 +364,40 @@ func (q *durableQuota) accountingClassification(path string, expected os.FileInf
 	}
 	a.mu.Unlock()
 	if fact.mode == 0 {
-		return 0, false, nil
+		return 0, 0, false, nil
 	}
 	current, err := q.store.accountingBinding(q.home)
 	if err != nil {
 		a.clear()
-		return 0, false, err
+		return 0, 0, false, err
 	}
 	if !sameDurableStamp(binding.config, current.config) || binding.configSHA != current.configSHA || !os.SameFile(binding.home, current.home) {
 		a.clear()
-		return 0, false, nil
+		return 0, 0, false, nil
 	}
 	if !sameDurableStamp(fact.stamp, expected) {
 		q.store.invalidatePublishedAccounting(filepath.Join(q.path, path))
-		return 0, false, nil
+		return 0, 0, false, nil
 	}
 	sum, err := q.store.accountingHash(q.home, path, expected)
 	if err != nil {
 		q.store.invalidatePublishedAccounting(filepath.Join(q.path, path))
-		return 0, false, err
+		return 0, 0, false, err
 	}
 	if sum != fact.sha {
 		q.store.invalidatePublishedAccounting(filepath.Join(q.path, path))
-		return 0, false, nil
+		return 0, 0, false, nil
 	}
 	if err = q.guard.CheckHome(q.path); err != nil {
 		a.clear()
-		return 0, false, err
+		return 0, 0, false, err
 	}
-	return fact.mode, true, nil
+	return fact.mode, fact.charged, true, nil
 }
 
 // savedAccountingCandidate is called only after the typed selecting producer
 // encoded and durably saved its validated final state through the shared writer.
-func (s *Store) savedAccountingCandidate(g config.DurableStorageGuard, path string, sum [32]byte, n int64) (fact *publicationAccountingFact, binding publicationAccountingContext, release func(), err error) {
+func (s *Store) savedAccountingCandidate(g config.DurableStorageGuard, path string, sum [32]byte, n, charged int64) (fact *publicationAccountingFact, binding publicationAccountingContext, release func(), err error) {
 	a := s.accountingScope()
 	if a == nil {
 		return nil, binding, func() {}, nil
@@ -423,7 +425,7 @@ func (s *Store) savedAccountingCandidate(g config.DurableStorageGuard, path stri
 	if err = g.CheckHome(s.home); err != nil {
 		return nil, binding, release, err
 	}
-	return &publicationAccountingFact{path: path, stamp: info, sha: actual, mode: 2}, binding, release, nil
+	return &publicationAccountingFact{path: path, stamp: info, sha: actual, mode: 2, charged: charged}, binding, release, nil
 }
 
 // readPublishedOwned shares the actual checked current decode with accounting.
@@ -504,7 +506,7 @@ func (s *Store) readCurrentPublished(path string, p *publishedState, a *publicat
 		return err
 	}
 	if mode := publishedAccountingMode(*p); mode != 0 {
-		a.install(publicationAccountingFact{path: rel, stamp: info, sha: sum, mode: mode}, current)
+		a.install(publicationAccountingFact{path: rel, stamp: info, sha: sum, mode: mode, charged: publishedCharge(*p, mode, info.Size())}, current)
 	}
 	*s.resourceReleases = append(*s.resourceReleases, release)
 	keep = true
@@ -531,11 +533,11 @@ func (s *Store) seedPublishedAccountingPeer(a *publicationAccounting, home *loca
 		a.reservation.Release(accountingFactBytes)
 		return
 	}
-	mode, sum, e := s.readPublishedClassification(s.durableContext(), home, path, info)
+	mode, charged, sum, e := s.readPublishedClassification(s.durableContext(), home, path, info)
 	if e != nil {
 		a.reservation.Release(accountingFactBytes)
 		return
 	}
-	a.install(publicationAccountingFact{path: path, stamp: info, sha: sum, mode: mode}, binding)
+	a.install(publicationAccountingFact{path: path, stamp: info, sha: sum, mode: mode, charged: charged}, binding)
 	a.reservation.Release(accountingFactBytes)
 }

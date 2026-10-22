@@ -407,7 +407,7 @@ func TestStatusWarnsOfALeftoverSkillFileWhileSkillsAreOff(t *testing.T) {
 		t.Fatalf("status calls a file out of date while the skills are off: %#v", view["agent_skills_out_of_date"])
 	}
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"status"}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"status", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatal(errOut.String())
 	}
 	if strings.Contains(out.String(), "out of date") || !strings.Contains(out.String(), "The agent skills are turned off, but the /handoff skill file at ~/.claude/skills/handoff/SKILL.md is still there. Run agent-archive setup to remove it.") {
@@ -419,7 +419,7 @@ func TestStatusWarnsOfALeftoverSkillFileWhileSkillsAreOff(t *testing.T) {
 	setupYes(t, env, "", 0, "--yes")
 	wantSkillFiles(t, nil, []string{claude})
 	out.Reset()
-	if code := Run([]string{"status"}, nil, &out, &errOut, env); code != 0 || strings.Contains(out.String(), "still there") {
+	if code := Run([]string{"status", "--verbose"}, nil, &out, &errOut, env); code != 0 || strings.Contains(out.String(), "still there") {
 		t.Fatalf("status after setup (exit %d):\n%s", code, &out)
 	}
 }

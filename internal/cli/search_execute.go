@@ -22,13 +22,7 @@ import (
 )
 
 func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, env searchCommandDependencies) int {
-	kind := contentSearchResults
-	if opts.read != "" {
-		kind = contentSearchContextRead
-	} else if !opts.hasQuery {
-		kind = contentSearchRefreshOnly
-	}
-	doc := contentSearchDocument{SchemaVersion: 1, Kind: kind, OK: true, Results: []contentSearchHit{}, Query: opts.query.Text, Limit: opts.query.Limit}
+	doc := contentSearchDocument{SchemaVersion: 1, Kind: contentSearchKindOf(opts), OK: true, Results: []contentSearchHit{}, Query: opts.query.Text, Limit: opts.query.Limit}
 
 	home, err := env.readHome()
 	if err != nil {
@@ -44,37 +38,52 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 		return writeContentSearch(doc, opts, stdout, stderr)
 	}
 	namespace, dir := contentSearchLocation(home, cfg)
+	code := startInteractiveSearch(home, dir, &cfg, &opts, stdout, stderr, env)
+	if opts.prompt != nil {
+		defer opts.prompt.close()
+	}
+	if code != 0 {
+		return code
+	}
+	doc.Query = opts.query.Text
+	// Background indexing runs only while capture is on and not paused.
+	opts.indexing = cfg.SearchIndexing && cfg.Archive.Enabled && !cfg.Paused
 	ctx, stop := readCommandContext(env)
 	defer stop()
+	// browse opens the results browser over index, which it closes; handOff
+	// then hands off the session picked there, outside the browser's reads.
+	browse := func(index *search.Store, page search.Page, opts contentSearchOptions, failure *contentSearchError) (*searchPick, int) {
+		if opts.prompt != nil {
+			opts.prompt.close()
+		}
+		row, picked, input, code := runContentSearchBrowser(ctx, env, cfg, namespace, index, page, opts, stdout, stderr)
+		_ = index.Close()
+		if code != 0 || !picked {
+			return nil, contentSearchBrowserExit(code, failure)
+		}
+		return &searchPick{row: row, input: input, opts: opts, failure: failure}, 0
+	}
+	handOff := func(pick *searchPick, code int) int {
+		if pick == nil {
+			return code
+		}
+		return handOffSearchPick(stop, *pick, stdout, stderr, env)
+	}
 	if opts.read != "" {
 		return readSearchContext(ctx, env, cfg, namespace, opts, doc, stdout, stderr)
 	}
 	if opts.hasQuery {
-		f := &contentSearchFiltersDocument{Harness: opts.query.Harness, Replays: string(opts.query.Replay), Children: string(opts.query.Children)}
-		if f.Replays == "" {
-			f.Replays = "include"
-		}
-		if f.Children == "" {
-			f.Children = "include"
-		}
-		if !opts.query.From.IsZero() {
-			f.Since = &opts.query.From
-		}
-		if !opts.query.To.IsZero() {
-			f.Until = &opts.query.To
-		}
-		doc.Filters = f
+		doc.Filters = contentSearchFiltersOf(opts.query)
 	}
 
+	var scope sessionScope
 	if opts.hasQuery {
-		scope, e := scopeFor(env, opts.project, opts.all)
+		// Search covers every project unless --project names one.
+		opts.all = opts.project == ""
+		var e error
+		scope, e = scopeFor(env, opts.project, opts.all)
 		if e != nil {
 			setSearchError(&doc, e)
-			return writeContentSearch(doc, opts, stdout, stderr)
-		}
-		if !opts.all && !scope.narrowed() {
-			setSearchError(&doc, searchFailure("scope_required"))
-			doc.Error.Message = "choose --project or --all-projects outside a known project"
 			return writeContentSearch(doc, opts, stdout, stderr)
 		}
 		opts.query.Scope = search.Scope{Restricted: scope.narrowed(), Named: scope.Dir == "", RepoKey: scope.RepoKey, ProjectName: scope.Label, ProjectIDs: scope.ProjectIDs}
@@ -88,6 +97,13 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 		queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		index, e := search.OpenRead(queryCtx, dir, namespace)
+		if e != nil && wantsDirectSearch(cfg, opts, dir, namespace) {
+			found, code := runDirectSearch(ctx, cfg, namespace, scope, opts, stdout, stderr, env)
+			if found == nil {
+				return code
+			}
+			return handOff(browse(found.index, found.page, found.opts, nil))
+		}
 		if os.IsNotExist(e) {
 			doc.Coverage = contentSearchCoverageOf(search.Observation{}, false)
 		} else if e != nil {
@@ -98,16 +114,7 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 				if doc.Error != nil {
 					searchCommandError(stderr, errors.New(doc.Error.Message))
 				}
-				row, picked, input, code := runContentSearchBrowser(ctx, env, cfg, namespace, index, page, opts, stdout, stderr)
-				_ = index.Close()
-				if code != 0 || !picked {
-					return contentSearchBrowserExit(code, doc.Error)
-				}
-				// The search store and all browser reads are closed before handing
-				// signal and prompt ownership to the ordinary handoff pipeline.
-				stop()
-				code = runHandoffWithInput([]string{row.SessionID, "--harness", row.HarnessKey, "--source", "archive"}, opts.stdin, stdout, stderr, env, input)
-				return contentSearchBrowserExit(code, doc.Error)
+				return handOff(browse(index, page, opts, doc.Error))
 			}
 			_ = index.Close()
 			if e != nil {
@@ -118,6 +125,53 @@ func executeContentSearch(opts contentSearchOptions, stdout, stderr io.Writer, e
 		}
 	}
 	return writeContentSearch(doc, opts, stdout, stderr)
+}
+
+// handOffSearchPick hands off the session picked in the results browser. The
+// search store and all browser reads are closed first; stop hands signal and
+// prompt ownership to the ordinary handoff pipeline.
+func handOffSearchPick(stop func(), pick searchPick, stdout, stderr io.Writer, env searchCommandDependencies) int {
+	stop()
+	code := runHandoffWithInput([]string{pick.row.SessionID, "--harness", pick.row.HarnessKey, "--source", "archive"}, pick.opts.stdin, stdout, stderr, env, pick.input)
+	return contentSearchBrowserExit(code, pick.failure)
+}
+
+// searchPick is the session picked in the results browser, with the typed
+// input and options the handoff continues with.
+type searchPick struct {
+	row     listRow
+	input   *typedInput
+	opts    contentSearchOptions
+	failure *contentSearchError
+}
+
+// contentSearchKindOf is the document kind a search command produces.
+func contentSearchKindOf(opts contentSearchOptions) contentSearchKind {
+	switch {
+	case opts.read != "":
+		return contentSearchContextRead
+	case !opts.hasQuery:
+		return contentSearchRefreshOnly
+	}
+	return contentSearchResults
+}
+
+// contentSearchFiltersOf is the filters object a query's document reports.
+func contentSearchFiltersOf(q search.Query) *contentSearchFiltersDocument {
+	f := &contentSearchFiltersDocument{Harness: q.Harness, Replays: string(q.Replay), Children: string(q.Children)}
+	if f.Replays == "" {
+		f.Replays = "include"
+	}
+	if f.Children == "" {
+		f.Children = "include"
+	}
+	if !q.From.IsZero() {
+		f.Since = &q.From
+	}
+	if !q.To.IsZero() {
+		f.Until = &q.To
+	}
+	return f
 }
 
 // A cached browser or handoff success cannot erase a requested refresh failure.
@@ -374,7 +428,13 @@ func readSearchContext(ctx context.Context, env searchCommandDependencies, cfg c
 	out, err := search.ReadContext(ctx, objects, parsersFor(env), ref, offset, opts.maxBytes, opts.before, opts.after, reader.Limits{})
 	if err != nil {
 		setSearchError(&doc, err)
-		return writeContentSearch(doc, opts, stdout, stderr)
+		code := writeContentSearch(doc, opts, stdout, stderr)
+		if code == 1 && errors.Is(err, search.ErrInvalidOffset) {
+			// Only the read can tell an offset is past the message's end;
+			// it is still the caller's input that is wrong.
+			return 2
+		}
+		return code
 	}
 	slice := func(ref search.Reference, role string, c search.Context) contentSearchSlice {
 		var next *int

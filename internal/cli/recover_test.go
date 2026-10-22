@@ -503,3 +503,72 @@ func TestRecoverRefusesPauseDestinationAndSubagent(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoverRefusesUnsupportedImportStageBeforeReadingTranscript(t *testing.T) {
+	t.Parallel()
+	env, home, path, id := recoverFixture(t)
+	reg, _ := onlyRegistration(t, home)
+	reg.StagedImportSHA256 = strings.Repeat("a", 64)
+	data, err := json.Marshal(reg)
+	must(t, err)
+	must(t, os.WriteFile(filepath.Join(home, "registrations", id+".json"), data, 0600))
+	// Filtering this transcript would fail with a different error.
+	must(t, os.WriteFile(path, []byte("not native JSON"), 0600))
+	before, err := os.ReadFile(filepath.Join(home, "config.json"))
+	must(t, err)
+	for _, args := range [][]string{{"recover", id}, {"recover", id, "--confirm"}} {
+		var out, errOut bytes.Buffer
+		if code := Run(args, nil, &out, &errOut, env); code != 1 || errOut.String() != "agent-archive: recover: "+state.ErrGenerationStageUnsupported.Error()+"\n" {
+			t.Fatalf("%v: %d %q", args, code, errOut.String())
+		}
+	}
+	if _, found, err := state.OpenReadOnly(home).GenerationSuccessor(id); err != nil || found {
+		t.Fatalf("unsupported stage started recovery: %v %v", found, err)
+	}
+	if after, err := os.ReadFile(filepath.Join(home, "config.json")); err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("refused recovery changed configuration: %v", err)
+	}
+}
+
+func TestRecoverFailurePutsSyncOnItsOwnLineOnlyForOwedStages(t *testing.T) {
+	t.Parallel()
+	owed := recoverFailure(fmt.Errorf("begin: %w", state.ErrGenerationStageUnsettled))
+	if owed != "agent-archive: recover: the session's import stage has not settled. Run:\n  agent-archive sync\n" {
+		t.Fatalf("owed stage: %q", owed)
+	}
+	cause := recoverFailure(fmt.Errorf("read release progress: %w", state.ErrDurableStorageRecovery))
+	if strings.Contains(cause, "agent-archive sync") || !strings.Contains(cause, "read release progress") {
+		t.Fatalf("storage failure lost its cause: %q", cause)
+	}
+}
+
+func TestRecoverSuccessorRefusalsSayWhatToDo(t *testing.T) {
+	t.Parallel()
+	for err, want := range map[error]string{
+		fmt.Errorf("generation recovery %q remains pending: %w", "session", state.ErrGenerationRecoveryConfigChanged): "agent-archive: recover: the archive configuration changed during an interrupted recovery. Restore the skill evidence, destination and capture settings it started with, then run:\n  agent-archive sync\n",
+		state.ErrGenerationHistorySuccessor:      "agent-archive: recover: sessions with retained history alternatives cannot be recovered on this archive home; the session keeps its current publication.\n",
+		state.ErrGenerationSuccessorUnselectable: "agent-archive: recover: the recovered transcript cannot be published under the current archive configuration; the session keeps its current publication.\n",
+	} {
+		if got := recoverFailure(err); got != want {
+			t.Fatalf("%v:\n%q\n%q", err, got, want)
+		}
+	}
+}
+
+func TestRecoverDoesNotResumeRecordedRecoveryWhilePaused(t *testing.T) {
+	t.Parallel()
+	env, home, _, id := recoverFixture(t)
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"recover", id, "--confirm"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("recover: %d %s", code, errOut.String())
+	}
+	cfg, _, err := config.Load(home)
+	must(t, err)
+	cfg.Paused = true
+	must(t, config.Save(home, cfg))
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"recover", id, "--confirm"}, nil, &out, &errOut, env); code != 1 || !strings.Contains(errOut.String(), "collection is paused") {
+		t.Fatalf("paused resume: %d %q %q", code, out.String(), errOut.String())
+	}
+}

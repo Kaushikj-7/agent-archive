@@ -62,3 +62,46 @@ func BenchmarkSearchContextNeighbors(b *testing.B) {
 	b.ReportMetric(float64(counted.gets)/float64(b.N), "object_GET/op")
 	b.ReportMetric(1, "parse/op")
 }
+
+func TestSearchContextReadsOnThroughLaterPassagesOfOneMessage(t *testing.T) {
+	long := strings.Repeat("synthetic λ line ", 1250) // 22,500 bytes: three passages
+	raw := `{"type":"response_item","payload":{"type":"message","role":"user","content":"before visible"}}` + "\n" + `{"type":"response_item","payload":{"type":"message","role":"assistant","content":"` + long + `"}}` + "\n" + `{"type":"response_item","payload":{"type":"message","role":"user","content":"after visible"}}`
+	m, _, objects := verifiedFixture(t, "codex", raw)
+	parsers := builtin.NewBuiltins()
+	p, err := LoadProjection(t.Context(), objects, parsers, "test/context", m, "", reader.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ref Reference
+	for _, v := range p.Passages {
+		if v.Role == "assistant" {
+			ref = v.Reference
+			break
+		}
+	}
+	if ref.End >= len(long) {
+		t.Fatalf("fixture message fits one passage: %+v", ref)
+	}
+	var read strings.Builder
+	offset, reads := ref.Start, 0
+	for {
+		out, err := ReadContext(t.Context(), objects, parsers, ref, offset, 4096, 1, 1, reader.Limits{})
+		if err != nil {
+			t.Fatalf("read from %d: %v", offset, err)
+		}
+		if out.Selected.Start != offset {
+			t.Fatalf("read from %d started at %d", offset, out.Selected.Start)
+		}
+		if len(out.Before) != 1 || len(out.After) != 1 || out.After[0].Context.Text != "after visible" {
+			t.Fatalf("neighbors from %d: %+v", offset, out)
+		}
+		read.WriteString(out.Selected.Text)
+		if reads++; out.Selected.Next == 0 || reads > 20 {
+			break
+		}
+		offset = out.Selected.Next
+	}
+	if read.String() != long {
+		t.Fatalf("read %d of %d bytes in %d reads", read.Len(), len(long), reads)
+	}
+}

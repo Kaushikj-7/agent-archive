@@ -91,7 +91,7 @@ func TestMuseSkillsSourceBundleUsesSharedFilteredInventoryWithoutUseClaims(t *te
 	must(t, err)
 	encoded, err := json.Marshal(bundle)
 	must(t, err)
-	if bundle.Capture.FilterVersion != "31" || bundle.Capture.AdapterVersion != "0.31.0" {
+	if bundle.Capture.FilterVersion != "32" || bundle.Capture.AdapterVersion != "0.32.0" {
 		t.Fatal("wrong privacy provenance")
 	}
 	for _, secret := range []string{"synthetic-secret-value", "PRIVATE_FOREIGN_FILE_SENTINEL", userHome, xdg, codexHome, skillData, outside} {

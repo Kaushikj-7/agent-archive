@@ -158,7 +158,9 @@ def validate(catalog, workers, *, allow_legacy=False):
     config = catalog['configuration']
     if (not isinstance(config, dict) or set(config) != set(CONFIG_FIELDS)
             or any(type(v) is not str for v in config.values())
-            or config['GOVERSION'] != 'go1.27.2' or config['GOOS'] != 'linux'
+            # Recorded legacy catalogs were discovered with go1.27.2.
+            or config['GOVERSION'] not in (('go1.27.2', 'go1.27.3') if allow_legacy else ('go1.27.3',))
+            or config['GOOS'] != 'linux'
             or config['GOHOSTOS'] != 'linux' or config['GOARCH'] != config['GOHOSTARCH']
             or config['GOARCH'] not in ('amd64','arm64') or config['CGO_ENABLED'] != '1'
             or config['GOFLAGS'] != '-mod=readonly' or config['GOTOOLCHAIN'] != 'local'
