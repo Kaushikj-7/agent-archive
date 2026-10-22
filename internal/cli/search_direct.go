@@ -128,6 +128,9 @@ type directScan struct {
 	// ran, when set, runs after each session's index pass, before its
 	// matches are counted.
 	ran func()
+	// sent, when set, runs after each match is sent, before the memory
+	// it fills is checked.
+	sent func()
 }
 
 // directSessionKey identifies a session among those a direct search reads.
@@ -278,8 +281,13 @@ func (s *directScan) run(ctx context.Context, found chan<- directMatch) (directS
 			case <-ctx.Done():
 				return directScanStopped, nil
 			}
+			if s.sent != nil {
+				s.sent()
+			}
 			if s.memory > 0 {
-				size, err := s.index.Size(ctx)
+				// Esc may end ctx now; the session is counted, so its
+				// size is still read and the stretch ends as it would.
+				size, err := s.index.Size(context.WithoutCancel(ctx))
 				if err != nil {
 					return directScanStopped, err
 				}
