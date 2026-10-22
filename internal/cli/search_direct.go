@@ -96,7 +96,9 @@ type directScan struct {
 	matching int
 	failed   int
 	// failedInRow is how many of the latest sessions searched could not
-	// be read, since the last one that could.
+	// be read for a reason of the bucket's, since the last one that could.
+	// A session too large or too slow to read is unread for its own reason:
+	// it neither adds to the count nor resets it.
 	failedInRow int
 	// matched and unread are the sessions searched that matched and that
 	// could not be read, by harness/session, so narrowing keeps only the
@@ -144,6 +146,17 @@ const directSearchFailureLimit = 5
 // readable.
 var errDirectSearchUnreadable = errors.New("sessions in a row could not be read")
 
+// errDirectSessionSlow is a session that took longer to read than one index
+// pass allows.
+var errDirectSessionSlow = errors.New("reading the session took too long")
+
+// unreadOnItsOwn reports that a session could not be read for a reason of its
+// own, not the bucket's: it is too large to index, or slower than a pass
+// allows. Such sessions do not count toward directSearchFailureLimit.
+func unreadOnItsOwn(unread error) bool {
+	return errors.Is(unread, storage.ErrObjectTooLarge) || errors.Is(unread, archive.ErrSourceTooLarge) || errors.Is(unread, errDirectSessionSlow)
+}
+
 // session indexes one session through the same verified loading, authority
 // recheck and parser visibility as refresh, and reports its matches. Its text
 // is dropped unless it matches. A session that could not be read reports why
@@ -162,7 +175,7 @@ func (s *directScan) session(ctx context.Context, m archive.Metadata) (count int
 	switch {
 	case err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded):
 		// Run bounds each pass; a session slower than that is unread.
-		unread = fmt.Errorf("reading the session took too long: %w", err)
+		unread = fmt.Errorf("%w: %w", errDirectSessionSlow, err)
 	case err != nil:
 		return 0, nil, err
 	case progress.Committed == 0 && progress.Failed > 0:
@@ -185,21 +198,23 @@ func (s *directScan) session(ctx context.Context, m archive.Metadata) (count int
 
 // run reads sessions until none is left or the budget is spent, sending each
 // match on found. It returns when ctx ends too, and with an error once
-// directSearchFailureLimit sessions in a row could not be read. The budget is
+// directSearchFailureLimit sessions in a row could not be read. It does not
+// pause while the latest sessions are failing, so a dropped connection ends
+// in that error rather than a question. The budget is
 // measured from the wall clock; tests set it to zero or far beyond the
 // fixture.
 func (s *directScan) run(ctx context.Context, found chan<- directMatch) (directScanStop, error) {
 	started := time.Now()
 	for read := 0; ; read++ {
 		s.mu.Lock()
-		next := s.searched
+		next, failing := s.searched, s.failedInRow > 0
 		s.mu.Unlock()
 		if next >= len(s.sessions) {
 			return directScanDone, nil
 		}
 		// Each stretch reads at least one session, so going on always
 		// makes progress.
-		if read > 0 && time.Since(started) >= s.budget {
+		if read > 0 && !failing && time.Since(started) >= s.budget {
 			return directScanPaused, nil
 		}
 		m := s.sessions[next]
@@ -223,12 +238,15 @@ func (s *directScan) run(ctx context.Context, found chan<- directMatch) (directS
 			s.matching++
 			s.matched[directSessionKey(m)] = true
 		}
+		switch {
+		case unread == nil:
+			s.failedInRow = 0
+		case !unreadOnItsOwn(unread):
+			s.failedInRow++
+		}
 		if unread != nil {
 			s.failed++
 			s.unread[directSessionKey(m)] = true
-			s.failedInRow++
-		} else {
-			s.failedInRow = 0
 		}
 		inRow := s.failedInRow
 		s.mu.Unlock()

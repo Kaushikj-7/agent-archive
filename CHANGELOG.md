@@ -22,7 +22,6 @@ follow [Semantic Versioning](https://semver.org/).
   without suggesting a full setup. The direct-search warning is three short
   lines and the command, and a missing index prints `agent-archive search --refresh` on
   its own line.
-
 - `agent-archive search` covers every project by default. Use `--project` to
   narrow it; `--all-projects` is still accepted. Outside a project, search no
   longer refuses to run.
@@ -75,18 +74,25 @@ follow [Semantic Versioning](https://semver.org/).
   messages to show". `search --read` likewise returns a `next_offset` until
   the whole message is read. An `m` typed while a passage loads applies once
   it is read instead of cancelling it, reading on no longer pushes a full
-  screen up a line, and Esc or a 30-second timeout says
-  "Not loaded · m loads it · b goes back" instead of "context canceled". A
+  screen up a line, and Esc says "Not loaded · m loads it · b goes back" and
+  a 30-second timeout "Not loaded in 30s · m tries again · b goes back"
+  instead of "context canceled". Once the match is read to its end, `m` says
+  when a neighboring message goes on and that `t` shows the transcript. A
   match far down a long message opens scrolled to it, the footer lists
   `m more`, tabs line up at tab stops, and `i` labels the reference's record
   and text bytes.
 - A direct bucket search (after you decline indexing) stops when 5 sessions
   in a row cannot be read, as when the network drops, and prints the error
   and `agent-archive status` instead of finishing with "N could not be read"
-  and exit status 0. Like refresh, it now rechecks each session against the
+  and exit status 0. Sessions too large or too slow to read are counted as
+  not read but do not stop it, and it does not ask whether to keep going
+  while sessions are failing to read. Like refresh, it now rechecks each session against the
   bucket before searching its text, so a session deleted since the listing
   is skipped, and Esc no longer leaves the session it cut short in the
   results.
+- `search --read REF --offset N` with an offset past the end of the
+  referenced message fails with `invalid_offset` and exit status 2 instead
+  of `index_unavailable` and exit status 1.
 - The `handoff` picker appears sooner when sessions are not uploaded yet. To
   title each, it filters and parses only the first and last 256 KiB of its
   transcript instead of the whole transcript, which took seconds for a large

@@ -369,7 +369,7 @@ func (p *openPassage) apply(ctx context.Context, answer contentSearchAction, scr
 				p.top = 0
 			}
 		default:
-			p.notice = "Nothing more of these messages to show."
+			p.notice = neighborsGoOnNotice(p.out)
 		}
 	case searchActionNext, searchActionPrevious:
 		direction := 1
@@ -389,6 +389,24 @@ func (p *openPassage) apply(ctx context.Context, answer contentSearchAction, scr
 		p.notice = "Press n or p for another match, t for the transcript, b for the results, or q to quit."
 	}
 	return browseStay, false, nil
+}
+
+// neighborsGoOnNotice is what m says once the match is read to its end and
+// its neighbors are shown whole: a neighbor longer than one bounded read goes
+// on in the transcript, which t opens.
+func neighborsGoOnNotice(out search.Surrounding) string {
+	goesOn := func(neighbors []search.ContextSlice) bool {
+		return slices.ContainsFunc(neighbors, func(v search.ContextSlice) bool { return v.Context.Next != 0 })
+	}
+	switch before, after := goesOn(out.Before), goesOn(out.After); {
+	case before && after:
+		return "The messages before and after go on · t shows the transcript"
+	case before:
+		return "The message before goes on · t shows the transcript"
+	case after:
+		return "The message after goes on · t shows the transcript"
+	}
+	return "Nothing more of these messages to show."
 }
 
 // searchTranscript shows the session's transcript in the pager show

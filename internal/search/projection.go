@@ -220,6 +220,10 @@ var (
 	ErrDeleted     = errors.New("search session deleted")
 	ErrUnsupported = errors.New("search source interpretation unsupported")
 	ErrUnavailable = errors.New("search source unavailable")
+	// ErrInvalidOffset is an offset past the end of the referenced message
+	// or inside a UTF-8 character: the caller's input, not the source, is
+	// wrong.
+	ErrInvalidOffset = errors.New("search offset is past the message's end or splits a UTF-8 character; use a next_offset from an earlier read")
 )
 
 // Context contains a bounded byte interval within the referenced message.
@@ -332,7 +336,7 @@ func continues(p, next Passage) bool {
 func sliceContext(passage Passage, offset, maxBytes int) (Context, error) {
 	local := offset - passage.Reference.Start
 	if local < 0 || local > len(passage.Text) || (local < len(passage.Text) && !utf8.RuneStart(passage.Text[local])) {
-		return Context{}, errors.New("search offset splits UTF-8 or is outside passage")
+		return Context{}, ErrInvalidOffset
 	}
 	end := min(local+maxBytes, len(passage.Text))
 	for end < len(passage.Text) && !utf8.RuneStart(passage.Text[end]) {

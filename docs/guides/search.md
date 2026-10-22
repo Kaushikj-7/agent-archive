@@ -44,7 +44,8 @@ agent-archive search --read REF --offset NEXT_OFFSET --max-bytes 4096 --json
 References bind exact source membership, bytes, interpretation and message
 location, never rendered line numbers. Reads never silently substitute newer
 content. A next_offset of null means the referenced message is complete; one
-past the reference's passage reads on into the message's next passage.
+past the reference's passage reads on into the message's next passage. An
+offset past the message's end fails with `invalid_offset` and exit 2.
 Each context slice identifies its own reference and raw UTF-8 offsets.
 The existing plain read prints an escaped quoted string and continuation on
 stderr. --limit defaults to 20 (1–100); --cursor continues the same query/filters
@@ -181,7 +182,8 @@ Only matching sessions keep their passages, until the command exits. A progress
 line counts the sessions searched and matching, and each matching session is
 printed as it is found; the summary also counts sessions that could not be
 read. If 5 sessions in a row cannot be read, as when the network drops, it
-stops, prints the error, and exits with status 1. Esc stops early. After 2 minutes it asks whether to keep going, search
+stops, prints the error, and exits with status 1; a session too large or too
+slow to read is counted but neither adds to nor resets that count. Esc stops early. After 2 minutes, unless the latest sessions are failing to read, it asks whether to keep going, search
 only the project you are in (with its session count, and counting from then on
 only that project's sessions), show the results so far, or stop. The results open in the same browser as indexed
 search; reading a passage downloads its source again. Ctrl-C exits.
@@ -258,7 +260,7 @@ The matching message is read from its exact source revision and shown between
 the message before and after it (dim), each labeled with who wrote it; its
 matched words are highlighted. Long neighbors are cut to three lines, and `m`
 shows them whole, then reads on in a matching message longer than one bounded
-read, to its end. A match far down a long message opens scrolled to it. Esc
+read, to its end, then says when a neighbor goes on and `t` shows the rest. A match far down a long message opens scrolled to it. Esc
 cancels a passage still loading, and `m` loads it again. `n`/`p` move to the session's other matches (the list's strip follows),
 `i` shows the source revision, record, text byte range and SHA-256 of the exact reference,
 `t` opens the session's whole transcript in the pager `show --transcript` uses

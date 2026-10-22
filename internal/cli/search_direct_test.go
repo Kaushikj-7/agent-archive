@@ -360,23 +360,31 @@ func TestDirectSearchCountsSessionsThatCouldNotBeRead(t *testing.T) {
 	assertNoSearchIndex(t, env)
 }
 
-// refusingStore fails every read of the named keys, as a dropped network
-// connection would.
+// refusingStore fails every read of the named keys with err, or as a
+// dropped network connection would when err is nil.
 type refusingStore struct {
 	storage.ObjectStore
 	fail []string
+	err  error
+}
+
+func (s refusingStore) failure() error {
+	if s.err != nil {
+		return s.err
+	}
+	return errors.New("dial tcp: connection refused")
 }
 
 func (s refusingStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if slices.Contains(s.fail, key) {
-		return nil, errors.New("dial tcp: connection refused")
+		return nil, s.failure()
 	}
 	return s.ObjectStore.Get(ctx, key)
 }
 
 func (s refusingStore) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
 	if slices.Contains(s.fail, key) {
-		return nil, errors.New("dial tcp: connection refused")
+		return nil, s.failure()
 	}
 	return s.ObjectStore.(storage.LimitedGetter).GetLimited(ctx, key, limit)
 }
@@ -399,6 +407,41 @@ func TestDirectSearchStopsWhenSessionsKeepFailingToRead(t *testing.T) {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("missing %q:\n%s", want, errOut)
 		}
+	}
+}
+
+func TestDirectSearchStopsAtFailuresInARowWithoutPausing(t *testing.T) {
+	t.Parallel()
+	sessions := make([]directSession, directSearchFailureLimit)
+	for i := range sessions {
+		sessions[i] = directSession{fmt.Sprintf("native-%d", i), 0, "checksum"}
+	}
+	env, objects, _, sources := directSearchFixture(t, sessions)
+	// Every session is past the budget, as when each read hangs.
+	env.directSearchPause = func() time.Duration { return 0 }
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		return refusingStore{ObjectStore: objects.ObjectStore, fail: sources}, nil
+	}
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 1 || strings.Contains(out, "Keep searching the bucket?") || !strings.Contains(errOut, "5 sessions in a row could not be read") {
+		t.Fatalf("asked to keep going while the bucket stopped answering: %d %s %s", code, errOut, out)
+	}
+}
+
+func TestDirectSearchGoesOnPastSessionsTooLargeToRead(t *testing.T) {
+	t.Parallel()
+	sessions := make([]directSession, directSearchFailureLimit+1)
+	for i := range sessions {
+		sessions[i] = directSession{fmt.Sprintf("native-%d", i), 0, fmt.Sprintf("checksum %d", i)}
+	}
+	env, objects, _, sources := directSearchFixture(t, sessions)
+	// The newest 5, read first, are too large; the oldest matches.
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		return refusingStore{ObjectStore: objects.ObjectStore, fail: sources[1:], err: storage.ErrObjectTooLarge}, nil
+	}
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 0 || !strings.Contains(out, "Searched all 6 sessions · 1 matching session · 5 could not be read") || strings.Contains(errOut, "Check your network") {
+		t.Fatalf("sessions too large to read stopped the search: %d %s %s", code, errOut, out)
 	}
 }
 
