@@ -201,3 +201,27 @@ func skillPolicyRoots(project string) []agentapi.SkillRoot {
 	provider, _ := testSources.LookupSkills("codex")
 	return provider.EvidenceRoots(agentapi.SkillLocations{ProjectRoot: project})
 }
+
+func TestUnrecognisedSkillPolicyNeverBroadensTheCeiling(t *testing.T) {
+	t.Parallel()
+	unknown := config.SkillEvidence("synthetic-unknown")
+	for _, tc := range []struct {
+		origin, current config.SkillEvidence
+		want            bool
+	}{
+		{config.SkillEvidenceBody, config.SkillEvidenceMetadata, true},
+		{config.SkillEvidenceMetadata, config.SkillEvidenceNone, true},
+		{config.SkillEvidenceMetadata, config.SkillEvidenceMetadata, false},
+		{config.SkillEvidenceNone, config.SkillEvidenceBody, false},
+		{unknown, config.SkillEvidenceNone, false},
+		{unknown, config.SkillEvidenceMetadata, false},
+		{config.SkillEvidenceBody, unknown, false},
+	} {
+		if got := skillPolicyBroadens(tc.origin, tc.current); got != tc.want {
+			t.Errorf("skillPolicyBroadens(%q, %q) = %v, want %v", tc.origin, tc.current, got, tc.want)
+		}
+	}
+	if skillPolicyRank(unknown) != skillPolicyRank(config.SkillEvidenceNone) {
+		t.Fatalf("unrecognised policy ranked %d, not narrowest", skillPolicyRank(unknown))
+	}
+}

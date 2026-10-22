@@ -59,6 +59,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `agent-archive status` records uploads made while a large `backfill` frees
+  local room, so it no longer says "No saved upload yet" during the backfill.
+  A collection pass that cannot list sessions keeps the previous count of
+  failed read-back checks instead of resetting it to none.
 - Updating a session's local record of its last upload no longer needs free
   room for twice the record's size under the 1 GiB limit on pending local
   work. A large record that counts nothing at rest now needs room only for
