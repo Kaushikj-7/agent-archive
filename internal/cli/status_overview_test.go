@@ -494,7 +494,7 @@ func TestStatusOverviewNamesTheCommandThatFixesItsProblem(t *testing.T) {
 		{"another installation", func(t *testing.T, _ string, env *Env, _ config.Config, _ statusSummary) {
 			t.Helper()
 			env.Scheduler = newFakeScheduler(t, string(scheduler.AnotherInstallation))
-		}, "agent-archive setup"},
+		}, "agent-archive status --issues"},
 		{"collector executable unavailable", func(t *testing.T, home string, env *Env, _ config.Config, _ statusSummary) {
 			t.Helper()
 			userHome, err := env.userHomeDir()
@@ -548,5 +548,23 @@ func TestStatusOverviewNamesTheCommandThatFixesItsProblem(t *testing.T) {
 				t.Errorf("overview offers status --issues before %q:\n%s", tc.want, &out)
 			}
 		})
+	}
+}
+
+// A job owned by another installation cannot be replaced by setup.
+func TestStatusOverviewAnotherInstallationDoesNotRecommendSetup(t *testing.T) {
+	t.Parallel()
+	_, env, _, _ := overviewFixture(t)
+	env.Scheduler = newFakeScheduler(t, string(scheduler.AnotherInstallation))
+	var out bytes.Buffer
+	if code := Run([]string{"status"}, nil, &out, &out, env); code != 0 {
+		t.Fatalf("exit=%d: %s", code, &out)
+	}
+	lines := strings.Split(out.String(), "\n")
+	if slices.Contains(lines, "agent-archive setup") {
+		t.Fatalf("recommended setup although it refuses another installation: %s", &out)
+	}
+	if !slices.Contains(lines, "agent-archive status --issues") {
+		t.Fatalf("missing safe recovery guidance: %s", &out)
 	}
 }
