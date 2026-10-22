@@ -410,11 +410,10 @@ func printDirectSearchWarning(p *prompter, cfg config.Config, scan *directScan) 
 	if strings.EqualFold(strings.TrimSpace(cfg.Storage.Provider), credentials.ProviderS3) {
 		provider = "S3"
 	}
-	terminal.Printf(p.out, "%s Without an index, search downloads sessions from your %s bucket, newest first.\n", p.style.warnMark(), provider)
-	terminal.Println(p.out, "  No conversation text is kept on this machine; session titles are cached, as for list.")
+	terminal.Printf(p.out, "%s Without an index, search reads your %s bucket, newest first, pausing after %s.\n", p.style.warnMark(), provider, durationText(scan.budget))
+	terminal.Println(p.out, "  It caches metadata such as titles, not conversation text.")
 	minutes := (scan.total + directSearchRate - 1) / directSearchRate
-	terminal.Printf(p.out, "  It pauses after %s; across all %s a full search takes %s.\n", durationText(scan.budget), sessionsText(scan.total), aboutMinutes(minutes))
-	terminal.Println(p.out, "  To search instantly next time, run:")
+	terminal.Printf(p.out, "  Searching all %s takes %s. To search instantly, run:\n", sessionsText(scan.total), aboutMinutes(minutes))
 	terminal.Println(p.out, "  "+p.style.cmd("agent-archive setup --yes --search-indexing on"))
 	terminal.Println(p.out)
 }

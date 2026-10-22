@@ -120,9 +120,10 @@ func TestDeclinedIndexingSearchesTheBucketNewestFirst(t *testing.T) {
 		t.Fatalf("%d %s %s", code, errOut, out)
 	}
 	for _, want := range []string{
-		"! Without an index, search downloads sessions from your S3 bucket, newest first.\n  No conversation text is kept on this machine; session titles are cached, as for list.\n",
-		"It pauses after 60 minutes; across all 3 sessions a full search takes about a minute.",
-		"To search instantly next time, run:\n  agent-archive setup --yes --search-indexing on\n",
+		"! Without an index, search reads your S3 bucket, newest first, pausing after 60 minutes.\n" +
+			"  It caches metadata such as titles, not conversation text.\n" +
+			"  Searching all 3 sessions takes about a minute. To search instantly, run:\n" +
+			"  agent-archive setup --yes --search-indexing on\n",
 		"Searched all 3 sessions · 2 matching sessions",
 	} {
 		if !strings.Contains(out, want) {
@@ -136,7 +137,7 @@ func TestDeclinedIndexingSearchesTheBucketNewestFirst(t *testing.T) {
 	if strings.Contains(out, shortSessionID(ids[1])+"  ") {
 		t.Fatalf("printed a session that does not match:\n%s", out)
 	}
-	if !strings.Contains(out, "checksum") || strings.Contains(out, "No search index yet") || strings.Contains(out, "Run search --refresh") {
+	if !strings.Contains(out, "checksum") || strings.Contains(out, "No search index yet") || strings.Contains(out, "search --refresh") {
 		t.Fatalf("results browser did not open over what was found:\n%s", out)
 	}
 	if len(objects.directReads()) == 0 {

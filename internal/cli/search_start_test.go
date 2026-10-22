@@ -77,8 +77,27 @@ func TestFirstIndexPassWaitsForBackgroundJobThenIndexes(t *testing.T) {
 	if err := indexFirstPass(home, cfg, contentSearchOptions{}, newPrompter(strings.NewReader(""), &out), env); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "1 of 1 known sessions indexed") {
+	// The fixture's bucket has no catalog, so discovery, and with it
+	// coverage, is never complete; the count says what is indexed so far.
+	if !strings.Contains(out.String(), "Background indexing is on; 1 of 1 sessions indexed so far.\n") {
 		t.Fatalf("busy job was not waited out: %s", out.String())
+	}
+}
+
+func TestFirstIndexPassReportsRemainingWorkUnlessCoverageIsComplete(t *testing.T) {
+	for _, tc := range []struct {
+		coverage *contentSearchCoverage
+		want     string
+	}{
+		{nil, ". Results fill in over the next few minutes."},
+		{&contentSearchCoverage{Known: 3, Indexed: 3, Complete: true}, "; 3 sessions indexed."},
+		{&contentSearchCoverage{Known: 3, Indexed: 1}, "; 1 of 3 sessions indexed so far."},
+		// Every session counted, but a gap leaves coverage incomplete.
+		{&contentSearchCoverage{Known: 3, Indexed: 3, Unsupported: 1}, "; 3 of 3 sessions indexed so far."},
+	} {
+		if got := firstPassCoverage(tc.coverage); got != tc.want {
+			t.Errorf("%+v: got %q, want %q", tc.coverage, got, tc.want)
+		}
 	}
 }
 
@@ -140,7 +159,7 @@ func TestMissingIndexWhilePausedAsksForRefresh(t *testing.T) {
 	if code := Run([]string{"search", "visible"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("%d %s %s", code, &out, &errOut)
 	}
-	if strings.Contains(out.String(), "background indexing is building it") || !strings.Contains(out.String(), "Run search --refresh") {
+	if strings.Contains(out.String(), "background indexing is building it") || !strings.Contains(out.String(), "To build it, run:\n  agent-archive search --refresh\n") {
 		t.Fatalf("paused indexing reported as running: %s", out.String())
 	}
 }
@@ -193,7 +212,11 @@ func TestSearchDeclineWaitsForOtherConfigurationWriters(t *testing.T) {
 	out, _, _ := runOnTerminal(t, env, newFakeKeys("q"), "2\nchecksum\n", "search")
 	release()
 	cfg, _, err := config.Load(home)
-	if err != nil || cfg.SearchIndexingDeclined || !strings.Contains(out, "the answer was not saved") {
+	if err != nil || cfg.SearchIndexingDeclined {
 		t.Fatalf("saved while another writer held the configuration: %v %v\n%s", cfg.SearchIndexingDeclined, err, out)
+	}
+	// A failed No says once that search asks again, with no setup to run.
+	if strings.Count(strings.ToLower(out), "the answer was not saved") != 1 || !strings.Contains(out, "search asks again next time") || strings.Contains(out, "--search-indexing off") {
+		t.Fatalf("failed No reported wrongly:\n%s", out)
 	}
 }

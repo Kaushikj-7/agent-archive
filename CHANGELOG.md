@@ -16,6 +16,12 @@ follow [Semantic Versioning](https://semver.org/).
   storage access failed. `status --issues` prints a group's `agent-archive
   sync` on its own line too, and lists groups that need you before those
   with nothing to do.
+- `agent-archive search` output is shorter. After the first index pass it
+  says when every session is indexed instead of "the rest fill in". A No to
+  indexing that cannot be saved says so once and that search asks again,
+  without suggesting a full setup. The direct-search warning is three short
+  lines and the command, and a missing index prints `agent-archive search --refresh` on
+  its own line.
 
 - `agent-archive search` covers every project by default. Use `--project` to
   narrow it; `--all-projects` is still accepted. Outside a project, search no
