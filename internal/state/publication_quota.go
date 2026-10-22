@@ -22,7 +22,7 @@ func (q *durableQuota) publishedProtocol(ctx context.Context, path string, expec
 	if err = ctx.Err(); err != nil {
 		return 0, 0, err
 	}
-	if err = q.guard.CheckHome(q.path); err != nil {
+	if err = q.checkCensus(); err != nil {
 		return 0, 0, err
 	}
 	if reused, reusedCharge, ok, e := q.accountingClassification(path, expected); e != nil {
@@ -31,7 +31,7 @@ func (q *durableQuota) publishedProtocol(ctx context.Context, path string, expec
 		return reused, reusedCharge, nil
 	}
 	mode, charged, _, err = q.store.readPublishedClassification(ctx, q.home, path, expected)
-	if e := q.guard.CheckHome(q.path); e != nil {
+	if e := q.checkCensus(); e != nil {
 		return 0, 0, errors.Join(err, e)
 	}
 	return mode, charged, err
@@ -303,14 +303,14 @@ func (q *durableQuota) unreadablePublishedCharge(ctx context.Context, path strin
 	if err := ctx.Err(); err != nil {
 		return 0, errors.Join(readErr, err)
 	}
-	if err := q.guard.CheckHome(q.path); err != nil {
+	if err := q.checkCensus(); err != nil {
 		return 0, errors.Join(readErr, err)
 	}
 	named, err := q.home.Root.Lstat(path)
 	if err != nil || expected == nil || !named.Mode().IsRegular() || !sameDurableStamp(expected, named) || expected.Mode() != named.Mode() {
 		return 0, errors.Join(readErr, ErrDurableStorageRecovery, err)
 	}
-	if err := errors.Join(ctx.Err(), q.home.Check(), q.guard.CheckHome(q.path)); err != nil {
+	if err := errors.Join(ctx.Err(), q.home.Check(), q.checkCensus()); err != nil {
 		return 0, errors.Join(readErr, err)
 	}
 	return 2, nil

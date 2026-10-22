@@ -143,3 +143,39 @@ const (
 	handoffChangeForeignTemp stageHandoffChange = "foreign-temp"
 	handoffChangeUndone      stageHandoffChange = "undone"
 )
+
+// The initial stage write counts existing published states toward the quota
+// under the import preparation, which owns no ordinary durable write guard.
+func TestNativeImportInitialStageCountsExistingPublishedState(t *testing.T) {
+	t.Parallel()
+	f := newNativeImportPrepareFixture(t)
+	prepared, err := f.prepare(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := prepared.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	var published publishedState
+	published.Bundle.ArchiveSessionID = "11111111-1111-4111-8111-111111111111"
+	published.Bundle.NativeSessionID = "synthetic-native"
+	if err := local.Write(filepath.Join(f.native.store.home, "published", published.Bundle.ArchiveSessionID+".json"), published); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.WithDurableStorage(f.native.store.home, func(g config.DurableStorageGuard) (err error) {
+		q, err := f.native.store.openDurableQuota(g)
+		if err != nil {
+			return err
+		}
+		defer func() { err = errors.Join(err, q.Close()) }()
+		_, err = q.usageContext(t.Context())
+		return err
+	}); err != nil {
+		t.Fatal("ordinary census refused the published fixture", err)
+	}
+	if _, err := f.native.store.CommitNativeImport(t.Context(), prepared); err != nil {
+		t.Fatal("existing published state refused the initial import stage", err)
+	}
+}

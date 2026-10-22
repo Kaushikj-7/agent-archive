@@ -62,11 +62,23 @@ type durableUsage struct {
 }
 
 type durableQuota struct {
-	store  *Store
-	guard  config.DurableStorageGuard
+	store *Store
+	guard config.DurableStorageGuard
+	// census, when set, replaces guard as the authority for read-only usage
+	// classification. Writers always check guard itself.
+	census func(home string) error
 	path   string
 	home   *local.RootedHome
 	unlock func()
+}
+
+// checkCensus verifies the authority for classifying existing state during a
+// usage census: the census check when one is set, otherwise the write guard.
+func (q *durableQuota) checkCensus() error {
+	if q.census != nil {
+		return q.census(q.path)
+	}
+	return q.guard.CheckHome(q.path)
 }
 
 func (s *Store) openDurableQuota(g config.DurableStorageGuard) (*durableQuota, error) {

@@ -16,6 +16,7 @@ import (
 
 // This preparation can never enter generic durable writers: its quota object
 // borrows only the existing usage/accounting methods and owns no ordinary guard.
+// The preparation authorizes only the usage census's classification reads.
 type nativeImportStageQuota struct {
 	quota       *durableQuota
 	preparation config.NativeImportStoragePreparation
@@ -48,7 +49,7 @@ func (p *PreparedNativeImport) writeInitialNativeImportStage(ctx context.Context
 	if err != nil {
 		return err
 	}
-	q := &nativeImportStageQuota{quota: &durableQuota{store: read, home: home, path: p.store.home}, preparation: preparation}
+	q := &nativeImportStageQuota{quota: &durableQuota{store: read, home: home, path: p.store.home, census: preparation.CheckHome}, preparation: preparation}
 	if err := q.acquire(); err != nil {
 		return err
 	}
