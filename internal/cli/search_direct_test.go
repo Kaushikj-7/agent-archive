@@ -557,6 +557,35 @@ func TestDirectSearchDownloadsSessionsAheadInParallel(t *testing.T) {
 	})
 }
 
+// Sessions held ahead stay within a byte budget: past it, the next download
+// waits for the one before to be matched.
+func TestDirectSearchHoldsAheadWithinItsByteBudget(t *testing.T) {
+	t.Parallel()
+	sessions := make([]directSession, 4)
+	for i := range sessions {
+		sessions[i] = directSession{fmt.Sprintf("native-%d", i), 0, fmt.Sprintf("checksum %d", i)}
+	}
+	env, objects, ids, sources := directSearchFixture(t, sessions)
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		index, err := search.OpenMemory(t.Context(), "test/context")
+		must(t, err)
+		defer func() { _ = index.Close() }()
+		slow := &slowSources{ObjectStore: objects.ObjectStore, sources: sources, reads: map[string]int{}}
+		scan := &directScan{index: index, objects: slow, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, prefetchBytes: 1, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}}
+		if why, err := scan.run(t.Context(), make(chan directMatch, len(listed))); why != directScanDone || err != nil {
+			t.Fatalf("%s %v", why, err)
+		}
+		if searched, _ := scan.counts(); searched != len(ids) {
+			t.Fatalf("searched %d of %d", searched, len(ids))
+		}
+		if slow.most != 1 {
+			t.Fatalf("%d sources read at once past the byte budget, want 1", slow.most)
+		}
+	})
+}
+
 // Esc after a session is read but before it is counted leaves none of its
 // text for the results browser.
 func TestDirectSearchEscAfterAReadKeepsNoUncountedText(t *testing.T) {

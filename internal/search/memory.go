@@ -88,11 +88,31 @@ func (s *Store) DropSessionText(ctx context.Context, harness, session string, ke
 type Prefetched struct {
 	id      string
 	sources map[string][]byte
+	size    int
+}
+
+// Size is how many bytes the prefetched sources hold.
+func (p Prefetched) Size() int { return p.size }
+
+// PrefetchCost is about how many bytes prefetching a session reads: its
+// sources' compressed size, which its parsed text usually exceeds.
+func PrefetchCost(metadata archive.Metadata) int {
+	refs, err := metadata.SourceReferences()
+	if err != nil {
+		return 0
+	}
+	cost := 0
+	for _, ref := range refs {
+		cost += max(ref.CompressedBytes, 0)
+	}
+	return cost
 }
 
 // Prefetch loads and parses every source of a session, as Run would, without
 // touching the database, so several sessions can be prefetched at once while
-// another is indexed. A session too large to index is not loaded.
+// another is indexed. A session too large to index, by Run's limits on its
+// compressed sources, passages and text, is not loaded, nor is the rest of
+// its sources once one passes them.
 func (s *Store) Prefetch(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, metadata archive.Metadata) (Prefetched, error) {
 	reqs, err := requests(metadata, parsers)
 	if err != nil {
@@ -105,19 +125,25 @@ func (s *Store) Prefetch(ctx context.Context, objects storage.ObjectStore, parse
 		}
 		compressed += req.Reference.CompressedBytes
 	}
-	out := Prefetched{id: metadata.Harness.Name + "/" + metadata.SessionID, sources: map[string][]byte{}}
+	sources := map[string][]byte{}
+	size := 0
+	var totals sessionTotals
 	for _, req := range reqs {
 		p, err := LoadProjection(ctx, objects, parsers, s.destination, metadata, req.Revision, reader.Limits{})
 		if err != nil {
+			return Prefetched{}, err
+		}
+		if err = totals.add(p); err != nil {
 			return Prefetched{}, err
 		}
 		data, err := json.Marshal(p)
 		if err != nil {
 			return Prefetched{}, err
 		}
-		out.sources[digest(req)] = data
+		sources[digest(req)] = data
+		size += len(data)
 	}
-	return out, nil
+	return Prefetched{id: metadata.Harness.Name + "/" + metadata.SessionID, sources: sources, size: size}, nil
 }
 
 // Stage keeps prefetched sources where Run reuses them instead of reading
