@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
@@ -158,9 +159,7 @@ func TestNativeImportInitialStageCountsExistingPublishedState(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	var published publishedState
-	published.Bundle.ArchiveSessionID = "11111111-1111-4111-8111-111111111111"
-	published.Bundle.NativeSessionID = "synthetic-native"
+	published := publishedState{Bundle: archive.SourceBundle{ArchiveSessionID: "11111111-1111-4111-8111-111111111111", NativeSessionID: "synthetic-native"}}
 	if err := local.Write(filepath.Join(f.native.store.home, "published", published.Bundle.ArchiveSessionID+".json"), published); err != nil {
 		t.Fatal(err)
 	}
