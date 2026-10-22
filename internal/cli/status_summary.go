@@ -223,7 +223,13 @@ func (w *statusProgressWriter) saveSummary(cfg config.Config, passErr error, ful
 		}
 		summary.Problem, summary.Notices = summarizedStatusProblem(record, passErr)
 		if w.verification != nil {
-			summary.VerificationFailures = w.verification.UnresolvedFailures
+			if w.verification.Enumerated {
+				summary.VerificationFailures = w.verification.UnresolvedFailures
+			} else {
+				// Keep known failures until a complete scan can clear them,
+				// while still recording any higher observed count.
+				summary.VerificationFailures = max(summary.VerificationFailures, w.verification.UnresolvedFailures)
+			}
 		}
 	}
 	if err := root.Check(); err != nil {
@@ -269,12 +275,10 @@ func (w *statusProgressWriter) processed(progress collector.Progress) {
 	}
 }
 
-// verified keeps the previous failure count when verification could not
-// enumerate publications, since its zero count would hide unresolved ones.
+// verified retains the observed count and whether the scan was complete.
+// saveSummary merges incomplete observations with the previous count.
 func (w *statusProgressWriter) verified(summary verificationSummary) {
-	if summary.Enumerated {
-		w.verification = &summary
-	}
+	w.verification = &summary
 }
 
 func (w *statusProgressWriter) observe(forward func(collector.Progress)) func(collector.Progress) {

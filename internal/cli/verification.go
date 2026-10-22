@@ -93,8 +93,9 @@ type verificationSummary struct {
 	// UnresolvedFailures counts failed or mismatched current publications,
 	// including those deferred by backoff, the pass cap or its deadline.
 	UnresolvedFailures int
-	// Enumerated is set once registrations were listed, so the counts above
-	// cover this destination's publications rather than none of them.
+	// Enumerated means all registrations and their local publication and
+	// verification records were classified. An incomplete scan cannot prove
+	// that a previously recorded failure has cleared.
 	Enumerated bool
 }
 
@@ -253,11 +254,11 @@ func storageFailureState(err error) string {
 // over the per-pass cap.
 func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Config, env Env, store *state.Store, remote storage.ObjectStore) (verificationSummary, error) {
 	var summary verificationSummary
-	regs, _, err := store.ScanRegistrations()
+	regs, registrationIssues, err := store.ScanRegistrations()
 	if err != nil {
 		return summary, err
 	}
-	summary.Enumerated = true
+	summary.Enumerated = len(registrationIssues) == 0
 	now := env.now().UTC()
 	type candidate struct {
 		reg   archive.SessionRegistration
@@ -281,6 +282,7 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 		// needs; only the few due below decode their whole state.
 		published, _, err := store.LoadPublishedSummary(reg.ArchiveSessionID)
 		if err != nil {
+			summary.Enumerated = false
 			localErrs = append(localErrs, err)
 			continue
 		}
@@ -290,6 +292,7 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 		}
 		prior, err := readVerification(home, reg.ArchiveSessionID)
 		if err != nil {
+			summary.Enumerated = false
 			localErrs = append(localErrs, err)
 			continue
 		}
@@ -334,6 +337,7 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 		}
 		published, err := store.LoadPublishedState(c.reg.ArchiveSessionID)
 		if err != nil {
+			summary.Enumerated = false
 			localErrs = append(localErrs, err)
 			continue
 		}

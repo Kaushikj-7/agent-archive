@@ -225,3 +225,55 @@ func TestUnenumeratedVerificationKeepsPreviousFailureCount(t *testing.T) {
 		t.Fatalf("failed enumeration reset unresolved failures to %d", summary.VerificationFailures)
 	}
 }
+
+// A directory listing can succeed while a registration cannot be read. That
+// still does not prove that the session's prior verification failure is gone.
+func TestPartialVerificationKeepsPreviousFailureCount(t *testing.T) {
+	t.Parallel()
+	home, env, cfg, previous := overviewFixture(t)
+	previous.VerificationFailures = 3
+	must(t, local.Write(filepath.Join(home, statusSummaryFile), previous))
+	store, err := state.Open(home)
+	must(t, err)
+	must(t, os.WriteFile(filepath.Join(home, "registrations", "unreadable.json"), []byte("{"), 0600))
+	verification, err := verifyPublicationsWithin(t.Context(), home, cfg, env, store, storagetest.NewMemoryStore())
+	must(t, err)
+	w := beginStatusProgress(home, cfg, env)
+	w.verified(verification)
+	w.finish(cfg, nil, true)
+	var summary statusSummary
+	must(t, local.Read(filepath.Join(home, statusSummaryFile), &summary))
+	if summary.VerificationFailures != 3 {
+		t.Fatalf("partial registration scan reset unresolved failures to %d", summary.VerificationFailures)
+	}
+}
+
+func TestIncompleteVerificationRecordsKnownFailuresWithoutClearingPreviousOnes(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name           string
+		complete       bool
+		observed, want int
+	}{
+		{"incomplete with no observed failures", false, 0, 3},
+		{"incomplete with more observed failures", false, 5, 5},
+		{"incomplete with fewer observed failures", false, 1, 3},
+		{"complete with fewer failures", true, 1, 1},
+		{"complete and successful", true, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, env, cfg, previous := overviewFixture(t)
+			previous.VerificationFailures = 3
+			must(t, local.Write(filepath.Join(home, statusSummaryFile), previous))
+			w := beginStatusProgress(home, cfg, env)
+			w.verified(verificationSummary{Enumerated: tc.complete, UnresolvedFailures: tc.observed})
+			w.finish(cfg, nil, true)
+			var summary statusSummary
+			must(t, local.Read(filepath.Join(home, statusSummaryFile), &summary))
+			if summary.VerificationFailures != tc.want {
+				t.Fatalf("recorded %d verification failures, want %d", summary.VerificationFailures, tc.want)
+			}
+		})
+	}
+}
