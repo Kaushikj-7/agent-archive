@@ -259,7 +259,7 @@ class LinuxFullMemoryTest(unittest.TestCase):
                     self.assertEqual(tiers.main(), 0)
                 tier, actual_suite, _, _, seconds = run.call_args.args
                 self.assertEqual(actual_suite, 'linux')
-                self.assertEqual(seconds, 3300 if tier == 'full' else 2400)
+                self.assertEqual(seconds, 3300 if tier == 'full' else 1440)
                 minutes = expression_value(job_key(job, 'timeout-minutes'), event,
                                            suite=suite, schedule=schedule)
                 if tier == 'full':
@@ -268,11 +268,12 @@ class LinuxFullMemoryTest(unittest.TestCase):
                 else:
                     self.assertEqual(tier, 'daily')
                     self.assertEqual(minutes, 30)
+                    self.assertLessEqual(seconds + 5 * 60, minutes * 60)
 
-    def test_extended_weekly_full_run_forwards_budget_and_daily_keeps_environment(self):
+    def test_extended_linux_runs_forward_memory_budget(self):
         step = next(step for workflow, step in self.consumers() if workflow == 'extended')
         for schedule, expected in [(tiers.catalog()['weekly_cron'], '3GiB'),
-                                   (tiers.catalog()['daily_cron'], None)]:
+                                   (tiers.catalog()['daily_cron'], '3GiB')]:
             with self.subTest(schedule=schedule):
                 result, calls = self.execute_consumer(step, event='schedule', schedule=schedule)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -280,7 +281,7 @@ class LinuxFullMemoryTest(unittest.TestCase):
                           if tool == 'python3' and 'scripts/run_ci_tier.py' in args]
                 self.assertEqual(len(runner), 1)
                 self.assertEqual(runner[0][1], expected)
-                if expected:
+                if schedule == tiers.catalog()['weekly_cron']:
                     self.assertIn(['go', ['test', 'full-linux-fixture'], expected], calls)
                 else:
                     self.assertFalse(any(tool == 'go' for tool, _, _ in calls))

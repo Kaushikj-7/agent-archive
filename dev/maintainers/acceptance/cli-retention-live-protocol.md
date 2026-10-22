@@ -181,7 +181,7 @@ the sender's preference and expect the paired receiver to change remotely.
 | Platform/app coverage | List macOS Intel/Apple Silicon and each advertised Linux architecture, native scheduler, installer and app separately; run the parent release sheet on each supported combination. Missing hardware, app or asset remains pending. | pending — |
 
 Run compatibility probes from a checkout of the recorded release SHA with Go
-1.27.2. Supply absolute paths to the actual applicable predecessor binaries;
+1.27.3. Supply absolute paths to the actual applicable predecessor binaries;
 record their source/tag and digests separately. The published writer script is
 native macOS only and validates the pinned v0.1.1 asset:
 

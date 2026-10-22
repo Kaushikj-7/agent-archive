@@ -223,7 +223,7 @@ def invocation(out, report, command, name, deadline, env, selected=None, package
         save(out, 'receipt.json', report)
 
 
-def execute(mode, out, directory=None, index=None, seconds=3300):
+def execute(mode, out, directory=None, index=None, seconds=3000):
     out.mkdir(parents=True, exist_ok=False)
     report = {'schema': 1, 'role': mode, 'success': False, 'invocations': []}
     save(out, 'receipt.json', report)
@@ -370,7 +370,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--plan', type=Path)
     parser.add_argument('--worker', type=int)
-    parser.add_argument('--seconds', type=int, default=3300)
+    parser.add_argument('--seconds', type=int, default=3000)
     parser.add_argument('--needs', default='{}')
     args = parser.parse_args()
     if args.mode == 'reconcile':
