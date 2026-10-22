@@ -36,7 +36,7 @@ def native_environment():
     if arch is None:
         raise Failure('unsupported native architecture')
     return {'GOOS': 'darwin', 'GOARCH': arch, 'CGO_ENABLED': '1',
-            'GOMAXPROCS': '2', 'GOFLAGS': '', 'GOEXPERIMENT': '', 'GOTOOLCHAIN': 'go1.27.2',
+            'GOMAXPROCS': '2', 'GOFLAGS': '', 'GOEXPERIMENT': '', 'GOTOOLCHAIN': 'go1.27.3',
             'AGENT_ARCHIVE_REAL_SYSTEMD': '0'}
 
 
@@ -150,7 +150,7 @@ def restorations(actual, plan):
             raise Failure('restoration missing from native compiled discovery')
         selected.setdefault(p, []).append(entry['test'])
         children[(p, entry['test'])] = entry.get('full_children', [])
-    tier.verify_selected(actual, selected, children)
+    tier.verify_selected(actual, selected, children, plain_owned=tier.race_skipped())
 
 
 # The canonical command includes archive to compile and run its test main;
@@ -201,7 +201,7 @@ def body_coverage(text, packages, selected):
     return evidence
 
 
-def invocation(out, report, command, name, deadline, env, selected=None, packages=None):
+def invocation(out, report, command, name, deadline, env, selected=None, packages=None, children=None):
     record = {'command': command, 'log': name+'.jsonl', 'completed': False,
               'performance_enabled': env.get('AGENT_ARCHIVE_PERF') == '1',
               'real_systemd_enabled': env.get('AGENT_ARCHIVE_REAL_SYSTEMD') == '1'}
@@ -216,14 +216,14 @@ def invocation(out, report, command, name, deadline, env, selected=None, package
             evidence = body_coverage(text, packages, selected)
         else:
             evidence = body_coverage(text, {p: True for p in selected}, selected)
-            tier.verify_selected(evidence['actual'], selected)
+            tier.verify_selected(evidence['actual'], selected, children)
         record.update(completed=True, evidence=evidence)
     finally:
         record['elapsed_seconds'] = round(time.monotonic()-started, 3)
         save(out, 'receipt.json', report)
 
 
-def execute(mode, out, directory=None, index=None, seconds=2400):
+def execute(mode, out, directory=None, index=None, seconds=3300):
     out.mkdir(parents=True, exist_ok=False)
     report = {'schema': 1, 'role': mode, 'success': False, 'invocations': []}
     save(out, 'receipt.json', report)
@@ -268,6 +268,9 @@ def execute(mode, out, directory=None, index=None, seconds=2400):
                     invocation(out, report, tier.PERFORMANCE, 'performance', deadline, perf_env, selected)
                     invocation(out, report, ['bash','scripts/test_published_writer.sh'], 'published-writer',
                                deadline, env, {tier.MODULE+'internal/config': ['TestPublishedWriterRefusesProtectedConfiguration']})
+                    plain = tier.plain_restoration()
+                    if plain:
+                        invocation(out, report, plain[0], 'plain-restoration', deadline, env, plain[1], children=plain[2])
                 else:
                     raise Failure('invalid native role')
             if proof() != source:
@@ -290,7 +293,7 @@ def verify_receipt(directory, plan, role):
     return value
 
 
-def verify_invocation(directory, record, command, selected, packages=None, performance=False):
+def verify_invocation(directory, record, command, selected, packages=None, performance=False, children=None):
     if (record.get('command') != command or record.get('completed') is not True
             or record.get('performance_enabled') is not performance
             or record.get('real_systemd_enabled') is not False):
@@ -302,7 +305,7 @@ def verify_invocation(directory, record, command, selected, packages=None, perfo
         evidence = body_coverage(text, packages, selected)
     else:
         evidence = body_coverage(text, {p: True for p in selected}, selected)
-        tier.verify_selected(evidence['actual'], selected)
+        tier.verify_selected(evidence['actual'], selected, children)
     if record.get('evidence') != evidence:
         raise Failure('native raw body evidence changed')
     return evidence['actual']
@@ -341,20 +344,24 @@ def reconcile(directory, needs):
     if report.get('performance_scope') != {'compiled_selection': selected_performance,
                                            'compile_only': sorted(PERFORMANCE_COMPILE_ONLY)}:
         raise Failure('plain performance body/compile-only scope missing or changed')
-    required = [('performance.jsonl', tier.PERFORMANCE, selected_performance, True),
+    required = [('performance.jsonl', tier.PERFORMANCE, selected_performance, True, None),
                 ('published-writer.jsonl', ['bash','scripts/test_published_writer.sh'],
-                 {tier.MODULE+'internal/config': ['TestPublishedWriterRefusesProtectedConfiguration']}, False)]
+                 {tier.MODULE+'internal/config': ['TestPublishedWriterRefusesProtectedConfiguration']}, False, None)]
+    plain = tier.plain_restoration()
+    if plain:
+        required.append(('plain-restoration.jsonl', plain[0], plain[1], False, plain[2]))
     if len(report['invocations']) != len(required):
         raise Failure('native plain obligations missing or duplicated')
-    for record, (log, command, selected, performance) in zip(report['invocations'], required):
+    for record, (log, command, selected, performance, children) in zip(report['invocations'], required):
         if record.get('log') != log:
             raise Failure('native obligation log changed')
-        verify_invocation(out, record, command, selected, performance=performance)
+        verify_invocation(out, record, command, selected, performance=performance, children=children)
     if proof() != plan['source_proof']:
         raise Failure('native source changed during reconciliation')
     return {'schema': 1, 'success': True, 'source_proof': plan['source_proof'],
             'plan_sha256': full.shards.digest(plan), 'workers': WORKERS,
-            'actual': actual, 'obligations': ['plain performance', 'pinned published writer']}
+            'actual': actual, 'obligations': ['plain performance', 'pinned published writer']
+            + (['plain restoration'] if plain else [])}
 
 
 def main():
@@ -363,7 +370,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--plan', type=Path)
     parser.add_argument('--worker', type=int)
-    parser.add_argument('--seconds', type=int, default=2400)
+    parser.add_argument('--seconds', type=int, default=3300)
     parser.add_argument('--needs', default='{}')
     args = parser.parse_args()
     if args.mode == 'reconcile':

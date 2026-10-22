@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -72,7 +73,16 @@ func TestLocalBudgetCancelAndEncodingRefusalRelease(t *testing.T) {
 	}
 	closeScope()
 	scoped, closeScope = s.WithReadBudget(t.Context(), budget)
-	if err := scoped.writeCompact(s.pendingPath("unsupported"), make(chan int)); !agentapi.HasFailure(err, agentapi.Limit) {
+	root, err := os.OpenRoot(s.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := root.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if err := scoped.writeCompactAt(root, filepath.Join("pending", "unsupported.json"), make(chan int)); !agentapi.HasFailure(err, agentapi.Limit) {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(s.pendingPath("unsupported")); !errors.Is(err, os.ErrNotExist) {

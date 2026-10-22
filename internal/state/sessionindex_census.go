@@ -2,7 +2,6 @@ package state
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -61,7 +60,7 @@ func (s *Store) newRecoveryRegistrationReader() *recoveryRegistrationReader {
 						if data.Len() > recoveryReadAheadBytes {
 							err = errRecoveryReadAheadLarge
 						} else {
-							err = json.Unmarshal(data.Bytes(), &job.result.reg)
+							err = archive.DecodeSessionRegistration(data.Bytes(), &job.result.reg)
 						}
 					}
 				}

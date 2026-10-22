@@ -13,23 +13,34 @@ import (
 )
 
 var commandHelp = map[string]string{
-	"search": `Usage: agent-archive search "QUERY" [options]
+	"search": `Usage: agent-archive search ["QUERY"] [options]
        agent-archive search --refresh [--session SESSION_ID --harness NAME]
        agent-archive search --read REF [--offset N] [--max-bytes N]
 
 Search visible conversation messages and titles in the private local index.
-Queries never read storage. Choose --project or --all-projects outside a known
-project; an empty scoped result never broadens. Coverage describes a past local
-observation, not current remote contents. Refresh is namespace-wide unless a
-session is named. It does not install or enable automatic indexing.
+Cached queries never read storage; only a Yes to the one-time indexing question
+first runs a refresh. With indexing declined and no local index, a terminal
+search reads the bucket directly instead. Search covers every project unless
+--project names one; an empty scoped result never broadens. Coverage describes
+a past local observation, not current remote contents. Refresh is
+namespace-wide unless a session is named. It does not install or enable
+automatic indexing.
 Words are ANDed, quotes match phrases, and a trailing * enables prefix matching.
 Punctuation splits words; this is keyword search, not substring/semantic search.
 References bind exact source revisions. Reads print escaped, quoted text.
-On an interactive terminal, browse ranked snippets and exact bounded context.
-Scrolling past the last result loads the next results. Use n/p for matching
-body passages, r to rerun the fixed query, and h to hand off the current
-session through existing gates. Metadata / filtering is
-disabled. JSON and piped output remain bounded documents.
+On an interactive terminal, search without a query asks for one. Before the
+first local index exists, search asks once whether to index in the background.
+After No, with no local index, a terminal search downloads sessions in scope
+from the bucket, newest first, and matches them in memory. It pauses after 2
+minutes to ask whether to go on; Esc stops and shows what was found.
+Results open in the session browser, best match first, with the highlighted
+session's matching passage under the list and its matched words highlighted.
+Use n/p for the session's other matches, Enter to read the passage, / for a
+new query, Tab to switch between all projects and the current one, r to rerun,
+and h to hand off the session through existing gates. Scrolling past the last
+result loads the next results. The passage shows the messages around the
+match; i shows its exact reference, and t the session's transcript.
+JSON and piped output remain bounded documents.
   --json              Print one versioned bounded JSON document
   --refresh           Run a bounded verified archive refresh
   --session SESSION_ID  Exact refresh target; requires --harness
@@ -42,8 +53,8 @@ disabled. JSON and piped output remain bounded documents.
   --before N          Preceding visible messages with --read, 0–2 (default 0)
   --after N           Following visible messages with --read, 0–2 (default 0)
   --max-output-bytes N  Escaped stdout bytes, 4096–1048576 (default 262144)
-  --project DIR|NAME  Restrict to a project (default current repository)
-  --all-projects      Search every project's indexed sessions
+  --project DIR|NAME  Restrict to a project (default every project)
+  --all-projects      Search every project's indexed sessions (the default)
   --since DATE|AGE    Inclusive capture start, date/RFC3339 time/age
   --until DATE|AGE    Inclusive capture end, date/RFC3339 time/age
   --replays MODE      hide (default), include or only replay sessions
@@ -83,10 +94,21 @@ Recovery permanently fences older binaries out of this data directory.
 `,
 	"eval": `Usage: agent-archive eval export SESSION_ID... | --ids-from - | --scan
        | --file PATH --harness NAME [--detail metadata|full] [--max-bytes N]
+       agent-archive eval replay-plan --harness muse < request.json
 
 Export sessions for an evaluation tool, one JSON Lines record per session
 (schemas/eval-export.schema.json), from the archive or from transcripts on
-this machine. Read-only and never interactive.
+this machine. Read-only and never interactive. The replay-plan action prepares
+private launch artifacts for an external replay runner.
+`,
+	"eval replay-plan": `Usage: agent-archive eval replay-plan --harness muse < request.json
+
+Prepare one bounded, versioned JSON replay launch plan from explicit file and
+ownership observations. Planning reads no settings or archive state and changes
+no files. The request and response each have a 64 KiB aggregate limit.
+
+The plan reports qualified:false. Native launch, forwarding qualification and
+runner lifetime belong to the external runner; ordinary handoff stays unchanged.
 `,
 	"eval export": `Usage: agent-archive eval export SESSION_ID... [--detail metadata|full]
        agent-archive eval export --ids-from - [--detail metadata|full]
@@ -346,23 +368,27 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
   --r2-account ACCOUNT_ID --bucket BUCKET --r2-access-key-id KEY_ID \
   --project ~/src/app --apps codex,claude
 `,
-	"status": `Usage: agent-archive status [APP] [--verbose] [--json] [--no-pager]
+	"status": `Usage: agent-archive status [APP] [--issues | --verbose | --json] [--no-pager]
 
-Show local capture evidence, background health, and a next step.
+Show a compact overview of collection, uploads, queue and detected agents.
+Uses the collector's saved summary and bounded live background checks.
+Missing or stale summaries stay unknown until collection records a new one.
+Detected agents show when setup observed them and whether archiving is enabled;
+detection alone does not prove capture. Default status does not scan sessions.
 No conversations are printed and no cloud request is made.
-Each app's line counts its sessions, imports and uploads, with at most
-five uploading sessions under it; the screen doesn't grow with projects.
-APP (claude, codex or cursor) shows that app in full: every uploading
-session and a table of its projects.
---verbose adds each project's progress, skill evidence, imports and
-every error, then a Details section with the codes, exact times, full
-paths and raw errors behind each line.
-On a terminal, status is paged through $PAGER unless --no-pager.
---json prints the same status as a versioned JSON document. In it,
+--issues opens failures, capture gaps, missing transcripts and recovery steps,
+including problems with imported sessions.
+APP (claude, codex or cursor) shows that app's sessions and projects.
+--verbose opens all capture evidence, project progress, skills, imports,
+codes, exact times, paths and raw errors. --issues cannot be combined
+with APP, --verbose or --json. Detailed views scan history and may take longer.
+Default status prints directly; detailed text uses $PAGER unless --no-pager.
+--json retains the detailed version-4 document. In it,
 storage_verified_at is when setup's storage check last passed, and
 storage_access_confirmed_at is the latest confirmation of access (by
 "setup" or the "collector", in storage_access_confirmed_by).
 Example: agent-archive status claude
+Example: agent-archive status --issues
 Example: agent-archive status --verbose
 Example: agent-archive status --json
 `,
@@ -404,6 +430,14 @@ Remote archives and unrelated files are always kept.
 Example: agent-archive uninstall
 `,
 	"list": `Usage: agent-archive list [WORDS] [options]
+
+With --source local, find bounded native sessions before setup without opening
+storage or changing archive state. Use --harness muse for Muse Code. Only the
+first 50 bounded previews are searched; incomplete discovery and unavailable
+labels are reported. --project needs an existing checkout directory; use
+--all-projects to broaden the scope. Local output is a separate read-only view.
+Archive is the default source; the following options describe archive reads.
+  --source archive|local Archive metadata (default) or bounded native reads
 
 Find sessions using metadata; does not download conversation content.
 With WORDS (quote them: one argument), list only the sessions they match.
@@ -522,6 +556,16 @@ On a terminal, the summary and transcript are paged; in the default less,
 scroll with the mouse wheel, arrows, or space, search with /, and quit with
 q. Nothing is asked when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside
 coding agents: give a SESSION_ID.
+  --source archive|local Select archive (default) or read-only native sessions
+                        before setup; local reads validate the entire selected
+                        source and never enable archiving or write archive state
+  --project DIRECTORY  With --source local, search an existing checkout
+  --all-projects       With --source local, search every native checkout
+                        Example: show NATIVE_ID --source local --harness muse
+                        Local reads have bounded discovery; archive revisions
+                        and stored metadata are unavailable. Local JSON is a
+                        separate view; --transcript includes its conversation.
+                        No full-transcript artifact is saved for local reads.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --revisions           List active and preserved native revision IDs, capture
@@ -633,8 +677,9 @@ prefixes select beyond the first 50 filtered previews. Scrolling past the last
 row (o when reading lines) loads another 50; / filters loaded rows only. Word
 queries report their bounded preview window.
 --project requires a directory; --all-projects explicitly broadens the scope.
-Local --latest ranks file modification time and requires complete identity
-coverage. Direct --to uses an exact current identity or asks for selection;
+Local --latest ranks file modification time. Enumeration must finish, and no
+unresolved history may be as recent as the selected session. Missing checkouts
+are skipped. Direct --to uses an exact current identity or asks for selection;
 it never guesses newest. --source archive requires setup. No capture hooks,
 credentials, configuration, registrations or scheduler are created. Private
 temporary launch files survive launch; later local handoffs clean owned files
@@ -718,7 +763,7 @@ given.
   --output FILE         Write to FILE (mode 0600) instead of printing it
   --force               With --output, replace FILE if it exists
   --no-preamble         Omit the note addressed to the receiving agent
-  --to NAME             Start claude, codex, or cursor without asking (its
+  --to NAME             Start claude, codex, cursor, or muse (its
                         CLI must be on PATH). It reads a private copy of the
                         handoff, kept 7 days. With no session named, hands
                         off the agent session it runs in, else picks one on
@@ -737,6 +782,7 @@ given.
                         and the first 8 characters of SESSION_ID)
   -- ARGS               Everything after -- goes to the launched agent, after
                         any arguments set in config.json's handoff.args
+                        For muse, an initial exec selects the headless command
 Example: agent-archive handoff
 Example: agent-archive handoff --to codex
 Example: agent-archive handoff "fix the auth bug" --harness codex --to claude

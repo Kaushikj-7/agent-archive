@@ -229,7 +229,8 @@ func TestDecodeKeys(t *testing.T) {
 		"\x1b\x1b[B":                 {{kind: keyEscape}, down},
 		// Unknown sequences, Alt with a key, cut-off sequences, and control
 		// characters are dropped.
-		"\x1b[1;5A\x1b[200~\x1b[Z\x1b[<0;3;4M\x1bx\x1bOP\t\x01\x1b[": nil,
+		"\x1b[1;5A\x1b[200~\x1b[Z\x1b[<0;3;4M\x1bx\x1bOP\x01\x1b[": nil,
+		"\t":         {{kind: keyTab}},
 		"\x1b[99~2":  {{kind: keyRune, r: '2'}},
 		"\x1b[\x01B": {{kind: keyRune, r: 'B'}},
 	} {

@@ -47,7 +47,7 @@ type pickerView struct {
 func (v *pickerView) formatFor(width int) listFormatOptions {
 	f := v.format
 	f.Width = width
-	if width <= 0 || f.Verbose || f.Search {
+	if width <= 0 || f.Verbose {
 		return f
 	}
 	if v.layout == nil || v.layout.width != width {
@@ -118,6 +118,9 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 	keyed := l.keys != nil
 	var footer bytes.Buffer
 	switch {
+	case words == "" && l.contentSearch != nil:
+		// The heading counts the results and the footer line or the
+		// question names the keys.
 	case words == "" && keyed:
 		if format.Note != "" {
 			footer.WriteString(format.Note + "\n")
@@ -142,7 +145,10 @@ func (l *sessionPicker) view(rows []listRow, totalMatched int, truncated bool, f
 	if l.boundedNotice != "" {
 		footer.WriteString(l.boundedNotice + "\n")
 	}
-	if l.older != nil && !keyed {
+	switch {
+	case l.older != nil && !keyed && l.contentSearch != nil:
+		footer.WriteString("o · " + l.older.Label + "\n")
+	case l.older != nil && !keyed:
 		footer.WriteString("o · " + l.older.Label + " (Esc first while filtering)\n")
 	}
 	// The mark is the key browser's highlight; a table read by lines is
@@ -371,7 +377,7 @@ func (l *sessionPicker) filterKey(k key, screen listScreen) listKeyResult {
 		if unicode.IsPrint(k.r) && len(l.filter) < maxFilterText {
 			l.setFilter(l.filter + string(k.r))
 		}
-	case keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyLeft, keyRight, keyResize:
+	case keyUp, keyDown, keyPageUp, keyPageDown, keyHome, keyEnd, keyLeft, keyRight, keyResize, keyTab:
 		// Moved above, or nothing to do but draw the screen again.
 	}
 	return listStay

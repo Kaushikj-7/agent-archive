@@ -46,19 +46,19 @@ func TestSearchBrowserKeysAndLinesKeepExactBodyReference(t *testing.T) {
 			}
 			var fake *fakeKeys
 			if keyed {
-				fake = newFakeKeys("1\r", later(100*time.Millisecond, "n"), "p", "b", "q")
+				fake = newFakeKeys("1\r", "i", later(100*time.Millisecond, "n"), "p", "b", "q")
 			}
 			var out, errOut string
 			var code int
 			if keyed {
 				out, errOut, code = runOnTerminal(t, env, fake, "", "search", "visible", "--all-projects")
 			} else {
-				out, errOut, code = runSearchAfterContext(t, env, "n\np\nb\nq\n")
+				out, errOut, code = runSearchAfterContext(t, env, "1\n", "codex › visible", "i\nn\np\nb\nq\n", "visible", "--all-projects")
 			}
 			if code != 0 {
 				t.Fatalf("%d %s %s", code, errOut, out)
 			}
-			for _, want := range []string{id, "1. " + shortSessionID(id), jsonPage.Results[0].Harness + " / " + jsonPage.Results[0].Session, "Reference:", "[selected · assistant]", "visible", "Hand off current session", "no further matching body passage"} {
+			for _, want := range []string{id, shortSessionID(id), `All projects · "visible" · 1 session, best match first`, "Session: " + jsonPage.Results[0].Harness + " / " + jsonPage.Results[0].Session, "Reference:", "  codex › visible", searchMatchFooter, "no further matching body passage"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("missing %q: %s", want, out)
 				}
@@ -66,8 +66,9 @@ func TestSearchBrowserKeysAndLinesKeepExactBodyReference(t *testing.T) {
 			if !strings.Contains(strings.ReplaceAll(out, "\n", ""), jsonReference.Source.Reference.SHA256) {
 				t.Fatalf("terminal wrapped source identity differs from JSON: %s", out)
 			}
-			// Reading keys, the next results load past the end, not with o.
-			if keyed == strings.Contains(out, "o next results") || keyed != strings.Contains(out, "r rerun · ↓ past the end for more results") {
+			// Reading keys, the footer names the keys and the next results load
+			// past the end; reading lines, the question names the answers.
+			if keyed == strings.Contains(out, "o next results") || keyed != strings.Contains(out, "↑↓ move   Enter read   n/p match") {
 				t.Errorf("next results named for the wrong mode: %s", out)
 			}
 			if strings.Contains(out, "words to filter") || strings.Contains(out, "/ filter ·") {
@@ -184,7 +185,7 @@ func TestSearchSelectedReadCancelsAndJoinsBeforeReturning(t *testing.T) {
 			keys := startKeys(fake)
 			defer keys.close()
 			b := &sessionBrowser{search: &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace}, keys: keys, prompt: newPrompter(strings.NewReader(""), io.Discard), stdout: io.Discard, list: &sessionPicker{keys: keys}}
-			_, err = b.readSearchSelection(t.Context(), *page.Hits[0].Reference, page.Hits[0].Reference.Start)
+			_, err = b.readSearchSelection(t.Context(), *page.Hits[0].Reference, page.Hits[0].Reference.Start, false)
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("read: %v", err)
 			}
@@ -267,7 +268,7 @@ func TestSearchDetailsWrapLongUnicodeLinesForScrolling(t *testing.T) {
 	env.TerminalSize = fixedTerminal{36, 20}.terminalSize
 	b := &sessionBrowser{env: env, stdout: io.Discard, prompt: newPrompter(strings.NewReader(""), io.Discard), search: &contentSearchBrowser{}}
 	lines := []string{strings.Repeat("界", 2000) + "TAILMARK"}
-	screen := b.drawSearchDetails(lines, 0)
+	screen := b.drawSearchDetails(lines, 0, -1, "")
 	if !screen.cut || screen.bottom == 0 || len(screen.lines) < 100 {
 		t.Fatalf("long line cannot scroll: %+v", screen)
 	}
@@ -288,7 +289,7 @@ func TestSearchSnippetRowsFitNarrowSharedBrowserMeasurements(t *testing.T) {
 	state := &contentSearchBrowser{}
 	rows := make([]listRow, 10)
 	for i := range rows {
-		rows[i] = listRow{Index: i + 1, Title: strings.Repeat("title", 100), Harness: "codex", ShortID: "12345678", When: "2026-01-01", searchSnippet: strings.Repeat("界", 256), searchMatches: 8}
+		rows[i] = listRow{Index: i + 1, Title: strings.Repeat("title", 100), Harness: "codex", ShortID: "12345678", When: "2026-01-01", searchSnippet: strings.Repeat("界", 256)}
 	}
 	format := listFormatOptions{Search: true, Numbered: true}
 	groups := sessionTableGroups(rows, format)
@@ -301,7 +302,7 @@ func TestSearchSnippetRowsFitNarrowSharedBrowserMeasurements(t *testing.T) {
 		t.Fatalf("%d rendered lines exceed budget%d", used, screen.budget)
 	}
 	var rendered bytes.Buffer
-	if err := printSessionGroups(&rendered, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), (&pickerView{format: format}).formatFor(36)); err != nil {
+	if err := printSessionGroups(&rendered, pageSessionGroups(groups, pickerPage{screen.start, screen.end}), (&pickerView{rows: rows, format: format}).formatFor(36)); err != nil {
 		t.Fatal(err)
 	}
 	for line := range strings.SplitSeq(rendered.String(), "\n") {
@@ -309,8 +310,8 @@ func TestSearchSnippetRowsFitNarrowSharedBrowserMeasurements(t *testing.T) {
 			t.Fatalf("oversized row: %q", line)
 		}
 	}
-	if !strings.Contains(rendered.String(), "7 other indexed title/body matches") {
-		t.Fatalf("known count missing: %s", &rendered)
+	if !strings.Contains(rendered.String(), "\n"+strings.Repeat(" ", 4)+"界界") {
+		t.Fatalf("passage missing under its row: %s", &rendered)
 	}
 }
 
@@ -327,23 +328,35 @@ func TestSearchAndMetadataRowsKeepDistinctWidthMeasurements(t *testing.T) {
 	}
 	for i := range rows {
 		rows[i].searchSnippet = strings.Repeat("matched context ", 32)
-		rows[i].searchMatches = 3
 	}
-	searchView := &pickerView{rows: rows, format: listFormatOptions{Search: true, Numbered: true}}
-	picker := &sessionPicker{contentSearch: &contentSearchBrowser{}}
-	for _, width := range []int{36, 100, 36} {
-		searchFormat := searchView.formatFor(width)
-		if searchFormat.Width != width || searchFormat.layout != nil {
-			t.Fatalf("search inherited one-line metadata layout at width%d", width)
-		}
-		groups := sessionTableGroups(rows, searchFormat)
-		var actual bytes.Buffer
-		if err := printSessionGroups(&actual, groups, searchFormat); err != nil {
-			t.Fatal(err)
-		}
-		measured := picker.tableLines(groups, searchFormat, pickerPage{0, len(rows)}, width)
-		if measured != displayLines(actual.String(), width) || measured <= len(rows) {
-			t.Fatalf("search multiline measure%d differs from actual or became one line per hit", measured)
+	// Read by lines, each result has its passage on a line under it; read by
+	// keys, the strip shows it and each result is one line, as in list.
+	for _, keyed := range []bool{false, true} {
+		searchView := &pickerView{rows: rows, format: listFormatOptions{Search: true, Numbered: true, Cursor: keyed}}
+		picker := &sessionPicker{contentSearch: &contentSearchBrowser{}}
+		for _, width := range []int{36, 100, 36} {
+			searchFormat := searchView.formatFor(width)
+			if searchFormat.Width != width || searchFormat.layout == nil || searchFormat.layout.width != width {
+				t.Fatalf("search rows not laid out for width%d", width)
+			}
+			groups := sessionTableGroups(rows, searchFormat)
+			var actual bytes.Buffer
+			if err := printSessionGroups(&actual, groups, searchFormat); err != nil {
+				t.Fatal(err)
+			}
+			for line := range strings.SplitSeq(strings.TrimSuffix(actual.String(), "\n"), "\n") {
+				if visibleWidth(line) > width {
+					t.Fatalf("row wider than%d: %q", width, line)
+				}
+			}
+			measured := picker.tableLines(groups, searchFormat, pickerPage{0, len(rows)}, width)
+			want := 2 * len(rows)
+			if keyed {
+				want = len(rows)
+			}
+			if measured != displayLines(actual.String(), width) || measured != want {
+				t.Fatalf("keyed%v width%d: measured%d, drawn%d, want%d", keyed, width, measured, displayLines(actual.String(), width), want)
+			}
 		}
 	}
 	var ordinary bytes.Buffer
@@ -417,7 +430,7 @@ func TestSearchBufferedActionsCancelAndJoinSelectedRead(t *testing.T) {
 				b := &sessionBrowser{search: &contentSearchBrowser{env: env, cfg: cfg, namespace: namespace}, keys: keys, prompt: prompt, stdout: io.Discard, list: &sessionPicker{keys: keys}}
 				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 				defer cancel()
-				_, err = b.readSearchSelection(ctx, *page.Hits[0].Reference, page.Hits[0].Reference.Start)
+				_, err = b.readSearchSelection(ctx, *page.Hits[0].Reference, page.Hits[0].Reference.Start, false)
 				if !errors.Is(err, context.Canceled) || action == "q" && !b.list.operationQuit || action != "q" && b.search.pendingAction != contentSearchAction(action) {
 					t.Fatalf("buffered action was not applied before read deadline: err=%v quit=%v pending=%q", err, b.list.operationQuit, b.search.pendingAction)
 				}
@@ -462,32 +475,50 @@ func TestSearchInteractiveRefreshFailureKeepsCachedResultsAndFailure(t *testing.
 	}
 }
 
-func TestSearchBrowserCoverageShowsPartialObservationAndGaps(t *testing.T) {
+// The interactive screen sums coverage up in one line under the heading;
+// --json keeps every count and the observation times.
+func TestSearchBrowserCoverageIsOneLineUnderTheHeading(t *testing.T) {
 	observed := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	s := &contentSearchBrowser{page: search.Page{Observation: search.Observation{LastObserved: observed, Indexed: 4, Known: 7, Unsupported: 3}}, pages: 1, choices: rowChoices(nil, listFormatOptions{})}
-	s.installRows()
-	note := s.choices.shown().note
-	for _, want := range []string{"incomplete", "2026-01-02T03:04:05Z", "3 unsupported"} {
-		if !strings.Contains(note, want) || !strings.Contains((&sessionPicker{contentSearch: s}).displayFooter(note, 36), want) {
-			t.Errorf("coverage omits %q in narrow view: %s", want, note)
+	for _, tc := range []struct {
+		observation search.Observation
+		stale       bool
+		want        string
+	}{
+		{search.Observation{LastObserved: observed, Indexed: 4, Known: 7, Unsupported: 3}, false, "Indexed 4 of 7 · coverage incomplete · 3 unsupported"},
+		{search.Observation{Indexed: 105, Known: 211, Pending: 106, Failed: 2}, false, "Indexed 105 of 211 · catching up · 2 failed"},
+		{search.Observation{Indexed: 9, Known: 9, Complete: true}, true, "Index complete · index changed; r reruns this query"},
+	} {
+		s := &contentSearchBrowser{page: search.Page{Observation: tc.observation}, pages: 1, stale: tc.stale, choices: rowChoices(nil, listFormatOptions{})}
+		s.installRows()
+		if got := s.coverageLine(); got != tc.want {
+			t.Errorf("coverage %q, want %q", got, tc.want)
+		}
+		heading := s.heading(true)
+		if lines := strings.Split(heading, "\n"); len(lines) != 3 || lines[1] != tc.want || lines[2] != "" {
+			t.Errorf("heading is not the query line, the coverage line and a blank line: %q", heading)
+		}
+		if note := s.choices.shown().note; note != "" {
+			t.Errorf("coverage repeated in the footer: %q", note)
 		}
 	}
-	s.page.Observation.LastObserved = time.Time{}
-	s.installRows()
-	if note = s.choices.shown().note; !strings.Contains(note, "freshness unknown") {
-		t.Fatalf("unobserved archive not explained: %s", note)
+	// A search that reads no index words its own coverage.
+	s := &contentSearchBrowser{page: search.Page{Observation: search.Observation{Indexed: 3, Known: 9, Failed: 1}}, pages: 1, choices: rowChoices(nil, listFormatOptions{}),
+		coverage: func(search.Page) string { return "Searched 104 of 2,350 sessions\x1b[2J" }}
+	if got := s.coverageLine(); got != "Searched 104 of 2,350 sessions[2J" {
+		t.Errorf("supplied coverage %q", got)
 	}
 }
 
-// A real pipe lets the line-mode browser poll without blocking. Actions arrive
-// only after selected context is painted, distinguishing retrieval from cancel.
-func runSearchAfterContext(t *testing.T, env Env, actions string) (string, string, int) {
+// A real pipe lets the line-mode browser poll without blocking. open is typed
+// at the results; actions arrive only once shown is on the screen, after the
+// passage is painted, distinguishing retrieval from cancel.
+func runSearchAfterContext(t *testing.T, env Env, open, shown, actions string, args ...string) (string, string, int) {
 	t.Helper()
 	input, send, err := os.Pipe()
 	must(t, err)
 	defer func() { _ = input.Close() }()
-	shown := make(chan struct{})
-	out := &searchContextOutput{shown: shown}
+	painted := make(chan struct{})
+	out := &searchContextOutput{shown: painted, marker: shown}
 	var diagnostics bytes.Buffer
 	env.TerminalSize = fixedTerminal{100, 40}.terminalSize
 	env.IsTerminal = func(stream any) bool { return stream == any(input) || stream == any(out) }
@@ -495,31 +526,32 @@ func runSearchAfterContext(t *testing.T, env Env, actions string) (string, strin
 	done := make(chan error, 1)
 	go func() {
 		defer func() { _ = send.Close() }()
-		if _, e := io.WriteString(send, "1\n"); e != nil {
+		if _, e := io.WriteString(send, open); e != nil {
 			done <- e
 			return
 		}
 		select {
-		case <-shown:
+		case <-painted:
 			_, e := io.WriteString(send, actions)
 			done <- e
 		case <-time.After(5 * time.Second):
 			done <- errors.New("selected context was not painted")
 		}
 	}()
-	code := Run([]string{"search", "visible", "--all-projects"}, input, out, &diagnostics, env)
+	code := Run(append([]string{"search"}, args...), input, out, &diagnostics, env)
 	must(t, <-done)
 	return out.String(), diagnostics.String(), code
 }
 
 type searchContextOutput struct {
 	bytes.Buffer
-	shown chan struct{}
+	shown  chan struct{}
+	marker string
 }
 
 func (o *searchContextOutput) Write(p []byte) (int, error) {
 	n, err := o.Buffer.Write(p)
-	if o.shown != nil && strings.Contains(o.String(), "[selected · assistant]") {
+	if o.shown != nil && strings.Contains(o.String(), searchMatchFooter) && strings.Contains(o.String(), o.marker) {
 		close(o.shown)
 		o.shown = nil
 	}
@@ -533,7 +565,7 @@ func TestSearchHighlightedNavigationAndCompactFooter(t *testing.T) {
 		{Index: 1, selectionKey: childKey("codex", "same"), HarnessKey: "codex", Harness: "Codex", SessionID: "same", ShortID: "same", Title: "first ranked hit", searchSnippet: "first snippet"},
 		{Index: 2, selectionKey: childKey("claude", "same"), HarnessKey: "claude", Harness: "Claude", SessionID: "same", ShortID: "same", Title: "second ranked hit", searchSnippet: "second snippet"},
 	}
-	keys := startKeys(newFakeKeys("/", "\x1b[B", "\r"))
+	keys := startKeys(newFakeKeys("\x1b[B", "\r"))
 	defer keys.close()
 	var out bytes.Buffer
 	l := &sessionPicker{env: fixedTerminal{160, 40}, keys: keys, contentSearch: &contentSearchBrowser{page: search.Page{Next: "more"}, pages: 1}, older: &browserLoadAction{Label: "next indexed results"}, clear: func() { out.WriteString(screenBreak) }}
@@ -543,17 +575,17 @@ func TestSearchHighlightedNavigationAndCompactFooter(t *testing.T) {
 	}
 	screens := strings.Split(out.String(), screenBreak)
 	checkKeyScreensFit(t, screens, 160, 40)
-	for _, forbidden := range []string{"/ search", "/ filter", "o older", "o next results"} {
+	for _, forbidden := range []string{"/ search", "/ filter", "o older", "o next results", "Coverage incomplete."} {
 		if strings.Contains(out.String(), forbidden) {
 			t.Fatalf("search advertised %q: %s", forbidden, &out)
 		}
 	}
-	for _, want := range []string{cursorMark + " 1.", "first ranked hit", "r rerun", "PgUp/PgDn page", "1–2 of 2+", "Coverage incomplete."} {
+	for _, want := range []string{cursorMark + " 1", "first ranked hit", "↑↓ move   Enter read   n/p match   / new search   h hand off   q quit", "1–2 of 2+"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q: %s", want, &out)
 		}
 	}
-	if !strings.Contains(screens[len(screens)-1], cursorMark+" 2.") || !strings.Contains(screens[len(screens)-1], strings.Repeat("─", 160)) {
+	if !strings.Contains(screens[len(screens)-1], cursorMark+" 2") || !strings.Contains(screens[len(screens)-1], strings.Repeat("─", 160)) {
 		t.Fatalf("highlight or shared detail strip missing: %s", screens[len(screens)-1])
 	}
 }
@@ -578,7 +610,7 @@ func TestSearchRerunHighlightRebindsFullIdentityOrFirstHit(t *testing.T) {
 }
 
 func TestSearchHighlightedScreenMeasuresStripFooterAndResize(t *testing.T) {
-	rows := []listRow{{Index: 1, Title: "first", searchSnippet: strings.Repeat("界", 50), searchMatches: 3}, {Index: 2, Title: "second", searchSnippet: "second match"}}
+	rows := []listRow{{Index: 1, Title: "first", searchSnippet: strings.Repeat("界", 50)}, {Index: 2, Title: "second", searchSnippet: "second match"}}
 	format := listFormatOptions{Search: true, Numbered: true, Cursor: true}
 	footer := "Coverage incomplete; matching history may be missing.\nLast observed: unknown.\n"
 	for _, size := range []fixedTerminal{{120, 40}, {36, 20}, {120, 40}} {
@@ -592,7 +624,11 @@ func TestSearchHighlightedScreenMeasuresStripFooterAndResize(t *testing.T) {
 			t.Fatal(err)
 		}
 		if screen.strip {
-			for _, line := range detailStrip(rows[0], screen.width, format.Style) {
+			strip := l.contentSearch.strip(rows[0], screen.width)
+			if len(strip) != searchStripLines {
+				t.Fatalf("strip of %d lines, measured as %d", len(strip), searchStripLines)
+			}
+			for _, line := range strip {
 				frame.WriteString(line + "\n")
 			}
 		}

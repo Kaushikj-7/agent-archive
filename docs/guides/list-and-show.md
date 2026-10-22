@@ -497,7 +497,8 @@ Before setup has run, both commands print ``Not set up yet. For Claude Code or C
 
 On a terminal, anything longer than a screen goes through a pager: the
 `list` table outside the browser, `show SESSION_ID`'s summary, a transcript,
-`status`, and `purge plan`. Piped or redirected output, and `--json`, are
+the detailed `status` views (`--issues`, `--verbose`, or an app), and `purge plan`.
+Compact `status` prints directly. Piped or redirected output, and `--json`, are
 never paged; `--no-pager` prints directly on a terminal too.
 
 With no pager set, or with the pager set to a bare `less` (as oh-my-zsh

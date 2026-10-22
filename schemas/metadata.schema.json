@@ -677,6 +677,16 @@
             "discovered",
             "installed_only"
           ]
+        },
+        "installed_identities": {
+          "description": "Optional logical installed declarations sharing this name and filtered content hash. Absence is unknown; not eligibility or invocation.",
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/skill_declaration_identity"
+          },
+          "minItems": 1
         }
       }
     },
@@ -1027,6 +1037,28 @@
           "type": "string",
           "format": "uri",
           "pattern": "^https://"
+        }
+      }
+    },
+    "skill_declaration_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "id"
+      ],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[a-z0-9_.:-]+$"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
         }
       }
     }

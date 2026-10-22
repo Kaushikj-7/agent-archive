@@ -173,7 +173,7 @@ func TestStatusShowsWhatTheBackgroundJobDoesNotDoRobustly(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Run([]string{"status", "--no-pager"}, nil, &out, &errOut, l.env); code != 0 {
+	if code := Run([]string{"status", "--verbose", "--no-pager"}, nil, &out, &errOut, l.env); code != 0 {
 		t.Fatalf("status: exit %d\n%s%s", code, &out, &errOut)
 	}
 	text := out.String()
@@ -205,7 +205,7 @@ func TestLinuxStatusNamesAnotherInstallationsJobInSystemdWords(t *testing.T) {
 	l.setup()
 	l.manager.put(l.ref(), scheduler.AnotherInstallation)
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"status", "--no-pager"}, nil, &out, &errOut, l.env); code != 0 {
+	if code := Run([]string{"status", "--verbose", "--no-pager"}, nil, &out, &errOut, l.env); code != 0 {
 		t.Fatalf("status: exit %d\n%s%s", code, &out, &errOut)
 	}
 	text := out.String()
@@ -228,7 +228,7 @@ func TestLinuxStatusWithNoUserBusNamesSystemctl(t *testing.T) {
 	l.setup()
 	l.manager.noBus = true
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"status", "--no-pager"}, nil, &out, &errOut, l.env); code != 0 {
+	if code := Run([]string{"status", "--verbose", "--no-pager"}, nil, &out, &errOut, l.env); code != 0 {
 		t.Fatalf("status: exit %d\n%s%s", code, &out, &errOut)
 	}
 	if text := out.String(); !strings.Contains(text, "Background collector state unknown") || !strings.Contains(text, "systemctl couldn't say") || strings.Contains(text, "launchctl") {
@@ -417,7 +417,7 @@ func TestLinuxStatusRowsForEachState(t *testing.T) {
 			l.setup()
 			l.manager.put(l.ref(), tc.state)
 			var out, errOut bytes.Buffer
-			if code := Run([]string{"status", "--no-pager"}, nil, &out, &errOut, l.env); code != 0 {
+			if code := Run([]string{"status", "--verbose", "--no-pager"}, nil, &out, &errOut, l.env); code != 0 {
 				t.Fatalf("status: exit %d\n%s%s", code, &out, &errOut)
 			}
 			if text := out.String(); !strings.Contains(text, tc.row) || strings.Contains(text, "launchctl") || strings.Contains(text, "LaunchAgent") {
@@ -442,7 +442,7 @@ func TestLinuxStatusRowsForEachState(t *testing.T) {
 		l.setup()
 		must(t, os.Remove(mustLoadConfig(t, l.home).InstalledExecutable))
 		var out, errOut bytes.Buffer
-		if code := Run([]string{"status", "--no-pager"}, nil, &out, &errOut, l.env); code != 0 {
+		if code := Run([]string{"status", "--verbose", "--no-pager"}, nil, &out, &errOut, l.env); code != 0 {
 			t.Fatalf("status: exit %d\n%s%s", code, &out, &errOut)
 		}
 		text := out.String()

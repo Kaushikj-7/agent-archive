@@ -93,6 +93,7 @@ var corruptionPolicies = map[string]corruption{
 	"status.json":             replacedByNextPass,
 	storageClockFile:          readAsAbsent,
 	"request-locks":           holdsNoContent,
+	importLocksDirectory:      holdsNoContent,
 	"temporary-quota":         holdsNoContent,
 }
 
@@ -190,6 +191,9 @@ func quarantinePath(path string) string {
 // (json.UnmarshalTypeError) is not corruption: it is likely a file a newer
 // version wrote before a downgrade, and it is reported, never moved aside.
 func isCorruptJSON(err error) bool {
+	if errors.Is(err, archive.ErrUnsupportedNativeImport) {
+		return false
+	}
 	var syntaxErr *json.SyntaxError
 	return errors.As(err, &syntaxErr)
 }
@@ -197,6 +201,9 @@ func isCorruptJSON(err error) bool {
 // IsUndecodable reports whether err is any JSON decoding failure, corrupt or
 // of an unexpected shape.
 func IsUndecodable(err error) bool {
+	if errors.Is(err, archive.ErrUnsupportedNativeImport) {
+		return false
+	}
 	var typeErr *json.UnmarshalTypeError
 	return isCorruptJSON(err) || errors.As(err, &typeErr)
 }
@@ -215,7 +222,7 @@ func readOrQuarantine[T any](s *Store, path, lockName string) (value T, found bo
 // lockName; with none, a lock held right now leaves the file where it is
 // and the error wraps local.ErrBusy.
 func readOrQuarantineWaiting[T any](s *Store, path, lockName string, lockWait time.Duration) (value T, found bool, err error) {
-	value, found, err = readJSON[T](path)
+	value, found, err = readJSON[T](s, path)
 	if err == nil || !isCorruptJSON(err) {
 		return value, found, err
 	}
@@ -224,7 +231,7 @@ func readOrQuarantineWaiting[T any](s *Store, path, lockName string, lockWait ti
 		return value, false, fmt.Errorf("%w (and it could not be locked to move it aside: %w)", err, lockErr)
 	}
 	defer unlock()
-	value, found, err = readJSON[T](path)
+	value, found, err = readJSON[T](s, path)
 	if err == nil || !isCorruptJSON(err) {
 		return value, found, err
 	}
@@ -250,9 +257,9 @@ func pruneQuarantine(path string) {
 	}
 }
 
-func readJSON[T any](path string) (T, bool, error) {
+func readJSON[T any](s *Store, path string) (T, bool, error) {
 	var value T
-	err := local.Read(path, &value)
+	err := s.readRegistrationJSON(path, &value)
 	if errors.Is(err, os.ErrNotExist) {
 		return value, false, nil
 	}

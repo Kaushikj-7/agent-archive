@@ -159,6 +159,60 @@ func TestCollectPassSoftDeadlineStartsNoNewSession(t *testing.T) {
 	}
 }
 
+// Soft scheduling exhaustion does not bypass mandatory durable safety checks.
+func TestCollectPassZeroSoftDeadlineStillRefusesUnsafeEvidence(t *testing.T) {
+	previous := collectSoftDeadline
+	collectSoftDeadline = 0
+	t.Cleanup(func() { collectSoftDeadline = previous })
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	home, env, remote := collectFixture(t, now)
+	opened := false
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		opened = true
+		return remote, nil
+	}
+	if err := config.WithDurableStorage(home, func(config.DurableStorageGuard) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, "pending", ".pending-123")
+	original := []byte("sole-original")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := runOnePass(env, false)
+	if !errors.Is(err, state.ErrDurableStorageRecovery) || result.Scanned != 0 || len(result.Published) != 0 || opened {
+		t.Fatalf("unsafe evidence was not refused before work: %#v %v", result, err)
+	}
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, original) {
+		t.Fatalf("unsafe evidence changed: %q %v", got, err)
+	}
+}
+
+// A caller's Stop callback may consume the remaining allowance while returning
+// false. The recovery budget is sampled afterward and must not get a 1ns floor.
+func TestCollectPassStopCallbackCanExhaustRecoveryBudget(t *testing.T) {
+	previous := collectSoftDeadline
+	t.Cleanup(func() { collectSoftDeadline = previous })
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	home, env, _ := collectFixture(t, now)
+	called := false
+	result, err := runPass(env, false, passOptions{stop: func() bool {
+		called = true
+		collectSoftDeadline = 0
+		return false
+	}})
+	if !called || err != nil || len(result.Errors) != 0 || len(result.Published) != 0 || result.Scanned != 0 {
+		t.Fatalf("exhausted callback allowance started work: called=%t result=%#v err=%v", called, result, err)
+	}
+	status, err := state.OpenReadOnly(home).LoadStatus()
+	if err != nil || status.LastError != "" {
+		t.Fatalf("status = %#v %v", status, err)
+	}
+}
+
 // Recorded references keep legitimate legacy cached bundles readable after a
 // source schema bump. The legacy persistence API validates this authority;
 // selecting protocol2 state cannot be modified into the same legacy premise.

@@ -186,7 +186,7 @@ in [CI timing](../../docs/reference/ci-timing.md#current-schema-4-hint-refresh).
 The PR source-audit job also executes complete native Linux/amd64 plain
 `go vet ./...` sequentially after the actual named audit body. Its separate vet
 receipt pins canonical command, successful exit, raw-log hash, source before
-and after, and the existing exact Go1.27.2/compiler/runtime context. Worker0
+and after, and the existing exact Go1.27.3/compiler/runtime context. Worker0
 omits its trailing vet only under explicit `--plain-vet-owned`; all workers
 record matching ownership/context and the required reconciliation demands the
 same-source actual-vet receipt. Default local/standalone shards still run vet,
@@ -236,7 +236,7 @@ than two-runner cold latency. On macOS it builds all production packages with cg
 focused Keychain, launchd, terminal, and CLI smoke suite above in short mode.
 macOS golangci-lint also runs on each pull request: the first pass blocks, and
 revive's doc-comment rule checks only code the pull request adds or changes.
-All jobs use Go 1.27.2 exactly (go.mod's `toolchain` line). A new push to a
+All jobs use Go 1.27.3 exactly (go.mod's `toolchain` line). A new push to a
 pull request cancels that pull request's older Test and Levenshtein runs.
 
 Short mode scales large rendering, statistics, collector, and codec fixtures
@@ -250,7 +250,11 @@ same-root warm SQL /128+/512, actual CLI1100/1050 pagination and physical
 million-record related-history limit. Confirmed backfill runs its actual mixed
 3/17-session import, publication and readback cases in short mode; daily,
 weekly and exact-commit candidate runs also restore the unchanged 513-session
-case. A short pass records the full 513-session body as NOT RUN.
+case. A short pass records the full 513-session body as NOT RUN. Under the
+race detector its durable-quota rescans exceed the 20-minute package timeout,
+so the race build skips that child with the exact `plain_children` reason and
+the restored tiers (Linux and the macOS obligations job) run it in one plain
+`plain-restoration` invocation whose pass the tier gate requires.
 The small cached-prefix history test pins
 aggregate refusal/release/retry; it does not prove million-record physical
 streaming. Metadata 16384, retained warm sources 2000 and physical/indexed
@@ -348,7 +352,12 @@ daily campaign on Sunday. Daily runs all Linux representative race bodies plus
 the five named full restorations, native Darwin platform smoke, expanded native
 config/catalog/capture/source-I/O integration and the pinned
 published writer, actual systemd scheduler/setup/timer/uninstall, five seconds
-of mutations on every discovered fuzz target and expanded purge cases. Weekly
+of mutations on every discovered fuzz target and expanded purge cases. Daily
+Linux short race bodies use the full tier's compiled CLI split with `-short`,
+because one short CLI process reached the 20-minute package timeout; all its
+invocations overlap in one batch to fit the daily job's 50-minute limit and
+must record every assigned parent. Extended Linux exports `GOMEMLIMIT=3GiB` for every event; native macOS workers run
+with `--seconds 3000` so their receipt uploads inside the 60-minute job. Weekly
 runs complete default Linux and Darwin race suites, plain full-size performance
 assertions, exhaustive purge products and 30 seconds per fuzz target. Security
 advisory/workflow audits remain fresh daily in Levenshtein, including the
@@ -377,7 +386,7 @@ and security advisories are never stored as verification evidence in a cache.
 Actual discovery and execution use `-count=1` regardless of cache outcome, and
 the required verdict always reconciles freshly generated artifacts.
 
-Keys include actual Go 1.27.2 driver/build/vet tool bytes, native
+Keys include actual Go 1.27.3 driver/build/vet tool bytes, native
 OS/architecture/CGO/flags, C/C++ compiler binary/version identities, runner image/version and OS metadata, both module
 files' bytes, PR number, worker and source tree. A single narrow restore prefix
 may reuse older source from the same PR/worker/dependency/build context; Go's
@@ -480,7 +489,7 @@ compilation/module seeds may be restored; check results and XDG state stay fresh
 and vulnerability checks continue querying current advisory data.
 
 The additional `native-release-vulnerabilities` job runs on the same workflow
-events, alongside the existing verifier. It installs the product Go 1.27.2
+events, alongside the existing verifier. It installs the product Go 1.27.3
 compiler from `go.mod` and refuses a different native compiler or shared
 verifier pin. Its helper stages the tracked archive inputs into a new private
 directory and generates a temporary native-only vulnerability run; it leaves
@@ -819,12 +828,13 @@ each check):
 - Capture: a synthetic Claude Code session through the hook command setup
   installed, published by the **timer's** collector (not `sync`) and read back
   with `list` and `show`; a hand-made Cursor database written the way a running
-  Cursor leaves it, imported by `backfill` through a copy under
-  `$XDG_CACHE_HOME/agent-archive/cursor-snapshots` (mode, `CACHEDIR.TAG`, the
-  copy removed, nothing under `/tmp` or the default cache).
+  Cursor leaves it, with a chat older than setup's 7-day import, imported by
+  `backfill` through a copy under `$XDG_CACHE_HOME/agent-archive/cursor-snapshots`
+  (mode, `CACHEDIR.TAG`, the copy removed, nothing under `/tmp` or the default
+  cache).
 - `status`: the XDG-drift warnings, and the machine-ID clone warning (quiet on
-  the original; after `/etc/machine-id` changes it warns in `status`, `--json`
-  and `setup`, and `setup` keeps the recorded `host_id`; a machine ID
+  the original; after `/etc/machine-id` changes it warns in `status --issues`,
+  `--json` and `setup`, and `setup` keeps the recorded `host_id`; a machine ID
   bind-mounted over `/etc/machine-id` is not read, so it stays quiet).
 - `setup --refresh` after the binary moved, and `uninstall`.
 - The enable link on every path that removes a job: `uninstall`;
@@ -885,6 +895,17 @@ commit, systemd, architecture, result):
   Local evidence (not committed):
   `/private/tmp/agent-archive-linux-acceptance-20261001-61d068b-retry.log` and
   `/private/tmp/agent-archive-linux-acceptance-20261001-61d068b-summary.txt`.
+- 2026-10-20, v0.2.2 product (`8764d745`) with the harness updated for the
+  product's changes since 2026-10-01 (compact `config.json`, the `status`
+  overview with warnings under `--issues` and app rows under `--verbose`, the
+  new `list` layout, and setup's 7-day import, which now took the Cursor chat
+  before `backfill` could), Ubuntu 24.04.5 LTS, systemd 255
+  (255.4-1ubuntu8.18), linux/arm64 (Docker in the colima `levenshtein` VM):
+  **93 passed, 0 failed**, 167 seconds. Before the update the same product
+  failed 12 checks, all of them the harness's; none was a product defect. The
+  compact `config.json` had also made section 6's kept-`host_id` check pass
+  on an empty match; it now checks the ID was read (one of the two new checks;
+  the other names the project `list` shows).
 
 When a check fails, read it from the top (later sections build on earlier ones),
 and diagnose before changing a check: a failure is a finding about the product
@@ -1202,8 +1223,10 @@ Their seeds come from the fixtures in `testdata/` and from
 `testdata/fuzz/<target>/`, and plain `go test` runs them on every pull request.
 The `fuzz` job in [Extended CI](../../.github/workflows/extended.yml) mutates
 every discovered target (at least the 24 currently known) for five seconds daily
-and 30 seconds weekly, on candidates or on demand. For a change to
-redaction or parsing, run the affected targets for a couple of minutes each,
+and 30 seconds weekly, on candidates or on demand. Full campaigns have a
+45-minute job limit around the tier runner's 40-minute deadline, leaving room
+for setup and artifact upload; daily jobs retain their 30-minute limit. For a
+change to redaction or parsing, run the affected targets for a couple of minutes each,
 with fast minimization so a
 failure is reported promptly:
 

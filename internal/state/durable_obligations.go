@@ -122,6 +122,9 @@ func (s *Store) DurableStorageObligations() (out []DurableStorageObligation, err
 		return append(out, DurableStorageObligation{Namespace: UnavailableStorage}), errors.Join(ErrDurableStorageRecovery, e)
 	}
 	remaining := durableEntryLimit - used
+	if e := inspectImportLocks(s.durableContext(), home, &remaining); e != nil {
+		return append(out, DurableStorageObligation{Namespace: UnavailableStorage}), errors.Join(ErrDurableStorageRecovery, e)
+	}
 	for _, base := range []string{"sessions", "publication-evidence", deletionDirectory} {
 		dir, e := privateDirectory(home.Root, base, false)
 		if errors.Is(e, os.ErrNotExist) {

@@ -765,6 +765,7 @@ var localStateEntries = []string{
 	"discovery-catalog.json", "discovery-catalog.lock", "discovery-health.json", "discovery-refused-starts.json",
 	machineRegistrationFile, "config.json", "setup-draft.json", "setup-transaction.json", "imports",
 	"storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
+	statusSummaryFile, statusProgressFile,
 	"admission-intents", "admission-intents.lock", "admission-replay-cursor.json",
 	"search", "search-worker.lock", "search.log", "search-error.log",
 	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",

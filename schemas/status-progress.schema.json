@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Local active collector progress",
+  "description": "Private, disposable display evidence only; never authorizes capture, publication, deletion or recovery. Readers reject incompatible versions and configuration IDs.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "configuration_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "phase": {
+      "enum": [
+        "preparing",
+        "collecting",
+        "verifying",
+        "finishing"
+      ]
+    },
+    "processed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "published": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "version",
+    "configuration_id",
+    "pid",
+    "started_at",
+    "updated_at",
+    "phase",
+    "processed",
+    "published"
+  ]
+}

@@ -483,7 +483,7 @@ func TestStatusCountsEachAppsSessions(t *testing.T) {
 	if pair := app.Projects[0]; pair.sessions != 4 || pair.imported != 1 || pair.uploading != 3 {
 		t.Errorf("project counts sessions=%d imported=%d uploading=%d", pair.sessions, pair.imported, pair.uploading)
 	}
-	if text := statusOutput(t, env); !strings.Contains(text, "discovery off; included projects   4 sessions (+1 subagent) · 1 archived (1 verified) · 1 imported · 3 uploading\n") {
+	if text := statusOutput(t, env, "--verbose"); !strings.Contains(text, "discovery off; included projects   4 sessions (+1 subagent) · 1 archived (1 verified) · 1 imported · 3 uploading\n") {
 		t.Errorf("status:\n%s", text)
 	}
 	if full := statusOutput(t, env, "codex"); !strings.Contains(full, "\nProjects\n  Project") || !strings.Contains(full, "   4          1          3           verified\n") {

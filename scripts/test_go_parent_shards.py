@@ -299,6 +299,13 @@ class ParentScheduling(unittest.TestCase):
             bad=copy.deepcopy(good);change(bad)
             with self.assertRaises(r.Failure):p.validate(bad,8)
 
+    def test_only_legacy_import_accepts_the_recorded_go_version(self):
+        old=copy.deepcopy(catalog());old['configuration']['GOVERSION']='go1.27.2'
+        with self.assertRaises(r.Failure):p.validate(old,8)
+        p.validate(old,8,allow_legacy=True)
+        old['configuration']['GOVERSION']='go1.27.1'
+        with self.assertRaises(r.Failure):p.validate(old,8,allow_legacy=True)
+
     def test_discovery_listing_and_raw_source_config_are_authoritative(self):
         c=catalog()
         with tempfile.TemporaryDirectory() as d:

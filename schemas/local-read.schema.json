@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/local-read.schema.json",
+  "title": "Bounded read-only native list and show output",
+  "description": "Native session IDs are local observations, never archive IDs or capture authority. Identity coverage describes the declared native roots, not descendant completeness.",
+  "oneOf": [{"$ref": "#/$defs/list"}, {"$ref": "#/$defs/show"}],
+  "$defs": {
+    "list": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "domain", "source", "coverage", "preview_limited", "sessions"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "domain": {"const": "local-read-list"},
+        "source": {"const": "local"},
+        "coverage": {"$ref": "#/$defs/coverage"},
+        "preview_limited": {"type": "boolean"},
+        "sessions": {"type": "array", "items": {"$ref": "#/$defs/session"}}
+      }
+    },
+    "show": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "domain", "source", "coverage", "session", "observability"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "domain": {"const": "local-read-show"},
+        "source": {"const": "local"},
+        "coverage": {"$ref": "#/$defs/coverage"},
+        "session": {"$ref": "#/$defs/session"},
+        "view": {"$ref": "#/$defs/view"},
+        "token_observations": {"$ref": "metadata.schema.json#/properties/token_observations"},
+        "observability": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "structured_counts": {"$ref": "#/$defs/availability"},
+            "tool_calls": {"$ref": "#/$defs/availability"},
+            "files_touched": {"$ref": "#/$defs/availability"},
+            "git_activity": {"$ref": "#/$defs/availability"},
+            "compactions": {"$ref": "#/$defs/availability"},
+            "tool_errors": {"$ref": "#/$defs/availability"},
+            "tool_results": {"$ref": "#/$defs/availability"}
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enumerated", "inspected", "in_scope", "skipped", "identity_complete", "reserved_bytes", "read_bytes"],
+      "properties": {
+        "enumerated": {"type": "integer", "minimum": 0},
+        "inspected": {"type": "integer", "minimum": 0},
+        "in_scope": {"type": "integer", "minimum": 0},
+        "skipped": {"type": "integer", "minimum": 0},
+        "identity_complete": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "reserved_bytes": {"type": "integer", "minimum": 0},
+        "read_bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "session": {
+      "type": "object", "additionalProperties": false,
+      "required": ["native_session_id", "harness", "project", "started_at"],
+      "properties": {
+        "native_session_id": {"type": "string", "minLength": 1},
+        "harness": {"type": "string", "minLength": 1},
+        "project": {"type": "string"},
+        "started_at": {"type": "string", "format": "date-time"},
+        "name": {"type": "string"},
+        "title": {"type": "string"},
+        "preview": {"type": "string"},
+        "gaps": {"$ref": "metadata.schema.json#/properties/capture_gaps"}
+      }
+    },
+    "availability": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": {"enum": ["available", "unavailable", "unknown"]},
+        "reason": {"type": "string"}
+      }
+    },
+    "view": {
+      "type": "object", "additionalProperties": false,
+      "required": ["turns", "tool_calls", "tool_results", "hook_finals"],
+      "properties": {
+        "turns": {"type": "array", "items": {"type": "object"}},
+        "tool_calls": {"type": ["array", "null"], "items": {"type": "object"}},
+        "tool_results": {"type": ["array", "null"], "items": {"type": "object"}},
+        "hook_finals": {"type": ["array", "null"], "items": {"type": "object"}}
+      }
+    }
+  }
+}

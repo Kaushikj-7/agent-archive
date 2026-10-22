@@ -36,6 +36,7 @@ linters:
             - "!$test"
             - "!**/internal/cli/*.go"
             - "!**/internal/agents/builtin/*.go"
+            - "!**/internal/agents/retainedprivacy/producer/transform.go"
           deny:
             - pkg: github.com/wangjohn/agent-archive/internal/agents/builtin
               desc: CLI owns operational composition; core consumers receive narrow ports
@@ -52,6 +53,7 @@ linters:
             - "$all"
             - "!$test"
             - "!**/internal/agents/builtin/*.go"
+            - "!**/internal/agents/retainedprivacy/producer/transform.go"
           deny:
             - pkg: github.com/wangjohn/agent-archive/internal/agents/claude
               desc: builtin is the sole native composition root

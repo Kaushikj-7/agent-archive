@@ -247,7 +247,7 @@ func (owned *PendingPublication) validatePublicationEnvelopeWithFacts(facts *pay
 	if err := p.validateRetentionEnvelope(); err != nil {
 		return err
 	}
-	if p.Commit != nil && p.Commit.SettledPrivacySHA256 != "" {
+	if p.Commit != nil && p.Commit.SettledPrivacySHA256 != "" || releasedPayloads(p) {
 		return ErrDurableStorageRecovery
 	}
 	if len(p.MetadataBytes) > 32<<20 || len(a.OriginMetadata) > 32<<20 {

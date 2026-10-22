@@ -195,9 +195,20 @@ func TestBackfillConfirmedCompletesMixedNativeWindows(t *testing.T) {
 		counts = append(counts, 513)
 	}
 	for _, count := range counts {
-		t.Run(strconv.Itoa(count), func(t *testing.T) { checkConfirmedMixedNativeWindows(t, count) })
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			if count == 513 && raceEnabled {
+				// scripts/ci_tiers.json plain_children: the restored tiers run
+				// this body in a plain invocation and require its pass there.
+				t.Skip(plainRestorationSkip)
+			}
+			checkConfirmedMixedNativeWindows(t, count)
+		})
 	}
 }
+
+// plainRestorationSkip is the exact reason the tier gate accepts for a
+// restored child that skips under the race detector.
+const plainRestorationSkip = "full-scale body owned by the plain restoration run; race body NOT RUN"
 
 func TestBackfillConfirmedStagingRenewsAcrossElapsedScopes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {

@@ -27,12 +27,25 @@ func generationFixture(t *testing.T) (*Store, archive.SessionRegistration, time.
 		t.Fatal(err)
 	}
 	at := reg.RegisteredAt.Add(time.Hour)
-	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, CapturedAt: reg.RegisteredAt}}
+	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Capture: archive.SourceCapture{Harness: reg.Harness, AdapterName: "test", CapturedAt: reg.RegisteredAt}}
 	p, err := s.LoadPublishedState(reg.ArchiveSessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Save(bundle, reg.RegisteredAt, CacheStatusPublished); err != nil {
+	source, err := archive.BuildCompressedSource(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceKey, err := archive.SourceObjectKey(bundle, source.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := archive.Metadata{SchemaVersion: archive.MetadataSchemaVersion, SessionID: reg.ArchiveSessionID, NativeSessionID: reg.NativeSessionID, ProjectID: reg.ProjectID, Harness: reg.Harness, CapturedAt: bundle.Capture.CapturedAt, SourceBundle: archive.SourceReference{Key: sourceKey, SHA256: source.SHA256, CompressedBytes: len(source.Bytes)}}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Save(bundle, reg.RegisteredAt, CacheStatusPublished, raw); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.SaveBlocked(bundle, reg.RegisteredAt, BlockedReasonTranscriptRewritten); err != nil {
@@ -200,7 +213,7 @@ func TestGenerationRecoveryReplayRefusesChangedAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.onIndexStep = nil
-	journal, found, err := readJSON[generationRecovery](s.generationRecoveryPath(original.ArchiveSessionID))
+	journal, found, err := readJSON[generationRecovery](s, s.generationRecoveryPath(original.ArchiveSessionID))
 	if err != nil || !found {
 		t.Fatal(err)
 	}
@@ -243,7 +256,7 @@ func TestGenerationRecoveryReplayRefusesChangedPublication(t *testing.T) {
 				t.Fatal(err)
 			}
 			s.onIndexStep = nil
-			journal, _, err := readJSON[generationRecovery](s.generationRecoveryPath(original.ArchiveSessionID))
+			journal, _, err := readJSON[generationRecovery](s, s.generationRecoveryPath(original.ArchiveSessionID))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -376,7 +389,7 @@ func TestFrozenGenerationRefusesUnsupportedNodeVersion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			node, found, err := readJSON[generationNode](s.generationNodePath(original.ArchiveSessionID))
+			node, found, err := readJSON[generationNode](s, s.generationNodePath(original.ArchiveSessionID))
 			if err != nil || !found {
 				t.Fatalf("generation node: %v %v", found, err)
 			}

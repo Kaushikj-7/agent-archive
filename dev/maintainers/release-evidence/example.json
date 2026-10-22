@@ -15,97 +15,113 @@
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "signed-install-darwin-arm64": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "install-linux-amd64": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "install-linux-arm64": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "clean-user": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "upgrade": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "s3": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "r2": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "claude-code": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "codex": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "cursor": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "recovery": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "cleanup": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "listing-budget": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "documentation": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     },
     "repository-settings": {
       "result": "pending",
       "tester": "",
       "utc": "",
-      "evidence": ""
+      "evidence": "",
+      "reason": ""
     }
   },
   "ci": {

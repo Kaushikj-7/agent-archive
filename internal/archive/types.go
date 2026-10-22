@@ -49,7 +49,7 @@ const (
 	// Filter 19 adds the strictly validated local Muse conversation projection.
 	// Filter 17 retains typed, owning Codex session_labels metadata with
 	// prompt redaction and a bounded display name; it never establishes activity.
-	FilterVersion = "30"
+	FilterVersion = "32"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.
@@ -342,6 +342,7 @@ type ProjectResolution struct {
 // SessionStartedAt is when the conversation began. It is not the capture
 // boundary: project activation and the storage destination compare Admitted().
 type SessionRegistration struct {
+	NativeImport       *NativeImport           `json:"native_import,omitempty"`
 	NativeAdmission    *NativeAdmission        `json:"native_admission,omitempty"`
 	NativeBinding      *NativeSourceBinding    `json:"native_binding,omitempty"`
 	HistoricalProject  *HistoricalProjectProof `json:"historical_project,omitempty"`
@@ -452,6 +453,11 @@ func (r SessionRegistration) IsChild() bool { return r.NativeChild || r.ParentSe
 // Validate reports the first problem that makes the registration unusable:
 // a missing session ID, project, harness name, start time or incompatible source.
 func (r SessionRegistration) Validate() error {
+	if r.NativeImport != nil {
+		if err := r.ValidateNativeImport(); err != nil {
+			return err
+		}
+	}
 	if err := r.validateNativeChild(); err != nil {
 		return err
 	}
@@ -729,9 +735,12 @@ type ModelSummary struct {
 // SkillSnapshot is a skill reported available to a session, with the SHA-256
 // of its content when known and why it counts as available.
 type SkillSnapshot struct {
-	Name     string        `json:"name"`
-	SHA256   string        `json:"sha256,omitempty"`
-	Coverage SkillCoverage `json:"coverage,omitempty"`
+	// InstalledIdentities preserves distinct installed declarations sharing the
+	// same display name/content. Absence is unknown, never observed no installs.
+	InstalledIdentities []SkillDeclarationIdentity `json:"installed_identities,omitempty"`
+	Name                string                     `json:"name"`
+	SHA256              string                     `json:"sha256,omitempty"`
+	Coverage            SkillCoverage              `json:"coverage,omitempty"`
 }
 
 // SkillUse is a skill the session used and the evidence for that use.

@@ -513,7 +513,9 @@ run/task, activity, turn, pending response, tool or accounting fact. It cannot
 interrupt required startup blocks. Existing v1 row bytes are unchanged.
 
 The tool-batch started profile additionally accepts exactly
-`{kind: file_read, subject: string}` alongside `{kind: ineligible}`. A completed
+`{kind: file_read, subject: string}` alongside `{kind: ineligible}` and exactly
+`{kind: broad_read}`. The latter has no subject or extra keys and supplies no
+committed file-read classification, skill eligibility, invocation or use. A completed
 outcome accepts `task_completion: {kind: complete}` alongside the existing
 `{kind: terminal, terminal: {kind: completed}}`, with the same nonnegative exact
 `output_ref_count`. The other accepted outcome is exactly
@@ -533,6 +535,23 @@ requires the existing prior task observation. Any approval request sharing the
 run/task or run/call identity, before or after the read, excludes this lane.
 The unmarked approved lane preserves its previous request/name checks and does
 not acquire a prior committed-call requirement.
+
+Filter31 additionally permits the separate omission-only start classification
+`effect_join: committed_broad_read_v1`. Both private native names must be exactly
+`read_skill`, with exactly `{kind: broad_read}`, a known prior native task and
+an earlier unique own session/materialized-run/call committed native item. No
+prior or later approval may overlap the run/task or run/call. Raw input cannot
+supply the marker. Terminals retain the existing exact start tuple and ordering.
+The existing `committed_file_read_v1` lane and bytes are unchanged.
+
+Retained validation independently checks the closed marker, owned materialized
+run, prior committed call, start task/effect/call tuple and terminal order. It
+cannot reconstruct erased native tool names, profiles or proposed-task events;
+those were required during raw validation. Unknown markers, extra fields,
+foreign/later/duplicate calls and overlapping approvals refuse. Neither class
+retains skill names, arguments, bodies or hashes, nor derives eligibility,
+invocation, skill use or result success. Older strict Muse readers refuse the
+new marker. Existing source proof and capture admission remain separate.
 
 Retained parsing/refiltering independently rebuilds the prior own call and
 materialized/source graph and checks the fixed marker and exact start/terminal
@@ -611,3 +630,25 @@ physical raw allowance is still held. It covers safe retained maps/output plus
 call, batch and source joins and normalized call slices without increasing any
 budget or format limit. Pressure refuses the whole artifact and releases every
 charge; bounded success and idempotent release are tested with many short IDs.
+
+
+Muse supplemental skills (filter31) use the shared filtered evidence allowlist,
+mode selection and bounded filesystem observer. All shared directory roots
+(Claude, Codex, Cursor and Muse) use one opened-directory read of at most 257
+entries. Only complete results of at most 256 entries are sorted and inspected.
+Overflow yields an empty unreadable/incomplete inventory before bodies or safe
+content digests, with no retained prefix or exact omitted total. Open-time
+ENOENT proves absence; acquired read/close errors do not. Existing declared-file,
+body and per-observation byte limits remain separate and unchanged.
+Exact injected root inventory is
+installed-only, including foreign/project roots regardless of unproven native
+eligibility. Config/plugin/native activation facts and skill invocation/read use
+are not inferred. Native private root paths are not added to inventory payloads.
+
+Retained skill-evidence policy successors (filter32) bound uncommitted ordinary
+and complete current/preserved history work by the policy of the oldest
+uncommitted ready selection that the Store retained as its privacy original,
+then by the current mode. The original qualifies only while it is linked to the
+installed journal and the remote position equals the one it was prepared
+against; otherwise the immediate pending ceiling applies. A committed narrower
+selection is never widened from older pending bytes.

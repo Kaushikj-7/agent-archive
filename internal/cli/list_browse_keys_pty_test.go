@@ -191,11 +191,10 @@ const keysPTYScript = ptyKeysHarness + `try:
         assert restored(), 'terminal modes not restored while stopped'
         assert output.endswith(b'\x1b[?1049l'), ('alternate screen shown while stopped', output[-200:])
         stopped = len(output)
-        p.send_signal(signal.SIGCONT)
         # Key mode goes back on before the screen is drawn again, and the
         # list's prompt is already in the output from before the stop: wait
         # for the alternate screen and then a new prompt after it.
-        wait_until(keys_on, 'key mode not back on after continuing')
+        continue_job(p.pid, keys_on, pump)
         wait_for(b'Number or ID to show', wait_for(b'\x1b[?1049h', stopped))
         os.write(master, b'q')
         finish(0)

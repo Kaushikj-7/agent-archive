@@ -307,6 +307,7 @@ func pairingCaptureSettings(p *prompter, payload pairing.Payload, cfg, existing 
 	var err error
 	// Pairing carries storage/capture settings, never another machine's search consent.
 	cfg.SearchIndexing = existing.SearchIndexing
+	cfg.SearchIndexingDeclined = existing.SearchIndexingDeclined
 	if opts.searchIndexing != "" {
 		if err := config.SetSearchIndexing(&cfg, opts.searchIndexing == searchIndexingOn); err != nil {
 			return cfg, err

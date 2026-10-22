@@ -18,18 +18,8 @@ import (
 // The caller closes the returned data lease
 // after the preview and any returned publication have finished their consumers.
 func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistration, at time.Time, opts Options) (builder func(archive.SessionRegistration, string) (archive.SessionRegistration, state.PendingPublication, error), release func(), resultErr error) {
-	if reg.HistoricalProject != nil {
-		return nil, func() {}, errors.New("historical imports cannot recover native continuation; preview a new explicit import")
-	}
-	if reg.IsChild() || !reg.ReadsTranscriptFile() {
-		return nil, func() {}, errors.New("recovery supports top-level transcript files only; start a fresh parent session for subagent recovery")
-	}
-	semantics, err := sourceSemantics(opts.Sources, reg)
-	if err != nil {
+	if err := CheckGenerationRecoverySource(reg, opts); err != nil {
 		return nil, func() {}, err
-	}
-	if semantics.Mutation != agentapi.AppendOnly {
-		return nil, func() {}, errors.New("recovery requires an append-only native transcript")
 	}
 	adapter, err := sourceAdapter(opts.Sources, reg.Harness.Name)
 	if err != nil {
@@ -91,6 +81,25 @@ func PrepareGenerationRecovery(ctx context.Context, reg archive.SessionRegistrat
 	return builder, release, nil
 }
 
+// CheckGenerationRecoverySource refuses a registration whose source recovery
+// cannot replace. It reads no native transcript.
+func CheckGenerationRecoverySource(reg archive.SessionRegistration, opts Options) error {
+	if reg.HistoricalProject != nil || reg.NativeImport != nil {
+		return errors.New("historical imports cannot recover native continuation; preview a new explicit import")
+	}
+	if reg.IsChild() || !reg.ReadsTranscriptFile() {
+		return errors.New("recovery supports top-level transcript files only; start a fresh parent session for subagent recovery")
+	}
+	semantics, err := sourceSemantics(opts.Sources, reg)
+	if err != nil {
+		return err
+	}
+	if semantics.Mutation != agentapi.AppendOnly {
+		return errors.New("recovery requires an append-only native transcript")
+	}
+	return nil
+}
+
 // maintainFrozen runs only from retained evidence. Privacy and parser upgrades
 // may republish it with its original capture age; no native source or current
 // skill inventory is observed, even if the live transcript grew or vanished.
@@ -142,7 +151,7 @@ func (s *sessionScan) maintainFrozen() (sessionOutcome, error) {
 			return outcomeSkipped, errors.New("frozen history maintenance cannot decline an existing publication")
 		}
 		pending := state.PendingPublication{ImportExpectedMetadataSHA256: func() string {
-			if s.reg.StagedImportSHA256 != "" {
+			if s.importStageActive() {
 				return metadataSHA(s.published.Metadata())
 			}
 			return ""
@@ -193,8 +202,11 @@ func (p *pass) unchangedFrozenSinceLastScan(reg archive.SessionRegistration) (bo
 }
 
 func (p *pass) retainedSignatureAuthority(reg archive.SessionRegistration) error {
-	if reg.HistoricalProject == nil {
+	if reg.HistoricalProject == nil && reg.NativeImport == nil {
 		return p.local.FrozenGeneration(reg)
+	}
+	if reg.NativeImport != nil {
+		return p.local.NativeImportRetainedAuthority(p.ctx, reg)
 	}
 	s := sessionScan{reg: reg}
 	return s.validateHistoricalSnapshot()
@@ -258,6 +270,9 @@ func generationRecoveryBuilder(ctx context.Context, owner *sessionScan, filtered
 				owner.releaseRetainedAfter(mark)
 			}
 		}()
+		// A settled import stage stays with the predecessor; state refuses
+		// recovery before building while that stage is still owed.
+		latest.StagedImportSHA256 = ""
 		latest.ArchiveSessionID = id
 		latest.PreviousGenerationID = reg.ArchiveSessionID
 		bundle, err := owner.newSourceBundle(latest, adapter, filtered, at, nil)
@@ -298,6 +313,9 @@ func generationRecoveryBuilder(ctx context.Context, owner *sessionScan, filtered
 }
 
 func (s *sessionScan) retainedOnlyAuthority() error {
+	if s.reg.NativeImport != nil {
+		return s.published.ValidateNativeImportAuthority(s.reg)
+	}
 	if s.reg.HistoricalProject != nil {
 		return s.reg.ValidateHistoricalProject()
 	}

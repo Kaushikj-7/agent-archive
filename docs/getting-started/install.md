@@ -4,12 +4,10 @@
 dependencies. It runs on macOS (Intel and Apple Silicon) and on Linux (x86-64
 and arm64).
 
-The latest published release, v0.1.1, provides macOS binaries for Intel and
-Apple Silicon. Linux support and newer CLI features described in these docs
-are available by [building the current checkout](#build-from-source); they
-have not yet been published in a release. With a current source build, try
-`agent-archive handoff` inside a project to continue an existing Claude Code
-or Codex conversation before creating a bucket or running setup. See [native local selection and limits](../guides/handoff.md#before-setup-native-local-sessions).
+The latest published release, v0.2.2, provides binaries for macOS (Intel and
+Apple Silicon) and Linux (x86-64 and arm64). Try `agent-archive handoff`
+inside a project to continue an existing Claude Code or Codex conversation
+before creating a bucket or running setup. See [native local selection and limits](../guides/handoff.md#before-setup-native-local-sessions).
 
 For persistent capture and cross-machine history, continue with [setup](setup.md).
 If you want to pull in older sessions, you can import them with
@@ -86,21 +84,14 @@ Windows is not supported.
 
 ## Install with the script
 
-The pinned release below is for macOS. On Linux, [build from source](#build-from-source)
-until a release with Linux assets is published.
+The pinned release below installs on macOS and Linux.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.2.2/install.sh | AGENT_ARCHIVE_VERSION=v0.2.2 sh
 ```
 
-The pinned v0.1.1 script installs macOS binaries, verifies the checksum and
-Developer ID signature, and never runs setup or refresh. Read its
-[published script](https://github.com/wangjohn/agent-archive/blob/v0.1.1/install.sh)
-before running it.
-
-The current-checkout [`install.sh`](../../install.sh) is short; read it first
-if you prefer. Its behavior below applies when installing a release containing
-the corresponding features and assets. It downloads the release binary for
+The [published script](https://github.com/wangjohn/agent-archive/blob/v0.2.2/install.sh)
+is short; read it before running it. It downloads the release binary for
 your operating system and architecture
 (`agent-archive-darwin-arm64`, `-darwin-amd64`, `-linux-arm64` or
 `-linux-amd64`), checks it against the release's `SHA256SUMS` (which catches
@@ -166,13 +157,12 @@ To verify a Linux binary yourself before anything is installed, download it
 that is the [install a release build by hand](#install-a-release-build-by-hand)
 flow below, whose step 3 is this same `gh attestation verify` check.
 
-The current installer supports Linux asset selection, but no published release
-has Linux binaries yet. v0.1.1 and earlier are macOS only. An architecture
-other than x86-64 and arm64 is refused.
+Linux binaries are published from v0.2.2 on; v0.1.1 and earlier are macOS
+only. An architecture other than x86-64 and arm64 is refused.
 
 Run the same pinned command again to reinstall that version; choose a newer
-published tag when upgrading. The current-checkout installer adds the following
-refresh behavior, which the v0.1.1 installer does not have: on a machine already
+published tag when upgrading. From v0.2.2 on, the installer also refreshes an
+existing setup (the v0.1.1 installer does not): on a machine already
 set up (a
 `config.json` in `~/.local/share/agent-archive`, or in `AGENT_ARCHIVE_HOME`
 when that is set), the installer then runs the new binary's
@@ -191,16 +181,16 @@ yourself. A fresh install runs nothing.
 Upgrades keep your capture settings. If you want to pull in older sessions,
 you can import them with `agent-archive backfill`.
 
-To pin both the installer script and the published release, or to choose a
-directory on macOS, use this `v0.1.1` example:
+To pin both the installer script and the published release and choose a
+directory, use this `v0.2.2` example:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 AGENT_ARCHIVE_INSTALL_DIR="$HOME/bin" sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.2.2/install.sh | AGENT_ARCHIVE_VERSION=v0.2.2 AGENT_ARCHIVE_INSTALL_DIR="$HOME/bin" sh
 ```
 
 ## Build from source
 
-You need Go 1.27.2 (go.mod pins `toolchain go1.27.2`; any `go` command
+You need Go 1.27.3 (go.mod pins `toolchain go1.27.3`; any `go` command
 from Go 1.21 on downloads it automatically). On macOS you also need Xcode's
 command line tools (`xcode-select --install`), which the Keychain code needs
 through cgo. On Linux no C toolchain is needed: the binary is built with

@@ -38,18 +38,19 @@ func readyPolicy(p PendingPublication) readyPolicyContext {
 // ReadySelection freezes one ordinary ready source without catalog ownership.
 // JournalVersion2 is mandatory so prior decoders cannot ignore this authority.
 type ReadySelection struct {
-	Version           int              `json:"version"`
-	BundleSHA256      string           `json:"bundle_sha256"`
-	MetadataSHA256    string           `json:"metadata_sha256"`
-	SourceSetSHA256   string           `json:"source_set_sha256"`
-	BindingSHA256     string           `json:"binding_sha256"`
-	DestinationID     string           `json:"destination_id"`
-	AdmissionContext  string           `json:"admission_context"`
-	PolicyContext     string           `json:"policy_context"`
-	Predecessor       ReadyPredecessor `json:"predecessor"`
-	PredecessorSHA256 string           `json:"predecessor_sha256,omitempty"`
-	Purpose           string           `json:"purpose"`
-	SHA256            string           `json:"sha256"`
+	NativeImportAuthority string           `json:"native_import_authority,omitempty"`
+	Version               int              `json:"version"`
+	BundleSHA256          string           `json:"bundle_sha256"`
+	MetadataSHA256        string           `json:"metadata_sha256"`
+	SourceSetSHA256       string           `json:"source_set_sha256"`
+	BindingSHA256         string           `json:"binding_sha256"`
+	DestinationID         string           `json:"destination_id"`
+	AdmissionContext      string           `json:"admission_context"`
+	PolicyContext         string           `json:"policy_context"`
+	Predecessor           ReadyPredecessor `json:"predecessor"`
+	PredecessorSHA256     string           `json:"predecessor_sha256,omitempty"`
+	Purpose               string           `json:"purpose"`
+	SHA256                string           `json:"sha256"`
 }
 
 // ErrReadySelectionFrozen keeps unsupported successors and their evidence pending.
@@ -110,6 +111,9 @@ func (owned *PendingPublication) validateReadySelectionShape() error {
 	if q.Version != 2 || q.Purpose != "capture" || q.DestinationID == "" || len(q.DestinationID) > 128 || p.MetadataOnly || p.History != nil || p.Bundle.History != nil || p.ImportExpectedMetadataSHA256 != "" || len(p.ImportRetired) != 0 {
 		return ErrReadySelectionFrozen
 	}
+	if q.NativeImportAuthority != "" && !readyDigestValid(q.NativeImportAuthority) {
+		return ErrDurableStorageRecovery
+	}
 	for _, h := range []string{q.BundleSHA256, q.MetadataSHA256, q.SourceSetSHA256, q.BindingSHA256, q.AdmissionContext, q.PolicyContext, q.SHA256} {
 		if !readyDigestValid(h) {
 			return ErrDurableStorageRecovery
@@ -134,17 +138,24 @@ func (owned *PendingPublication) validateReadySelectionShape() error {
 // Remote predecessor observation belongs to the caller; publication rechecks it
 // before any source effect. Present is checksum-bound to retained exact bytes.
 func (s *Store) FreezeReadySelection(ctx context.Context, id string, p PendingPublication, predecessor ReadyPredecessor, previous []byte) (PendingPublication, error) {
+	return s.freezeReadySelection(ctx, id, nil, p, predecessor, previous)
+}
+
+// freezeReadySelection binds the proof to owner when given, and otherwise to
+// the retained registration. Generation recovery passes its journaled successor
+// before that registration exists, so begin can refuse it with nothing written.
+func (s *Store) freezeReadySelection(ctx context.Context, id string, owner *archive.SessionRegistration, p PendingPublication, predecessor ReadyPredecessor, previous []byte) (PendingPublication, error) {
 	if p.Selection != nil || p.JournalVersion != 0 || p.Catalog != nil {
 		return p, ErrReadySelectionFrozen
 	}
 	if err := s.validateReadablePendingContext(ctx, p); err != nil {
 		return p, err
 	}
-	cfg, err := s.inspectDurableReadRoots()
+	cfg, err := s.inspectDurableReadRoots(ctx)
 	if err != nil || !cfg.SupportsOrdinarySelection() {
 		return p, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	reg, found, err := s.LoadRegistration(id)
+	reg, found, err := s.readyOwner(id, owner)
 	if err != nil || !found || reg.CaptureFrozen || reg.StagedImportSHA256 != "" || reg.HistoricalProject != nil || !cfg.AcceptSession(reg) {
 		return p, errors.Join(ErrReadySelectionFrozen, err)
 	}
@@ -161,6 +172,10 @@ func (s *Store) FreezeReadySelection(ctx context.Context, id string, p PendingPu
 	}
 	p.JournalVersion = 2
 	p.Selection = &ReadySelection{Version: 2, MetadataSHA256: readySHA(p.MetadataBytes), DestinationID: cfg.DestinationID(), AdmissionContext: admission, PolicyContext: policy, Predecessor: predecessor, Purpose: "capture"}
+	p.Selection.NativeImportAuthority, err = nativeImportSelectionAuthority(reg)
+	if err != nil {
+		return p, err
+	}
 	if err := s.freezeReadyPredecessor(ctx, id, &p, previous); err != nil {
 		return p, err
 	}
@@ -192,7 +207,14 @@ func (s *Store) FreezeReadySelection(ctx context.Context, id string, p PendingPu
 	if err != nil {
 		return p, err
 	}
-	return p, s.validateReadySelection(ctx, p)
+	return p, s.validateReadySelectionOwner(ctx, p, owner)
+}
+
+func (s *Store) readyOwner(id string, owner *archive.SessionRegistration) (archive.SessionRegistration, bool, error) {
+	if owner != nil {
+		return *owner, true, nil
+	}
+	return s.LoadRegistration(id)
 }
 
 func (s *Store) freezeReadyPredecessor(ctx context.Context, id string, p *PendingPublication, previous []byte) error {
@@ -228,6 +250,10 @@ func (s *Store) readyBinding(ctx context.Context, p PendingPublication) (string,
 }
 
 func (s *Store) validateReadySelection(ctx context.Context, p PendingPublication) error {
+	return s.validateReadySelectionOwner(ctx, p, nil)
+}
+
+func (s *Store) validateReadySelectionOwner(ctx context.Context, p PendingPublication, owner *archive.SessionRegistration) error {
 	if p.StagedProof() != nil {
 		return s.validateStagedSelection(ctx, p)
 	}
@@ -240,7 +266,7 @@ func (s *Store) validateReadySelection(ctx context.Context, p PendingPublication
 	if err := validateReadySourceKeys(p); err != nil {
 		return err
 	}
-	if err := s.validateReadyOwner(ctx, p); err != nil {
+	if err := s.validateReadyOwner(ctx, p, owner); err != nil {
 		return err
 	}
 	if err := s.validateReadyDigests(ctx, p); err != nil {
@@ -264,14 +290,17 @@ func validateReadySourceKeys(p PendingPublication) error {
 	return nil
 }
 
-func (s *Store) validateReadyOwner(ctx context.Context, p PendingPublication) error {
-	cfg, err := s.inspectDurableReadRoots()
+func (s *Store) validateReadyOwner(ctx context.Context, p PendingPublication, owner *archive.SessionRegistration) error {
+	cfg, err := s.inspectDurableReadRoots(ctx)
 	if err != nil || !cfg.SupportsOrdinarySelection() || cfg.DestinationID() != p.Selection.DestinationID {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	reg, found, err := s.LoadRegistration(p.Bundle.ArchiveSessionID)
+	reg, found, err := s.readyOwner(p.Bundle.ArchiveSessionID, owner)
 	if err != nil || !found || reg.CaptureFrozen || reg.StagedImportSHA256 != "" || reg.HistoricalProject != nil || !cfg.AcceptSession(reg) {
 		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	if err := validateNativeImportSelectionAuthority(reg, *p.Selection); err != nil {
+		return err
 	}
 	if !readySelectionOwnerMatches(reg, p.Bundle) {
 		return ErrDurableStorageRecovery
@@ -339,7 +368,10 @@ func (q *ReadySelection) UnmarshalJSON(raw []byte) error {
 	if len(raw) > 16<<10 {
 		return ErrDurableStorageRecovery
 	}
-	if err := rejectDuplicateAuthorityKeys(raw, []string{"version", "bundle_sha256", "metadata_sha256", "source_set_sha256", "binding_sha256", "destination_id", "admission_context", "policy_context", "predecessor", "predecessor_sha256", "purpose", "sha256"}); err != nil {
+	if err := rejectDuplicateAuthorityKeys(raw, []string{"version", "bundle_sha256", "metadata_sha256", "source_set_sha256", "binding_sha256", "destination_id", "admission_context", "policy_context", "predecessor", "predecessor_sha256", "purpose", "sha256", "native_import_authority"}); err != nil {
+		return err
+	}
+	if err := rejectStagedNullAliases(raw, []string{"native_import_authority"}); err != nil {
 		return err
 	}
 	type plain ReadySelection
@@ -347,6 +379,9 @@ func (q *ReadySelection) UnmarshalJSON(raw []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&next); err != nil {
+		return ErrDurableStorageRecovery
+	}
+	if next.NativeImportAuthority != "" && !readyDigestValid(next.NativeImportAuthority) {
 		return ErrDurableStorageRecovery
 	}
 	*q = ReadySelection(next)
@@ -399,6 +434,11 @@ func (p *Published) preserveReadyPublished(ctx context.Context, next *publishedS
 			return ErrReadySelectionFrozen
 		}
 		if next.LastPublished.Selection == nil {
+			if prior.Selection.NativeImportAuthority != "" {
+				if allowed, err := p.nativeImportSelectingSuccessor(ctx, next); allowed || err != nil {
+					return err
+				}
+			}
 			if readySHA(next.MetadataBytes) != prior.Selection.MetadataSHA256 {
 				return ErrReadySelectionFrozen
 			}
@@ -408,7 +448,7 @@ func (p *Published) preserveReadyPublished(ctx context.Context, next *publishedS
 	}
 	if next.LastPublished != nil && next.LastPublished.Selection != nil {
 		next.PublicationVersion = 2
-		cfg, err := p.store.inspectDurableReadRoots()
+		cfg, err := p.store.inspectDurableReadRoots(ctx)
 		if err != nil || !cfg.SupportsOrdinarySelection() {
 			return errors.Join(ErrDurableStorageRecovery, err)
 		}
@@ -421,7 +461,7 @@ func (p *Published) preserveReadyPublished(ctx context.Context, next *publishedS
 }
 
 func (s *Store) checkSelectingPendingWrite(ctx context.Context, id string, p PendingPublication) error {
-	cfg, err := s.inspectDurableReadRoots()
+	cfg, err := s.inspectDurableReadRoots(ctx)
 	if err != nil {
 		return err
 	}
@@ -437,6 +477,15 @@ func (s *Store) checkSelectingPendingWrite(ctx context.Context, id string, p Pen
 	if !found {
 		if p.Selection != nil || p.StagedProof() != nil {
 			return nil
+		}
+		if p.JournalVersion == 5 && p.Preparation != nil && p.Bundle.Capture.Harness.Name == "muse" {
+			if err := p.ValidatePublicationBudgeted(ctx, s.resourceBudget); err != nil {
+				return errors.Join(ErrReadySelectionFrozen, err)
+			}
+			_, historical, err := read.nativeImportPublicationState(ctx, id, nativeImportPendingTarget(p))
+			if historical || err != nil {
+				return err
+			}
 		}
 		return ErrReadySelectionFrozen
 	}
@@ -525,7 +574,7 @@ func (p *Published) validateReadyPublished(ctx context.Context, next *publishedS
 	if err != nil || digest != q.BundleSHA256 || metadata.NativeChild != bundle.NativeChild {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}
-	cfg, err := read.inspectDurableReadRoots()
+	cfg, err := read.inspectDurableReadRoots(ctx)
 	if err != nil || cfg.DestinationID() != q.DestinationID {
 		return errors.Join(ErrDurableStorageRecovery, err)
 	}

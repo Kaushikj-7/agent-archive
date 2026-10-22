@@ -21,6 +21,7 @@ type nativeJournalFence struct {
 	Writer    string `json:"writer"`
 	Value     bool   `json:"value"`
 	Admission string `json:"admission,omitempty"`
+	Import    string `json:"import,omitempty"`
 }
 
 // MarshalJSON fences recovery before older setup binaries can apply raw rollback
@@ -34,8 +35,19 @@ func (j Journal) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	replay, err := nativeJournalReplayProtected(j)
+	if err != nil {
+		return nil, err
+	}
+	j.NativeReplayProtection = replay
+	admission = admission || replay
 	j.NativeAdmissionProtection = admission
-	protected = protected || admission
+	importProtected, err := nativeJournalImportProtected(j)
+	if err != nil {
+		return nil, err
+	}
+	j.NativeImportProtection = importProtected
+	protected = protected || admission || importProtected
 	j.NativeAuthorityProtection = protected
 	raw, err := marshalBaseJSON(j)
 	if err != nil || !protected {
@@ -47,9 +59,13 @@ func (j Journal) MarshalJSON() ([]byte, error) {
 	}
 	var capability string
 	if admission {
-		capability = "muse-root-admission"
+		capability = config.MuseAdmissionWriterSelector(replay)
 	}
-	fence := nativeJournalFence{Version: 1, Writer: "native-authority-v16", Value: j.FilesOnly, Admission: capability}
+	var importCapability string
+	if importProtected {
+		importCapability = "muse-historical-import"
+	}
+	fence := nativeJournalFence{Version: 1, Writer: "native-authority-v16", Value: j.FilesOnly, Admission: capability, Import: importCapability}
 	doc["files_only"], err = json.Marshal(fence)
 	if err != nil {
 		return nil, err
@@ -63,13 +79,7 @@ func (j *Journal) UnmarshalJSON(raw []byte) (decodeErr error) {
 		if decodeErr == nil {
 			return
 		}
-		var fields map[string]json.RawMessage
-		_ = json.Unmarshal(raw, &fields)
-		protected := false
-		for key, value := range fields {
-			protected = protected || strings.EqualFold(key, "native_authority_protection") || strings.EqualFold(key, "native_admission_protection") || strings.EqualFold(key, "files_only") && bytes.HasPrefix(bytes.TrimSpace(value), []byte("{"))
-		}
-		if protected {
+		if nativeJournalAuthorityPresent(raw) {
 			decodeErr = errors.Join(ErrUnsupportedRecoveryAuthority, decodeErr)
 		}
 	}()
@@ -81,35 +91,17 @@ func (j *Journal) UnmarshalJSON(raw []byte) (decodeErr error) {
 		return err
 	}
 	filesOnly := bytes.TrimSpace(doc["files_only"])
+	replayProtected, importProtected, err := nativeJournalStickyCapabilities(doc)
+	if err != nil {
+		return err
+	}
 	fenced := len(filesOnly) > 0 && filesOnly[0] == '{'
 	if fenced {
-		// Validate the original envelope before normalizing its fence: a map
-		// would otherwise collapse duplicate managed authority fields.
-		if err := checkJournalKeys(json.NewDecoder(bytes.NewReader(raw)), 0); err != nil {
-			return err
-		}
-		admissionProtected := bytes.Equal(bytes.TrimSpace(doc["native_admission_protection"]), []byte("true"))
-		if err := checkNativeJournalKeys(filesOnly, true, admissionProtected); err != nil {
-			return err
-		}
-		var fence nativeJournalFence
-		d := json.NewDecoder(bytes.NewReader(filesOnly))
-		d.DisallowUnknownFields()
-		if err := d.Decode(&fence); err != nil {
-			return err
-		}
-		if fence.Version != 1 || fence.Writer != "native-authority-v16" || !bytes.Equal(bytes.TrimSpace(doc["native_authority_protection"]), []byte("true")) {
-			return errors.New("unsupported native setup recovery fence")
-		}
-		if admissionProtected && fence.Admission != "muse-root-admission" {
-			return errors.New("unsupported native admission recovery capability")
-		}
-		doc["files_only"], _ = json.Marshal(fence.Value)
-		var err error
-		raw, err = json.Marshal(doc)
+		normalized, err := normalizeNativeJournalFence(raw, doc, filesOnly, replayProtected, importProtected)
 		if err != nil {
 			return err
 		}
+		raw = normalized
 	}
 	plain, err := unmarshalBaseJSON(raw)
 	if err != nil {
@@ -129,8 +121,80 @@ func (j *Journal) UnmarshalJSON(raw []byte) (decodeErr error) {
 	if admission != plain.NativeAdmissionProtection || admission && !fenced {
 		return errors.New("native admission recovery requires exact fence")
 	}
+	importProtected, err = nativeJournalImportProtected(plain)
+	if err != nil {
+		return errors.Join(ErrUnsupportedRecoveryAuthority, err)
+	}
+	if importProtected != plain.NativeImportProtection || importProtected && !fenced {
+		return errors.New("native import recovery requires exact fence")
+	}
+	replay, err := nativeJournalReplayProtected(plain)
+	if err != nil {
+		return errors.Join(ErrUnsupportedRecoveryAuthority, err)
+	}
+	if replay != plain.NativeReplayProtection || replay && !fenced {
+		return errors.New("native replay recovery requires exact fence")
+	}
 	*j = plain
 	return nil
+}
+
+// nativeJournalStickyCapabilities checks wire-level flags before interpreting
+// the recovery fence or its snapshots, in the original refusal order.
+func nativeJournalStickyCapabilities(doc map[string]json.RawMessage) (bool, bool, error) {
+	replayProtected := bytes.Equal(bytes.TrimSpace(doc["native_replay_protection"]), []byte("true"))
+	if doc["native_replay_protection"] != nil && !replayProtected {
+		return false, false, errors.New("native replay recovery requires sticky protection")
+	}
+	if replayProtected && !bytes.Equal(bytes.TrimSpace(doc["native_admission_protection"]), []byte("true")) {
+		return false, false, errors.New("native replay recovery requires admission protection")
+	}
+	importProtected := bytes.Equal(bytes.TrimSpace(doc["native_import_protection"]), []byte("true"))
+	if doc["native_import_protection"] != nil && !importProtected {
+		return false, false, errors.New("native import recovery requires sticky protection")
+	}
+	return replayProtected, importProtected, nil
+}
+
+// nativeJournalAuthorityPresent classifies recovery errors without granting
+// authority from a malformed or aliased envelope.
+func nativeJournalAuthorityPresent(raw []byte) bool {
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &fields)
+	protected := false
+	for key, value := range fields {
+		protected = protected || strings.EqualFold(key, "native_authority_protection") || strings.EqualFold(key, "native_admission_protection") || strings.EqualFold(key, "native_import_protection") || strings.EqualFold(key, "native_replay_protection") || strings.EqualFold(key, "files_only") && bytes.HasPrefix(bytes.TrimSpace(value), []byte("{"))
+	}
+	return protected
+}
+
+func normalizeNativeJournalFence(raw []byte, doc map[string]json.RawMessage, filesOnly []byte, replayProtected, importProtected bool) ([]byte, error) {
+	// Validate the original envelope before normalizing its fence: a map
+	// would otherwise collapse duplicate managed authority fields.
+	if err := checkJournalKeys(json.NewDecoder(bytes.NewReader(raw)), 0); err != nil {
+		return nil, err
+	}
+	admissionProtected := bytes.Equal(bytes.TrimSpace(doc["native_admission_protection"]), []byte("true"))
+	if err := checkNativeJournalKeys(filesOnly, true, admissionProtected, importProtected); err != nil {
+		return nil, err
+	}
+	var fence nativeJournalFence
+	d := json.NewDecoder(bytes.NewReader(filesOnly))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&fence); err != nil {
+		return nil, err
+	}
+	if fence.Version != 1 || fence.Writer != "native-authority-v16" || !bytes.Equal(bytes.TrimSpace(doc["native_authority_protection"]), []byte("true")) {
+		return nil, errors.New("unsupported native setup recovery fence")
+	}
+	if admissionProtected && fence.Admission != config.MuseAdmissionWriterSelector(replayProtected) {
+		return nil, errors.New("unsupported native admission recovery capability")
+	}
+	if importProtected && fence.Import != "muse-historical-import" {
+		return nil, errors.New("unsupported native import recovery capability")
+	}
+	doc["files_only"], _ = json.Marshal(fence.Value)
+	return json.Marshal(doc)
 }
 
 func nativeJournalProtected(j Journal) (bool, error) {
@@ -166,14 +230,24 @@ func checkNativeJournalKeys(raw []byte, fence bool, admission ...bool) error {
 	names := []string{"files_only", "native_authority_protection"}
 	if !fence {
 		var fields map[string]json.RawMessage
-		if json.Unmarshal(raw, &fields) == nil && fields["native_admission_protection"] != nil {
-			names = append(names, "native_admission_protection")
+		if json.Unmarshal(raw, &fields) == nil {
+			for _, name := range []string{"native_admission_protection", "native_import_protection", "native_replay_protection"} {
+				for key := range fields {
+					if strings.EqualFold(key, name) {
+						names = append(names, name)
+						break
+					}
+				}
+			}
 		}
 	}
 	if fence {
 		names = []string{"version", "writer", "value"}
 		if len(admission) > 0 && admission[0] {
 			names = append(names, "admission")
+		}
+		if len(admission) > 1 && admission[1] {
+			names = append(names, "import")
 		}
 	}
 	seen := map[string]int{}
@@ -237,6 +311,46 @@ func nativeJournalAdmissionProtected(j Journal) (bool, error) {
 	return protected, nil
 }
 
+func nativeJournalImportProtected(j Journal) (bool, error) {
+	protected := j.NativeImportProtection
+	for _, change := range j.Changes {
+		if filepath.Base(change.Path) != "config.json" {
+			continue
+		}
+		for _, raw := range [][]byte{change.Before, change.After} {
+			if !nativeSnapshotAuthority(raw) {
+				continue
+			}
+			var cfg config.Config
+			if err := json.Unmarshal(raw, &cfg); err != nil {
+				return false, err
+			}
+			protected = protected || cfg.NativeImportProtection
+		}
+	}
+	return protected, nil
+}
+
+func nativeJournalReplayProtected(j Journal) (bool, error) {
+	protected := j.NativeReplayProtection
+	for _, change := range j.Changes {
+		if filepath.Base(change.Path) != "config.json" {
+			continue
+		}
+		for _, raw := range [][]byte{change.Before, change.After} {
+			if !nativeSnapshotAuthority(raw) {
+				continue
+			}
+			var cfg config.Config
+			if err := json.Unmarshal(raw, &cfg); err != nil {
+				return false, err
+			}
+			protected = protected || cfg.NativeReplayProtection
+		}
+	}
+	return protected, nil
+}
+
 // A structural schema fence is authority even when a future writer no longer
 // emits today's companion booleans. Decode it before permitting raw rollback.
 
@@ -268,7 +382,7 @@ func nativeSnapshotAuthority(raw []byte) bool {
 
 func nativeSnapshotSelector(key string, value json.RawMessage) bool {
 	switch strings.ToLower(key) {
-	case "native_authority_protection", "native_roots", "native_admission_protection", "muse_capture", "muse_capture_last_issued_at":
+	case "native_authority_protection", "native_roots", "native_admission_protection", "native_import_protection", "native_replay_protection", "muse_capture", "muse_capture_last_issued_at":
 		return true
 	case "schema_version":
 		return bytes.HasPrefix(bytes.TrimSpace(value), []byte("{"))

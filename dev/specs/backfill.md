@@ -1346,7 +1346,7 @@ results the file lacks. Phase 2 still imports only chats that have no file:
    checked" with a reason, and is retried on the next pass.
 4. **`modernc.org/sqlite`, a pure-Go driver,** already added for the phase-1
    count (v1.46.1, the newest release that supports the `go 1.24.0` floor;
-   builds use `toolchain go1.27.2`). It keeps CI and tests free of
+   builds use `toolchain go1.27.3`). It keeps CI and tests free of
    cgo. `mattn/go-sqlite3` would also work, because release builds already
    use cgo. Shelling out to `/usr/bin/sqlite3` is rejected because its output
    and version are uncontrolled.

@@ -12,8 +12,8 @@ draft or mismatched release fails closed before signing.
 
 1. **build** (macOS runner, read-only token, no secrets). Refuses a tag that
    isn't exactly `vX.Y.Z` or whose commit is not on `main`
-   (`git merge-base --is-ancestor`), runs `go vet`, the existing source-bound
-   full macOS tier, and the script tests, cross-builds `darwin/amd64` and `darwin/arm64`
+   (`git merge-base --is-ancestor`), reconciles the split native macOS full
+   tier, runs `go vet` and the script tests, cross-builds `darwin/amd64` and `darwin/arm64`
    with `scripts/build-release.sh darwin` (the same script contributors
    run), and checks the embedded version.
 2. **build-linux** (`ubuntu-24.04`, read-only token, no secrets). The same
@@ -34,15 +34,18 @@ draft or mismatched release fails closed before signing.
    latest=false**. It retains the signed workflow artifact for 30 days before
    creating the release. The current public latest release stays unchanged.
 
-Both build jobs explicitly select the full tier for the release tag, retaining
-all discovered Test/Fuzz/Example parents and their children, race, `-count=1`,
-and each invocation's 20-minute package timeout. The existing standalone
-`[[0], [1, 2]]` schedule gives the qualification parent its own package lifetime;
-discovery, race invocations and full-size plain performance checks share the
-unchanged 2400-second tier deadline. macOS also retains its protected-configuration
-writer check. The jobs verify exact-source/raw-body evidence before Build and
-upload separate `release-validation-macos` and `release-validation-linux`
-artifacts even on failure. These validation artifacts are separate from the
+Both platforms run the full tier on the tagged commit: every discovered
+Test/Fuzz/Example parent and its children, race, `-count=1`, and each
+invocation's 20-minute package timeout. Linux runs it in `build-linux` with
+`scripts/run_ci_tier.py` under a 3300-second tier deadline (job limit 80
+minutes), the default for the full Linux tier in Test and Extended too. macOS no longer fits one runner, so it uses Extended's split with the
+same `scripts/run_native_full.py` commands: `macos-plan` (with the tag and
+`main` guard) compiles the catalog and assigns three `macos-workers`, while
+`macos-obligations` runs full-size plain performance and the
+protected-configuration writer check; each job has its own 3300-second
+deadline (job limit 60 minutes). `build` reconciles their exact-source/raw-body receipts and job
+results before Build. Separate `release-validation-macos` and
+`release-validation-linux` artifacts are uploaded even on failure. These validation artifacts are separate from the
 release assets; they do not authorize signing or promotion.
 
 The candidate and promoted release have six assets: `agent-archive-darwin-amd64`,
@@ -137,15 +140,18 @@ evidence.
 4. Copy [the pending JSON template](release-evidence/example.json) to
    `dev/maintainers/release-evidence/vX.Y.Z.json`. Commit it to main in a reviewed
    documentation-only PR. Fill the tag, exact tagged commit, all six downloaded
-   SHA256 digests, and every check with `result: passed`, actual tester,
-   ISO-8601 UTC timestamp and a durable HTTPS evidence URL. Each evidence record
+   SHA256 digests, and decide every check. Acceptance is best effort: a check
+   is `result: passed` with actual tester, ISO-8601 UTC timestamp and a durable
+   HTTPS evidence URL, or `result: skipped` with tester, UTC timestamp and a
+   non-empty `reason` (evidence optional, HTTPS if present). Each evidence record
    must identify the candidate and describe the actual procedure/result;
    generic links or an earlier release's evidence do not establish acceptance.
    `repository-settings` includes both approval environments, main protection,
    vulnerability reporting, labels and release freeze. `documentation` includes
    command/link/generated reference audits and actual current provider/app
-   versions. Pending, skipped, unavailable or failed checks stay pending and
-   **block promotion**; the example intentionally fails this gate.
+   versions. Pending, missing or failed checks **block promotion**; the example
+   intentionally fails this gate. Promotion prints skipped checks and reasons in
+   the job log before it publishes.
 5. Under `ci`, record exact successful push run IDs for `Test`, `Levenshtein`,
    and `Extended`, with tester, UTC timestamp and evidence URL. Promotion queries
    GitHub and requires the exact repository/SHA/workflow plus successful jobs:
@@ -185,7 +191,8 @@ non-cancelling publication concurrency group.
 
 The human acceptance gate is deliberate: the script checks structure, exact
 identity/digests and CI results, but cannot judge whether a provider/app test
-was honestly performed. Protected reviewers must inspect linked evidence.
+was honestly performed or whether a skip is acceptable. Protected
+`release-promotion` reviewers must inspect linked evidence and skip reasons.
 No live signed-candidate, architecture, provider, application or approval
 setting acceptance is established by this implementation or its fake API tests.
 

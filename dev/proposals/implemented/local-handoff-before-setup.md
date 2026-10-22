@@ -2,9 +2,11 @@
 
 > **Implemented in the local handoff changes.** Read-only discovery/I/O extraction
 > and native preview/browser/launch integration follow the accepted design below.
-> Synthetic filesystem and launcher coverage is included. Disposable actual
-> Claude Code/Codex histories and current identity variables on macOS and Linux
-> remain unverified; no live-platform acceptance is claimed. Prepared 2026-10-01.
+> Synthetic filesystem and launcher coverage is included. Disposable live macOS
+> checks passed native-ID and `--latest --to` handoffs in both Claude Code/Codex
+> directions, with existing native history and an unconfigured archive home.
+> Linux, the interactive picker, new-window launching, and automatic current
+> identity remain unverified live.
 
 
 ## Goal
@@ -156,8 +158,9 @@ Inspect labels for the newest 50 in-scope native sessions initially. Offer
 another 50. Report when more candidates exist. A word query searches only the
 loaded preview window and says so; exact native-ID selection bypasses that
 window but still verifies identity. A bounded query must never claim
-exhaustive absence. `--latest` requires complete enumeration and identity/
-checkout inspection, but does not require previewing every title.
+exhaustive absence. `--latest` requires complete enumeration and verified
+identity/checkout inspection for any history that could be as recent as the
+selected session, but does not require previewing every title.
 
 ## Engineering design
 
@@ -474,7 +477,11 @@ to retain the complete candidate set its plan needs via its own consumption
 mode of the shared enumerator.
 
 For `--latest`, choose the maximum modification time among eligible files
-only when enumeration and identity/checkout inspection are complete. This
+only when enumeration is complete and no unresolved history could be as recent.
+A confirmed missing checkout is not eligible. Other unresolved histories may be
+ignored only when their verified snapshot modification times are strictly older
+than the selected non-current candidate; unknown timestamps and exhausted
+enumeration/read budgets prevent this proof. This
 is a snapshot of local discovery, not a claim about the newest conversation
 timestamp. If discovery is incomplete in a way that could hide a newer
 candidate, refuse automatic `--latest` and offer the known candidates for
@@ -586,10 +593,10 @@ histories before claiming the first-run flow works on each supported platform.
    the 50-session starting batch unless measurements justify adjusting it.
    Enforce a per-command cumulative read budget across batches. Exhaustion
    disables further preview loading with an explanation and retains bounded,
-   verified native-ID rows for explicit selection. Completed header inspection
-   releases unused reservations by measured bytes before preview scheduling,
-   rather than silently raising
-   the budget; a new invocation starts a new bounded run.
+   verified native-ID rows for explicit selection. Each completed deterministic
+   header batch releases unused reservations by measured bytes for remaining
+   headers and previews, rather than silently raising the budget; a new
+   invocation starts a new bounded run.
 2. Observe current-session environment variables in actual interactive
    Claude Code and Codex sessions. Test unavailable/ambiguous identity paths
    before documenting automatic current-session support.

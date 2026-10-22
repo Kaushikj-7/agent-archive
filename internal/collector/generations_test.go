@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -204,5 +205,35 @@ func TestFrozenGenerationPrivacyAndParserMaintenanceNeverReadsNative(t *testing.
 	m := fetchMetadata(t, cloud, "codex", "session-1")
 	if !m.CapturedAt.Equal(at) || m.Parser.Version != opts.ParserVersion {
 		t.Fatalf("age/parser changed: %#v", m)
+	}
+}
+
+func TestGenerationRecoveryBuilderClearsStageOnlyInSuccessor(t *testing.T) {
+	t.Parallel()
+	reg := registration(t, writeTranscript(t, t.TempDir(), "native.jsonl", codexTranscript))
+	reg.StagedImportSHA256 = strings.Repeat("a", 64)
+	original := reg
+	at := reg.RegisteredAt.Add(time.Hour)
+	build, closePreview, err := PrepareGenerationRecovery(t.Context(), reg, at, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", RepoKey: func(string) string { return "" }})
+	defer closePreview()
+	if err != nil {
+		t.Fatal(err)
+	}
+	successor, pending, err := build(reg, "successor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if successor.StagedImportSHA256 != "" {
+		t.Fatalf("successor inherited predecessor stage link %q", successor.StagedImportSHA256)
+	}
+	if !reflect.DeepEqual(reg, original) {
+		t.Fatal("builder changed the predecessor registration")
+	}
+	preserved := successor
+	preserved.ArchiveSessionID = original.ArchiveSessionID
+	preserved.PreviousGenerationID = original.PreviousGenerationID
+	preserved.StagedImportSHA256 = original.StagedImportSHA256
+	if !reflect.DeepEqual(preserved, original) || pending.Bundle.ArchiveSessionID != "successor" || pending.Bundle.PreviousGenerationID != original.ArchiveSessionID {
+		t.Fatalf("successor changed admission: %#v %#v", preserved, pending.Bundle)
 	}
 }
