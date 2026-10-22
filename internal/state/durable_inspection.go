@@ -185,34 +185,17 @@ func (s *Store) inspectPendingRoot(ctx context.Context, home *local.RootedHome, 
 			if e := countDurableEntry(visited); e != nil {
 				return out, true, ErrDurableStorageRecovery
 			}
-			info, e := root.Lstat(entry.Name())
+			id, entryUnknown, e := s.inspectPendingRootEntry(home, root, name, entry.Name(), legacy, matchedWitness)
 			if e != nil {
 				return out, true, e
 			}
-			matched, e := s.matchInspectionAtomicWitness(home, name, entry.Name(), info, matchedWitness)
-			if e != nil {
-				return out, true, e
-			}
-			if matched {
-				continue
-			}
-			if s.atomicWitness == nil && legacy && strings.HasPrefix(entry.Name(), ".pending-") {
-				s.durableInspection.legacyTemps = true
-			}
-			if legacy && info.Mode().IsRegular() && (acknowledgedLegacyQuarantine(entry.Name()) || strings.HasPrefix(entry.Name(), ".pending-") && info.ModTime().Before(time.Now().Add(-staleTempAge))) {
-				continue
-			}
-			id := strings.TrimSuffix(entry.Name(), ".json")
-			if info.Mode().IsRegular() && strings.HasSuffix(entry.Name(), ".json") && safeFileComponent(id) && !strings.HasPrefix(entry.Name(), ".pending-") {
-				if collectNames && name != "published" {
-					out, err = s.appendDurableObligations(out, DurableStorageObligation{SessionID: id, Namespace: namespace})
-					if err != nil {
-						return out, true, err
-					}
+			if id != "" && collectNames && name != "published" {
+				out, err = s.appendDurableObligations(out, DurableStorageObligation{SessionID: id, Namespace: namespace})
+				if err != nil {
+					return out, true, err
 				}
-				continue
 			}
-			unknown = true
+			unknown = unknown || entryUnknown
 		}
 		if errors.Is(e, io.EOF) {
 			break
@@ -225,6 +208,32 @@ func (s *Store) inspectPendingRoot(ctx context.Context, home *local.RootedHome, 
 		}
 	}
 	return out, unknown, nil
+}
+
+// inspectPendingRootEntry classifies one pending-root entry. It returns the
+// session ID of a supported record, unknown for anything else, and neither
+// for the writer's witnessed temporary or acknowledged legacy leftovers.
+func (s *Store) inspectPendingRootEntry(home *local.RootedHome, root *os.Root, name, entry string, legacy bool, matchedWitness *bool) (id string, unknown bool, err error) {
+	info, err := root.Lstat(entry)
+	if err != nil {
+		return "", true, err
+	}
+	matched, err := s.matchInspectionAtomicWitness(home, name, entry, info, matchedWitness)
+	if err != nil || matched {
+		return "", err != nil, err
+	}
+	temporary := strings.HasPrefix(entry, ".pending-")
+	if s.atomicWitness == nil && legacy && temporary {
+		s.durableInspection.legacyTemps = true
+	}
+	if legacy && info.Mode().IsRegular() && (acknowledgedLegacyQuarantine(entry) || temporary && info.ModTime().Before(time.Now().Add(-staleTempAge))) {
+		return "", false, nil
+	}
+	id = strings.TrimSuffix(entry, ".json")
+	if info.Mode().IsRegular() && strings.HasSuffix(entry, ".json") && safeFileComponent(id) && !temporary {
+		return id, false, nil
+	}
+	return "", true, nil
 }
 
 func (s *Store) matchInspectionAtomicWitness(home *local.RootedHome, name, entry string, info os.FileInfo, matchedWitness *bool) (bool, error) {
@@ -294,12 +303,16 @@ func (s *Store) loadDurableInspectionConfig(ctx context.Context, home *local.Roo
 func (s *Store) inspectDurableReadRoots(ctx context.Context) (cfg config.Config, err error) {
 	s, ctx, closeContext := s.withDurableContext(ctx)
 	defer closeContext()
+	// An expired caller leaves the roots unverified: a refusal, not a pass.
 	if err := ctx.Err(); err != nil {
-		return cfg, err
+		return cfg, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	home, err := local.OpenRootedHome(s.home)
 	if errors.Is(err, os.ErrNotExist) {
-		return cfg, ctx.Err()
+		if err := ctx.Err(); err != nil {
+			return cfg, errors.Join(ErrDurableStorageRecovery, err)
+		}
+		return cfg, nil
 	}
 	if err != nil {
 		return cfg, errors.Join(ErrDurableStorageRecovery, err)
