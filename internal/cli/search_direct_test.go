@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -454,15 +456,105 @@ func TestDirectSearchSkipsASessionDeletedSinceTheListing(t *testing.T) {
 	must(t, err)
 	key, err := archive.MetadataObjectKey("codex", ids[0])
 	must(t, err)
-	must(t, objects.Delete(t.Context(), key))
 	index, err := search.OpenMemory(t.Context(), "test/context")
 	must(t, err)
 	defer func() { _ = index.Close() }()
+	// Its source was downloaded ahead of its turn, before the deletion.
+	prefetched, err := index.Prefetch(t.Context(), objects, parsersFor(env), listed[0])
+	must(t, err)
+	must(t, objects.Delete(t.Context(), key))
 	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}}
-	count, unread, err := scan.session(t.Context(), listed[0])
-	if err != nil || unread != nil || count != 0 {
-		t.Fatalf("deleted session searched: %d matches, unread %v, %v", count, unread, err)
+	for _, ahead := range []*search.Prefetched{nil, &prefetched} {
+		count, unread, err := scan.session(t.Context(), listed[0], ahead)
+		if err != nil || unread != nil || count != 0 {
+			t.Fatalf("deleted session searched (prefetched %v): %d matches, unread %v, %v", ahead != nil, count, unread, err)
+		}
 	}
+}
+
+// slowSources takes a second to read each source, on the synctest clock,
+// and records how many reads of each and how many at once.
+type slowSources struct {
+	storage.ObjectStore
+	sources []string
+
+	mu       sync.Mutex
+	reads    map[string]int
+	inFlight int
+	most     int
+}
+
+func (s *slowSources) wait(key string) {
+	if !slices.Contains(s.sources, key) {
+		return
+	}
+	s.mu.Lock()
+	s.reads[key]++
+	s.inFlight++
+	s.most = max(s.most, s.inFlight)
+	s.mu.Unlock()
+	time.Sleep(time.Second)
+	s.mu.Lock()
+	s.inFlight--
+	s.mu.Unlock()
+}
+
+func (s *slowSources) Get(ctx context.Context, key string) ([]byte, error) {
+	s.wait(key)
+	return s.ObjectStore.Get(ctx, key)
+}
+
+func (s *slowSources) GetLimited(ctx context.Context, key string, limit int64) ([]byte, error) {
+	s.wait(key)
+	return s.ObjectStore.(storage.LimitedGetter).GetLimited(ctx, key, limit)
+}
+
+// Sessions are downloaded several at a time ahead of their turn, each once,
+// while they are still matched one at a time, in order.
+func TestDirectSearchDownloadsSessionsAheadInParallel(t *testing.T) {
+	t.Parallel()
+	sessions := make([]directSession, 12)
+	for i := range sessions {
+		sessions[i] = directSession{fmt.Sprintf("native-%d", i), 0, fmt.Sprintf("checksum %d", i)}
+	}
+	env, objects, ids, sources := directSearchFixture(t, sessions)
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	slices.SortFunc(listed, func(a, b archive.Metadata) int { return b.CapturedAt.Compare(a.CapturedAt) })
+	synctest.Test(t, func(t *testing.T) {
+		index, err := search.OpenMemory(t.Context(), "test/context")
+		must(t, err)
+		defer func() { _ = index.Close() }()
+		slow := &slowSources{ObjectStore: objects.ObjectStore, sources: sources, reads: map[string]int{}}
+		scan := &directScan{index: index, objects: slow, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}}
+		found := make(chan directMatch, len(listed))
+		started := time.Now()
+		why, err := scan.run(t.Context(), found)
+		elapsed := time.Since(started)
+		if why != directScanDone || err != nil {
+			t.Fatalf("%s %v", why, err)
+		}
+		if searched, matching := scan.counts(); searched != len(ids) || matching != len(ids) {
+			t.Fatalf("searched %d, %d matching, want %d", searched, matching, len(ids))
+		}
+		for i := range listed {
+			if m := <-found; m.metadata.SessionID != listed[i].SessionID {
+				t.Fatalf("match %d is %s, want %s: not in order", i, m.metadata.SessionID, listed[i].SessionID)
+			}
+		}
+		if slow.most < 2 || slow.most > directSearchReaders {
+			t.Fatalf("%d sources read at once, want 2 to %d", slow.most, directSearchReaders)
+		}
+		for _, key := range sources {
+			if slow.reads[key] != 1 {
+				t.Fatalf("source %s read %d times, want once: %v", key, slow.reads[key], slow.reads)
+			}
+		}
+		// One at a time would take a second per session on this clock.
+		if elapsed >= time.Duration(len(ids))*time.Second/2 {
+			t.Fatalf("reading %d sessions took %s on the test clock", len(ids), elapsed)
+		}
+	})
 }
 
 // Esc after a session is read but before it is counted leaves none of its
@@ -501,7 +593,7 @@ func TestDirectSearchDropsTheTextOfSessionsThatDoNotMatch(t *testing.T) {
 	defer func() { _ = index.Close() }()
 	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}}
 	for _, m := range listed {
-		if _, _, err = scan.session(t.Context(), m); err != nil {
+		if _, _, err = scan.session(t.Context(), m, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

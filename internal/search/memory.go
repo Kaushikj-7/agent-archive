@@ -3,7 +3,13 @@ package search
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 // OpenMemory creates a search store with Open's schema that lives only in
@@ -72,6 +78,62 @@ func (s *Store) DropSessionText(ctx context.Context, harness, session string, ke
 	}
 	if !keep {
 		if _, err = tx.ExecContext(ctx, "UPDATE search_state SET generation=generation+1 WHERE id=1"); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// Prefetched is a session's sources loaded ahead of its turn, for Stage.
+type Prefetched struct {
+	id      string
+	sources map[string][]byte
+}
+
+// Prefetch loads and parses every source of a session, as Run would, without
+// touching the database, so several sessions can be prefetched at once while
+// another is indexed. A session too large to index is not loaded.
+func (s *Store) Prefetch(ctx context.Context, objects storage.ObjectStore, parsers agentapi.ParsersLookup, metadata archive.Metadata) (Prefetched, error) {
+	reqs, err := requests(metadata, parsers)
+	if err != nil {
+		return Prefetched{}, err
+	}
+	compressed := 0
+	for _, req := range reqs {
+		if req.Reference.CompressedBytes > maxSessionBytes-compressed {
+			return Prefetched{}, storage.ErrObjectTooLarge
+		}
+		compressed += req.Reference.CompressedBytes
+	}
+	out := Prefetched{id: metadata.Harness.Name + "/" + metadata.SessionID, sources: map[string][]byte{}}
+	for _, req := range reqs {
+		p, err := LoadProjection(ctx, objects, parsers, s.destination, metadata, req.Revision, reader.Limits{})
+		if err != nil {
+			return Prefetched{}, err
+		}
+		data, err := json.Marshal(p)
+		if err != nil {
+			return Prefetched{}, err
+		}
+		out.sources[digest(req)] = data
+	}
+	return out, nil
+}
+
+// Stage keeps prefetched sources where Run reuses them instead of reading
+// them again. Each is kept under its request's identity, so only a Run of the
+// same sources reuses it, and Run still rechecks the session against the
+// bucket (VerifyCurrent) before installing it. Stage follows the session's
+// Observe; Observe and ForgetSession drop what it staged as they drop what
+// Run staged.
+func (s *Store) Stage(ctx context.Context, p Prefetched) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for identity, data := range p.sources {
+		if _, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO search_sources VALUES(?,?,?)", p.id, identity, data); err != nil {
 			return err
 		}
 	}

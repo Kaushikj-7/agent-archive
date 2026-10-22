@@ -8,6 +8,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A direct bucket search (after you decline indexing) downloads up to 6
+  sessions at once ahead of the one it is matching, so it reads about three
+  times as many sessions before each pause. Matches still appear newest first,
+  each session is still rechecked against the bucket before its text is
+  searched, and the warning's time estimate is shorter to match.
 - `agent-archive status` prints the command that fixes its problem when it
   knows one, on its own line: `agent-archive setup` when background
   collection is not scheduled,

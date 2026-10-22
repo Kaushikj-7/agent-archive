@@ -175,7 +175,8 @@ agent-archive setup --yes --search-indexing on
 
 It lists the archive's metadata, applies the query's scope and filters (all
 projects unless `--project`; harness, dates, replays and children) before
-downloading anything, then reads the matching sessions newest first. Each
+downloading anything, then reads the matching sessions newest first,
+downloading up to 6 at once ahead of the one being matched. Each
 session's verified sources go through the same parser visibility and privacy
 rules as indexing, into an in-memory database that is never written to disk.
 Only matching sessions keep their passages, until the command exits. A progress
