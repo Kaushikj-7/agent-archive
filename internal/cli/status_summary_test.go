@@ -251,9 +251,10 @@ func TestPartialVerificationKeepsPreviousFailureCount(t *testing.T) {
 func TestIncompleteVerificationRecordsKnownFailuresWithoutClearingPreviousOnes(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name           string
-		complete       bool
-		observed, want int
+		name     string
+		complete bool
+		observed int
+		want     int
 	}{
 		{"incomplete with no observed failures", false, 0, 3},
 		{"incomplete with more observed failures", false, 5, 5},
