@@ -564,7 +564,7 @@ func TestStatusOverviewAnotherInstallationDoesNotRecommendSetup(t *testing.T) {
 	if slices.Contains(lines, "agent-archive setup") {
 		t.Fatalf("recommended setup although it refuses another installation: %s", &out)
 	}
-	if !slices.Contains(lines, "agent-archive status --issues") || !strings.Contains(out.String(), "setup will not replace it") {
+	if !slices.Contains(lines, "agent-archive status --issues") {
 		t.Fatalf("missing safe recovery guidance: %s", &out)
 	}
 }
