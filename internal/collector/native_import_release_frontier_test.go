@@ -208,10 +208,31 @@ func modifyHistoricalReleaseOwner(t *testing.T, f *historicalNativeStage, modifi
 	}
 }
 
+// shortReleaseFrontierModifier is the one owner modifier short mode runs for
+// each phase. Together they cover every modifier, a refused later request
+// before release and an allowed one after it; the default suite runs every
+// phase with every modifier.
+var shortReleaseFrontierModifier = map[releaseFrontierPhase]releaseOwnerModifier{
+	frontierAck:           ownerAttachedLater,
+	frontierReceipt:       ownerDetachedOriginal,
+	frontierVerified:      ownerAttachedOriginal,
+	frontierLocalComplete: ownerDetachedLater,
+	frontierPendingAbsent: ownerDetachedOriginal,
+	frontierBothAbsent:    ownerDetachedLater,
+	frontierReleased:      ownerAttachedLater,
+}
+
+func releaseFrontierModifiers(phase releaseFrontierPhase) []releaseOwnerModifier {
+	if testing.Short() {
+		return []releaseOwnerModifier{shortReleaseFrontierModifier[phase]}
+	}
+	return []releaseOwnerModifier{ownerAttachedOriginal, ownerDetachedOriginal, ownerDetachedLater, ownerAttachedLater}
+}
+
 func TestNativeImportPublicReleaseFrontiers(t *testing.T) {
 	for _, phase := range []releaseFrontierPhase{frontierAck, frontierReceipt, frontierVerified, frontierLocalComplete, frontierPendingAbsent, frontierBothAbsent, frontierReleased} {
 		t.Run(string(phase), func(t *testing.T) {
-			for _, modifier := range []releaseOwnerModifier{ownerAttachedOriginal, ownerDetachedOriginal, ownerDetachedLater, ownerAttachedLater} {
+			for _, modifier := range releaseFrontierModifiers(phase) {
 				t.Run(string(modifier), func(t *testing.T) {
 					f := historicalReleaseFrontier(t, phase)
 					modifyHistoricalReleaseOwner(t, &f, modifier)

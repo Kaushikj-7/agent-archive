@@ -13,6 +13,16 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+// largeStageScale divides the large-stage fixture and its recovery ledger.
+// The default suite keeps the full-size stage against the 128MiB ledger; short
+// mode keeps the same stage-to-ledger ratio with an eighth of the bytes.
+func largeStageScale() int {
+	if testing.Short() {
+		return 8
+	}
+	return 1
+}
+
 // Extend known qualified synthetic assistant records before the actual source
 // snapshot/proof/filter is acquired. No caller-made stage or receipt is used.
 func largeNativeImportFixture(t *testing.T) nativeImportPrepareFixture {
@@ -30,7 +40,7 @@ func largeNativeImportFixture(t *testing.T) nativeImportPrepareFixture {
 	}
 	// Privacy retains at most 64KiB per text. Use many valid smaller records,
 	// not oversized values whose retained output would silently shrink.
-	const messages = 320
+	messages := 320 / largeStageScale()
 	for i := range messages {
 		var row map[string]any
 		if err := json.Unmarshal(lines[len(lines)-2], &row); err != nil {
@@ -93,7 +103,7 @@ func TestNativeImportLargeStagePublicRecoveryUsesBoundedTemporaryLoans(t *testin
 	}
 	id := p.reg.ArchiveSessionID
 	info, err := os.Stat(f.native.store.home + "/" + importStageRelative(id))
-	if err != nil || info.Size() < 18<<20 || info.Size() > MaxImportStageBytes {
+	if err != nil || info.Size() < int64(18<<20/largeStageScale()) || info.Size() > MaxImportStageBytes {
 		t.Fatal("large stage fixture outside intended valid range", info, err)
 	}
 	if err := p.Close(); err != nil {
@@ -110,7 +120,7 @@ func TestNativeImportLargeStagePublicRecoveryUsesBoundedTemporaryLoans(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	budget := agentapi.NewNativeReadBudget(128 << 20)
+	budget := agentapi.NewNativeReadBudget(int64(128 << 20 / largeStageScale()))
 	read, closeRead := reopened.WithReadBudget(t.Context(), budget)
 	before := budget.Available()
 	if err := read.ResumeImportAdmissions(t.Context()); err != nil {
