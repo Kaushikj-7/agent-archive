@@ -543,21 +543,22 @@ type escWatch struct {
 }
 
 func watchEsc(p *prompter, env searchCommandDependencies) *escWatch {
-	w := &escWatch{release: func() {}}
-	if term, ok := env.openKeyTerminal(p.source); ok {
-		// The keys answer Ctrl-Z while they are read; the prompter's own
-		// stop handling, left from the questions before, stands aside so
-		// the process is stopped once, with the terminal restored first.
-		release := p.suspendPrompts(true)
-		if w.keys = startKeys(term); w.keys == nil {
-			release()
-		} else {
-			w.release = release
-			w.ready = make(chan struct{})
-			close(w.ready)
-		}
+	term, ok := env.openKeyTerminal(p.source)
+	if !ok {
+		return &escWatch{release: func() {}}
 	}
-	return w
+	// The keys answer Ctrl-Z while they are read; the prompter's own stop
+	// handling, left from the questions before, stands aside so the
+	// process is stopped once, with the terminal restored first.
+	release := p.suspendPrompts(true)
+	keys := startKeys(term)
+	if keys == nil {
+		release()
+		return &escWatch{release: func() {}}
+	}
+	ready := make(chan struct{})
+	close(ready)
+	return &escWatch{keys: keys, release: release, ready: ready}
 }
 
 // hint is the progress line's note that Esc stops, when keys are read.
