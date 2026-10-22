@@ -351,12 +351,7 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 		sha, err := verifyPublication(ctx, cfg, remote, c.reg, published)
 		setDigest, metadataDigest := "", ""
 		if err == nil {
-			var m archive.Metadata
-			if decodeErr := json.Unmarshal(published.Metadata(), &m); decodeErr == nil {
-				setDigest, _ = m.SourceSetDigest()
-				raw, _ := json.Marshal(m)
-				metadataDigest = storage.SHA256Hex(raw)
-			}
+			setDigest, metadataDigest = verificationMetadataDigests(published.Metadata())
 		}
 		record := verificationEvidence{ConfigurationID: c.cfgID, PublishedAt: c.at, SourceSHA256: sha, Attempts: c.prior.Attempts + 1, SourceSetDigest: setDigest, MetadataDigest: metadataDigest}
 		if c.prior.failed() {
@@ -386,6 +381,16 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 		}
 	}
 	return summary, errors.Join(localErrs...)
+}
+
+func verificationMetadataDigests(metadata []byte) (string, string) {
+	var m archive.Metadata
+	if err := json.Unmarshal(metadata, &m); err != nil {
+		return "", ""
+	}
+	setDigest, _ := m.SourceSetDigest()
+	raw, _ := json.Marshal(m)
+	return setDigest, storage.SHA256Hex(raw)
 }
 
 func (e verificationEvidence) failed() bool {
