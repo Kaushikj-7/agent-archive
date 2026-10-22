@@ -59,6 +59,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Esc stops a direct bucket search while it is still listing the bucket's
+  sessions, as it does once sessions are being read. Before, only Ctrl-C
+  worked until the listing finished.
 - `agent-archive status` records uploads made while a large `backfill` frees
   local room, so it no longer says "No saved upload yet" during the backfill.
   A collection pass that cannot list sessions keeps the previous count of

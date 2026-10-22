@@ -283,11 +283,14 @@ func runDirectSearch(ctx context.Context, cfg config.Config, namespace string, s
 	if err != nil {
 		return nil, searchCommandError(stderr, err)
 	}
-	spin := p.style.spin(stdout, "Listing the bucket's sessions")
-	listed, err := reader.ListMetadataWithOptions(ctx, objects, archiveSessionsPrefix, reader.Filter{Harness: opts.query.Harness}, reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "search")})
-	spin.stop()
+	listed, escaped, err := listDirectSessions(ctx, p, stdout, env, func(ctx context.Context) ([]archive.Metadata, error) {
+		return reader.ListMetadataWithOptions(ctx, objects, archiveSessionsPrefix, reader.Filter{Harness: opts.query.Harness}, reader.ListOptions{Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "search")})
+	})
 	if ctx.Err() != nil {
 		return nil, directSearchInterrupted(stderr)
+	}
+	if escaped {
+		return nil, 0
 	}
 	if err != nil {
 		return nil, searchCommandError(stderr, err)
@@ -440,25 +443,9 @@ func printDirectSearchWarning(p *prompter, cfg config.Config, scan *directScan) 
 // sessions are read, keeps the progress line on stdout, and prints each
 // match found through the prompter.
 func (s *directScan) scan(ctx context.Context, p *prompter, stdout io.Writer, env searchCommandDependencies, scopeLabel string) (directScanStop, error) {
-	var keys *keyInput
-	if term, ok := env.openKeyTerminal(p.source); ok {
-		// The keys answer Ctrl-Z while they are read; the prompter's own
-		// stop handling, left from the questions before, stands aside so
-		// the process is stopped once, with the terminal restored first.
-		release := p.suspendPrompts(true)
-		if keys = startKeys(term); keys == nil {
-			release()
-		} else {
-			defer release()
-		}
-	}
-	if keys != nil {
-		defer keys.close()
-	}
-	hint := ""
-	if keys != nil {
-		hint = " · " + p.style.dim("Esc stop")
-	}
+	esc := watchEsc(p, env)
+	defer esc.close()
+	hint := esc.hint(p)
 	label := func() string {
 		searched, matching := s.counts()
 		return fmt.Sprintf("Searching the bucket · %s · %s of %s, newest first · %s so far%s", scopeLabel, countText(searched), sessionsText(s.total), matchingText(matching), hint)
@@ -479,13 +466,7 @@ func (s *directScan) scan(ctx context.Context, p *prompter, stdout io.Writer, en
 		done <- outcome{why, err}
 	}()
 	escaped := false
-	polling := make(chan struct{})
-	close(polling)
 	for {
-		var poll <-chan struct{}
-		if keys != nil {
-			poll = polling
-		}
 		select {
 		case m := <-found:
 			spin.stop()
@@ -504,20 +485,121 @@ func (s *directScan) scan(ctx context.Context, p *prompter, stdout io.Writer, en
 			cancel()
 			<-done
 			return directScanInterrupted, nil
-		case <-poll:
+		case <-esc.poll():
 		}
-		k, err := keys.nextWait(100 * time.Millisecond)
-		if err != nil {
-			// Keys can no longer be read; Ctrl-C still interrupts.
-			keys.close()
-			keys = nil
-			continue
-		}
-		if k.kind == keyEscape && !escaped {
+		if esc.pressed() && !escaped {
 			escaped = true
 			cancel()
 		}
 	}
+}
+
+// listDirectSessions lists the bucket's sessions under a spinner, reading
+// keys so Esc stops the listing as it stops the search. It reports whether
+// Esc was pressed, having said so; Ctrl-C ends ctx instead.
+func listDirectSessions(ctx context.Context, p *prompter, stdout io.Writer, env searchCommandDependencies, list func(context.Context) ([]archive.Metadata, error)) ([]archive.Metadata, bool, error) {
+	esc := watchEsc(p, env)
+	defer esc.close()
+	spin := p.style.spin(stdout, "Listing the bucket's sessions"+esc.hint(p))
+	defer spin.stop()
+	listCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type outcome struct {
+		listed []archive.Metadata
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		listed, err := list(listCtx)
+		done <- outcome{listed, err}
+	}()
+	for {
+		select {
+		case result := <-done:
+			return result.listed, false, result.err
+		case <-ctx.Done():
+			cancel()
+			result := <-done
+			return nil, false, result.err
+		case <-esc.poll():
+		}
+		if esc.pressed() {
+			cancel()
+			<-done
+			spin.stop()
+			terminal.Printf(stdout, "%s Stopped while listing the bucket\n", p.style.okMark())
+			return nil, true, nil
+		}
+	}
+}
+
+// escWatch reads keys for Esc while a direct search waits on the bucket.
+// Without a terminal to read keys from it never polls, and Ctrl-C still
+// interrupts.
+type escWatch struct {
+	keys    *keyInput
+	release func()
+	ready   chan struct{}
+}
+
+func watchEsc(p *prompter, env searchCommandDependencies) *escWatch {
+	term, ok := env.openKeyTerminal(p.source)
+	if !ok {
+		return &escWatch{release: func() {}}
+	}
+	// The keys answer Ctrl-Z while they are read; the prompter's own stop
+	// handling, left from the questions before, stands aside so the
+	// process is stopped once, with the terminal restored first.
+	release := p.suspendPrompts(true)
+	keys := startKeys(term)
+	if keys == nil {
+		release()
+		return &escWatch{release: func() {}}
+	}
+	ready := make(chan struct{})
+	close(ready)
+	return &escWatch{keys: keys, release: release, ready: ready}
+}
+
+// hint is the progress line's note that Esc stops, when keys are read.
+func (w *escWatch) hint(p *prompter) string {
+	if w.keys == nil {
+		return ""
+	}
+	return " · " + p.style.dim("Esc stop")
+}
+
+// poll is ready while keys can be read, and never otherwise.
+func (w *escWatch) poll() <-chan struct{} {
+	if w.keys == nil {
+		return nil
+	}
+	return w.ready
+}
+
+// pressed waits briefly for a key and reports whether it was Esc. Once keys
+// cannot be read it stops reading them.
+func (w *escWatch) pressed() bool {
+	if w.keys == nil {
+		return false
+	}
+	k, err := w.keys.nextWait(100 * time.Millisecond)
+	if err != nil {
+		w.keys.close()
+		w.keys = nil
+		return false
+	}
+	return k.kind == keyEscape
+}
+
+// close restores line input and the prompter's own stop handling.
+func (w *escWatch) close() {
+	if w.keys != nil {
+		w.keys.close()
+		w.keys = nil
+	}
+	w.release()
+	w.release = func() {}
 }
 
 // printDirectMatch prints a matching session as it is found: its agent's
