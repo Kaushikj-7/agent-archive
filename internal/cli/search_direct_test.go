@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -212,8 +213,36 @@ func TestDirectSearchEscStopsADownloadInProgress(t *testing.T) {
 	env, objects, _, sources := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}, {"native-2", 0, "checksum two"}})
 	stalled := stallingStore{ObjectStore: objects.ObjectStore, stall: sources}
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return stalled, nil }
-	out, errOut, code := runOnTerminal(t, env, newFakeKeys(later(0, "\x1b")), "", "search", "checksum")
+	// No key while the bucket is listed; Esc once the sessions are read.
+	var opened atomic.Int32
+	env.openKeys = func(io.Reader) (keyTerminal, bool) {
+		if opened.Add(1) == 1 {
+			return newFakeKeys(), true
+		}
+		return newFakeKeys(later(0, "\x1b")), true
+	}
+	out, errOut, code := runOnTerminal(t, env, nil, "", "search", "checksum")
 	if code != 0 || !strings.Contains(out, "Stopped before searching any of the 2 sessions") || strings.Contains(out, "Searched all") {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	assertNoSearchIndex(t, env)
+}
+
+// stalledListing never finishes listing: a list waits until its context
+// ends, as a slow listing of a large bucket would.
+type stalledListing struct{ storage.ObjectStore }
+
+func (s stalledListing) List(ctx context.Context, _ string) ([]storage.Object, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestDirectSearchEscStopsTheListing(t *testing.T) {
+	t.Parallel()
+	env, objects, _, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}})
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return stalledListing{objects.ObjectStore}, nil }
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys(later(0, "\x1b")), "", "search", "checksum")
+	if code != 0 || !strings.Contains(out, "Stopped while listing the bucket") || strings.Contains(out, "Without an index") || errOut != "" {
 		t.Fatalf("%d %s %s", code, errOut, out)
 	}
 	assertNoSearchIndex(t, env)

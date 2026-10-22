@@ -295,7 +295,7 @@ func runPassLocked(env Env, quietOnBusy bool, pass passOptions, changes *passCha
 
 	statusProgress.phase(statusVerifying)
 	verification, summary, verifyErr, err := verifyAndRecordPass(ctx, home, cfg, env, localStore, objectStore, quietOnBusy, result)
-	statusProgress.verification = &verification
+	statusProgress.verified(verification)
 	if err != nil {
 		return result, err
 	}

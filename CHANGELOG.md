@@ -10,7 +10,7 @@ follow [Semantic Versioning](https://semver.org/).
 
 - `agent-archive status` prints the command that fixes its problem when it
   knows one, on its own line: `agent-archive setup` when background
-  collection is not scheduled or belongs to another installation,
+  collection is not scheduled,
   `agent-archive setup --refresh` when the installed collector is missing,
   and `agent-archive sync` when there is no recent collection result or
   storage access failed. `status --issues` prints a group's `agent-archive
@@ -63,6 +63,13 @@ follow [Semantic Versioning](https://semver.org/).
   of matching sessions' text in memory. When a common word fills that, it
   stops, says so with the command that turns indexing on, and shows the
   results so far, instead of holding most of a large bucket's text.
+- Esc stops a direct bucket search while it is still listing the bucket's
+  sessions, as it does once sessions are being read. Before, only Ctrl-C
+  worked until the listing finished.
+- `agent-archive status` records uploads made while a large `backfill` frees
+  local room, so it no longer says "No saved upload yet" during the backfill.
+  A collection pass that cannot list sessions keeps the previous count of
+  failed read-back checks instead of resetting it to none.
 - Updating a session's local record of its last upload no longer needs free
   room for twice the record's size under the 1 GiB limit on pending local
   work. A large record that counts nothing at rest now needs room only for

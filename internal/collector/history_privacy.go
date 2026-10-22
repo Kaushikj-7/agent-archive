@@ -220,7 +220,7 @@ func (s *sessionScan) stricterHistoryInputCeiling(p state.PendingPublication, co
 		return limit, nil
 	}
 	origin, found, err := s.local.PublicationPrivacyOrigin(s.id(), p, prior)
-	if err != nil || !found || skillPolicyRank(origin.Policy) <= skillPolicyRank(immediate) {
+	if err != nil || !found || !skillPolicyBroadens(origin.Policy, immediate) {
 		return limit, err
 	}
 	return func(input state.HistoryInput) config.SkillEvidence {

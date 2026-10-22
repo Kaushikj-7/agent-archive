@@ -36,7 +36,7 @@ func TestReadBackOfVerifiedSessionsDecodesNothing(t *testing.T) {
 	}
 	loads := state.PublishedStateLoads()
 	summary, err := verifyPublications(home, cfg, env, store, remote)
-	if err != nil || summary != (verificationSummary{}) {
+	if err != nil || summary != (verificationSummary{Enumerated: true}) {
 		t.Fatalf("%#v %v", summary, err)
 	}
 	if n := state.PublishedStateLoads() - loads; n != 0 {

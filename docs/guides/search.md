@@ -186,7 +186,7 @@ line counts the sessions searched and matching, and each matching session is
 printed as it is found; the summary also counts sessions that could not be
 read. If 5 sessions in a row cannot be read, as when the network drops, it
 stops, prints the error, and exits with status 1; a session too large or too
-slow to read is counted but neither adds to nor resets that count. Esc stops early. After 2 minutes, unless the latest sessions are failing to read, it asks whether to keep going, search
+slow to read is counted but neither adds to nor resets that count. Esc stops early, also while the bucket is still being listed. After 2 minutes, unless the latest sessions are failing to read, it asks whether to keep going, search
 only the project you are in (with its session count, and counting from then on
 only that project's sessions), show the results so far, or stop. The results open in the same browser as indexed
 search; reading a passage downloads its source again. Ctrl-C exits.
