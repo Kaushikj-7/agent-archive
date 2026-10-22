@@ -204,10 +204,12 @@ func skillPolicyRoots(project string) []agentapi.SkillRoot {
 
 func TestUnrecognisedSkillPolicyNeverBroadensTheCeiling(t *testing.T) {
 	t.Parallel()
-	unknown := config.SkillEvidence("synthetic-unknown")
+	// A policy from a newer or damaged record, built at run time.
+	unknown := config.SkillEvidence(strings.Repeat(string(config.SkillEvidenceBody), 2))
 	for _, tc := range []struct {
-		origin, current config.SkillEvidence
-		want            bool
+		origin  config.SkillEvidence
+		current config.SkillEvidence
+		want    bool
 	}{
 		{config.SkillEvidenceBody, config.SkillEvidenceMetadata, true},
 		{config.SkillEvidenceMetadata, config.SkillEvidenceNone, true},

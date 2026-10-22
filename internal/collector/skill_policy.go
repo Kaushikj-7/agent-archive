@@ -24,6 +24,8 @@ func pendingSkillMode(value string) config.SkillEvidence {
 // An unrecognised policy ranks narrowest, so it never outranks a known one.
 func skillPolicyRank(mode config.SkillEvidence) int {
 	switch mode {
+	case config.SkillEvidenceNone:
+		return 0
 	case config.SkillEvidenceMetadata:
 		return 1
 	case config.SkillEvidenceBody:
