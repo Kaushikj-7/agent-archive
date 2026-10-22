@@ -269,6 +269,14 @@ func (w *statusProgressWriter) processed(progress collector.Progress) {
 	}
 }
 
+// verified keeps the previous failure count when verification could not
+// enumerate publications, since its zero count would hide unresolved ones.
+func (w *statusProgressWriter) verified(summary verificationSummary) {
+	if summary.Enumerated {
+		w.verification = &summary
+	}
+}
+
 func (w *statusProgressWriter) observe(forward func(collector.Progress)) func(collector.Progress) {
 	return func(progress collector.Progress) {
 		w.processed(progress)

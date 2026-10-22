@@ -21,9 +21,9 @@ func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.A
 	return analysis, err
 }
 
-// sessionLabelName is the name a session whose records name it name has
-// under label: the label's, none when it confirms there is none, when Codex
-// can interpret it, and name otherwise.
+// sessionLabelName returns the session name to record given label and name,
+// the name from the session's own records. A label Codex can interpret wins,
+// including one that confirms the session has no name; otherwise name stands.
 func sessionLabelName(label archive.SessionLabel, name string) string {
 	if supportedSessionLabel(label) {
 		return label.Name

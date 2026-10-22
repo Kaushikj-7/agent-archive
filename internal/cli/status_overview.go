@@ -193,7 +193,8 @@ func (view *statusOverview) readLiveness(ctx context.Context, root *os.Root, hom
 		view.attention("Background collection is not scheduled.", "agent-archive setup")
 	case scheduler.AnotherInstallation:
 		view.background = "Another installation"
-		view.attention("The background job belongs to another installation.", "agent-archive setup")
+		// Setup will not replace it; the issues view says what will.
+		view.attention("The background job belongs to another installation; setup will not replace it.", overviewIssues)
 	case scheduler.Unknown:
 		view.background = "Could not confirm within the status budget"
 		if view.state != overviewAttention {
