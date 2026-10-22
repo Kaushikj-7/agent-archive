@@ -349,6 +349,36 @@ func TestDirectSearchNarrowingCountsOnlyTheProject(t *testing.T) {
 	}
 }
 
+// Once matching sessions fill the memory a direct search may keep, it stops
+// and shows what it found instead of reading on.
+func TestDirectSearchStopsWhenMatchesFillItsMemory(t *testing.T) {
+	t.Parallel()
+	env, objects, ids, sources := directSearchFixture(t, []directSession{
+		{"native-old", 0, "checksum in the oldest"},
+		{"native-miss", 0, "nothing relevant"},
+		{"native-new", 0, "checksum in the newest"},
+	})
+	env.directSearchMemory = 1
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 0 {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	for _, want := range []string{
+		"Stopped after the newest 1 of 3 sessions · 1 matching session",
+		"! Matches filled the memory a search without an index may use.\n  Search for more specific words, or to search every session, run:\n  agent-archive setup --yes --search-indexing on\n",
+		shortSessionID(ids[2]) + "  1 match",
+		"Searched the newest 1 of 3 sessions in the bucket",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if slices.Contains(objects.directReads(), sources[1]) || slices.Contains(objects.directReads(), sources[0]) {
+		t.Fatalf("read on after memory was full: %v", objects.directReads())
+	}
+	assertNoSearchIndex(t, env)
+}
+
 func TestDirectSearchCountsSessionsThatCouldNotBeRead(t *testing.T) {
 	t.Parallel()
 	env, objects, _, sources := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}, {"native-2", 0, "checksum two"}})

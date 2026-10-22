@@ -59,6 +59,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A direct bucket search (after you decline indexing) keeps at most 256 MiB
+  of matching sessions' text in memory. When a common word fills that, it
+  stops, says so with the command that turns indexing on, and shows the
+  results so far, instead of holding most of a large bucket's text.
 - Updating a session's local record of its last upload no longer needs free
   room for twice the record's size under the 1 GiB limit on pending local
   work. A large record that counts nothing at rest now needs room only for

@@ -36,6 +36,19 @@ func (e Env) directSearchBudget() time.Duration {
 	return directSearchPause
 }
 
+// directSearchMemoryCap is how many bytes of matching sessions' text, with
+// its full-text index, a direct search keeps in memory. Past it the search
+// stops and shows the results so far: a query matching most of a large
+// bucket would otherwise hold most of its text.
+const directSearchMemoryCap = 256 << 20
+
+func (e Env) directSearchMemoryCap() int64 {
+	if e.directSearchMemory > 0 {
+		return e.directSearchMemory
+	}
+	return directSearchMemoryCap
+}
+
 // wantsDirectSearch reports whether a query reads the bucket directly: on a
 // terminal (startInteractiveSearch left its prompter), after the indexing
 // offer was declined, with no usable local index in dir (none, or one whose
@@ -71,6 +84,9 @@ const (
 	directScanPaused      directScanStop = "paused"
 	directScanStopped     directScanStop = "stopped"
 	directScanInterrupted directScanStop = "interrupted"
+	// directScanFull is a search whose matches filled the memory it may
+	// keep.
+	directScanFull directScanStop = "full"
 )
 
 // directMatch is a session found to match while a direct search runs.
@@ -82,12 +98,15 @@ type directMatch struct {
 // directScan reads sessions newest first into a store held in memory. Only
 // matching sessions keep their passages, for the results browser.
 type directScan struct {
-	index    *search.Store
-	objects  storage.ObjectStore
-	parsers  agentapi.ParsersLookup
-	query    search.Query
-	now      func() time.Time
-	budget   time.Duration
+	index   *search.Store
+	objects storage.ObjectStore
+	parsers agentapi.ParsersLookup
+	query   search.Query
+	now     func() time.Time
+	budget  time.Duration
+	// memory is how many bytes the store may hold before the search
+	// stops; zero sets no limit.
+	memory   int64
 	sessions []archive.Metadata
 	total    int
 
@@ -259,6 +278,15 @@ func (s *directScan) run(ctx context.Context, found chan<- directMatch) (directS
 			case <-ctx.Done():
 				return directScanStopped, nil
 			}
+			if s.memory > 0 {
+				size, err := s.index.Size(ctx)
+				if err != nil {
+					return directScanStopped, err
+				}
+				if size >= s.memory {
+					return directScanFull, nil
+				}
+			}
 		}
 	}
 }
@@ -316,7 +344,7 @@ func runDirectSearch(ctx context.Context, cfg config.Config, namespace string, s
 			_ = index.Close()
 		}
 	}()
-	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: opts.query, now: env.now, budget: env.directSearchBudget(), sessions: sessions, total: len(sessions), matched: map[string]bool{}, unread: map[string]bool{}}
+	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: opts.query, now: env.now, budget: env.directSearchBudget(), memory: env.directSearchMemoryCap(), sessions: sessions, total: len(sessions), matched: map[string]bool{}, unread: map[string]bool{}}
 	printDirectSearchWarning(p, cfg, scan)
 
 	// The project the working directory is in, offered at a pause when the
@@ -339,23 +367,9 @@ func runDirectSearch(ctx context.Context, cfg config.Config, namespace string, s
 		if err != nil {
 			return nil, searchCommandError(stderr, err)
 		}
-		searched, matching := scan.counts()
-		unread := ""
-		if n := scan.unreadable(); n > 0 {
-			unread = " · " + countText(n) + " could not be read"
-		}
-		if why != directScanPaused {
-			switch {
-			case searched >= scan.total:
-				terminal.Printf(stdout, "%s Searched all %s · %s%s\n", p.style.okMark(), sessionsText(scan.total), matchingSessionsText(matching), unread)
-			case searched == 0:
-				terminal.Printf(stdout, "%s Stopped before searching any of the %s\n", p.style.okMark(), sessionsText(scan.total))
-			default:
-				terminal.Printf(stdout, "%s Stopped after the newest %s of %s · %s%s\n", p.style.okMark(), countText(searched), sessionsText(scan.total), matchingSessionsText(matching), unread)
-			}
+		if !printDirectSearchStretch(p, stdout, scan, why) {
 			break
 		}
-		terminal.Printf(stdout, "%s Searched the newest %s of %s · %s%s\n", p.style.okMark(), countText(searched), sessionsText(scan.total), matchingSessionsText(matching), unread)
 		choice, err := askDirectSearchPause(ctx, p, scan, narrow)
 		if err != nil {
 			return nil, searchCommandError(stderr, err)
@@ -419,6 +433,39 @@ func (s *directScan) narrow(scope sessionScope) {
 	}
 	s.sessions, s.total = kept, len(kept)
 	s.searched, s.matching, s.failed = searched, matching, failed
+}
+
+// printDirectSearchStretch summarizes a stretch of the search as it ended,
+// and reports whether it paused to ask how to go on.
+func printDirectSearchStretch(p *prompter, stdout io.Writer, scan *directScan, why directScanStop) (paused bool) {
+	searched, matching := scan.counts()
+	unread := ""
+	if n := scan.unreadable(); n > 0 {
+		unread = " · " + countText(n) + " could not be read"
+	}
+	switch {
+	case why == directScanPaused:
+		terminal.Printf(stdout, "%s Searched the newest %s of %s · %s%s\n", p.style.okMark(), countText(searched), sessionsText(scan.total), matchingSessionsText(matching), unread)
+		return true
+	case searched >= scan.total:
+		terminal.Printf(stdout, "%s Searched all %s · %s%s\n", p.style.okMark(), sessionsText(scan.total), matchingSessionsText(matching), unread)
+	case searched == 0:
+		terminal.Printf(stdout, "%s Stopped before searching any of the %s\n", p.style.okMark(), sessionsText(scan.total))
+	default:
+		terminal.Printf(stdout, "%s Stopped after the newest %s of %s · %s%s\n", p.style.okMark(), countText(searched), sessionsText(scan.total), matchingSessionsText(matching), unread)
+	}
+	if why == directScanFull && searched < scan.total {
+		printDirectSearchFull(p)
+	}
+	return false
+}
+
+// printDirectSearchFull says why a search stopped short of the bucket's
+// end, and the command that searches all of it.
+func printDirectSearchFull(p *prompter) {
+	terminal.Printf(p.out, "%s Matches filled the memory a search without an index may use.\n", p.style.warnMark())
+	terminal.Println(p.out, "  Search for more specific words, or to search every session, run:")
+	terminal.Println(p.out, "  "+p.style.cmd("agent-archive setup --yes --search-indexing on"))
 }
 
 // printDirectSearchWarning says what a direct search costs before it starts,
