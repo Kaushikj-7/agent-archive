@@ -59,6 +59,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Esc stops a direct bucket search while it is still listing the bucket's
+  sessions, as it does once sessions are being read. Before, only Ctrl-C
+  worked until the listing finished.
 - Updating a session's local record of its last upload no longer needs free
   room for twice the record's size under the 1 GiB limit on pending local
   work. A large record that counts nothing at rest now needs room only for
