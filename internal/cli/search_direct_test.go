@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -214,8 +215,36 @@ func TestDirectSearchEscStopsADownloadInProgress(t *testing.T) {
 	env, objects, _, sources := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}, {"native-2", 0, "checksum two"}})
 	stalled := stallingStore{ObjectStore: objects.ObjectStore, stall: sources}
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return stalled, nil }
-	out, errOut, code := runOnTerminal(t, env, newFakeKeys(later(0, "\x1b")), "", "search", "checksum")
+	// No key while the bucket is listed; Esc once the sessions are read.
+	var opened atomic.Int32
+	env.openKeys = func(io.Reader) (keyTerminal, bool) {
+		if opened.Add(1) == 1 {
+			return newFakeKeys(), true
+		}
+		return newFakeKeys(later(0, "\x1b")), true
+	}
+	out, errOut, code := runOnTerminal(t, env, nil, "", "search", "checksum")
 	if code != 0 || !strings.Contains(out, "Stopped before searching any of the 2 sessions") || strings.Contains(out, "Searched all") {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	assertNoSearchIndex(t, env)
+}
+
+// stalledListing never finishes listing: a list waits until its context
+// ends, as a slow listing of a large bucket would.
+type stalledListing struct{ storage.ObjectStore }
+
+func (s stalledListing) List(ctx context.Context, _ string) ([]storage.Object, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestDirectSearchEscStopsTheListing(t *testing.T) {
+	t.Parallel()
+	env, objects, _, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}})
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return stalledListing{objects.ObjectStore}, nil }
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys(later(0, "\x1b")), "", "search", "checksum")
+	if code != 0 || !strings.Contains(out, "Stopped while listing the bucket") || strings.Contains(out, "Without an index") || errOut != "" {
 		t.Fatalf("%d %s %s", code, errOut, out)
 	}
 	assertNoSearchIndex(t, env)
@@ -348,6 +377,76 @@ func TestDirectSearchNarrowingCountsOnlyTheProject(t *testing.T) {
 	}
 	if !strings.Contains(out, shortSessionID(ids[2])+"  1 match") {
 		t.Fatalf("the other project's match was not printed as found:\n%s", out)
+	}
+}
+
+// Once matching sessions fill the memory a direct search may keep, it stops
+// and shows what it found instead of reading on.
+func TestDirectSearchStopsWhenMatchesFillItsMemory(t *testing.T) {
+	t.Parallel()
+	env, objects, ids, _ := directSearchFixture(t, []directSession{
+		{"native-old", 0, "checksum in the oldest"},
+		{"native-miss", 0, "nothing relevant"},
+		{"native-new", 0, "checksum in the newest"},
+	})
+	env.directSearchMemory = 1
+	out, errOut, code := runOnTerminal(t, env, newFakeKeys("q"), "", "search", "checksum")
+	if code != 0 {
+		t.Fatalf("%d %s %s", code, errOut, out)
+	}
+	for _, want := range []string{
+		"Stopped after the newest 1 of 3 sessions · 1 matching session",
+		"! Matches filled the memory a search without an index may use.\n  Search for more specific words, or to search every session, run:\n  agent-archive setup --yes --search-indexing on\n",
+		shortSessionID(ids[2]) + "  1 match",
+		"Searched the newest 1 of 3 sessions in the bucket",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	// Sessions downloaded ahead may have been read, but none past the
+	// newest is matched, shown or kept.
+	if strings.Contains(out, shortSessionID(ids[0])) {
+		t.Fatalf("matched on after memory was full:\n%s", out)
+	}
+	assertNoSearchIndex(t, env)
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	slices.SortFunc(listed, func(a, b archive.Metadata) int { return b.CapturedAt.Compare(a.CapturedAt) })
+	index, err := search.OpenMemory(t.Context(), "test/context")
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, memory: 1, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}}
+	if why, err := scan.run(t.Context(), make(chan directMatch, len(listed))); why != directScanFull || err != nil {
+		t.Fatalf("%s %v", why, err)
+	}
+	if searched, _ := scan.counts(); searched != 1 {
+		t.Fatalf("searched %d sessions, want only the newest", searched)
+	}
+	if count, err := index.SessionMatches(t.Context(), search.Query{Text: "checksum"}, "codex", ids[0]); err != nil || count != 0 {
+		t.Fatalf("the oldest session kept %d matching passages (%v)", count, err)
+	}
+}
+
+// Esc just after a match is shown ends the stretch as a stop, not as an
+// error from reading how much memory the matches fill.
+func TestDirectSearchEscAfterAMatchStopsCleanly(t *testing.T) {
+	t.Parallel()
+	env, objects, _, _ := directSearchFixture(t, []directSession{{"native-1", 0, "checksum one"}, {"native-2", 0, "checksum two"}})
+	listed, err := reader.ListMetadataWithOptions(t.Context(), objects, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{})
+	must(t, err)
+	index, err := search.OpenMemory(t.Context(), "test/context")
+	must(t, err)
+	defer func() { _ = index.Close() }()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	scan := &directScan{index: index, objects: objects, parsers: parsersFor(env), query: search.Query{Text: "checksum"}, now: env.now, budget: time.Hour, memory: directSearchMemoryCap, sessions: listed, total: len(listed), matched: map[string]bool{}, unread: map[string]bool{}, sent: cancel}
+	why, err := scan.run(ctx, make(chan directMatch, len(listed)))
+	if err != nil || why == directScanDone {
+		t.Fatalf("%s %v", why, err)
+	}
+	if searched, matching := scan.counts(); searched != 1 || matching != 1 {
+		t.Fatalf("searched %d, %d matching, want the one shown", searched, matching)
 	}
 }
 

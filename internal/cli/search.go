@@ -21,6 +21,7 @@ type searchCommandDependencies interface {
 	newCommandFlags(string, io.Writer) *commandFlags
 	setSearchIndexing(bool, io.Writer) bool
 	directSearchBudget() time.Duration
+	directSearchMemoryCap() int64
 }
 
 type contentSearchOptions struct {

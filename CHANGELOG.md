@@ -10,10 +10,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 - A direct bucket search (after you decline indexing) downloads up to 6
   sessions at once, holding about 64 MiB of them, ahead of the one it is
-  matching, so it reads about three
-  times as many sessions before each pause. Matches still appear newest first,
-  each session is still rechecked against the bucket before its text is
-  searched, and the warning's time estimate is shorter to match.
+  matching, so it reads about three times as many sessions before each
+  pause. Matches still appear newest first, each session is still rechecked
+  against the bucket before its text is searched, and the warning's time
+  estimate is shorter to match.
 - `agent-archive status` prints the command that fixes its problem when it
   knows one, on its own line: `agent-archive setup` when background
   collection is not scheduled,
@@ -65,6 +65,18 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A direct bucket search (after you decline indexing) keeps at most 256 MiB
+  of matching sessions' text in memory. When a common word fills that, it
+  stops, says so with the command that turns indexing on, and shows the
+  results so far, instead of holding most of a large bucket's text.
+  Sessions downloaded ahead of matching are held besides that.
+- Esc stops a direct bucket search while it is still listing the bucket's
+  sessions, as it does once sessions are being read. Before, only Ctrl-C
+  worked until the listing finished.
+- `agent-archive status` records uploads made while a large `backfill` frees
+  local room, so it no longer says "No saved upload yet" during the backfill.
+  A collection pass that cannot list sessions keeps the previous count of
+  failed read-back checks instead of resetting it to none.
 - Updating a session's local record of its last upload no longer needs free
   room for twice the record's size under the 1 GiB limit on pending local
   work. A large record that counts nothing at rest now needs room only for

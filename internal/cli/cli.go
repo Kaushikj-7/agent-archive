@@ -144,6 +144,9 @@ type Env struct {
 	// directSearchPause, set only by tests, is how long a direct bucket
 	// search reads before it asks whether to go on (directSearchBudget).
 	directSearchPause func() time.Duration
+	// directSearchMemory, set only by tests, is how many bytes a direct
+	// bucket search keeps in memory before it stops (directSearchMemoryCap).
+	directSearchMemory int64
 	// backfillCheckpoint, set only by tests, is called inside the
 	// configuration commit between writing the batch file and saving the
 	// configuration ("batch saved"), after the commit ("committed"), after

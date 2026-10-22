@@ -93,6 +93,9 @@ type verificationSummary struct {
 	// UnresolvedFailures counts failed or mismatched current publications,
 	// including those deferred by backoff, the pass cap or its deadline.
 	UnresolvedFailures int
+	// Enumerated is set once registrations were listed, so the counts above
+	// cover this destination's publications rather than none of them.
+	Enumerated bool
 }
 
 type storageHealth struct {
@@ -254,6 +257,7 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 	if err != nil {
 		return summary, err
 	}
+	summary.Enumerated = true
 	now := env.now().UTC()
 	type candidate struct {
 		reg   archive.SessionRegistration

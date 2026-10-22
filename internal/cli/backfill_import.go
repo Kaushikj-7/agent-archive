@@ -1166,10 +1166,15 @@ func importCapacityDrain(env Env, stdout io.Writer, home string, store *state.St
 			return err
 		}
 		previous, _ := store.LoadStatus()
-		result, err := collector.Run(ctx, store, remote, collector.Options{CollectorGuard: guard, CatalogDestination: config.DestinationID(current.Storage), Sources: env.agentRegistry(), Parsers: parsersFor(env), Decoders: env.agentRegistry(), MachineID: current.MachineID, Now: env.Now, AcceptSession: current.AcceptSession, PendingOnly: true, SelectSession: func(reg archive.SessionRegistration) bool {
+		// Uploads here are scoped like an import pass: they renew the saved
+		// upload time but never global health.
+		statusProgress := beginStatusProgress(home, current, env)
+		statusProgress.phase(statusCollecting)
+		result, err := collector.Run(ctx, store, remote, collector.Options{CollectorGuard: guard, Progress: statusProgress.observe(nil), CatalogDestination: config.DestinationID(current.Storage), Sources: env.agentRegistry(), Parsers: parsersFor(env), Decoders: env.agentRegistry(), MachineID: current.MachineID, Now: env.Now, AcceptSession: current.AcceptSession, PendingOnly: true, SelectSession: func(reg archive.SessionRegistration) bool {
 			return reg.InBatch(batchID)
 		}, HistoricalProjectLabel: current.HistoricalProjectLabel, SkillEvidence: current.EffectiveSkillEvidence(), RequireSkillUse: current.RequireSkillUse, CursorDatabase: env.cursorDatabase(), CodexRollouts: lookup, ConfiguredCodexHomes: readHomes, NativeRoots: current.NativeRoots, RepoKey: env.repoKey, Stop: stop})
 		defer result.CloseStagedResults()
+		statusProgress.finish(current, err, false)
 		issueErr := recordSelectedPassSessionIssues(store, result, previous)
 		reportErr := errors.Join(reportImportCapacityDrain(stdout, result, err), issueErr)
 		if stop != nil && stop() {

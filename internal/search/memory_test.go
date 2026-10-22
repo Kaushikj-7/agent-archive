@@ -3,6 +3,7 @@ package search
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -69,5 +70,40 @@ func TestSessionTotalsSpanSources(t *testing.T) {
 	_, p = testProjection("s", "ab")
 	if err := totals.add(p); !errors.Is(err, storage.ErrObjectTooLarge) {
 		t.Fatalf("text past the limit: %v", err)
+	}
+}
+
+// Size counts the text a store in memory keeps, and stops counting it once
+// dropped.
+func TestMemoryStoreSizeFollowsKeptText(t *testing.T) {
+	t.Parallel()
+	s, err := OpenMemory(t.Context(), "test/context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	empty, err := s.Size(t.Context())
+	if err != nil || empty <= 0 {
+		t.Fatalf("empty store size %d %v", empty, err)
+	}
+	m, p := testProjection("large", "")
+	p.Passages = nil
+	text := strings.Repeat("checksum mismatch in the upload ", 64)
+	for i := range 1 << 9 {
+		p.Passages = append(p.Passages, Passage{Reference: Reference{Source: p.Source, Record: i, Start: 0, End: len(text)}, Role: "user", Text: text})
+	}
+	if _, err = s.Replace(t.Context(), m, []Projection{p}); err != nil {
+		t.Fatal(err)
+	}
+	kept, err := s.Size(t.Context())
+	if err != nil || kept-empty < 1<<20 {
+		t.Fatalf("size with 1 MiB of text kept: %d, empty %d, %v", kept, empty, err)
+	}
+	if err = s.DropSessionText(t.Context(), "codex", "large", false); err != nil {
+		t.Fatal(err)
+	}
+	dropped, err := s.Size(t.Context())
+	if err != nil || dropped-empty >= 1<<20 {
+		t.Fatalf("size after the text was dropped: %d, empty %d, %v", dropped, empty, err)
 	}
 }

@@ -2,6 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func TestStatusConfigurationIDTracksMusePolicy(t *testing.T) {
@@ -177,5 +181,47 @@ func TestStatusIssuesIncludesImportAndTranscriptNotices(t *testing.T) {
 				t.Errorf("missing %q: %s", want, &out)
 			}
 		}
+	}
+}
+
+func TestBackfillCapacityDrainRecordsItsUploadTime(t *testing.T) {
+	t.Parallel()
+	f := newStagedSyncFixture(t)
+	cfg := mustLoadConfig(t, f.home)
+	guard, unlock, err := lockCollectorGuard(f.home, "backfill import", f.env.now(), collectorNeedsGuard(cfg))
+	must(t, err)
+	defer unlock()
+	drain := importCapacityDrain(f.env, io.Discard, f.home, f.store, f.reg.ImportBatch.Recorded(), guard, nil, nil, nil)
+	must(t, drain(t.Context()))
+	var summary statusSummary
+	must(t, local.Read(filepath.Join(f.home, statusSummaryFile), &summary))
+	if !summary.LastPublishedAt.Equal(f.env.now()) || !summary.CompletedAt.IsZero() || summary.PendingKnown {
+		t.Fatalf("capacity drain upload not recorded as scoped: %+v", summary)
+	}
+	if _, err := os.Stat(filepath.Join(f.home, statusProgressFile)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("capacity drain left its progress file: %v", err)
+	}
+}
+
+func TestUnenumeratedVerificationKeepsPreviousFailureCount(t *testing.T) {
+	t.Parallel()
+	home, env, cfg, previous := overviewFixture(t)
+	previous.VerificationFailures = 3
+	must(t, local.Write(filepath.Join(home, statusSummaryFile), previous))
+	store, err := state.Open(home)
+	must(t, err)
+	must(t, os.RemoveAll(filepath.Join(home, "registrations")))
+	must(t, os.WriteFile(filepath.Join(home, "registrations"), []byte("not a directory"), 0600))
+	verification, err := verifyPublicationsWithin(t.Context(), home, cfg, env, store, storagetest.NewMemoryStore())
+	if err == nil {
+		t.Fatal("verification enumerated an unreadable registrations directory")
+	}
+	w := beginStatusProgress(home, cfg, env)
+	w.verified(verification)
+	w.finish(cfg, err, true)
+	var summary statusSummary
+	must(t, local.Read(filepath.Join(home, statusSummaryFile), &summary))
+	if summary.VerificationFailures != 3 {
+		t.Fatalf("failed enumeration reset unresolved failures to %d", summary.VerificationFailures)
 	}
 }

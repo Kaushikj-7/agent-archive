@@ -177,15 +177,18 @@ It lists the archive's metadata, applies the query's scope and filters (all
 projects unless `--project`; harness, dates, replays and children) before
 downloading anything, then reads the matching sessions newest first,
 downloading up to 6 at once, and about 64 MiB, ahead of the one being
-matched. Each
-session's verified sources go through the same parser visibility and privacy
+matched. Each session's verified sources go through the same parser visibility and privacy
 rules as indexing, into an in-memory database that is never written to disk.
-Only matching sessions keep their passages, until the command exits. A progress
+Only matching sessions keep their passages, until the command exits. Once
+their text and its full-text index fill 256 MiB of memory, as a common word
+across a large archive can, the search stops and shows the results so far,
+with the command that turns indexing on; more specific words reach further.
+Sessions downloaded ahead, up to about 64 MiB, are held besides that. A progress
 line counts the sessions searched and matching, and each matching session is
 printed as it is found; the summary also counts sessions that could not be
 read. If 5 sessions in a row cannot be read, as when the network drops, it
 stops, prints the error, and exits with status 1; a session too large or too
-slow to read is counted but neither adds to nor resets that count. Esc stops early. After 2 minutes, unless the latest sessions are failing to read, it asks whether to keep going, search
+slow to read is counted but neither adds to nor resets that count. Esc stops early, also while the bucket is still being listed. After 2 minutes, unless the latest sessions are failing to read, it asks whether to keep going, search
 only the project you are in (with its session count, and counting from then on
 only that project's sessions), show the results so far, or stop. The results open in the same browser as indexed
 search; reading a passage downloads its source again. Ctrl-C exits.

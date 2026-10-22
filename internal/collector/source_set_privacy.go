@@ -202,7 +202,7 @@ func (s *sessionScan) ordinaryPrivacyAlternatives(input state.PreparationInput, 
 // that are gone, keeps the immediate pending ceiling.
 func (s *sessionScan) oldestOrdinaryPrivacyAlternative(p state.PendingPublication, prior state.PublicationPredecessor, input state.PreparationInput) ([]state.PublicationPrivacyAlternative, error) {
 	origin, found, err := s.local.PublicationPrivacyOrigin(s.id(), p, prior)
-	if err != nil || !found || skillPolicyRank(origin.Policy) <= skillPolicyRank(pendingSkillMode(p.SkillEvidence)) {
+	if err != nil || !found || !skillPolicyBroadens(origin.Policy, pendingSkillMode(p.SkillEvidence)) {
 		return nil, err
 	}
 	alternative, err := origin.OrdinaryAlternative()
