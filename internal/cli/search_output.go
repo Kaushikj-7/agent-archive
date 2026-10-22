@@ -245,6 +245,8 @@ func setSearchError(doc *contentSearchDocument, err error) {
 		code = "source_unsupported"
 	case errors.Is(err, search.ErrUnavailable):
 		code = "source_unavailable"
+	case errors.Is(err, search.ErrInvalidOffset):
+		code = "invalid_offset"
 	case errors.Is(err, search.ErrFailedWork):
 		code = "refresh_failed"
 	case errors.Is(err, search.ErrWorkBusy):

@@ -428,7 +428,13 @@ func readSearchContext(ctx context.Context, env searchCommandDependencies, cfg c
 	out, err := search.ReadContext(ctx, objects, parsersFor(env), ref, offset, opts.maxBytes, opts.before, opts.after, reader.Limits{})
 	if err != nil {
 		setSearchError(&doc, err)
-		return writeContentSearch(doc, opts, stdout, stderr)
+		code := writeContentSearch(doc, opts, stdout, stderr)
+		if code == 1 && errors.Is(err, search.ErrInvalidOffset) {
+			// Only the read can tell an offset is past the message's end;
+			// it is still the caller's input that is wrong.
+			return 2
+		}
+		return code
 	}
 	slice := func(ref search.Reference, role string, c search.Context) contentSearchSlice {
 		var next *int

@@ -432,6 +432,33 @@ func TestSearchReadFollowsNextOffsetToTheMessagesEnd(t *testing.T) {
 	}
 }
 
+func TestSearchReadOffsetPastTheMessageIsAUsageError(t *testing.T) {
+	env := longMessageFixture(t)
+	code, page, diag := searchJSONRun(t, env, "zebrafish")
+	if code != 0 || len(page.Results) == 0 || page.Results[0].Reference == nil {
+		t.Fatalf("%d %s %+v", code, diag, page)
+	}
+	code, doc, diag := searchJSONRun(t, env, "--read", *page.Results[0].Reference, "--offset", strconv.Itoa(1<<20))
+	if code != 2 || doc.Error == nil || doc.Error.Code != "invalid_offset" {
+		t.Fatalf("offset past the message: %d %s %+v", code, diag, doc.Error)
+	}
+}
+
+func TestSearchPassageMSaysANeighborGoesOnInTheTranscript(t *testing.T) {
+	env := searchProjectsFixtureOf(t, `{"type":"turn_context","model":"gpt-test"}
+{"type":"response_item","id":"m1","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Write the zebrafish notes down."}]}}
+{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"`+strings.Repeat("filler words go here ", 1000)+`TAILMARK"}}`)
+	// m shows the cut reply whole, as far as one read goes; m again has
+	// nothing more of the match to read.
+	screens := searchScreens(t, env, newFakeKeys("\x1b[B", "\r", "m", "m", "b", "q"), "", "zebrafish")
+	lastScreenWith(t, screens, "The message after goes on · t shows the transcript")
+	for _, screen := range screens {
+		if strings.Contains(screen, "Nothing more of these messages to show.") {
+			t.Fatalf("m said nothing more while the reply goes on:\n%s", screen)
+		}
+	}
+}
+
 // readFails is a store whose reads fail with err once the terminal has only
 // left keys to read.
 type readFails struct {
