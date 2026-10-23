@@ -85,7 +85,9 @@ func TestCollectorSourceOnlyRecoveryWithoutRegistration(t *testing.T) {
 		t.Fatal(err)
 	}
 	loads := state.PublishedStateLoads()
-	result, err := Run(t.Context(), s, storagetest.NewMemoryStore(), Options{MachineID: "synthetic", Sources: refuseNativeSources{t}})
+	budget := agentapi.NewNativeReadBudget(128 << 20)
+	result, err := Run(t.Context(), s, storagetest.NewMemoryStore(), Options{MachineID: "synthetic", Sources: refuseNativeSources{t}, readBudgetOwner: budget})
+	defer result.CloseStagedResults()
 	if err != nil || !errors.Is(result.Errors["orphan"], state.ErrDurableStorageRecovery) || result.Scanned != 0 || len(result.Published) != 0 {
 		t.Fatalf("orphan collection: %+v %v", result, err)
 	}
@@ -99,6 +101,18 @@ func TestCollectorSourceOnlyRecoveryWithoutRegistration(t *testing.T) {
 	}
 	if state.PublishedStateLoads() != loads {
 		t.Fatal("source-only pass decoded published bodies")
+	}
+	if used, _ := budget.Charged(); used == 0 {
+		t.Fatal("durable diagnostic ID escaped its result owner")
+	}
+	alias := result
+	if !errors.Is(alias.Errors["orphan"], state.ErrDurableStorageRecovery) {
+		t.Fatal("result alias lost orphan")
+	}
+	alias.CloseStagedResults()
+	result.CloseStagedResults()
+	if used, _ := budget.Charged(); used != 0 {
+		t.Fatal("durable result close leaked charge", used)
 	}
 	t.Log("source-only cost: native opens=0, filters=0, published body decodes=0, registration fabricated=0")
 }

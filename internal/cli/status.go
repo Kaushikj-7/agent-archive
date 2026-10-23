@@ -692,7 +692,8 @@ func readSessionStatus(view *statusView, cfg config.Config, home string, store *
 			pending++
 		}
 	}
-	obligations, obligationErr := store.DurableStorageObligations()
+	obligations, closeObligations, obligationErr := store.DurableStorageObligationsOwned(context.Background())
+	defer closeObligations()
 	if obligationErr != nil {
 		view.Warnings = append(view.Warnings, "Durable publication evidence requires recovery; automatic cleanup and native substitution are unavailable.")
 	}

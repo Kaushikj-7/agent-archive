@@ -70,6 +70,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Durable quota and recovery checks traverse complete supported state inventories
+  beyond 65,536 combined entries. Explicit import recovery, reconciliation and
+  undo acquire session names once per invocation, with fresh stage/control reads
+  in groups of at most 50 directories. Explicit recovery covers stages before the
+  scheduled cursor; canceled censuses preserve queued work for retry.
+  The 1 GiB quota and per-write validation remain unchanged; large inventories
+  can still make admission checks slow.
 - A direct bucket search (after you decline indexing) keeps at most 256 MiB
   of matching sessions' text in memory. When a common word fills that, it
   stops, says so with the command that turns indexing on, and shows the

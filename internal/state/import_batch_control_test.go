@@ -234,12 +234,12 @@ func TestNativeImportBatchLockInspectionRefusesUnknownContent(t *testing.T) {
 					t.Error(err)
 				}
 			}()
-			remaining := durableEntryLimit
-			err = inspectImportLocks(t.Context(), held, &remaining)
+			visited := durableEntryLimit
+			err = inspectImportLocks(t.Context(), held, &visited)
 			if (err == nil) != (mode == lockTestValid) {
 				t.Fatalf("inspection %s: %v", mode, err)
 			}
-			if mode == lockTestValid && remaining != durableEntryLimit-1 {
+			if mode == lockTestValid && visited != durableEntryLimit+1 {
 				t.Fatal("lock entry was not charged")
 			}
 		})
