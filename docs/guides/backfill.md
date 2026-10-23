@@ -108,8 +108,11 @@ completes. Identity conflicts and other archive read errors still stop the plan.
 
 ## Durable import and recovery
 
-After confirmation, backfill stores the selected privacy-filtered evidence in
-private local staging before admitting each session. Setup's recent import and
+After confirmation, backfill keeps one import batch and oldest-start-first order
+across registration windows. Registration shares the native/state memory allowance;
+resource pressure stops unfinished work for a retry with the same options.
+It stores the selected privacy-filtered evidence in private local staging before
+admitting each session. Setup's recent import and
 `--background` use the same protection. Once a complete parent and its selected
 children are staged, that group can finish even if the apps delete their native
 files. A child payload written before its parent manifest is complete still needs
@@ -128,7 +131,15 @@ matching mapping files can be renamed or reordered without changing batch identi
 Run `agent-archive sync` to retry an interrupted staged upload, including
 supported protected legacy imports whose native files have already disappeared.
 
-Staging and pending publication share a 1 GiB local quota. Foreground imports
+Staging and pending publication share a 1 GiB local quota. Quota and recovery
+checks visit complete supported state inventories, including more than 65,536
+combined entries. Explicit recovery, reconciliation and undo acquire session
+names once per invocation and read current stages in groups of at most 50
+directories. Explicit recovery starts at the beginning of this inventory,
+regardless of the scheduled cursor. An observed membership change requires a fresh
+retry. Cancellation before the census completes stops collection and leaves queued
+work for retry. Every durable write still validates the full quota census while holding the admission locks,
+so large settled inventories can make admission slow. Foreground imports
 upload and verify bounded owned groups before preparing more evidence. Setup and
 background imports preserve completed work and report a capacity error so you
 can retry after the collector makes room. Each selected revision set and its

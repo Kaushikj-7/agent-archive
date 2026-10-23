@@ -184,7 +184,7 @@ func (s *Store) readPublishedDecoded(ctx context.Context, home *local.RootedHome
 	return sum, func() {}, nil
 }
 
-func (q *durableQuota) scanPublished(ctx context.Context, remaining *int, u *durableUsage) (err error) {
+func (q *durableQuota) scanPublished(ctx context.Context, visited *int, u *durableUsage) (err error) {
 	root, err := privateDirectory(q.home.Root, "published", false)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -202,13 +202,12 @@ func (q *durableQuota) scanPublished(ctx context.Context, remaining *int, u *dur
 		if err = ctx.Err(); err != nil {
 			return err
 		}
-		entries, e := dir.ReadDir(128)
+		entries, e := readDurableDirectory(ctx, dir)
 		if e != nil && !errors.Is(e, io.EOF) {
 			return e
 		}
 		for _, entry := range entries {
-			*remaining--
-			if *remaining < 0 {
+			if e := countDurableEntry(visited); e != nil {
 				return ErrDurableStorageRecovery
 			}
 			info, e := root.Lstat(entry.Name())

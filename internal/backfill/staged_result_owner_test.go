@@ -93,7 +93,7 @@ func TestStagedUndoRefusesBeforeChangingAuthority(t *testing.T) {
 		}
 	}
 	env := Environment{Sources: testSources, Home: r.Home, Now: func() time.Time { return r.AdmittedAt }}
-	if _, err = PlanUndo(env, r.Store, cfg, []Batch{batch}, batch, ""); !errors.Is(err, state.ErrReadySelectionFrozen) {
+	if _, err = planUndoForTesting(t, env, r.Store, cfg, []Batch{batch}, batch, ""); !errors.Is(err, state.ErrReadySelectionFrozen) {
 		t.Fatalf("unsupported typed undo: %v", err)
 	}
 	for _, path := range paths {
@@ -101,5 +101,63 @@ func TestStagedUndoRefusesBeforeChangingAuthority(t *testing.T) {
 		if err != nil || !bytes.Equal(before[path], after) {
 			t.Fatalf("typed undo changed authority: %s %v", path, err)
 		}
+	}
+}
+
+func TestLegacyStagedUndoResultOwnerSurvivesCopiesAndReassignment(t *testing.T) {
+	r, c, cfg := stagingFixture(t)
+	r.AfterStage = func(string) error { return errors.New("synthetic interruption") }
+	if _, err := r.Run([]Candidate{c}); err == nil {
+		t.Fatal("missing interruption")
+	}
+	batches, err := LoadBatches(r.Home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	budget := agentapi.NewNativeReadBudget(2 << 20)
+	store, closeStore := r.Store.WithReadBudget(t.Context(), budget)
+	defer closeStore()
+	env := Environment{Sources: testSources, Home: r.Home, Now: func() time.Time { return fixedNow }}
+	before := budget.Available()
+	plan, err := PlanUndo(env, store, cfg, batches, batches[0], "")
+	if err != nil || len(plan.Sessions) != 1 {
+		t.Fatal("legacy staged undo result", len(plan.Sessions), err)
+	}
+	defer plan.CloseStagedResults()
+	retained := before - budget.Available()
+	if retained <= 4096 {
+		t.Fatal("detached registration/slice/map unfunded", retained)
+	}
+	confirmed := plan.WithRetentionKept()
+	firstOwner := plan
+	// A new result must coexist with the preview, as in the CLI's recheck.
+	plan, err = PlanUndo(env, store, cfg, batches, batches[0], "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plan.CloseStagedResults()
+	if before-budget.Available() != 2*retained {
+		t.Fatal("recheck replaced preview owner")
+	}
+	if plan.Grew(confirmed) {
+		t.Fatal("detached copy changed semantic plan")
+	}
+	confirmed.CloseStagedResults()
+	firstOwner.CloseStagedResults()
+	if before-budget.Available() != retained {
+		t.Fatal("alias close lost recheck charge")
+	}
+	plan.CloseStagedResults()
+	if budget.Available() != before {
+		t.Fatal("reassigned result leaked owner")
+	}
+	// Make refusal occur after the first detached registration was retained.
+	invalid := batches[0]
+	invalid.StartedAt = fixedNow.Add(time.Hour)
+	if _, err = PlanUndo(env, store, cfg, []Batch{invalid}, invalid, ""); err == nil {
+		t.Fatal("missing post-retention refusal")
+	}
+	if budget.Available() != before {
+		t.Fatal("error retained result charge")
 	}
 }

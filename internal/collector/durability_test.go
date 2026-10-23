@@ -418,8 +418,8 @@ func TestMidPassLocalFailureIsPerSession(t *testing.T) {
 	}
 }
 
-// A pass whose context has expired stops before the next session, leaving
-// its work pending, instead of failing every remaining session.
+// An already canceled pass cannot complete its mandatory census. It reports
+// interruption without changing queued work or the last completed status.
 func TestExpiredPassContextLeavesSessionsPending(t *testing.T) {
 	t.Parallel()
 	local := newTestStore(t)
@@ -431,18 +431,52 @@ func TestExpiredPassContextLeavesSessionsPending(t *testing.T) {
 	if err := local.SaveRequest("session-1", "stop", now); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	if err := local.SetScanPending("session-1", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveStatus(state.Status{LastScanAt: now.Add(-time.Hour), PendingCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{"config.json", "registrations/session-1.json", "requests/session-1.json", "pending-scans/session-1.json", "status.json"}
+	before := make([][]byte, len(paths))
+	for i, path := range paths {
+		var err error
+		before[i], err = os.ReadFile(filepath.Join(local.Home(), path))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	labels := &mutableLabels{}
 	result, err := Run(ctx, local, store, Options{Sources: refuseNativeSources{t}, Parsers: testParsers, Labels: mutableLabelLookup{labels}, MachineID: "m", Now: func() time.Time { return now }})
-	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
-		t.Fatalf("%#v %v", result, err)
+	defer result.CloseStagedResults()
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, state.ErrDurableStorageRecovery) || len(result.Errors) != 1 || !errors.Is(result.Errors["durable-storage"], context.Canceled) || result.Scanned != 0 || len(result.Published) != 0 {
+		t.Fatalf("incomplete census hid interruption: %#v %v", result, err)
 	}
 	if labels.calls != 0 {
 		t.Fatal("canceled collector started label transport")
 	}
-	if status, err := local.LoadStatus(); err != nil || status.PendingCount != 1 {
-		t.Fatalf("status = %#v %v", status, err)
+	for i, path := range paths {
+		after, err := os.ReadFile(filepath.Join(local.Home(), path))
+		if err != nil || !bytes.Equal(before[i], after) {
+			t.Fatal("canceled census changed queued work or status", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(local.Home(), "pending", "session-1.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("canceled census created pending publication", err)
+	}
+	if objects, err := store.List(t.Context(), ""); err != nil || len(objects) != 0 {
+		t.Fatal("canceled census changed remote storage", objects, err)
+	}
+	result.CloseStagedResults()
+	retry, err := Run(t.Context(), local, store, Options{Sources: testSources, Parsers: testParsers, MachineID: "m", Now: func() time.Time { return now }})
+	defer retry.CloseStagedResults()
+	if err != nil || len(retry.Errors) != 0 || len(retry.Published) != 1 || retry.Published[0] != "session-1" {
+		t.Fatal("funded retry did not publish preserved work", retry, err)
+	}
+	if _, requested, err := local.LoadRequest("session-1"); err != nil || requested {
+		t.Fatal("funded retry did not acknowledge preserved request", requested, err)
 	}
 }
 

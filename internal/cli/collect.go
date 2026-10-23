@@ -886,7 +886,8 @@ func pendingCodexRollouts(lookup *discovery.CodexRolloutLookup) func() agentapi.
 func checkDurablePassRoots(ctx context.Context, store *state.Store) error {
 	scoped, closeScope := store.WithReadBudget(ctx, nil)
 	defer closeScope()
-	obligations, err := scoped.DurableStorageObligations()
+	obligations, closeObligations, err := scoped.DurableStorageObligationsOwned(ctx)
+	defer closeObligations()
 	if err != nil {
 		return err
 	}

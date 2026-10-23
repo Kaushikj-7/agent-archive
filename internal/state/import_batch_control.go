@@ -146,8 +146,8 @@ func readImportBatchBytesBounded(home *local.RootedHome, id string, limit int64)
 }
 
 // Synchronization files contain no authority or content. Validate each exact
-// filename and zero-byte regular file, charging the shared scan entry ceiling.
-func inspectImportLocks(ctx context.Context, home *local.RootedHome, remaining *int) (err error) {
+// filename and zero-byte regular file, counting each in the shared census.
+func inspectImportLocks(ctx context.Context, home *local.RootedHome, visited *int) (err error) {
 	dir, err := privateDirectory(home.Root, importLocksDirectory, false)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -162,14 +162,13 @@ func inspectImportLocks(ctx context.Context, home *local.RootedHome, remaining *
 	}
 	defer func() { err = errors.Join(err, f.Close()) }()
 	for {
-		entries, readErr := f.ReadDir(128)
+		entries, readErr := readDurableDirectory(ctx, f)
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
 			return readErr
 		}
 		for _, entry := range entries {
-			*remaining--
-			if *remaining < 0 {
-				return ErrDurableStorageRecovery
+			if err := countDurableEntry(visited); err != nil {
+				return err
 			}
 			if err := ctx.Err(); err != nil {
 				return err

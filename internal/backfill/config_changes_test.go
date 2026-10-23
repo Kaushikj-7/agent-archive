@@ -109,7 +109,7 @@ func TestImportConfigChangesAreRecordedAndUndone(t *testing.T) {
 	}
 
 	f.cfg = cfg
-	undo, err := PlanUndo(Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home, Now: func() time.Time { return fixedNow }}, f.store, cfg, []Batch{b}, b, "")
+	undo, err := planUndoForTesting(t, Environment{Sources: testSources, Discovery: testImportDiscovery(), DatabaseCatalogs: builtin.NewBuiltins(), NativePaths: builtin.NewBuiltins(), Worktrees: builtin.NewBuiltins(), Workspaces: builtin.NewBuiltins(), Children: builtin.NewBuiltins(), Imports: builtin.NewBuiltins(), Home: f.home, Now: func() time.Time { return fixedNow }}, f.store, cfg, []Batch{b}, b, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestUndoRestoresRetentionAndCountsWhatItDeletes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	plan, err := PlanUndo(env, f.store, f.cfg, []Batch{b}, b, "")
+	plan, err := planUndoForTesting(t, env, f.store, f.cfg, []Batch{b}, b, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,12 +219,12 @@ func TestUndoRestoresRetentionAndCountsWhatItDeletes(t *testing.T) {
 	}
 
 	// A --project undo leaves retention alone.
-	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{b}, b, "/work/p"); err != nil || plan.RestoreRetention != nil {
+	if plan, err = planUndoForTesting(t, env, f.store, f.cfg, []Batch{b}, b, "/work/p"); err != nil || plan.RestoreRetention != nil {
 		t.Fatalf("--project: %+v %v", plan.RestoreRetention, err)
 	}
 	// Changed since the import: left alone, and the plan says so.
 	f.cfg.RetentionDays = 200
-	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{b}, b, ""); err != nil || plan.RestoreRetention != nil || !plan.RetentionChangedSince {
+	if plan, err = planUndoForTesting(t, env, f.store, f.cfg, []Batch{b}, b, ""); err != nil || plan.RestoreRetention != nil || !plan.RetentionChangedSince {
 		t.Fatalf("changed since: %+v %v", plan.RestoreRetention, err)
 	}
 	out.Reset()
@@ -235,7 +235,7 @@ func TestUndoRestoresRetentionAndCountsWhatItDeletes(t *testing.T) {
 	// Already restored once: never again, even if it is back at To.
 	f.cfg.RetentionDays = 365
 	b.Retention.Restored = true
-	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{b}, b, ""); err != nil || plan.RestoreRetention != nil {
+	if plan, err = planUndoForTesting(t, env, f.store, f.cfg, []Batch{b}, b, ""); err != nil || plan.RestoreRetention != nil {
 		t.Fatalf("restored: %+v %v", plan.RestoreRetention, err)
 	}
 }

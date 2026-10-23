@@ -1191,7 +1191,18 @@ expansion and large-record scratch can lower the accepted input size; these are
 upper bounds, not a promise that every 32 MiB transcript fits. An oversized
 selection remains unadmitted instead of producing a journal the collector cannot
 read. Scheduled admission recovery visits at most 50 session
-directories per group and persists its cursor. Foreground backfill can publish a
+directories per group and persists its lexical progress cursor. Explicit full
+recovery, batch reconciliation and undo share one invocation-scoped, charged,
+content-free session-name index, with fresh strict stage/control reads on every
+page. Explicit recovery begins at the start of that inventory regardless of the
+scheduled cursor. Observed directory membership changes refuse completion and
+require a fresh traversal; the index supplies no absence, cleanup or admission
+authority. Quota and obligation censuses continue in bounded directory batches through actual EOF
+and successful closes, including more than 65,536 combined entries. The shared
+1 GiB quota, depth/record safety limits, control and atomic-copy headroom and
+complete per-write peer/config validation remain in force. Each complete quota
+census still holds hooks and quota locks; this does not establish short hook
+holds or remove per-write whole-peer work. Foreground backfill can publish a
 completed group to free capacity; setup and `--background` leave a resumable capacity
 error for later collection and retry.
 
@@ -1238,7 +1249,16 @@ only a few milliseconds at a time.
    then the new projects, `ImportedHarnesses`, and any retention edit. The
    batch file records every configuration change the import makes, so undo
    can reverse it (a guard test diffs every configuration field).
-5. **Register** in batches of at most 50 sessions or 100 ms:
+5. **Register** through one ordered candidate sequence, with at most 50 active
+   parents and holds of at most 50 steps or 100 ms. Fetch the next page outside
+   `hooks.lock`. Carry an unfinished parent's reservation, selected children,
+   digest and cleanup across holds; acknowledge only a prefix whose durable
+   disposition, obsolete-stage cleanup and after-hold batch callback succeeded.
+   Completion is explicit and valid only with an empty page after all borrowed
+   rows are acknowledged. Every producer error, including EOF, is a failure;
+   empty nonterminal pages and nonempty terminal pages are invalid. Close
+   unacknowledged borrowed work on cancellation, error and completion. Rebuilding
+   this disposable sequence after restart does not grant admission authority.
    - Take `hooks.lock` and reload the configuration. Skip anything no longer
      admitted. A session whose start is after `AdmittedAt` is skipped as
      `start_in_future`, a backstop for the clock check in step 4.
@@ -1246,11 +1266,24 @@ only a few milliseconds at a time.
      `RegisterNewSession`. If the native index already has the session, a
      hook or another run got there first, so count it `already_archived`.
      Otherwise save a request with reason `backfill`.
-   - Release `hooks.lock`.
+   - Release `hooks.lock`, then deliver only that hold's session/child ID deltas
+     and accumulate scalar totals. Preserve the normal gap between holds across
+     page boundaries. The production constructor shares the native lookup's
+     `NativeReadBudget` with active work, state reads and settled Cursor capture.
+     Each parent's decoded-state charge survives its partial holds and closes
+     after its disposition and callback, even while later rows of the page
+     remain. Cancellation cleanup preserves context values with an independent
+     timeout.
    - Subagent candidates are written just before their parent is
      registered. A crash in between leaves a candidate with no parent, which
      the collector discards, and a rerun writes it again with the same
      archive ID.
+   The test-only legacy slice entry point uses the same engine and may retain ID
+   arrays. The result owns a charge through explicit `Close`, including overlapping old/new
+   backing arrays during growth. The production sequence returns no such arrays.
+   Planning still materializes candidates, native catalogs, recovery witnesses
+   and the globally sorted selected slice; compatible batch arrays also remain.
+   This bounds active registration work, not whole-command memory or acquisition.
 6. **Upload.** Unless `--background` is set, run `runOnePass` repeatedly,
    exactly as `sync` does, until the batch has no pending work or a pass makes
    no progress. Progress is reported through a new

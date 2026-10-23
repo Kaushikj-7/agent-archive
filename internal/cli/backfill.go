@@ -546,7 +546,7 @@ func importRecentSessions(p *prompter, errOut io.Writer, home, userHome string, 
 			notImported(err)
 			return
 		}
-		printSetupImportResult(p, home, reg.result)
+		printSetupImportResult(p, reg.result)
 		printChangedAtAdmission(p.out, reg.changed, p.style.cmd(setupImportRetryCommand))
 	}
 	if older > 0 {
@@ -560,11 +560,9 @@ func importRecentSessions(p *prompter, errOut io.Writer, home, userHome string, 
 
 // printSetupImportResult reports this run, including independently registered
 // native children, without counting dependent subagent candidates as sessions.
-func printSetupImportResult(p *prompter, home string, result backfill.RegistrationResult) {
-	total, apps, err := registeredByApp(home, result)
-	if err != nil {
-		terminal.Println(p.out, "Recent session registration finished, but its totals could not be read. Check agent-archive status.")
-	} else if total > 0 {
+func printSetupImportResult(p *prompter, result backfill.RegistrationSummary) {
+	total, apps := registeredByApp(result)
+	if total > 0 {
 		terminal.Printf(p.out, "Imported %s from the last 7 days%s. Uploading in the background.\n", countNoun(total, "session"), apps)
 	}
 	printRegistrationSkips(p.out, result)
@@ -576,28 +574,12 @@ func printSetupImportResult(p *prompter, home string, result backfill.Registrati
 // registeredByApp counts only authoritative independent registrations made
 // by this invocation. Prior members of a resumed batch and dependent subagent
 // candidates are excluded; a native child's parent link does not change its count.
-func registeredByApp(home string, result backfill.RegistrationResult) (int, string, error) {
-	if len(result.Sessions)+len(result.Subagents) == 0 {
-		return 0, "", nil
-	}
-	regs, err := state.OpenReadOnly(home).LoadRegistrations()
-	if err != nil {
-		return 0, "", err
-	}
-	ids := map[string]bool{}
-	for _, id := range result.Sessions {
-		ids[id] = true
-	}
-	for _, id := range result.Subagents {
-		ids[id] = true
-	}
+func registeredByApp(result backfill.RegistrationSummary) (int, string) {
 	counts := map[string]int{}
 	total := 0
-	for _, reg := range regs {
-		if ids[reg.ArchiveSessionID] && independentImportedSession(reg) {
-			counts[appName(reg.Harness.Name)]++
-			total++
-		}
+	for harness, count := range result.IndependentByHarness {
+		counts[appName(harness)] += count
+		total += count
 	}
 	apps := make([]string, 0, len(counts))
 	for app := range counts {
@@ -614,9 +596,9 @@ func registeredByApp(home string, result backfill.RegistrationResult) (int, stri
 		parts[i] = fmt.Sprintf("%s %d", app, counts[app])
 	}
 	if len(parts) == 0 {
-		return total, "", nil
+		return total, ""
 	}
-	return total, " (" + strings.Join(parts, ", ") + ")", nil
+	return total, " (" + strings.Join(parts, ", ") + ")"
 }
 
 // interruptibleContext returns a context that the first Ctrl-C cancels,

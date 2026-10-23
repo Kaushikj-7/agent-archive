@@ -3,8 +3,11 @@ package backfill
 import (
 	"context"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"path/filepath"
 	"strings"
+	"testing"
 )
 
 // Helpers only tests use, kept out of the production files so deadcode
@@ -80,4 +83,23 @@ func (p Plan) CheckRecovery(ctx context.Context) error {
 func (i *recoverySourceInventory) current(ctx context.Context) bool {
 	grown, ok := i.compare(ctx)
 	return ok && !grown
+}
+
+func planUndoForTesting(t *testing.T, env Environment, store *state.Store, cfg config.Config, batches []Batch, b Batch, project string) (UndoPlan, error) {
+	t.Helper()
+	plan, err := PlanUndo(env, store, cfg, batches, b, project)
+	if err == nil {
+		t.Cleanup(plan.CloseStagedResults)
+	}
+	return plan, err
+}
+
+// Run registers every slice candidate through the sequence engine, retaining IDs.
+// When ReadBudget is supplied the caller must Close the returned result, even
+// after an error. The input slice remains owned and charged by its caller.
+func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
+	result := RegistrationResult{owner: &registrationIDs{reservation: r.ReadBudget.Reservation()}}
+	summary, err := r.runSequence(SliceCandidates(candidates), &result)
+	result.RegistrationSummary = summary
+	return result, err
 }

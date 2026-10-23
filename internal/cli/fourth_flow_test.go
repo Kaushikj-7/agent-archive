@@ -280,9 +280,16 @@ func TestFourthHistoricalQualifiedLocatorFlow(t *testing.T) {
 	_, err = backfill.ApplyToConfig(&cfg, plan, at)
 	must(t, err)
 	must(t, config.Save(home, cfg))
-	registration := backfill.Registration{Home: home, Store: local, Batch: "2026-09-01-1", AdmittedAt: at, DestinationID: cfg.DestinationID()}
-	result, err := registration.Run(imported)
-	if err != nil || len(result.Sessions) != 1 {
+	var registered []string
+	registration := backfill.Registration{
+		Home: home, Store: local, Batch: "2026-09-01-1", AdmittedAt: at, DestinationID: cfg.DestinationID(),
+		AfterHold: func(sessions, _ []string) error {
+			registered = append(registered, sessions...)
+			return nil
+		},
+	}
+	result, err := registration.RunSequence(backfill.SliceCandidates(imported))
+	if err != nil || result.RegisteredSessions != 1 || len(registered) != 1 {
 		t.Fatalf("historical admission: %+v %v", result, err)
 	}
 	remote := storagetest.NewMemoryStore()
@@ -290,7 +297,7 @@ func TestFourthHistoricalQualifiedLocatorFlow(t *testing.T) {
 	if err != nil || len(collected.Published) != 1 || len(collected.Errors) != 0 {
 		t.Fatalf("historical publication: %+v %v", collected, err)
 	}
-	metadata := fetchFourthMetadata(t, remote, string(orbifold.ID), result.Sessions[0])
+	metadata := fetchFourthMetadata(t, remote, string(orbifold.ID), registered[0])
 	bundle, err := reader.LoadSource(ctx, remote, metadata, reader.Limits{})
 	must(t, err)
 	if bundle.NativeSessionID != "historical" || bundle.Capture.SourceFormat != orbifold.Format {

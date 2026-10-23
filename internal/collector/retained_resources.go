@@ -18,6 +18,9 @@ import (
 var errRetainedBudget = agentapi.ReadBudgetLimit(errors.New("retained work exceeds shared data budget"))
 
 func (s *sessionScan) readBudget() *agentapi.NativeReadBudget {
+	if s.opts.readBudgetOwner != nil {
+		return s.opts.readBudgetOwner
+	}
 	if s.opts.sourcePasses != nil {
 		return s.opts.sourcePasses.env.ReadBudget
 	}

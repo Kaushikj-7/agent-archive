@@ -13,6 +13,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/trace"
 )
 
 type durableStorageScope struct {
@@ -103,11 +104,17 @@ func withPublicationStorageClosing(home string, composition bool, write func(Dur
 	if remaining <= 0 {
 		return local.ErrBusy
 	}
+	wait := trace.Start("durable hooks wait")
 	unlock, err := local.RootedLockWait(held, "hooks.lock", remaining)
+	wait.End()
 	if err != nil {
 		return err
 	}
-	defer unlock()
+	hold := trace.Start("durable hooks hold")
+	defer func() {
+		unlock()
+		hold.End()
+	}()
 	if _, e := held.Root.Lstat("setup-transaction.json"); !errors.Is(e, os.ErrNotExist) {
 		return errors.New("setup pending before durable storage protection")
 	}

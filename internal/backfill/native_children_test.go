@@ -112,7 +112,7 @@ func TestUndoProjectsPreservesExternalNativeChildAndTransfersResponsibility(t *t
 				t.Fatal(err)
 			}
 			env := Environment{Home: f.home, Now: func() time.Time { return fixedNow }}
-			plan, err := PlanUndo(env, f.store, f.cfg, []Batch{older, newer}, older, "")
+			plan, err := planUndoForTesting(t, env, f.store, f.cfg, []Batch{older, newer}, older, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -126,7 +126,7 @@ func TestUndoProjectsPreservesExternalNativeChildAndTransfersResponsibility(t *t
 			older.RecordKept(plan.KeepProjects)
 			undone := fixedNow.Add(-time.Hour)
 			older.UndoneAt = &undone
-			plan, err = PlanUndo(env, f.store, f.cfg, []Batch{older, newer}, newer, "")
+			plan, err = planUndoForTesting(t, env, f.store, f.cfg, []Batch{older, newer}, newer, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -146,7 +146,7 @@ func TestUndoRefusesReusedBatchWithEarlierIndependentNativeChild(t *testing.T) {
 	if err := f.store.SaveRegistration(child); err != nil {
 		t.Fatal(err)
 	}
-	_, err := PlanUndo(Environment{Home: f.home}, f.store, f.cfg, []Batch{batch}, batch, "")
+	_, err := planUndoForTesting(t, Environment{Home: f.home}, f.store, f.cfg, []Batch{batch}, batch, "")
 	var shared *SharedBatchIDError
 	if !errors.As(err, &shared) || shared.Sessions != 1 {
 		t.Fatalf("reused batch allowed deletion of earlier independent child: %v", err)
@@ -176,7 +176,7 @@ func TestUndoRetentionWarningsIncludeIndependentNativeChildren(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	plan, err := PlanUndo(Environment{Home: f.home, Now: func() time.Time { return fixedNow }}, f.store, f.cfg, []Batch{batch}, batch, "")
+	plan, err := planUndoForTesting(t, Environment{Home: f.home, Now: func() time.Time { return fixedNow }}, f.store, f.cfg, []Batch{batch}, batch, "")
 	if err != nil {
 		t.Fatal(err)
 	}

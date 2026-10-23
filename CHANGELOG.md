@@ -16,6 +16,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Confirmed backfill registers bounded active groups through one ordered batch,
+  sharing native/state memory charges and retaining unfinished parents across
+  short hook holds. Registration totals no longer retain a second full ID list.
+  Full planning/native acquisition and compatible batch arrays still have their
+  existing memory and evidence limits.
 - A direct bucket search (after you decline indexing) downloads up to 6
   sessions at once, holding about 64 MiB of them, ahead of the one it is
   matching, so it reads about three times as many sessions before each
@@ -73,6 +78,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Durable quota and recovery checks traverse complete supported state inventories
+  beyond 65,536 combined entries. Explicit import recovery, reconciliation and
+  undo acquire session names once per invocation, with fresh stage/control reads
+  in groups of at most 50 directories. Explicit recovery covers stages before the
+  scheduled cursor; canceled censuses preserve queued work for retry.
+  The 1 GiB quota and per-write validation remain unchanged; large inventories
+  can still make admission checks slow.
 - A direct bucket search (after you decline indexing) keeps at most 256 MiB
   of matching sessions' text in memory. When a common word fills that, it
   stops, says so with the command that turns indexing on, and shows the

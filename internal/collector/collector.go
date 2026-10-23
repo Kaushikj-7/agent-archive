@@ -66,11 +66,12 @@ type Options struct {
 	// bounded local recovery stage. Direct collector callers recover once.
 	SkipSessionIndexRecovery bool
 	// Parsers resolves pure derivation separately from native source access.
-	Parsers       agentapi.ParsersLookup
-	parserCache   map[string]agentapi.TranscriptParser
-	Sources       agentapi.SourcesLookup
-	sourcePasses  *sourcePassSet
-	retainedOwner *sessionScan
+	Parsers         agentapi.ParsersLookup
+	parserCache     map[string]agentapi.TranscriptParser
+	Sources         agentapi.SourcesLookup
+	sourcePasses    *sourcePassSet
+	readBudgetOwner *agentapi.NativeReadBudget
+	retainedOwner   *sessionScan
 	// Decoders translates retained legacy admission intents; no lookup is needed for new generic effects.
 	Decoders agentapi.DecodersLookup
 	// ParserVersion identifies metadata derivation independently of source capture.
@@ -248,7 +249,8 @@ type PublicationCandidate struct {
 // CloseStagedResults ends copied staged diagnostic ownership after all result
 // aliases and diagnostic consumers finish; it is a no-op for legacy results.
 type Result struct {
-	stagedDiagnostics *stagedDiagnosticResult
+	stagedDiagnostics  *stagedDiagnosticResult
+	durableDiagnostics *stagedDiagnosticResult
 
 	Scanned   int
 	Published []string
@@ -311,7 +313,7 @@ type Result struct {
 // metadata, subject to MinUploadInterval. One session's failure does not
 // stop the pass; it is recorded in Result.Errors and left retryable on the
 // next call.
-func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opts Options) (_ Result, runErr error) {
+func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opts Options) (result Result, runErr error) {
 	if local == nil || store == nil {
 		return Result{}, errors.New("local store and object store are required")
 	}
@@ -322,25 +324,23 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if err := recoverCatalogRemovals(ctx, local, store, opts); err != nil {
 		return Result{}, err
 	}
-	_, durableErr := local.DurableStorageObligations()
+	// Census, recovery, native source passes and returned diagnostic IDs share
+	// one captured ledger. The first census result ends before recovery.
+	opts.readBudgetOwner = (&sessionScan{opts: opts}).readBudget()
+	census, closeCensus := local.WithReadBudget(ctx, opts.readBudgetOwner)
+	defer closeCensus()
+	durableObligations, closeObligations, phase, durableErr := prepareDurablePass(ctx, census, local, opts)
+	defer closeObligations()
 	if durableErr != nil {
-		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
+		return Result{Errors: map[string]error{string(phase): durableErr}}, durableErr
 	}
-	admissionErr := resumeImportAdmissionsForPass(ctx, local, opts)
-	if admissionErr != nil {
-		return Result{Errors: map[string]error{"staged-imports": admissionErr}}, admissionErr
-	}
-	// Recovery can finish cancellation or establish selected admissions. Report
-	// their current obligations, rather than the pre-recovery orphan snapshot.
-	durableObligations, durableErr := local.DurableStorageObligations()
-	if durableErr != nil {
-		return Result{Errors: map[string]error{"durable-storage": durableErr}}, durableErr
-	}
-	for _, obligation := range durableObligations {
-		if obligation.SessionID == "" {
-			return Result{Errors: map[string]error{"durable-storage": state.ErrDurableStorageRecovery}}, state.ErrDurableStorageRecovery
+	diagnosticReader, closeDiagnosticResults := census.WithImportResultScope(ctx)
+	defer func() {
+		if result.durableDiagnostics == nil {
+			closeDiagnosticResults()
 		}
-	}
+	}()
+	durableDiagnostics := &stagedDiagnosticResult{close: closeDiagnosticResults}
 	recoveryLocal, closeRecovery := local.WithReadBudget(ctx, (&sessionScan{opts: opts}).readBudget())
 	var generationRecoveryErr error
 	if ctx.Err() == nil {
@@ -388,14 +388,15 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	subagents := materializeSubagentCandidates(ctx, local, opts, now)
 	opts.repoKeys = newRepoKeyCache(opts.RepoKey)
 	p := &pass{
-		ctx:                ctx,
-		local:              local,
-		remote:             store,
-		opts:               opts,
-		now:                now,
-		durableObligations: durableObligations,
-		result:             Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
-		expiredSubagents:   subagents.expired,
+		ctx:                     ctx,
+		local:                   local,
+		remote:                  store,
+		opts:                    opts,
+		now:                     now,
+		durableObligations:      durableObligations,
+		durableDiagnosticReader: diagnosticReader,
+		result:                  Result{durableDiagnostics: durableDiagnostics, Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
+		expiredSubagents:        subagents.expired,
 	}
 	closeStartupCandidates = p.releaseStartupCandidates
 	defer p.releaseLabelResources()
@@ -440,6 +441,41 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		return p.result, err
 	}
 	return p.result, p.saveStatus()
+}
+
+type durablePassPhase string
+
+const (
+	durablePassPhaseNone    durablePassPhase = ""
+	durablePassPhaseStorage durablePassPhase = "durable-storage"
+	durablePassPhaseImports durablePassPhase = "staged-imports"
+)
+
+// prepareDurablePass closes the initial result before recovery and retains only
+// the current, fully funded obligation result until Run ends.
+func prepareDurablePass(ctx context.Context, census, local *state.Store, opts Options) ([]state.DurableStorageObligation, func(), durablePassPhase, error) {
+	_, closeInitial, err := census.DurableStorageObligationsOwned(ctx)
+	closeInitial()
+	if err != nil {
+		return nil, func() {}, durablePassPhaseStorage, err
+	}
+	if err := resumeImportAdmissionsForPass(ctx, local, opts); err != nil {
+		return nil, func() {}, durablePassPhaseImports, err
+	}
+	// Recovery can finish cancellation or establish selected admissions. Report
+	// their current obligations, rather than the pre-recovery orphan snapshot.
+	obligations, closeObligations, err := census.DurableStorageObligationsOwned(ctx)
+	if err != nil {
+		closeObligations()
+		return nil, func() {}, durablePassPhaseStorage, err
+	}
+	for _, obligation := range obligations {
+		if obligation.SessionID == "" {
+			closeObligations()
+			return nil, func() {}, durablePassPhaseStorage, state.ErrDurableStorageRecovery
+		}
+	}
+	return obligations, closeObligations, durablePassPhaseNone, nil
 }
 
 func replayPassAdmissions(ctx context.Context, local *state.Store, now time.Time, opts Options) error {
@@ -567,10 +603,11 @@ type pass struct {
 	pending int
 	// expiredSubagents lists the subagents this pass stopped waiting for
 	// (see state.Status.ExpiredSubagents).
-	expiredSubagents   []state.ExpiredSubagent
-	result             Result
-	durableObligations []state.DurableStorageObligation
-	durableCounted     map[string]bool
+	expiredSubagents        []state.ExpiredSubagent
+	result                  Result
+	durableObligations      []state.DurableStorageObligation
+	durableDiagnosticReader *state.Store
+	durableCounted          map[string]bool
 	// priorDeferred is the previous pass's state.Status.DeferredSessions
 	// (see orderLookupAllowanceDeferralsLast).
 	priorDeferred map[string]string
@@ -648,13 +685,21 @@ func (p *pass) loadWork() error {
 				p.pending++
 				p.durableCounted[id] = true
 				p.unreadable[id] = true
-				addError(p.result.Errors, id, err)
+				copied, retainErr := p.durableDiagnosticReader.RetainImportID(p.ctx, id)
+				if retainErr != nil {
+					return retainErr
+				}
+				addError(p.result.Errors, copied, err)
 			}
 		}
 		if !registered[id] && !orphaned[id] {
 			orphaned[id] = true
 			p.pending++
-			addError(p.result.Errors, id, state.ErrDurableStorageRecovery)
+			copied, retainErr := p.durableDiagnosticReader.RetainImportID(p.ctx, id)
+			if retainErr != nil {
+				return retainErr
+			}
+			addError(p.result.Errors, copied, state.ErrDurableStorageRecovery)
 		}
 	}
 	// Lock files of sessions and candidates that are gone go now, while the
@@ -1201,9 +1246,12 @@ func (p *pass) repairListingIndex() {
 // consumer and alias is finished; legacy results have no staged owner.
 type stagedDiagnosticResult struct{ close func() }
 
-// CloseStagedResults is idempotent and ends only staged diagnostic ID ownership.
+// CloseStagedResults is idempotent and ends staged and durable diagnostic ownership.
 // No result alias may use those diagnostics after the shared owner is closed.
 func (r Result) CloseStagedResults() {
+	if r.durableDiagnostics != nil {
+		r.durableDiagnostics.close()
+	}
 	if r.stagedDiagnostics != nil {
 		r.stagedDiagnostics.close()
 	}

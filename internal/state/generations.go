@@ -315,12 +315,14 @@ func (s *Store) generationRecoveryOriginal(id string) (archive.SessionRegistrati
 // ResumeGenerationRecoveries replays interrupted local transitions before any
 // census, admission replay or storage work. Caller owns collector.lock.
 func (s *Store) ResumeGenerationRecoveries(ctx context.Context) error {
+	s, ctx, closeContext := s.withDurableContext(ctx)
+	defer closeContext()
 	if _, err := s.inspectDurableReadRoots(ctx); err != nil {
 		return err
 	}
 	files, err := os.ReadDir(filepath.Join(s.home, generationRecoveryDir))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return ctx.Err()
 	}
 	if err != nil {
 		return err
@@ -345,7 +347,7 @@ func (s *Store) ResumeGenerationRecoveries(ctx context.Context) error {
 			pressure = append(pressure, fmt.Errorf("generation recovery %q remains pending: %w", id, err))
 		}
 	}
-	return errors.Join(pressure...)
+	return errors.Join(errors.Join(pressure...), ctx.Err())
 }
 
 // Each restart journal owns a short scope. Completed receipts and preceding
