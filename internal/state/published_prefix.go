@@ -42,7 +42,7 @@ func (s *Store) publishedPrefix(id string) (summary PublishedSummary, found, hea
 	if err != nil {
 		return summary, true, false, info, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	cfg, present, err := s.loadDurableInspectionConfig(home)
+	cfg, present, err := s.loadDurableInspectionConfig(s.durableContext(), home)
 	if err != nil || !present {
 		return summary, true, false, info, errors.Join(ErrDurableStorageRecovery, err)
 	}

@@ -3,8 +3,11 @@ package backfill
 import (
 	"context"
 	"github.com/wangjohn/agent-archive/internal/agents/builtin"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"path/filepath"
 	"strings"
+	"testing"
 )
 
 // Helpers only tests use, kept out of the production files so deadcode
@@ -90,4 +93,13 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 	summary, err := r.runSequence(SliceCandidates(candidates), &result)
 	result.RegistrationSummary = summary
 	return result, err
+}
+
+func planUndoForTesting(t *testing.T, env Environment, store *state.Store, cfg config.Config, batches []Batch, b Batch, project string) (UndoPlan, error) {
+	t.Helper()
+	plan, err := PlanUndo(env, store, cfg, batches, b, project)
+	if err == nil {
+		t.Cleanup(plan.CloseStagedResults)
+	}
+	return plan, err
 }

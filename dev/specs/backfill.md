@@ -1169,7 +1169,18 @@ expansion and large-record scratch can lower the accepted input size; these are
 upper bounds, not a promise that every 32 MiB transcript fits. An oversized
 selection remains unadmitted instead of producing a journal the collector cannot
 read. Scheduled admission recovery visits at most 50 session
-directories per group and persists its cursor. Foreground backfill can publish a
+directories per group and persists its lexical progress cursor. Explicit full
+recovery, batch reconciliation and undo share one invocation-scoped, charged,
+content-free session-name index, with fresh strict stage/control reads on every
+page. Explicit recovery begins at the start of that inventory regardless of the
+scheduled cursor. Observed directory membership changes refuse completion and
+require a fresh traversal; the index supplies no absence, cleanup or admission
+authority. Quota and obligation censuses continue in bounded directory batches through actual EOF
+and successful closes, including more than 65,536 combined entries. The shared
+1 GiB quota, depth/record safety limits, control and atomic-copy headroom and
+complete per-write peer/config validation remain in force. Each complete quota
+census still holds hooks and quota locks; this does not establish short hook
+holds or remove per-write whole-peer work. Foreground backfill can publish a
 completed group to free capacity; setup and `--background` leave a resumable capacity
 error for later collection and retry.
 

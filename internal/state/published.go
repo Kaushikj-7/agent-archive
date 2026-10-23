@@ -454,7 +454,7 @@ func (s *Store) loadPublishedStateContext(ctx context.Context, archiveSessionID 
 	if !safeFileComponent(archiveSessionID) {
 		return nil, errors.New("archive session ID is not a safe file name component")
 	}
-	s.preparePublicationAccounting(archiveSessionID)
+	s.preparePublicationAccounting(ctx, archiveSessionID)
 	publishedStateLoads.Add(1)
 	p := &Published{store: s, id: archiveSessionID}
 	observedHome, err := os.Stat(s.home)

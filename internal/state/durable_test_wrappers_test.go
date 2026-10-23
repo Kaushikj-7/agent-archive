@@ -3,14 +3,7 @@ package state
 import (
 	"context"
 	"io"
-
-	"github.com/wangjohn/agent-archive/internal/local"
 )
-
-func (s *Store) inspectPendingRoot(home *local.RootedHome, name string, remaining *int, legacy bool) ([]DurableStorageObligation, bool, error) {
-	matched := false
-	return s.inspectPendingRootWitnessed(home, name, remaining, legacy, &matched)
-}
 
 func (s *Store) validateDurableReadPending(id string, history bool, owner *publicationReadOwner) error {
 	return s.validateDurableReadPendingSelection(id, history, owner, nil)

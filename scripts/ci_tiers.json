@@ -4,6 +4,28 @@
   "weekly_cron": "17 8 * * 0",
   "restorations": [
     {
+      "package": "internal/state",
+      "test": "TestDurableCensusCompletesCombinedRoots",
+      "restore": "daily",
+      "pr": "257 physical combined entries with 129 published peers; full 65537-entry boundary NOT RUN",
+      "full_children": [
+        "257",
+        "65537"
+      ],
+      "full_fixture": "65537 physical combined entries across 129 supported published peers and 65408 session directories; actual source-set save/readback, exact quota accounting, late unknown-owner refusal and cancellation"
+    },
+    {
+      "package": "internal/backfill",
+      "test": "TestImportFullConsumersAcquireStageNamesOnce",
+      "restore": "daily",
+      "pr": "all three actual 5000-directory sparse consumers; full 50000-directory body NOT RUN",
+      "full_children": [
+        "5000",
+        "50000"
+      ],
+      "full_fixture": "5000 and50000 physical sparse session directories; actual full recovery, batch reconciliation and legacy undo each acquire names once, without native-session throughput qualification"
+    },
+    {
       "package": "internal/archive",
       "test": "TestFitStagesNeverGrowWithThePrefix",
       "restore": "weekly",

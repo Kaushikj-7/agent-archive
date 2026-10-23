@@ -122,6 +122,7 @@ func (cmd undoCommand) run() int {
 	if err != nil {
 		return fail("%v", err)
 	}
+	defer plan.CloseStagedResults()
 	if keepRetention {
 		plan = plan.WithRetentionKept()
 	}
@@ -247,6 +248,7 @@ func (cmd undoCommand) apply(plan backfill.UndoPlan, bfEnv backfill.Environment,
 	if plan, err = backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, batches, *batch, project); err != nil {
 		return fail("%v", err)
 	}
+	defer plan.CloseStagedResults()
 	if keepRetention {
 		plan = plan.WithRetentionKept()
 	}
