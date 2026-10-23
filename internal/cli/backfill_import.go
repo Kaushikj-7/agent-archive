@@ -111,7 +111,7 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 type registeredImport struct {
 	batch  backfill.Batch
 	added  int
-	result backfill.RegistrationResult
+	result backfill.RegistrationSummary
 	// plan is what was imported: the confirmed plan without the sessions
 	// whose evidence changed before the configuration was committed, which
 	// changed counts (backfill.Plan.AdmitRecovery).
@@ -263,6 +263,7 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 		onCapacity = importCapacityDrain(env, capacityOut, home, store, batch.ID, collectorGuard, lookup, readHomes, interrupt.requested)
 	}
 	registration := backfill.Registration{
+		ReadBudget: lookup.NativeReadBudget(),
 		HistoricalSourcePolicy: func(current config.Config) func(string) bool {
 			return backfill.NewHistoricalSourcePolicy(env.backfillEnvironment(plan.Home, current), current, plan.Filters)
 		},
@@ -282,7 +283,7 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 		AfterHold: recordImportGroup(env, home, &batch, registrationCtx, onCapacity),
 		Stop:      interrupt.requested,
 	}
-	result, err := registration.Run(candidates)
+	result, err := registration.RunSequence(backfill.SliceCandidates(candidates))
 	reg.batch, reg.result = batch, result
 	if err != nil {
 		stopRegister()
@@ -296,7 +297,7 @@ func registerImportLocked(env Env, stdout, stderr io.Writer, home string, plan b
 		if errors.Is(err, backfill.ErrStopped) {
 			return reg, &importStoppedError{batchID: batch.ID, sessions: len(batch.Sessions), cause: err}
 		}
-		return reg, &importRegistrationError{err: err, registered: len(result.Sessions)}
+		return reg, &importRegistrationError{err: err, registered: result.RegisteredSessions}
 	}
 	if err := completeBatch(env, home, store, &batch); err != nil {
 		stopRegister()
@@ -591,13 +592,13 @@ func commitAdmitted(ctx context.Context, env Env, home string, plan backfill.Pla
 	return batch, admittedAt, len(changes.ProjectIDs), nil
 }
 
-func printRegistered(out io.Writer, batchID string, added int, result backfill.RegistrationResult) {
+func printRegistered(out io.Writer, batchID string, added int, result backfill.RegistrationSummary) {
 	line := ""
 	if added > 0 {
 		line = fmt.Sprintf("Added %s. ", countNoun(added, "project"))
 	}
-	line += "Registered " + countNoun(len(result.Sessions), "session")
-	if n := len(result.Subagents); n > 0 {
+	line += "Registered " + countNoun(result.RegisteredSessions, "session")
+	if n := result.RegisteredSubagents; n > 0 {
 		line += " and " + countNoun(n, "subagent transcript")
 	}
 	terminal.Printf(out, "%s as import %s.\n", line, batchID)
@@ -605,7 +606,7 @@ func printRegistered(out io.Writer, batchID string, added int, result backfill.R
 }
 
 // printRegistrationSkips keeps non-admission outcomes visible to every import caller.
-func printRegistrationSkips(out io.Writer, result backfill.RegistrationResult) {
+func printRegistrationSkips(out io.Writer, result backfill.RegistrationSummary) {
 	var skipped []string
 	if n := result.AlreadyArchived; n > 0 {
 		skipped = append(skipped, fmt.Sprintf("%d already in the archive", n))

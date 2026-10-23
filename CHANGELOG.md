@@ -8,6 +8,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Confirmed backfill registers bounded active groups through one ordered batch,
+  sharing native/state memory charges and retaining unfinished parents across
+  short hook holds. Registration totals no longer retain a second full ID list.
+  Full planning/native acquisition and compatible batch arrays still have their
+  existing memory and evidence limits.
 - A direct bucket search (after you decline indexing) downloads up to 6
   sessions at once, holding about 64 MiB of them, ahead of the one it is
   matching, so it reads about three times as many sessions before each

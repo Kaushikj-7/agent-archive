@@ -912,14 +912,14 @@ func TestBackfillHookDuringRegistration(t *testing.T) {
 			return nil
 		},
 	}
-	result, err := registration.Run(candidates)
+	result, err := registration.RunSequence(backfill.SliceCandidates(candidates))
 	close(finished)
 	wg.Wait()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Sessions) != len(candidates) {
-		t.Fatalf("registered %d of %d", len(result.Sessions), len(candidates))
+	if result.RegisteredSessions != len(candidates) {
+		t.Fatalf("registered %d of %d", result.RegisteredSessions, len(candidates))
 	}
 	for _, err := range hookErrs {
 		if errors.Is(err, local.ErrBusy) {
