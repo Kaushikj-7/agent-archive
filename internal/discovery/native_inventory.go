@@ -817,6 +817,9 @@ func (l *NativeInventory) candidate(ctx context.Context, id string) (agentapi.So
 		selected := agentapi.SourceRef{Kind: archive.SourceKindFile, Path: path, Key: id}
 		env := agentapi.SourceEnvironment{NativeRoot: &l.root, ReadBudget: l.budget, Files: nativeCountedOpener{owner: l}, Policy: transcriptio.OpenPolicy{Root: l.root.Canonical, RejectSymlinks: true}}
 		if err = l.validate(ctx, env, selected, id); err != nil {
+			if l.historical {
+				err = &nativeCandidateError{err: err}
+			}
 			return ref, stamp, found, err
 		}
 		after, err := (nativeCountedOpener{owner: l}).Lstat(path)
@@ -896,6 +899,9 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 		l.skipInactive()
 	}
 	ref, stamp, n, err := l.candidate(ctx, request.NativeID)
+	if l.refusesCandidate(ctx, err) {
+		return agentapi.LocatorResult{Status: agentapi.LocatorRefused}, nil
+	}
 	if err != nil {
 		l.stopped = true
 		return pending, err
@@ -918,6 +924,23 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 	}
 	l.tokens[request.NativeID] = nativeSelection{token: token, relative: strings.Clone(relative), stamp: stamp}
 	return agentapi.LocatorResult{Status: agentapi.LocatorFound, Candidates: []agentapi.SourceRef{ref}, Revision: token}, nil
+}
+
+// nativeCandidateError marks, for a historical preview only, that the selected
+// source itself failed startup validation, as opposed to the inventory's
+// directories or allowance. Capture keeps the validator's error unchanged.
+type nativeCandidateError struct{ err error }
+
+func (e *nativeCandidateError) Error() string { return e.err.Error() }
+func (e *nativeCandidateError) Unwrap() error { return e.err }
+
+// refusesCandidate reports whether a historical preview refuses one source
+// that failed its own startup validation on that source's row. Later owners
+// keep their share of the remaining allowance; inventory, allowance and
+// cancellation failures still stop the inventory.
+func (l *NativeInventory) refusesCandidate(ctx context.Context, err error) bool {
+	var rejected *nativeCandidateError
+	return err != nil && l.historical && errors.As(err, &rejected) && ctx.Err() == nil
 }
 
 // Check accepts only an exact token minted by this still-live collector epoch.

@@ -141,7 +141,7 @@ func runLocalList(deps any, stdout, stderr io.Writer, o localReadOptions) int {
 	}
 	// Preview loads exactly the existing first bounded batch. It never performs
 	// full filtering or silently broadens the search when names are unavailable.
-	catalog := nativePreviewCatalog{ctx: ctx, files: env.nativeFiles(), sources: registryFor(env), previews: registryFor(env), candidates: result.Candidates, reserved: result.Coverage.ReadBytes, stderr: stderr, now: env.now()}
+	catalog := nativePreviewCatalog{ctx: ctx, files: env.nativeFiles(), sources: registryFor(env), previews: registryFor(env), candidates: result.Candidates, reserved: result.Coverage.ReadBytes, stderr: stderr, now: env.now(), command: "list"}
 	more, err := catalog.load()
 	if err != nil {
 		return localReadFailure(stderr, "list", err)
