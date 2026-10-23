@@ -93,3 +93,13 @@ func planUndoForTesting(t *testing.T, env Environment, store *state.Store, cfg c
 	}
 	return plan, err
 }
+
+// Run registers every slice candidate through the sequence engine, retaining IDs.
+// When ReadBudget is supplied the caller must Close the returned result, even
+// after an error. The input slice remains owned and charged by its caller.
+func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
+	result := RegistrationResult{owner: &registrationIDs{reservation: r.ReadBudget.Reservation()}}
+	summary, err := r.runSequence(SliceCandidates(candidates), &result)
+	result.RegistrationSummary = summary
+	return result, err
+}

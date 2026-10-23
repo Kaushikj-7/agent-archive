@@ -86,12 +86,13 @@ type Registration struct {
 	RepoKey func(root string) string
 }
 
-// RegistrationResult counts what registration did with the plan's sessions.
-type RegistrationResult struct {
-	// Sessions and Subagents are the archive session IDs registered, and
-	// given to subagent candidates.
-	Sessions  []string
-	Subagents []string
+// RegistrationSummary counts registration outcomes without retaining session IDs.
+type RegistrationSummary struct {
+	RegisteredSessions  int
+	RegisteredSubagents int
+	// IndependentByHarness counts authoritative independent registrations made
+	// by this invocation, including native children but excluding dependents.
+	IndependentByHarness map[string]int
 	// AlreadyArchived counts sessions a hook, or another run, registered
 	// after the plan was made.
 	AlreadyArchived int
@@ -115,11 +116,13 @@ type RegistrationResult struct {
 // leaves the session unregistered, and a rerun plans and registers it again;
 // the candidates it left are reused, or discarded by the collector.
 type parentWork struct {
-	c        Candidate
-	id       string
-	next     int
-	children []string
-	links    []archive.SupplementalEvidence
+	store      *state.Store
+	closeStore func()
+	c          Candidate
+	id         string
+	next       int
+	children   []string
+	links      []archive.SupplementalEvidence
 	// chatChecked and chatGone are the result of checking, before the hold,
 	// whether a chat found only in Cursor's database is still there (see
 	// checkChats).
@@ -135,69 +138,11 @@ type parentWork struct {
 	stageObsolete        bool
 }
 
-// Run registers every candidate, in order.
-func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
-	var result RegistrationResult
-	ctx := r.Context
-	if ctx == nil {
-		ctx = context.Background()
+func (r Registration) forWork(w *parentWork) Registration {
+	if w.store != nil {
+		r.Store = w.store
 	}
-	works := make([]*parentWork, len(candidates))
-	for i, c := range candidates {
-		works[i] = &parentWork{c: c}
-	}
-	flushed := [2]int{}
-	repoKeys := map[string]string{}
-	flush := func() error {
-		sessions, subagents := result.Sessions[flushed[0]:], result.Subagents[flushed[1]:]
-		flushed = [2]int{len(result.Sessions), len(result.Subagents)}
-		if r.AfterHold == nil || (len(sessions) == 0 && len(subagents) == 0) {
-			return nil
-		}
-		return r.AfterHold(sessions, subagents)
-	}
-	for i := 0; i < len(works); {
-		if ctx.Err() != nil || (r.Stop != nil && r.Stop()) {
-			return result, errors.Join(ErrStopped, r.cancelPrepared(works))
-		}
-		if err := r.checkChats(works[i:]); err != nil {
-			return result, err
-		}
-		r.resolveRepoKeys(works[i:], repoKeys)
-		// Filesystem/Git proof validation belongs before the short lock hold.
-		limit := maxHoldSteps
-		if r.MaxHoldSteps > 0 {
-			limit = r.MaxHoldSteps
-		}
-		r.validateGroupProof(ctx, works[i:i+min(limit, len(works)-i)])
-		if err := r.stageGroup(ctx, works[i:i+min(limit, len(works)-i)]); err != nil {
-			if ctx.Err() != nil || (r.Stop != nil && r.Stop()) {
-				return result, errors.Join(ErrStopped, err, r.cancelPrepared(works))
-			}
-			return result, err
-		}
-		if ctx.Err() != nil || (r.Stop != nil && r.Stop()) {
-			return result, errors.Join(ErrStopped, r.cancelPrepared(works))
-		}
-		groupStart := i
-		err := r.hold(works, &i, &result)
-		if cleanupErr := r.cleanObsoleteStages(ctx, works[groupStart:groupStart+min(limit, len(works)-groupStart)]); err == nil {
-			err = cleanupErr
-		}
-		if flushErr := flush(); err == nil {
-			err = flushErr
-		}
-		if err != nil {
-			if errors.Is(err, ErrStopped) {
-				return result, errors.Join(err, r.cancelPrepared(works))
-			}
-			return result, err
-		}
-		if i < len(works) {
-			time.Sleep(holdGap)
-		}
-	}
-	return result, nil
+	return r
 }
 
 func (r Registration) validateGroupProof(ctx context.Context, works []*parentWork) {
@@ -226,7 +171,7 @@ func (r Registration) validateGroupProof(ctx context.Context, works []*parentWor
 // of the hold. The answer can be a hold old by the time it is used; it only
 // ever was a check against the plan, and the collector handles a chat
 // deleted later.
-func (r Registration) checkChats(works []*parentWork) error {
+func (r Registration) checkChats(ctx context.Context, works []*parentWork) error {
 	limit := maxHoldSteps
 	if r.MaxHoldSteps > 0 {
 		limit = r.MaxHoldSteps
@@ -234,7 +179,7 @@ func (r Registration) checkChats(works []*parentWork) error {
 	// A hold finishes at most one session per step.
 	for _, w := range works[:min(limit, len(works))] {
 		if w.c.SourceKind == archive.SourceKindCursorSQLite && !w.chatChecked {
-			gone, err := r.chatGone(w.c)
+			gone, err := r.chatGone(ctx, w.c)
 			if err != nil {
 				return err
 			}
@@ -250,14 +195,17 @@ func (r Registration) checkChats(works []*parentWork) error {
 // hold must not wait for. A session the configuration does not admit (an
 // excluded project, one not yet activated) is not asked about at all; it will
 // not be registered.
-func (r Registration) resolveRepoKeys(works []*parentWork, repoKeys map[string]string) {
+func (r Registration) resolveRepoKeys(works []*parentWork, repoKeys *registrationRepoKeys) error {
 	if r.RepoKey == nil {
-		return
+		return nil
 	}
 	cfg, found, err := config.Load(r.Home)
-	if err != nil || !found {
+	if err != nil {
+		return fmt.Errorf("reload registration configuration: %w", err)
+	}
+	if !found {
 		// The hold reports it; nothing is asked about meanwhile.
-		return
+		return nil
 	}
 	limit := maxHoldSteps
 	if r.MaxHoldSteps > 0 {
@@ -275,15 +223,18 @@ func (r Registration) resolveRepoKeys(works []*parentWork, repoKeys map[string]s
 			w.repoKeyChecked = true
 			continue
 		}
-		key, asked := repoKeys[w.c.ProjectRoot]
+		key, asked := repoKeys.values[w.c.ProjectRoot]
 		if !asked {
 			if key = r.RepoKey(w.c.ProjectRoot); !archive.IsRepoKey(key) {
 				key = ""
 			}
-			repoKeys[w.c.ProjectRoot] = key
+			if err := repoKeys.add(w.c.ProjectRoot, key); err != nil {
+				return err
+			}
 		}
 		w.repoKey, w.repoKeyChecked = key, true
 	}
+	return nil
 }
 
 // hold takes hooks.lock, rereads the configuration, and works through the
@@ -310,7 +261,7 @@ func (r Registration) hold(works []*parentWork, i *int, result *RegistrationResu
 	}
 	start := time.Now()
 	for steps := 0; *i < len(works) && steps < limit && time.Since(start) < maxHold; steps++ {
-		done, err := r.step(cfg, works[*i], result)
+		done, err := r.forWork(works[*i]).step(cfg, works[*i], result)
 		if err != nil {
 			return err
 		}
@@ -365,6 +316,9 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 	if err != nil || skip {
 		return true, err
 	}
+	if err := result.prepareIDs(c.NativeChild, w.id, w.children); err != nil {
+		return false, err
+	}
 	reg, err := r.Store.RegisterReservedSession(agentmeta.SessionKey{Agent: agentmeta.ID(archive.CanonicalHarness(c.Harness)), NativeID: c.NativeSessionID}, w.id, func(id string) archive.SessionRegistration {
 		reg := r.registration(c, id, w.repoKey)
 		reg.StagedImportSHA256 = w.stagedSHA256
@@ -376,12 +330,13 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 	if err := r.Store.SaveRequest(reg.ArchiveSessionID, "backfill", r.AdmittedAt, w.links...); err != nil {
 		return true, fmt.Errorf("queue an imported session: %w", err)
 	}
-	if reg.NativeChild {
-		result.Subagents = append(result.Subagents, reg.ArchiveSessionID)
-	} else {
-		result.Sessions = append(result.Sessions, reg.ArchiveSessionID)
+	result.recordIDs(reg.NativeChild, reg.ArchiveSessionID, w.children)
+	if !reg.IsChild() || reg.NativeChild {
+		if result.IndependentByHarness == nil {
+			result.IndependentByHarness = map[string]int{}
+		}
+		result.IndependentByHarness[archive.CanonicalHarness(reg.Harness.Name)]++
 	}
-	result.Subagents = append(result.Subagents, w.children...)
 	return true, nil
 }
 
@@ -515,11 +470,11 @@ func (r Registration) registration(c Candidate, archiveID, repoKey string) archi
 // longer there. It reads a few indexed rows in place, never a copy. A
 // database that can't be read now (Cursor holds a lock) is not "gone": the
 // chat is registered, and the collector reads it when it can.
-func (r Registration) chatGone(c Candidate) (bool, error) {
+func (r Registration) chatGone(ctx context.Context, c Candidate) (bool, error) {
 	if r.CursorDatabase == "" {
 		return false, nil
 	}
-	_, err := observeSource(context.Background(), r.Sources, agentapi.SourceEnvironment{Database: r.CursorDatabase}, c.Harness, agentapi.SourceRef{Kind: c.SourceKind, Path: c.TranscriptPath, Key: c.SourceKey})
+	_, err := observeSource(ctx, r.Sources, agentapi.SourceEnvironment{Database: r.CursorDatabase}, c.Harness, agentapi.SourceRef{Kind: c.SourceKind, Path: c.TranscriptPath, Key: c.SourceKey})
 	if fatalSourceFailure(err) {
 		return false, err
 	}
@@ -742,23 +697,29 @@ func (r Registration) stageSelectedChild(ctx context.Context, parent archive.Ses
 	return digest, !errors.Is(err, state.ErrImportPolicyChanged), err
 }
 
-func (r Registration) cancelPrepared(works []*parentWork) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (r Registration) cancelPrepared(ctx context.Context, works []*parentWork) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	for _, w := range works {
-		if w.stagedSHA256 == "" {
-			if err := r.cancelUnlinkedChildren(ctx, w); err != nil {
-				return err
-			}
-			continue
-		}
-		reg := r.registration(w.c, w.id, w.repoKey)
-		reg.StagedImportSHA256 = w.stagedSHA256
-		if err := r.Store.CancelImportStage(ctx, reg); err != nil {
+		if err := r.forWork(w).cancelParent(ctx, w); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (r Registration) cancelParent(ctx context.Context, w *parentWork) error {
+	if r.ReadBudget != nil {
+		store, closeStore := r.Store.WithReadBudget(ctx, r.ReadBudget)
+		defer closeStore()
+		r.Store = store
+	}
+	if w.stagedSHA256 == "" {
+		return r.cancelUnlinkedChildren(ctx, w)
+	}
+	reg := r.registration(w.c, w.id, w.repoKey)
+	reg.StagedImportSHA256 = w.stagedSHA256
+	return r.Store.CancelImportStage(ctx, reg)
 }
 
 // A stop can interrupt a group's preparation before its parent journal exists.
@@ -779,15 +740,16 @@ func (r Registration) cancelUnlinkedChildren(ctx context.Context, w *parentWork)
 func (r Registration) stageGroup(ctx context.Context, works []*parentWork) error {
 	if r.DurableSources {
 		for _, w := range works {
+			owner := r.forWork(w)
 			if w.id != "" && w.stagedSHA256 == "" && !w.projectEvidenceStale {
-				if err := r.stage(ctx, w); err != nil {
+				if err := owner.stage(ctx, w); err != nil {
 					if !errors.Is(err, state.ErrDurableStorageCapacity) || r.OnCapacity == nil {
 						return err
 					}
 					if recoveryErr := r.OnCapacity(ctx); recoveryErr != nil {
 						return errors.Join(err, recoveryErr)
 					}
-					if err := r.stage(ctx, w); err != nil {
+					if err := owner.stage(ctx, w); err != nil {
 						return err
 					}
 				}
@@ -800,11 +762,12 @@ func (r Registration) stageGroup(ctx context.Context, works []*parentWork) error
 func (r Registration) cleanObsoleteStages(ctx context.Context, works []*parentWork) (err error) {
 	for _, w := range works {
 		if w.stageObsolete {
+			store := r.forWork(w).Store
 			reg := r.registration(w.c, w.id, w.repoKey)
 			reg.StagedImportSHA256 = w.stagedSHA256
-			stage, found, e := r.Store.LoadImportStage(ctx, reg)
+			stage, found, e := store.LoadImportStage(ctx, reg)
 			if e == nil && found {
-				e = r.Store.DropUnadmittedImportStage(ctx, stage)
+				e = store.DropUnadmittedImportStage(ctx, stage)
 			}
 			if err == nil {
 				err = e

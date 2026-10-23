@@ -64,8 +64,11 @@ completes. Identity conflicts and other archive read errors still stop the plan.
 
 ## Durable import and recovery
 
-After confirmation, backfill stores the selected privacy-filtered evidence in
-private local staging before admitting each session. Setup's recent import and
+After confirmation, backfill keeps one import batch and oldest-start-first order
+across registration windows. Registration shares the native/state memory allowance;
+resource pressure stops unfinished work for a retry with the same options.
+It stores the selected privacy-filtered evidence in private local staging before
+admitting each session. Setup's recent import and
 `--background` use the same protection. Once a complete parent and its selected
 children are staged, that group can finish even if the apps delete their native
 files. A child payload written before its parent manifest is complete still needs
