@@ -39,7 +39,7 @@ func TestMuseBindingOffersDormantCapturePorts(t *testing.T) {
 	if len(observations) != 1 || observations[0] != (agentapi.AgentRuntime{Agent: agentmeta.Muse, RuntimeObservation: agentapi.RuntimeObservation{PresenceKey: "MUSE_THREAD_ID"}}) {
 		t.Fatalf("presence-only observation lost or upgraded: %+v", observations)
 	}
-	if got := agentmeta.SetupNames(r.Catalog()); !slices.Equal(got, []string{"codex", "claude", "cursor", "muse"}) {
+	if got := agentmeta.SetupNames(r.Catalog()); !slices.Equal(got, []string{"codex", "claude", "cursor", "muse", "agy"}) {
 		t.Fatalf("bound hook integration missing from capability catalog: %v", got)
 	}
 	for _, names := range [][]string{r.HookAgents(), r.SkillAgents(), r.VersionAgents()} {

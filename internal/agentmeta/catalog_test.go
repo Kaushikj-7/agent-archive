@@ -61,7 +61,7 @@ func TestCatalogValidationAndCopies(t *testing.T) {
 }
 
 func TestPresentationOrders(t *testing.T) {
-	if got := Names(Builtins()); !reflect.DeepEqual(got, []string{"claude", "codex", "cursor", "muse"}) {
+	if got := Names(Builtins()); !reflect.DeepEqual(got, []string{"claude", "codex", "cursor", "muse", "agy"}) {
 		t.Fatal(got)
 	}
 	if got := SetupNames(Builtins()); len(got) != 0 {
@@ -79,7 +79,7 @@ func TestPresentationOrders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := SetupNames(composed); !reflect.DeepEqual(got, []string{"codex", "claude", "cursor"}) {
+	if got := SetupNames(composed); !reflect.DeepEqual(got, []string{"codex", "claude", "cursor", "agy"}) {
 		t.Fatal(got)
 	}
 }
@@ -92,7 +92,7 @@ func TestIdentityAndIntegrationImportBoundaries(t *testing.T) {
 			t.Errorf("agentmeta imports non-standard package %s", name)
 		}
 	}
-	for _, pkg := range []string{"archive", "config", "reader", "agentapi", "agents/claude", "agents/codex", "agents/cursor", "agents/muse"} {
+	for _, pkg := range []string{"archive", "config", "reader", "agentapi", "agents/claude", "agents/codex", "agents/cursor", "agents/muse", "agents/agy"} {
 		_, all := importgraph.Imports(t, prefix+pkg)
 		importgraph.Forbid(t, pkg, all, prefix+"agents/builtin", prefix+"cli", prefix+"capture", prefix+"collector", prefix+"backfill")
 	}

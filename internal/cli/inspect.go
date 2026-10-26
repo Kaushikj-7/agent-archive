@@ -570,7 +570,7 @@ func harnessFlagWithCatalog(c agentmeta.Catalog, value string) (string, bool) {
 }
 
 func harnessFlagError(value string) string {
-	return fmt.Sprintf("--harness must be claude, codex, or cursor, not %q", value)
+	return fmt.Sprintf("--harness must be claude, codex, cursor, muse, or agy, not %q", value)
 }
 
 // listSchemaVersion versions the `list --json` document.

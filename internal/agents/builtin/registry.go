@@ -10,6 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/agy"
 	"github.com/wangjohn/agent-archive/internal/agents/claude"
 	"github.com/wangjohn/agent-archive/internal/agents/codex"
 	"github.com/wangjohn/agent-archive/internal/agents/cursor"
@@ -139,6 +140,7 @@ func NewBuiltins() *Registry {
 		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Codex}, Launcher: codex.Launcher{}, Skills: codex.Skills(), Imports: codex.Imports(), Evidence: codex.CapabilityEvidence{}, Version: codex.VersionInspector{}, NativeHeaders: codex.NativeHeaders{}, Discovery: codex.NativeHeaders{}, NativePaths: codex.ProjectEvidence{}, Sources: codex.SourceProvider{}, Filter: codex.Filter{}, Runtime: codex.RuntimeDetector{}, Hooks: codex.Hooks(), Decoder: codex.Decoder(), Parser: codex.Parser{}, Preview: codex.Previewer{}, Labels: codex.LabelProvider{}},
 		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Cursor}, Launcher: cursor.Launcher{}, Skills: cursor.Skills(), Imports: cursor.Imports(), Evidence: cursor.CapabilityEvidence{}, Version: cursor.VersionInspector{}, Discovery: cursor.Discovery{}, NativePaths: cursor.ProjectEvidence{}, Workspace: cursor.ProjectEvidence{}, DatabaseCatalog: cursor.DatabaseCatalogInspector{}, Sources: cursor.SourceProvider{}, Filter: cursor.Filter{}, Runtime: cursor.RuntimeDetector{}, Hooks: cursor.Hooks(), Decoder: cursor.Decoder(), Parser: cursor.Parser{}, Labels: cursor.LabelProvider{}},
 		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Muse}, Launcher: muse.Launcher{}, Decoder: muse.Decoder(), Hooks: muse.Hooks(), Skills: muse.Skills(), Version: muse.VersionInspector{}, NativeHeaders: muse.NativeHeaders{}, Discovery: muse.NativeHeaders{}, Preview: muse.Previewer{}, Runtime: muse.RuntimeDetector{}, Sources: muse.SourceProvider{}, Filter: muse.Filter{}, Parser: muse.Parser{}},
+		{Descriptor: agentmeta.Descriptor{ID: agentmeta.Agy}, Launcher: agy.Launcher{}, Sources: agy.SourceProvider{}, Filter: agy.Filter{}, Parser: agy.Parser{}, Discovery: agy.Discovery{}, Hooks: agy.Hooks(), Decoder: agy.Decoder()},
 	})
 	if err != nil {
 		panic(err)

@@ -16,6 +16,7 @@ const (
 	Codex  ID = "codex"
 	Cursor ID = "cursor"
 	Muse   ID = "muse"
+	Agy    ID = "agy"
 )
 
 // Operation names an implemented integration port, not host health or evidence.
@@ -195,6 +196,7 @@ var identities = mustCatalog([]Descriptor{
 	{ID: Codex, DisplayName: "Codex"},
 	{ID: Cursor, DisplayName: "Cursor"},
 	{ID: Muse, Aliases: []string{"muse-code"}, DisplayName: "Muse Code"},
+	{ID: Agy, Aliases: []string{"antigravity"}, DisplayName: "Antigravity CLI"},
 })
 
 func mustCatalog(ds []Descriptor) Catalog {

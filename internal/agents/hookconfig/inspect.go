@@ -28,7 +28,7 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 			return false, nil
 		}
 	}
-	hs, err := hooksObject(doc.Root)
+	hs, err := configuredObject(doc.Root, app)
 	if err != nil || hs == nil {
 		return false, err
 	}
@@ -56,7 +56,7 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 			kind, _ := handler.Get("type")
 			timeout, timeoutOK := handler.Get("timeout")
 			timeoutNumber, numberOK := timeout.(json.Number)
-			if got != command || (!app.Flat && kind != "command") || app.CommandMarkerOwnership && (!timeoutOK || !numberOK || timeoutNumber != "2") {
+			if got != command || (!app.Flat && !app.Direct && kind != "command") || app.CommandMarkerOwnership && (!timeoutOK || !numberOK || timeoutNumber != "2") {
 				return false, nil
 			}
 			ours++
@@ -77,11 +77,11 @@ func otherInstallations(data []byte, spec Spec, hook Hook) ([]agentapi.HookOther
 	if err != nil {
 		return nil, nil, err
 	}
-	hs, err := hooksObject(doc.Root)
+	app := spec
+	hs, err := configuredObject(doc.Root, app)
 	if err != nil || hs == nil {
 		return nil, nil, err
 	}
-	app := spec
 	var others []agentapi.HookOtherOwner
 	var locations []string
 	for _, m := range hs.Members {

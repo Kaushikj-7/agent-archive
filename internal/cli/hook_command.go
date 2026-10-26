@@ -60,7 +60,7 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 	}()
 	fs := flag.NewFlagSet("_hook", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	harness = fs.String("harness", "", "harness name (codex, claude, cursor)")
+	harness = fs.String("harness", "", "harness name (codex, claude, cursor, muse, agy)")
 	if err := fs.Parse(args); err != nil {
 		return 0
 	}

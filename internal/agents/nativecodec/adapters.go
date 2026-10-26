@@ -96,6 +96,28 @@ func (CursorAdapter) Name() string { return "cursor" }
 // Version returns the adapter version shared by every adapter.
 func (CursorAdapter) Version() string { return adapterVersion }
 
+// AgyAdapter supports the plaintext Antigravity CLI trajectory JSONL format.
+// It deliberately accepts only documented lifecycle and tool record types;
+// unknown records remain privacy gaps rather than pass-through content.
+type AgyAdapter struct{}
+
+// Name returns the canonical harness name, "agy".
+func (AgyAdapter) Name() string { return "agy" }
+
+// Version returns the AGY adapter policy version.
+func (AgyAdapter) Version() string { return "1.0.0" }
+
+// FilterJSONL keeps documented Antigravity trajectory records through the
+// shared privacy filter.
+func (AgyAdapter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error) {
+	return filterJSONL(r, "agy-jsonl", map[string]bool{
+		"USER_INPUT": true, "PLANNER_RESPONSE": true, "RUN_COMMAND": true,
+		"TOOL_CALL": true, "TOOL_RESULT": true, "GENERIC": true,
+		"ERROR": true, "TASK_STARTED": true, "TASK_COMPLETED": true,
+		"SUBAGENT_STARTED": true, "SUBAGENT_COMPLETED": true,
+	}, nil)
+}
+
 // FilterJSONL keeps only the Cursor record types this adapter recognizes,
 // through the shared privacy filter, and labels the result cursor-jsonl.
 func (CursorAdapter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error) {

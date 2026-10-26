@@ -77,7 +77,7 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	latest := fs.Bool("latest", false, "the most recent session for the project, by path or by repository (remote origin)")
 	project := fs.String("project", "", "the project to pick from and search, as a directory or a project name, and the directory --latest searches (default: the current directory's repository)")
 	allProjects := fs.Bool("all-projects", false, "pick from and search every project, not only the current repository's")
-	harness := fs.String("harness", "", "only sessions from this harness (claude, codex, cursor, muse)")
+	harness := fs.String("harness", "", "only sessions from this harness (claude, codex, cursor, muse, agy)")
 	file := fs.String("file", "", "render this native transcript file directly (requires --harness)")
 	source := fs.String("source", "auto", "where session content comes from: auto, local, or archive")
 	maxBytes := fs.Int("max-bytes", archive.DefaultHandoffMaxBytes, "output budget in bytes; 0 means no limit")
@@ -85,7 +85,7 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	output := fs.String("output", "", "write to this file (mode 0600) instead of stdout")
 	force := fs.Bool("force", false, "with --output, replace an existing file")
 	noPreamble := fs.Bool("no-preamble", false, "omit the note addressed to the receiving agent")
-	to := fs.String("to", "", "launch a local claude, codex, cursor, or muse session with this handoff")
+	to := fs.String("to", "", "launch a local claude, codex, cursor, muse, or agy session with this handoff")
 	worktree := fs.Bool("worktree", false, "launch the agent in a new git worktree carrying this checkout's uncommitted and untracked files")
 	branch := fs.String("branch", "", "with --worktree, the new branch (default: handoff/ and the first 8 characters of SESSION_ID)")
 	here := fs.Bool("here", false, "run the launched agent in this terminal")
@@ -120,7 +120,7 @@ func validateHandoffOptionsWithCatalog(opts *handoffOptions, interactive bool, c
 	if opts.to != "" {
 		opts.to = agentmeta.Canonical(c, opts.to)
 		if opts.to == "" {
-			return "--to must be claude, codex, cursor, or muse"
+			return "--to must be claude, codex, cursor, muse, or agy"
 		}
 	}
 	if message := validateHandoffFlagCombinations(*opts, interactive); message != "" {
@@ -163,7 +163,7 @@ func validateHandoffFlagCombinations(opts handoffOptions, interactive bool) stri
 	case selectors > 1:
 		return "a session ID, --latest, and --file are mutually exclusive"
 	case opts.file != "" && opts.harness == "":
-		return "--file requires --harness (claude, codex, cursor, or muse)"
+		return "--file requires --harness (claude, codex, cursor, muse, or agy)"
 	case opts.project != "" && opts.allProjects:
 		return "--project and --all-projects cannot be used together: --project picks one project, --all-projects searches every project"
 	case opts.project != "" && opts.file != "":
@@ -205,12 +205,12 @@ const noSelectorMessage = "name a session ID or title, --latest, or --file PATH;
 
 // noCurrentSessionMessage is noSelectorMessage for --to, which can also take
 // the agent session it runs in.
-const noCurrentSessionMessage = "name a session ID or title, --latest, or --file PATH; with none, --to hands off the Claude Code, Codex, or Cursor session it runs in, or asks on a terminal"
+const noCurrentSessionMessage = "name a session ID or title, --latest, or --file PATH; with none, --to hands off the Claude Code, Codex, Cursor, or Antigravity session it runs in, or asks on a terminal"
 
 func validateHandoffLaunchOptionsWithCatalog(to, output, format string, noPreamble bool, c agentmeta.Catalog) string {
 	switch {
 	case to != "" && !launchSupported(c, to):
-		return "--to must be claude, codex, cursor, or muse"
+		return "--to must be claude, codex, cursor, muse, or agy"
 	case to != "" && output != "":
 		return "--to and --output cannot be used together"
 	case to != "" && format != "markdown":
