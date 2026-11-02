@@ -3,7 +3,7 @@ package muse
 import (
 	"encoding/json"
 	"errors"
-	"strings"
+	"slices"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 )
@@ -34,15 +34,18 @@ func refusal(raw []byte, line int64, err error) error {
 	if native.Frame != nil {
 		return agentapi.NewNativeRefusalError(agentapi.RefusalUnsupportedRecord, *native.Frame, line, err)
 	}
-	parts := []string{native.PayloadType}
-	for _, kind := range []any{native.Payload.Kind, native.Payload.Event.Kind, native.Payload.Record.Kind} {
-		if s, ok := kind.(string); ok && s != "" && !strings.Contains(native.PayloadType, s) {
-			parts = append(parts, s)
+	family := ""
+	if agentapi.ReportableNativeFamily(native.PayloadType) {
+		family = native.PayloadType
+		// A kind adds to the family only when it is a distinct reportable name;
+		// one that is not keeps the payload type rather than blanking it.
+		parts := []string{native.PayloadType}
+		for _, kind := range []any{native.Payload.Kind, native.Payload.Event.Kind, native.Payload.Record.Kind} {
+			if s, ok := kind.(string); ok && s != "" && !slices.Contains(parts, s) && agentapi.ReportableNativeFamily(family+"/"+s) {
+				family += "/" + s
+				parts = append(parts, s)
+			}
 		}
-	}
-	family := strings.Join(parts, "/")
-	if native.PayloadType == "" {
-		family = ""
 	}
 	if line == 1 && family != "" {
 		// The session layout's first line is always the permission frame. A file
@@ -50,4 +53,61 @@ func refusal(raw []byte, line int64, err error) error {
 		return agentapi.NewNativeRefusalError(agentapi.RefusalNoSessionStart, family, line, err)
 	}
 	return agentapi.NewNativeRefusalError(agentapi.RefusalUnsupportedRecord, family, line, err)
+}
+
+// rootError is errFormat naming the logical row that failed root validation,
+// or row -1 when no single row did. order reports a startup structure the
+// adapter has not qualified, rather than a row contradicting the session.
+type rootError struct {
+	row   int
+	order bool
+}
+
+func (rootError) Error() string { return errFormat.Error() }
+func (rootError) Unwrap() error { return errFormat }
+
+// startupRefusal names why rows ending at physical line did not qualify as a
+// session. Rows short of their startup lane are incomplete unless a present
+// row is itself inconsistent. Other errors pass through unchanged.
+func startupRefusal(rows []logicalRow, line int64, err error) error {
+	var failed rootError
+	if !errors.As(err, &failed) {
+		return err
+	}
+	supported := supportedRows(rows)
+	if failed.order && len(supported) < startupRows(supported) {
+		return agentapi.NewNativeRefusalError(agentapi.RefusalIncompleteStart, "", line, err)
+	}
+	reason := agentapi.RefusalInconsistentRecord
+	if failed.order {
+		reason = agentapi.RefusalUnsupportedStartup
+	}
+	family := ""
+	if failed.row < 0 && len(supported) > 0 {
+		// Only the whole startup prefix failed: name the row that completed it.
+		last := supported[len(supported)-1]
+		family, line = string(last.Type), last.Position.Line
+	} else if failed.row >= 0 {
+		r := rows[failed.row]
+		if r.ordinary != nil {
+			family = string(r.ordinary.Type)
+		} else if r.omission != nil {
+			family = r.omission.Omitted.PayloadType
+		}
+		if r.valid() {
+			_, _, _, pos := r.identity()
+			line = pos.Line
+		}
+	}
+	return agentapi.NewNativeRefusalError(reason, family, line, err)
+}
+
+// shortRefusal names why rows, read to line before end stopped the read short
+// of their startup lane, did not qualify. end stays in the error chain.
+func shortRefusal(rows []logicalRow, line int64, end error) error {
+	err := validateRoot(rows)
+	if err == nil {
+		err = rootError{row: -1, order: true}
+	}
+	return startupRefusal(rows, line, errors.Join(end, err))
 }

@@ -13,34 +13,34 @@ import (
 // the startup structure.
 func validateRoot(rows []logicalRow) error {
 	slots := ordinarySlots(rows)
-	if len(rows) < 4 || !initialAuthority(slots) {
-		return errFormat
+	if len(rows) < 2 || !initialAuthority(slots) {
+		return rootError{row: -1, order: true}
 	}
 	supported := supportedRows(rows)
 	s := rootState{owner: slots[0].Stream.ID, start: slots[0].Timestamp, ids: map[string]bool{}}
 	n := 0
 	for i, r := range rows {
 		if !r.valid() {
-			return errFormat
+			return rootError{row: i}
 		}
 		if r.ordinary != nil {
 			if !s.envelope(*r.ordinary, i) || !validFields(*r.ordinary) {
-				return errFormat
+				return rootError{row: i}
 			}
 			if err := s.authority(supported, n); err != nil {
-				return err
+				return rootError{row: i, order: startupRecord(supported, n) != nil}
 			}
 			n++
 			continue
 		}
 		st, id, seq, pos := r.identity()
 		if !r.omission.valid() || st.ID != s.owner || seq != int64(i+1) || pos.Line != int64(i) || s.ids[id] {
-			return errFormat
+			return rootError{row: i}
 		}
 		s.ids[id] = true
 	}
 	if s.original != 1 || s.workspace == "" || len(supported) < 4 || !startupPrefix(supported) {
-		return errFormat
+		return rootError{row: -1, order: true}
 	}
 	return nil
 }

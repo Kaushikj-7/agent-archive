@@ -142,10 +142,7 @@ func (Filter) filterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 	// conservatively remain held until the enclosing output lease is released.
 	nativeJoins = nativeBodyJoins{}
 	if err = validateLogical(rows); err != nil {
-		if len(rows) < 4 && errors.Is(err, errFormat) {
-			err = agentapi.NewNativeRefusalError(agentapi.RefusalIncompleteStart, "", line, err)
-		}
-		return out, release, err
+		return out, release, startupRefusal(rows, line, err)
 	}
 	out, err = filtered(rows, c.Limits, gaps.list())
 	if err == nil && contentJoin != nil {

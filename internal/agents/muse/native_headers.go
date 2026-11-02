@@ -41,10 +41,7 @@ func (NativeHeaders) InspectHeader(req agentapi.NativeHeaderRequest) (agentapi.N
 		if len(supported) < startupRows(supported) {
 			return true
 		}
-		decodeErr = validateRoot(rows)
-		if errors.Is(decodeErr, errFormat) {
-			decodeErr = agentapi.NewNativeRefusalError(agentapi.RefusalUnsupportedStartup, string(supported[len(supported)-1].Type), line, decodeErr)
-		}
+		decodeErr = startupRefusal(rows, line, validateRoot(rows))
 		complete = decodeErr == nil
 		return false
 	})
@@ -52,7 +49,10 @@ func (NativeHeaders) InspectHeader(req agentapi.NativeHeaderRequest) (agentapi.N
 		return agentapi.NativeHeader{}, err
 	}
 	if !complete {
-		return agentapi.NativeHeader{}, errFormat
+		if line == 0 {
+			return agentapi.NativeHeader{}, errFormat
+		}
+		return agentapi.NativeHeader{}, shortRefusal(rows, line, nil)
 	}
 	supported := supportedRows(rows)
 	owner := supported[0].Stream.ID

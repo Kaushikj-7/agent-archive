@@ -24,6 +24,10 @@ const (
 	// RefusalUnsupportedStartup reports startup records that are each
 	// supported but arrive in an order the adapter has not qualified.
 	RefusalUnsupportedStartup NativeRefusalReason = "unsupported_startup"
+	// RefusalInconsistentRecord reports a supported record that contradicts
+	// the session's other records, such as another owner, workspace or
+	// duplicate record ID.
+	RefusalInconsistentRecord NativeRefusalReason = "inconsistent_record"
 )
 
 // nativeFamily is the native schema identifier shape: lowercase words joined
@@ -44,10 +48,16 @@ type NativeRefusalError struct {
 	Err    error
 }
 
-// NewNativeRefusalError keeps family only when it has the schema identifier shape
-// and the shared credential redaction leaves it unchanged.
+// ReportableNativeFamily reports whether family has the schema identifier
+// shape and the shared credential redaction leaves it unchanged.
+func ReportableNativeFamily(family string) bool {
+	_, changed := archive.RedactSensitive(family)
+	return !changed && len(family) <= maxNativeFamily && nativeFamily.MatchString(family)
+}
+
+// NewNativeRefusalError keeps family only when it is reportable.
 func NewNativeRefusalError(reason NativeRefusalReason, family string, line int64, err error) *NativeRefusalError {
-	if _, changed := archive.RedactSensitive(family); changed || len(family) > maxNativeFamily || !nativeFamily.MatchString(family) {
+	if !ReportableNativeFamily(family) {
 		family = ""
 	}
 	return &NativeRefusalError{Reason: reason, Family: family, Line: line, Err: err}
@@ -65,6 +75,8 @@ func (e *NativeRefusalError) Error() string {
 		return fmt.Sprintf("incomplete session: the file ends at line %d, before its startup records", e.Line)
 	case RefusalUnsupportedStartup:
 		return fmt.Sprintf("unsupported startup order: %s at line %d", family, e.Line)
+	case RefusalInconsistentRecord:
+		return fmt.Sprintf("inconsistent session: %s at line %d contradicts its other records", family, e.Line)
 	case RefusalUnsupportedRecord:
 	}
 	return fmt.Sprintf("unsupported %s record at line %d", family, e.Line)

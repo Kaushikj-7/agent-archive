@@ -231,7 +231,7 @@ func (s *sourceSnapshot) startupFacts(ctx context.Context) (archive.NativeSource
 		raw, charge, err := physicalLine(ctx, reader, limit, reservation)
 		held += charge
 		if errors.Is(err, io.EOF) && line > 1 {
-			return empty, agentapi.NewNativeRefusalError(agentapi.RefusalIncompleteStart, "", line-1, err)
+			return empty, shortRefusal(rows, line-1, err)
 		}
 		if err != nil {
 			return empty, err
@@ -252,10 +252,7 @@ func (s *sourceSnapshot) startupFacts(ctx context.Context) (archive.NativeSource
 			continue
 		}
 		if err := validateRoot(rows); err != nil {
-			if errors.Is(err, errFormat) {
-				err = agentapi.NewNativeRefusalError(agentapi.RefusalUnsupportedStartup, string(supported[len(supported)-1].Type), line, err)
-			}
-			return empty, err
+			return empty, startupRefusal(rows, line, err)
 		}
 		cwd := ""
 		for _, r := range supported {
