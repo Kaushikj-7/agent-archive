@@ -469,6 +469,16 @@ Registered capture, backfill and Muse launch stay unavailable. Explicit files an
 
 The [production local v1 field policy](../qualification/muse/retained-allowlist-local-v1.json) is the exact current retained projection. The original `retained-allowlist.json` and derived corpus remain byte-frozen historical Q0 evidence; their broader metrics ceiling is not a production promise.
 
+Filter 39 qualifies the route-metadata startup lane: the permission frame,
+metadata without a model, schema-2 route facts, matching metadata with the
+model, then the original opening (unsupported records after the second
+metadata are omitted and are not members). The metadata pair is checked as in
+the two-metadata lane, including the private build and search copies before
+omission; the route cwd must equal the workspace. Metadata, route facts and
+metadata are contiguous at sequences 3 to 5, all four rows require nil
+causation, and timestamps never decrease after the frame. This changes
+validation only, with no new retained fields.
+
 Filter 38 supports two more Muse retained runtime facts. An
 `inbox_delivery.run_origin` fact (exact `{client_id}` body; the client is
 dropped) keeps `origin_kind` and the `run_id` it started. That run's start is
@@ -602,7 +612,7 @@ reminder agent and log path are dropped. The adapter exposes the verified
 child IDs to capture, which records lineage; the link grants no child
 transcript, capture or coverage.
 
-Filter 39 verifies workflow child lifecycle records (`workflow_child_lifecycle`
+Filter 40 verifies workflow child lifecycle records (`workflow_child_lifecycle`
 run events) the same way. Each must have no causation and an exact member set
 for its status: `scheduled`, `started`, `usage`, `completed` or `terminal`,
 with a positive integer `attempt`. It must name a child session

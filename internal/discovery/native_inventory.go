@@ -820,7 +820,7 @@ func (l *NativeInventory) candidate(ctx context.Context, id string) (agentapi.So
 			return ref, stamp, found, agentapi.ErrInvalidSourceBinding
 		}
 		if l.counts.Probes >= HeaderProbes {
-			return ref, stamp, found, agentapi.Wrap(agentapi.Unavailable, errors.New("native startup allowance spent"))
+			return ref, stamp, found, agentapi.Wrap(agentapi.Unavailable, ErrNativeStartupAllowance)
 		}
 		l.counts.Probes++
 		selected := agentapi.SourceRef{Kind: archive.SourceKindFile, Path: path, Key: id}
@@ -909,6 +909,10 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 	}
 	ref, stamp, n, err := l.candidate(ctx, request.NativeID)
 	if l.refusesCandidate(ctx, err) {
+		if candidateReadFailed(err) {
+			// The preview words the read failure; later owners keep their share.
+			return pending, err
+		}
 		refused := agentapi.LocatorResult{Status: agentapi.LocatorRefused}
 		errors.As(err, &refused.Refusal)
 		return refused, nil
@@ -937,6 +941,10 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 	return agentapi.LocatorResult{Status: agentapi.LocatorFound, Candidates: []agentapi.SourceRef{ref}, Revision: token}, nil
 }
 
+// ErrNativeStartupAllowance reports that one pass spent its native startup
+// probes. The same scope spends them again; a narrower one may not.
+var ErrNativeStartupAllowance = errors.New("native startup allowance spent")
+
 // nativeCandidateError marks, for a historical preview only, that the selected
 // source itself failed startup validation, as opposed to the inventory's
 // directories or allowance. Capture keeps the validator's error unchanged.
@@ -953,6 +961,17 @@ func (e *nativeCandidateError) Unwrap() error { return e.err }
 func (l *NativeInventory) refusesCandidate(ctx context.Context, err error) bool {
 	var rejected *nativeCandidateError
 	return err != nil && l.historical && errors.As(err, &rejected) && ctx.Err() == nil
+}
+
+// candidateReadFailed reports a candidate whose read failed rather than the
+// source itself: it changed, went missing or could not be read, or the shared
+// read budget ran out.
+func candidateReadFailed(err error) bool {
+	if errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, transcriptio.ErrChanged) {
+		return true
+	}
+	var failed *agentapi.SourceError
+	return errors.As(err, &failed) && (failed.Kind == agentapi.Unavailable || failed.Kind == agentapi.Changed || failed.Kind == agentapi.Missing)
 }
 
 // Check accepts only an exact token minted by this still-live collector epoch.

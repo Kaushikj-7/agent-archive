@@ -5,9 +5,9 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
-## Source filter version 39
+## Source filter version 40
 
-Global and Muse adapter 0.39.0 accompany this change. Parsers and other agents'
+Global and Muse adapter 0.40.0 accompany this change. Parsers and other agents'
 filtering are unchanged; the Muse retained schema gains one variant.
 
 - A Muse `workflow_child_lifecycle` run event is retained when it verifies
@@ -24,6 +24,21 @@ filtering are unchanged; the Muse retained schema gains one variant.
   Each child becomes lineage once, like a memory-reminder child, and grants no
   child transcript, capture or coverage.
 - A lifecycle record that does not verify still refuses the whole file.
+
+## Source filter version 39
+
+Global and Muse adapter 0.39.0 accompany this change. Parsers, other agents'
+filtering and the retained schemas are unchanged.
+
+- Muse sessions whose startup writes route facts between the two
+  model-resolution metadata records (frame, metadata without a model, route
+  facts, the same metadata with the model, original opening) qualify instead
+  of refusing with "unsupported Muse startup order". The second metadata is
+  checked as strictly as in the two-metadata lane: same session, closed
+  shape, and workspace, provider, tool surface and private build and search
+  copies equal to the first. The route cwd must be the workspace. The three
+  rows are contiguous, with nil causation and non-decreasing timestamps. No
+  new members are retained.
 
 ## Source filter version 38
 

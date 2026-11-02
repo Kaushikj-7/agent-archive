@@ -86,7 +86,9 @@ type nativeImportPreview struct {
 	inventory     *discovery.NativeInventory
 	budget        *agentapi.NativeReadBudget
 	resume        *backfill.Batch
-	charge        int64
+	// skips are earlier batches' skipped entries by native ID, latest last.
+	skips  map[string]backfill.NativeImportSkip
+	charge int64
 }
 
 func (p *nativeImportPreview) close() error {
@@ -175,11 +177,11 @@ func runNativeImportCommand(stdin io.Reader, stdout, stderr io.Writer, env Env, 
 	if !opts.yes {
 		p := newPrompter(stdin, stdout)
 		defer p.close()
-		question := fmt.Sprintf("Import these %d historical Muse sessions?", selected)
+		question, confirm := fmt.Sprintf("Import these %d historical Muse sessions?", selected), "Confirm exactly these sessions"
 		if selected == 1 {
-			question = "Import this historical Muse session?"
+			question, confirm = "Import this historical Muse session?", "Confirm exactly this session"
 		}
-		answer, err := p.guidedChoice(promptModel{Question: question, Default: "no", Primary: []option{{"yes", "Confirm exactly these sessions"}, {"no", "Cancel"}}})
+		answer, err := p.guidedChoice(promptModel{Question: question, Default: "no", Primary: []option{{"yes", confirm}, {"no", "Cancel"}}})
 		if err != nil {
 			return fail(err)
 		}

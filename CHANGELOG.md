@@ -16,8 +16,9 @@ follow [Semantic Versioning](https://semver.org/).
 - Explicit `backfill --harness muse` previews bounded historical ordinary roots,
   confirms their exact dates/projects/source checkpoints, and stages them before
   registration for the normal collector. Each refused session says why: the
-  unsupported record and line, a side log with no session start, an incomplete
-  file, or a read to retry. Preview and cancellation write no state
+  unsupported record and line, a record that contradicts the session's other
+  records, a side log with no session start, a file that ends before its
+  startup records, or a read to retry. Preview and cancellation write no state
   and open no storage. Exact batch undo detaches only its memberships. Child
   coverage and missing-worktree/mapping overrides remain unavailable.
 
@@ -41,6 +42,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 - Muse sessions from newer builds that write their startup metadata before the
   session-start command are no longer refused as an unsupported startup order.
+
+- Muse sessions that write route facts between their two startup metadata
+  records are no longer refused as an unsupported startup order.
 
 - Muse sessions that link memory-reminder child sessions are no longer refused
   when each link checks out against the session itself. Only the child's
@@ -116,11 +120,23 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `backfill history` counts the Codex child threads an import registered under
+  its subagents, as the import itself does, instead of as more sessions.
+
+- A historical Muse preview that could not read a session says to run the
+  preview again instead of that there is nothing to import, and one whose read
+  allowance ran out says to narrow it with `--since` and `--until`.
+
 - A confirmed `backfill --harness muse` no longer stops at the first session
   whose full read finds records this version cannot import. That session is
   skipped and named with its reason, and the rest of the batch imports. A long
   batch also no longer stops partway when its native inventory pass runs out
   of its metadata allowance; it renews the pass and continues.
+
+- A session a confirmed `backfill --harness muse` skipped is no longer selected
+  again by the next preview, which would only skip it again. The preview lists
+  it as refused with the same reason until its file changes or a different
+  agent-archive version runs.
 
 - Muse sessions started with the unrestricted filesystem permission mode are
   no longer refused; the archive records that mode. Muse route facts newer

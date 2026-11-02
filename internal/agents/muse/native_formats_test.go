@@ -168,14 +168,83 @@ func TestPermissionFrameAloneIsAnIncompleteStart(t *testing.T) {
 	}
 }
 
+// startupRefusals reads raw through the strict filter, the local startup facts
+// and the handoff header, which must all name the same refusal.
+func startupRefusals(t *testing.T, raw []byte) map[string]*agentapi.NativeRefusalError {
+	t.Helper()
+	_, filterErr := filterBytes(t, raw, agentapi.ReadLimits{})
+	_, startupErr := routeStartupFacts(t, raw)
+	_, headerErr := inspectSynthetic(t, raw)
+	return map[string]*agentapi.NativeRefusalError{"filter": refusalOf(t, filterErr), "startup": refusalOf(t, startupErr), "header": refusalOf(t, headerErr)}
+}
+
 func TestUnqualifiedStartupOrderIsNamed(t *testing.T) {
 	t.Parallel()
-	// Each record decodes, but route facts naming another directory leave the
-	// startup prefix unqualified.
-	raw := bytes.Replace(readSynthetic(t, "synthetic-route-startup.jsonl"), []byte(`"record":{"cwd":"/work/synthetic-muse"}`), []byte(`"record":{"cwd":"/work/elsewhere"}`), 1)
-	for name, err := range map[string]error{"startup": func() error { _, err := routeStartupFacts(t, raw); return err }(), "header": func() error { _, err := inspectSynthetic(t, raw); return err }()} {
-		if refused := refusalOf(t, err); refused.Reason != agentapi.RefusalUnsupportedStartup || refused.Family == "" || refused.Line < 2 {
+	// Each record qualifies, but a resumed opening cannot complete the
+	// route-facts startup lane.
+	raw := bytes.Replace(readSynthetic(t, "synthetic-route-startup.jsonl"), []byte(`"resume":false`), []byte(`"resume":true`), 1)
+	for name, refused := range startupRefusals(t, raw) {
+		if refused.Reason != agentapi.RefusalUnsupportedStartup || refused.Family != string(payloadSessionOpenedObserved) || refused.Line != 4 {
 			t.Fatalf("%s refusal: %+v", name, refused)
+		}
+	}
+}
+
+func TestContradictingStartupRecordIsNamed(t *testing.T) {
+	t.Parallel()
+	// Route facts naming another directory contradict the session's workspace;
+	// the refusal names that record, not the startup order.
+	raw := bytes.Replace(readSynthetic(t, "synthetic-route-startup.jsonl"), []byte(`"record":{"cwd":"/work/synthetic-muse"}`), []byte(`"record":{"cwd":"/work/elsewhere"}`), 1)
+	for name, refused := range startupRefusals(t, raw) {
+		if refused.Reason != agentapi.RefusalInconsistentRecord || refused.Family != string(payloadRuntimeSessionRouteFacts) || refused.Line != 3 {
+			t.Fatalf("%s refusal: %+v", name, refused)
+		}
+	}
+}
+
+func TestStartupCutShortOfItsLaneIsIncomplete(t *testing.T) {
+	t.Parallel()
+	for name, cut := range map[string]struct {
+		fixture string
+		lines   int
+	}{
+		// The route-facts lane needs its opening on line 4.
+		"route facts": {"synthetic-route-startup.jsonl", 3},
+		// The capture-selection lane needs seven lines.
+		"capture selection": {"synthetic-msp-conversation.jsonl", 5},
+	} {
+		lines := bytes.SplitAfter(readSynthetic(t, cut.fixture), []byte("\n"))
+		raw := bytes.Join(lines[:cut.lines], nil)
+		for path, refused := range startupRefusals(t, raw) {
+			if refused.Reason != agentapi.RefusalIncompleteStart || refused.Line != int64(cut.lines) {
+				t.Fatalf("%s %s refusal: %+v", name, path, refused)
+			}
+		}
+	}
+}
+
+func TestShortStartupWithAContradictingRecordIsNotIncomplete(t *testing.T) {
+	t.Parallel()
+	lines := bytes.SplitAfter(readSynthetic(t, "synthetic-route-startup.jsonl"), []byte("\n"))
+	raw := bytes.Replace(bytes.Join(lines[:2], nil), []byte(`"workspace_root":"/work/synthetic-muse"`), []byte(`"workspace_root":"work/relative"`), 1)
+	for path, refused := range startupRefusals(t, raw) {
+		if refused.Reason != agentapi.RefusalInconsistentRecord || refused.Family != string(payloadRuntimeSessionMetadata) || refused.Line != 2 {
+			t.Fatalf("%s refusal: %+v", path, refused)
+		}
+	}
+}
+
+func TestRefusedRecordFamilyKeepsEveryDistinctKind(t *testing.T) {
+	t.Parallel()
+	for raw, want := range map[string]string{
+		// A kind that is a substring of the payload type is still distinct.
+		`{"payload_type":"runtime.session.route_facts","payload":{"kind":"route"}}`:          "runtime.session.route_facts/route",
+		`{"payload_type":"runtime.session","payload":{"kind":"run","event":{"kind":"run"}}}`: "runtime.session/run",
+		// A kind that is not a reportable name keeps the payload type.
+		`{"payload_type":"runtime.session","payload":{"kind":"Run-2","record":{"kind":"task"}}}`: "runtime.session/task",
+	} {
+		if refused := refusalOf(t, refusal([]byte(raw), 3, errFormat)); refused.Family != want {
+			t.Fatalf("%s family %q, want %q", raw, refused.Family, want)
 		}
 	}
 }

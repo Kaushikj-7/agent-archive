@@ -104,6 +104,12 @@ func planNativeImportResume(ctx context.Context, home string, cfg config.Config,
 	if len(batches) == 0 {
 		return nil
 	}
+	p.skips = map[string]backfill.NativeImportSkip{}
+	for _, batch := range batches {
+		for _, skip := range batch.NativeImportSkipped {
+			p.skips[skip.NativeID] = skip
+		}
+	}
 	last := batches[len(batches)-1]
 	if last.NativeImport == nil || !last.Continues(nativeImportBatchFilters(opts, p.projects), cfg.DestinationID()) {
 		return nil
@@ -238,6 +244,11 @@ func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg
 	if err != nil {
 		return row, err
 	}
+	// An earlier batch's final read refused this exact source with this
+	// version; only a changed source or another version reads it again.
+	if skip, found := p.skips[id]; found && skip.BindingSHA256 == digest && skip.Version == Version {
+		return refuseNativeImportRow(row, skip.Reason)
+	}
 	row.selection = archive.NativeImportBatchSelection{Kind: archive.NativeImportOrdinaryRoot, NativeID: id, OriginalTUTC: row.OriginalT.UTC().Format(time.RFC3339Nano), ProjectID: row.ProjectID, RootFingerprint: fingerprint, RootRevision: root.Revision, BindingSHA256: digest, Source: *binding.Checkpoint}
 	row.candidate = state.NativeImportCandidate{NativeID: id, Root: root, ProjectRoot: row.Project, ProjectID: row.ProjectID}
 	if err := p.inventory.Check(ctx, id, row.token); err != nil {
@@ -253,6 +264,10 @@ func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg
 // nativeImportRefusalReason words a native adapter's whole-file refusal and
 // what follows from it. It carries only the bounded record family and line.
 func nativeImportRefusalReason(refused *agentapi.NativeRefusalError) string {
+	family := refused.Family
+	if family == "" {
+		family = "unrecognized"
+	}
 	switch refused.Reason {
 	case agentapi.RefusalNoSessionStart:
 		return "not a session: a Muse side log with no session start; nothing to import"
@@ -260,20 +275,25 @@ func nativeImportRefusalReason(refused *agentapi.NativeRefusalError) string {
 		return "incomplete: the file ends before its startup records; nothing to import"
 	case agentapi.RefusalUnsupportedStartup:
 		return fmt.Sprintf("unsupported Muse startup order at line %d; this agent-archive version cannot import it", refused.Line)
+	case agentapi.RefusalInconsistentRecord:
+		return fmt.Sprintf("inconsistent: Muse record %s at line %d contradicts the session's other records; nothing to import", family, refused.Line)
 	case agentapi.RefusalUnsupportedRecord:
-	}
-	family := refused.Family
-	if family == "" {
-		family = "unrecognized"
 	}
 	return fmt.Sprintf("unsupported Muse record %s at line %d; this agent-archive version cannot import it", family, refused.Line)
 }
+
+// nativeImportAllowanceReason words a source left unread because the preview's
+// read allowance ran out. The same scope spends it the same way again.
+const nativeImportAllowanceReason = "not read: this preview's read allowance ran out; narrow it with --since and --until"
 
 // nativeImportReadReason words a failure to read one source during preview.
 func nativeImportReadReason(err error) string {
 	var refused *agentapi.NativeRefusalError
 	if errors.As(err, &refused) {
 		return nativeImportRefusalReason(refused)
+	}
+	if errors.Is(err, discovery.ErrNativeStartupAllowance) || errors.Is(err, agentapi.ErrReadBudget) {
+		return nativeImportAllowanceReason
 	}
 	if agentapi.Failure(err) == agentapi.Changed {
 		return "source changed during this preview; run the preview again"
@@ -287,7 +307,7 @@ func nativeImportLocatorReason(located agentapi.LocatorResult) string {
 	case located.Refusal != nil:
 		return nativeImportRefusalReason(located.Refusal)
 	case located.Status == agentapi.LocatorPending:
-		return "not read: this preview's read allowance ran out; narrow it with --since and --until"
+		return nativeImportAllowanceReason
 	case located.Status == agentapi.LocatorAmbiguous:
 		return "more than one Muse file has this session ID; nothing to import"
 	}

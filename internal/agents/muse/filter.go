@@ -26,7 +26,7 @@ type Filter struct{}
 func (Filter) Name() string { return "muse" }
 
 // Version identifies the current privacy projection.
-func (Filter) Version() string { return "0.39.0" }
+func (Filter) Version() string { return "0.40.0" }
 
 // LeasedFilterFor refuses decorators which may change filtering semantics.
 func (Filter) LeasedFilterFor(a archive.Adapter) bool { _, ok := a.(Filter); return ok }
@@ -143,10 +143,7 @@ func (Filter) filterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 	// conservatively remain held until the enclosing output lease is released.
 	nativeJoins = nativeBodyJoins{}
 	if err = validateLogical(rows); err != nil {
-		if len(rows) < 4 && errors.Is(err, errFormat) {
-			err = agentapi.NewNativeRefusalError(agentapi.RefusalIncompleteStart, "", line, err)
-		}
-		return out, release, err
+		return out, release, startupRefusal(rows, line, err)
 	}
 	out, err = filtered(rows, c.Limits, gaps.list())
 	if err == nil && contentJoin != nil {

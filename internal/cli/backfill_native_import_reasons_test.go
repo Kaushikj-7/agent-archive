@@ -81,7 +81,12 @@ func TestBackfillNativeImportPreviewSaysWhyEachSourceIsRefused(t *testing.T) {
 	lines := bytes.Split(bytes.TrimSuffix(raw, []byte("\n")), []byte("\n"))
 	sideLog := "00000000-0000-7000-8000-00000000000a"
 	frameOnly := "00000000-0000-7000-8000-00000000000b"
+	contradicting := "00000000-0000-7000-8000-00000000000e"
+	opened := bytes.Split(musefixture.Rewrite(t, raw, contradicting, f.project), []byte("\n"))
+	// The opening names another session than the file's owner.
+	opened[2] = bytes.Replace(opened[2], []byte(`"session_id":"`+contradicting+`"`), []byte(`"session_id":"`+sideLog+`"`), 1)
 	for id, content := range map[string][]byte{
+		contradicting: bytes.Join(opened, []byte("\n")),
 		// A side log starts directly with ordinary records.
 		sideLog: bytes.ReplaceAll(append(bytes.Join(lines[1:3], []byte("\n")), '\n'), []byte(publicNativeImportID), []byte(sideLog)),
 		// Only the permission frame was written.
@@ -107,7 +112,7 @@ func TestBackfillNativeImportPreviewSaysWhyEachSourceIsRefused(t *testing.T) {
 		reasons[row.Status] = append(reasons[row.Status], row.Reason)
 	}
 	refused := strings.Join(reasons[nativeImportRefused], "\n")
-	if len(reasons[nativeImportSelected]) != 1 || len(reasons[nativeImportRefused]) != 2 || !strings.Contains(refused, "not a session: a Muse side log with no session start; nothing to import") || !strings.Contains(refused, "incomplete: the file ends before its startup records; nothing to import") {
+	if len(reasons[nativeImportSelected]) != 1 || len(reasons[nativeImportRefused]) != 3 || !strings.Contains(refused, "not a session: a Muse side log with no session start; nothing to import") || !strings.Contains(refused, "incomplete: the file ends before its startup records; nothing to import") || !strings.Contains(refused, "inconsistent: Muse record session.opened.observed at line 3 contradicts the session's other records; nothing to import") {
 		t.Fatalf("preview reasons: %+v", result.Sessions)
 	}
 }
@@ -225,6 +230,61 @@ func TestBackfillNativeImportSkipsAnEntryItsFinalReadRefuses(t *testing.T) {
 	}
 }
 
+func TestBackfillNativeImportPreviewLeavesOutAnEntryABatchSkippedUntilItChanges(t *testing.T) {
+	t.Parallel()
+	f := newPublicNativeImportFixture(t)
+	raw, err := os.ReadFile(filepath.Join("..", "agents", "muse", "testdata", "synthetic-exec-conversation.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := "00000000-0000-7000-8000-0000000000e4"
+	path := filepath.Join(f.native, "2026", "10", "15", refused, "session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := withAuthorityRecordBeforeEnd(t, musefixture.Rewrite(t, raw, refused, f.project))
+	if err := os.WriteFile(path, source, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code := f.run(nil, "--harness", "muse", "--yes", "--background")
+	if code != 0 || !strings.Contains(out, "1 skipped.") {
+		t.Fatal("confirmed import", code, out, stderr)
+	}
+	reason := "unsupported Muse record session.permission_grant.recorded"
+	// The next preview reports the skipped entry as refused, with the reason
+	// the batch printed, and confirms no batch that would only skip it again.
+	preview, stderr, code := f.run(nil, "--harness", "muse", "--dry-run")
+	if code != 0 || strings.Contains(preview, "selected") || !strings.Contains(preview, "refused  "+reason) {
+		t.Fatal("preview after skip", code, preview, stderr)
+	}
+	out, stderr, code = f.run(nil, "--harness", "muse", "--yes", "--background")
+	if batches, err := backfill.LoadBatches(f.home); code != 0 || err != nil || len(batches) != 1 {
+		t.Fatal("unchanged skipped entry started another batch", code, out, stderr, batches, err)
+	}
+	// A version other than the one that refused it reads it again.
+	control := filepath.Join(f.home, "imports", f.env.now().Format("2006-01-02")+"-1.json")
+	recorded, err := os.ReadFile(control)
+	if err != nil || bytes.Count(recorded, []byte(`"version": "dev"`)) != 1 {
+		t.Fatal("skip version not recorded", err, string(recorded))
+	}
+	if err := os.WriteFile(control, bytes.Replace(recorded, []byte(`"version": "dev"`), []byte(`"version": "0.0.1"`), 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if preview, stderr, code := f.run(nil, "--harness", "muse", "--dry-run"); code != 0 || strings.Count(preview, "selected") != 1 {
+		t.Fatal("preview after a version change", code, preview, stderr)
+	}
+	if err := os.WriteFile(control, recorded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// So does a changed source.
+	if err := os.WriteFile(path, append(source, source[len(source)-1]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if preview, stderr, code := f.run(nil, "--harness", "muse", "--dry-run"); code != 0 || strings.Count(preview, "selected") != 1 {
+		t.Fatal("preview after a source change", code, preview, stderr)
+	}
+}
+
 func TestBackfillNativeImportRenewsASpentInventoryPassMidBatch(t *testing.T) {
 	t.Parallel()
 	f := newPublicNativeImportFixture(t)
@@ -262,5 +322,30 @@ func TestBackfillNativeImportRenewsASpentInventoryPassMidBatch(t *testing.T) {
 	batches, err := backfill.LoadBatches(f.home)
 	if err != nil || len(batches) != 1 || batches[0].CompletedAt == nil || len(batches[0].Sessions) != 3 {
 		t.Fatal("batch did not complete after renewing its inventory", batches, err)
+	}
+}
+
+func TestBackfillNativeImportAsksAboutOneSessionInTheSingular(t *testing.T) {
+	t.Parallel()
+	f := newPublicNativeImportFixture(t)
+	f.env.IsTerminal = func(any) bool { return true }
+	out, stderr, code := f.run(strings.NewReader("\n"), "--harness", "muse", "--background")
+	if code != 0 || !strings.Contains(out, "Import this historical Muse session?") || !strings.Contains(out, "Confirm exactly this session") || strings.Contains(out, "these sessions") {
+		t.Fatal(code, out, stderr)
+	}
+}
+
+func TestNativeImportReadReasonSaysWhatToDoNext(t *testing.T) {
+	t.Parallel()
+	for err, want := range map[error]string{
+		// The same scope spends the allowance the same way again.
+		agentapi.Wrap(agentapi.Unavailable, discovery.ErrNativeStartupAllowance):  "narrow it with --since and --until",
+		agentapi.ReadBudgetLimit(errors.New("synthetic budget")):                  "narrow it with --since and --until",
+		agentapi.Wrap(agentapi.Changed, errors.New("synthetic change")):           "source changed during this preview; run the preview again",
+		agentapi.Wrap(agentapi.Unavailable, errors.New("synthetic read failure")): "source could not be read during this preview; run the preview again",
+	} {
+		if got := nativeImportReadReason(err); !strings.HasSuffix(got, want) {
+			t.Fatalf("%v: %q, want it to end %q", err, got, want)
+		}
 	}
 }
