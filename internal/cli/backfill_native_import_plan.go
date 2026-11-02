@@ -282,11 +282,18 @@ func nativeImportRefusalReason(refused *agentapi.NativeRefusalError) string {
 	return fmt.Sprintf("unsupported Muse record %s at line %d; this agent-archive version cannot import it", family, refused.Line)
 }
 
+// nativeImportAllowanceReason words a source left unread because the preview's
+// read allowance ran out. The same scope spends it the same way again.
+const nativeImportAllowanceReason = "not read: this preview's read allowance ran out; narrow it with --since and --until"
+
 // nativeImportReadReason words a failure to read one source during preview.
 func nativeImportReadReason(err error) string {
 	var refused *agentapi.NativeRefusalError
 	if errors.As(err, &refused) {
 		return nativeImportRefusalReason(refused)
+	}
+	if errors.Is(err, discovery.ErrNativeStartupAllowance) || errors.Is(err, agentapi.ErrReadBudget) {
+		return nativeImportAllowanceReason
 	}
 	if agentapi.Failure(err) == agentapi.Changed {
 		return "source changed during this preview; run the preview again"
@@ -300,7 +307,7 @@ func nativeImportLocatorReason(located agentapi.LocatorResult) string {
 	case located.Refusal != nil:
 		return nativeImportRefusalReason(located.Refusal)
 	case located.Status == agentapi.LocatorPending:
-		return "not read: this preview's read allowance ran out; narrow it with --since and --until"
+		return nativeImportAllowanceReason
 	case located.Status == agentapi.LocatorAmbiguous:
 		return "more than one Muse file has this session ID; nothing to import"
 	}

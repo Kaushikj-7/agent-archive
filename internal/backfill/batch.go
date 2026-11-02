@@ -137,6 +137,7 @@ func (b *Batch) Reconcile(store *state.Store) error {
 	if err := b.reconcileStagedSources(store); err != nil {
 		return err
 	}
+	b.Sessions = b.RegisteredSessions(regs)
 	parents := map[string]bool{}
 	for _, reg := range regs {
 		if !reg.InBatch(b.ID) {
@@ -145,7 +146,6 @@ func (b *Batch) Reconcile(store *state.Store) error {
 		if reg.IsChild() {
 			b.Subagents = addUnique(b.Subagents, reg.ArchiveSessionID)
 		} else {
-			b.Sessions = addUnique(b.Sessions, reg.ArchiveSessionID)
 			parents[reg.ArchiveSessionID] = true
 		}
 	}
@@ -159,6 +159,27 @@ func (b *Batch) Reconcile(store *state.Store) error {
 		}
 	}
 	return nil
+}
+
+// RegisteredSessions returns the batch's sessions: those it recorded, then
+// those registered in it that it has not recorded yet, such as after an
+// interrupted save. Children, native ones included, are its subagents.
+func (b *Batch) RegisteredSessions(regs []archive.SessionRegistration) []string {
+	seen := make(map[string]bool, len(b.Sessions))
+	sessions := make([]string, 0, len(b.Sessions))
+	for _, id := range b.Sessions {
+		if !seen[id] {
+			seen[id] = true
+			sessions = append(sessions, id)
+		}
+	}
+	for _, reg := range regs {
+		if reg.InBatch(b.ID) && !reg.IsChild() && !seen[reg.ArchiveSessionID] {
+			seen[reg.ArchiveSessionID] = true
+			sessions = append(sessions, reg.ArchiveSessionID)
+		}
+	}
+	return sessions
 }
 
 // Matches reports whether a run with these filters and destination

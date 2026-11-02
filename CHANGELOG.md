@@ -114,6 +114,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `backfill history` counts the Codex child threads an import registered under
+  its subagents, as the import itself does, instead of as more sessions.
+
+- A historical Muse preview that could not read a session says to run the
+  preview again instead of that there is nothing to import, and one whose read
+  allowance ran out says to narrow it with `--since` and `--until`.
+
 - A confirmed `backfill --harness muse` no longer stops at the first session
   whose full read finds records this version cannot import. That session is
   skipped and named with its reason, and the rest of the batch imports. A long
