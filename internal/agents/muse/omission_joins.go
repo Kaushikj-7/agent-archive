@@ -186,6 +186,7 @@ type nativeBodyJoins struct {
 	sources       map[runIdentity]bool
 	lastSource    map[string]int64
 	firstMetadata map[string]any
+	startupRoute  bool
 	sourceInvalid bool
 	hasNew        bool
 	tools         toolObservations
@@ -216,7 +217,12 @@ func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
 	if r.Sequence == 3 && r.Type == payloadRuntimeSessionMetadata {
 		s.firstMetadata = p
 	}
-	if r.Sequence == 4 && r.Type == payloadRuntimeSessionMetadata && s.firstMetadata != nil && !nativeMetadataPair(s.firstMetadata, p) {
+	if r.Sequence == 4 && r.Type == payloadRuntimeSessionRouteFacts && s.firstMetadata != nil {
+		s.startupRoute = true
+	}
+	// The second model-resolution metadata follows the first directly, or
+	// after the startup route facts.
+	if (r.Sequence == 4 || r.Sequence == 5 && s.startupRoute) && r.Type == payloadRuntimeSessionMetadata && s.firstMetadata != nil && !nativeMetadataPair(s.firstMetadata, p) {
 		return errFormat
 	}
 	run := str(p["run_id"])

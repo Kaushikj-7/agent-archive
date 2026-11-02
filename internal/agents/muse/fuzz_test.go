@@ -28,7 +28,7 @@ func (memoryInput) Records(context.Context, bool, int64, int64, func([]byte) boo
 }
 
 func FuzzMuseNative(f *testing.F) {
-	for _, name := range []string{"synthetic-exec-empty.jsonl", "synthetic-exec-conversation.jsonl", "synthetic-msp-empty.jsonl", "synthetic-msp-conversation.jsonl", "synthetic-native-omissions.jsonl", "synthetic-model-resolution-omissions.jsonl", "synthetic-route-startup.jsonl", "synthetic-own-observations.jsonl", "synthetic-own-tools.jsonl", "synthetic-committed-read-effects.jsonl", "synthetic-skill-read.jsonl", "synthetic-child-link.jsonl", "synthetic-metadata-first.jsonl", "synthetic-run-origins.jsonl"} {
+	for _, name := range []string{"synthetic-exec-empty.jsonl", "synthetic-exec-conversation.jsonl", "synthetic-msp-empty.jsonl", "synthetic-msp-conversation.jsonl", "synthetic-native-omissions.jsonl", "synthetic-model-resolution-omissions.jsonl", "synthetic-route-startup.jsonl", "synthetic-own-observations.jsonl", "synthetic-own-tools.jsonl", "synthetic-committed-read-effects.jsonl", "synthetic-skill-read.jsonl", "synthetic-child-link.jsonl", "synthetic-metadata-first.jsonl", "synthetic-route-metadata.jsonl", "synthetic-run-origins.jsonl"} {
 		raw, e := os.ReadFile(filepath.Join("testdata", name))
 		if e != nil {
 			f.Fatal(e)
@@ -78,7 +78,7 @@ func FuzzMuseNative(f *testing.F) {
 }
 
 func FuzzMuseRetained(f *testing.F) {
-	for _, name := range []string{"synthetic-exec-empty.golden.jsonl", "synthetic-msp-conversation.golden.jsonl", "synthetic-native-omissions.golden.jsonl", "synthetic-model-resolution-omissions.golden.jsonl", "synthetic-route-startup.golden.jsonl", "synthetic-own-observations.golden.jsonl", "synthetic-own-tools.golden.jsonl", "synthetic-committed-read-effects.golden.jsonl", "synthetic-skill-read.golden.jsonl", "synthetic-skill-content.golden.jsonl", "synthetic-child-link.golden.jsonl", "synthetic-metadata-first.golden.jsonl", "synthetic-login-completed.golden.jsonl", "synthetic-run-origins.golden.jsonl"} {
+	for _, name := range []string{"synthetic-exec-empty.golden.jsonl", "synthetic-msp-conversation.golden.jsonl", "synthetic-native-omissions.golden.jsonl", "synthetic-model-resolution-omissions.golden.jsonl", "synthetic-route-startup.golden.jsonl", "synthetic-own-observations.golden.jsonl", "synthetic-own-tools.golden.jsonl", "synthetic-committed-read-effects.golden.jsonl", "synthetic-skill-read.golden.jsonl", "synthetic-skill-content.golden.jsonl", "synthetic-child-link.golden.jsonl", "synthetic-metadata-first.golden.jsonl", "synthetic-route-metadata.golden.jsonl", "synthetic-login-completed.golden.jsonl", "synthetic-run-origins.golden.jsonl"} {
 		raw, e := os.ReadFile(filepath.Join("testdata", name))
 		if e != nil {
 			f.Fatal(e)
@@ -112,7 +112,7 @@ func FuzzMuseRetained(f *testing.F) {
 }
 
 func FuzzMuseHeaderPreview(f *testing.F) {
-	for _, name := range []string{"synthetic-exec-conversation.jsonl", "synthetic-msp-conversation.jsonl", "synthetic-model-resolution-omissions.jsonl", "synthetic-route-startup.jsonl", "synthetic-metadata-first.jsonl", "synthetic-run-origins.jsonl"} {
+	for _, name := range []string{"synthetic-exec-conversation.jsonl", "synthetic-msp-conversation.jsonl", "synthetic-model-resolution-omissions.jsonl", "synthetic-route-startup.jsonl", "synthetic-metadata-first.jsonl", "synthetic-route-metadata.jsonl", "synthetic-run-origins.jsonl"} {
 		raw, err := os.ReadFile(filepath.Join("testdata", name))
 		if err != nil {
 			f.Fatal(err)

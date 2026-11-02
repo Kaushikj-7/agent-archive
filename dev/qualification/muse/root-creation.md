@@ -76,6 +76,7 @@ Observed startup ordering is mode-specific:
 | Exec | Permission frame line 1 / sequences 1–2; own metadata line 2 / sequence 3; original opening line 3 / sequence 4. |
 | No-turn MSP | Permission frame line 1 / sequences 1–2; capture selection line 2 / sequence 3; command intake line 3 / sequence 4; `intake_v3` line 4 / sequence 5 with activation `startup`; `session.started` line 5 / sequence 6; own metadata line 6 / sequence 7; original opening line 7 / sequence 8. |
 | Metadata-first | Permission frame line 1 / sequences 1–2; own metadata line 2 / sequence 3; command intake line 3 / sequence 4; `intake_v3` line 4 / sequence 5 with activation `startup`; `session.started` line 5 / sequence 6; original opening line 6 / sequence 7. Unsupported records between them are omitted, not members. |
+| Route metadata | Permission frame line 1 / sequences 1–2; own metadata without a model line 2 / sequence 3; route facts line 3 / sequence 4; matching metadata with the model line 4 / sequence 5; original opening after them. Unsupported records before the opening are omitted, not members. |
 
 The MSP command intake, version-3 startup intake and started record must be
 related to the same startup command and root identity. Exec has its own root
