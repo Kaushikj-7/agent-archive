@@ -220,10 +220,11 @@ type runIdentity struct {
 // observeRunEvidence accepts a run's own native reports that create no
 // conversation turn: skill reads, child links and workflow child steps.
 func observeRunEvidence(r retained, children map[string]bool, workflowSteps map[string]workflowChildStep, joined map[string]bool, last map[string]int64, seen map[runIdentity]bool, view *archive.NormalizedView) error {
-	switch runtimeEvent(str(r.Fields["event_kind"])) {
-	case eventChildSessionLinked:
+	ek := runtimeEvent(str(r.Fields["event_kind"]))
+	if ek == eventChildSessionLinked {
 		return observeChildLink(r, children, joined, last, seen)
-	case eventWorkflowChildLifecycle:
+	}
+	if ek == eventWorkflowChildLifecycle {
 		return observeWorkflowChild(r, children, workflowSteps, joined, last, seen)
 	}
 	return observeSkillRead(r, joined, last, seen, view)

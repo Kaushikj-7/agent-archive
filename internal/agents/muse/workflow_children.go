@@ -79,12 +79,26 @@ func workflowChildFields(r retained) bool {
 }
 
 // workflowChildStep is a child's last lifecycle step and what each later step
-// must repeat. line is the native line of the child's first step.
+// must repeat. The retained proof knows only the run, attempt and step.
 type workflowChildStep struct {
-	line                                                int64
-	run, task, childID, childRun, workflowRun, toolCall string
-	attempt                                             int64
-	step                                                int
+	// line is the native line of the child's first step.
+	line int64
+	// run is the parent run reporting the child.
+	run string
+	// task is the parent task that runs the child.
+	task string
+	// childID is the child's workflow control ID.
+	childID string
+	// childRun is the child's own run.
+	childRun string
+	// workflowRun is the workflow run the child belongs to.
+	workflowRun string
+	// toolCall is the workflow tool call that launched the child.
+	toolCall string
+	// attempt is the child's attempt number.
+	attempt int64
+	// step is the index of the step's status in workflowChildStatuses.
+	step int
 }
 
 // nextWorkflowChildStep accepts a child's next lifecycle step: its first step

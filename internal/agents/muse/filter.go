@@ -209,7 +209,7 @@ func privacyWithGaps(r retained, record int, addGap func(string, int, string)) (
 	for k, v := range original.Fields {
 		switch fieldName(k) {
 		case fieldPrompt, fieldText, fieldNewName, fieldPreviousName, fieldObservedModel:
-		case fieldObservedAtSequence, fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence, fieldResume, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldModelCallIndex, fieldObservedInput, fieldObservedOutput, fieldToolCalls, fieldToolResults, fieldSkillContentSHA, fieldSkillContentEvidence, fieldFilesystemMode:
+		case fieldObservedAtSequence, fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence, fieldResume, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldModelCallIndex, fieldObservedInput, fieldObservedOutput, fieldToolCalls, fieldToolResults, fieldSkillContentSHA, fieldSkillContentEvidence, fieldFilesystemMode, fieldAttempt:
 			fallthrough
 		default:
 			if !reflect.DeepEqual(v, r.Fields[k]) {
