@@ -378,6 +378,12 @@ A historical import from a removed worktree also carries the existing private
 the current recovery policy digest. Preparation re-derives the same proof from
 the filesystem and configuration before committing; nothing about it is
 uploaded, and no version changes with it.
+A batch whose final read refused a confirmed entry records it in the private
+optional batch member `native_import_skipped` (native ID, selected binding
+digest, printed reason and the refusing agent-archive version), which later
+previews use to leave that unchanged source out. Older binaries refuse such a
+batch file as an unknown closed member rather than misread it; nothing is
+uploaded and no version changes with it.
 
 Native replay classification protection is independently opt-in through sticky
 `native_replay_protection`. It requires admission protection and the exact

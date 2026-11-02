@@ -60,7 +60,9 @@ After confirmation, the source is checked again and filtered through the normal
 Muse filter. The preview reads only each session's startup records, so a
 session's full read can still find records this version cannot import. That
 session is skipped, nothing of it is written, and the summary names its entry
-and reason; the other confirmed sessions still import. A source that changed or
+and reason; the other confirmed sessions still import. Later previews list
+that session as refused with the same reason, and select it again only once its
+file changes or a different agent-archive version runs the preview. A source that changed or
 could not be read stops the import instead, and the same command resumes it. Configuration saves the historical import writer protections, then
 a closed batch records the exact selected source checkpoints. Each filtered
 stage becomes durable before its index reservation and registration. The normal

@@ -857,7 +857,8 @@ worktrees and --include-* overrides are refused.
 Confirmation freezes exact original dates, projects, destination and source
 checkpoints; later source changes require a new preview. A confirmed session
 whose full read finds records this version cannot import is skipped and named
-with its reason; the rest still import. Its undo detaches only this batch's
+with its reason; the rest still import. Later previews list it as refused with
+that reason until its file or the agent-archive version changes. Its undo detaches only this batch's
 memberships, preserving stored/native files and later requests.
   --harness NAME        Only claude, codex, cursor (repeatable), or muse alone
   --project DIR         Only this project; it need not still exist (repeatable)
