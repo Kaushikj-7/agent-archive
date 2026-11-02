@@ -66,6 +66,9 @@ func startupRows(rows []retained) int {
 	if len(rows) >= 4 && rows[2].Type == payloadRuntimeSessionMetadata && (rows[3].Type == payloadRuntimeSessionMetadata || rows[3].Type == payloadRuntimeSessionRouteFacts) {
 		needed = 5
 	}
+	if len(rows) >= 5 && rows[2].Type == payloadRuntimeSessionMetadata && rows[3].Type == payloadRuntimeSessionRouteFacts && rows[4].Type == payloadRuntimeSessionMetadata {
+		needed = 6
+	}
 	if len(rows) >= 4 && rows[2].Type == payloadRuntimeSessionMetadata && rows[3].Type == payloadRuntimeCommandIntakeReceived {
 		needed = 7
 	}
@@ -228,6 +231,9 @@ func startupPrefix(rows []retained) bool {
 	if rows[2].Type == payloadRuntimeSessionMetadata {
 		if rows[3].Type == payloadRuntimeSessionMetadata {
 			return twoMetadataPrefix(rows)
+		}
+		if rows[3].Type == payloadRuntimeSessionRouteFacts && len(rows) >= 5 && rows[4].Type == payloadRuntimeSessionMetadata {
+			return routeMetadataPrefix(rows)
 		}
 		// The qualified route-facts lane has exactly one interposed row.
 		if rows[3].Type == payloadRuntimeSessionRouteFacts {
@@ -644,7 +650,26 @@ func twoMetadataPrefix(rows []retained) bool {
 		return false
 	}
 	a, b, o := rows[2], rows[3], rows[4]
-	if a.Type != payloadRuntimeSessionMetadata || b.Type != payloadRuntimeSessionMetadata || o.Type != payloadSessionOpenedObserved || a.Causation != nil || b.Causation != nil || o.Causation != nil || o.Fields["resume"] != false || a.Timestamp <= rows[0].Timestamp || b.Timestamp < a.Timestamp || o.Timestamp < b.Timestamp {
+	return b.Type == payloadRuntimeSessionMetadata && b.Timestamp >= a.Timestamp && modelResolution(rows[0], a, b, o)
+}
+
+// routeMetadataPrefix is the model-resolution lane with route facts between
+// the two metadata rows: frame, metadata, route facts, metadata with the
+// model, then the original opening. authority binds the route cwd to the
+// workspace; this fixes the order, causation and timeline. The three rows are
+// contiguous so the native metadata pair check covers the second metadata.
+func routeMetadataPrefix(rows []retained) bool {
+	if len(rows) < 6 {
+		return false
+	}
+	a, route, b, o := rows[2], rows[3], rows[4], rows[5]
+	return a.Sequence == 3 && route.Sequence == 4 && b.Sequence == 5 && route.Type == payloadRuntimeSessionRouteFacts && route.Causation == nil && route.Timestamp >= a.Timestamp && b.Timestamp >= route.Timestamp && modelResolution(rows[0], a, b, o)
+}
+
+// modelResolution checks a model-resolution metadata pair and its original
+// opening: metadata without a model, then the same metadata with one.
+func modelResolution(frame, a, b, o retained) bool {
+	if a.Type != payloadRuntimeSessionMetadata || b.Type != payloadRuntimeSessionMetadata || o.Type != payloadSessionOpenedObserved || a.Causation != nil || b.Causation != nil || o.Causation != nil || o.Fields["resume"] != false || a.Timestamp <= frame.Timestamp || o.Timestamp < b.Timestamp {
 		return false
 	}
 	if !keys(a.Fields, "kind", "workspace_root", "provider_id", "tool_surface_version") || !keys(b.Fields, "kind", "workspace_root", "provider_id", "model_id", "tool_surface_version") {

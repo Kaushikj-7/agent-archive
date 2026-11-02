@@ -42,6 +42,9 @@ follow [Semantic Versioning](https://semver.org/).
 - Muse sessions from newer builds that write their startup metadata before the
   session-start command are no longer refused as an unsupported startup order.
 
+- Muse sessions that write route facts between their two startup metadata
+  records are no longer refused as an unsupported startup order.
+
 - Muse sessions that link memory-reminder child sessions are no longer refused
   when each link checks out against the session itself. Only the child's
   session ID is kept; links that do not check out still refuse the session.
