@@ -52,6 +52,12 @@ follow [Semantic Versioning](https://semver.org/).
   Imported and captured Muse sessions list those children as linked sessions,
   shown as unavailable because their transcripts are not archived.
 
+- Muse sessions that run workflow child sessions are no longer refused for
+  the children's lifecycle records when each child checks out against the
+  session itself. Only the child's session ID, lifecycle step and attempt are
+  kept, and the child is listed as an unavailable linked session; records that
+  do not check out still refuse the session.
+
 - Confirmed backfill registers bounded active groups through one ordered batch,
   sharing native/state memory charges and retaining unfinished parents across
   short hook holds. Registration totals no longer retain a second full ID list.

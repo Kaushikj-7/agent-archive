@@ -313,7 +313,7 @@ func validFields(r retained) bool {
 			if _, ok := v.(json.Number); !ok {
 				return false
 			}
-		case fieldObservedInput, fieldObservedOutput:
+		case fieldObservedInput, fieldObservedOutput, fieldAttempt:
 			if !integer(v, 0) {
 				return false
 			}
@@ -551,6 +551,9 @@ func fieldsRuntimeSession(r retained) (int64, []string, bool) {
 	}
 	if kind == roleRun && ek == eventChildSessionLinked {
 		return schema, childLinkFieldNames, childLinkFields(r)
+	}
+	if kind == roleRun && ek == eventWorkflowChildLifecycle {
+		return schema, workflowChildFieldNames, workflowChildFields(r)
 	}
 	if kind == roleRun && enrichedTools(f) {
 		if ek == eventAssistantToolCallsCommitted {

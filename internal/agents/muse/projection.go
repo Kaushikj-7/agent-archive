@@ -348,8 +348,8 @@ func projectRuntimeSession(r retained, p map[string]any) (map[string]any, error)
 	if kind == roleRun && ek == eventSkillReadObserved {
 		return projectSkillRead(r, p, event)
 	}
-	if kind == roleRun && ek == eventChildSessionLinked {
-		return projectChildLink(r, p, event)
+	if kind == roleRun && (ek == eventChildSessionLinked || ek == eventWorkflowChildLifecycle) {
+		return projectLinkedChild(r, p, event)
 	}
 	if kind == roleRun && (ek == eventAssistantToolCallsCommitted || ek == eventToolResultBatchCommitted) {
 		return projectTools(r, p, event)
@@ -459,7 +459,7 @@ func optionalRuntime(kind runtimeRole, event runtimeEvent) bool {
 			return false
 		case eventProposed, eventAccepted, eventScheduled, eventSideEffectIntent, eventStarted, eventStatus, eventCompleted, eventFailed, eventCancelled:
 			return true
-		case eventSkillReadObserved, eventChildSessionLinked, eventAssistantMessageCommitted, eventAssistantToolCallsCommitted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
+		case eventSkillReadObserved, eventChildSessionLinked, eventWorkflowChildLifecycle, eventAssistantMessageCommitted, eventAssistantToolCallsCommitted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
 			return false
 		}
 		return false
@@ -472,7 +472,7 @@ func optionalRuntime(kind runtimeRole, event runtimeEvent) bool {
 		return false
 	case eventHookRunStarted, eventHookRunTerminal, eventContextBlockDiagnostic, eventModelRequestConfigured, eventContextBlockUpdated, eventProviderRequestOptionsConfigured, eventModelInputTraceRecorded, eventTaskStreamLinked, eventModelResponseCreated, eventGoalUsageAttribution, eventModelCompleted, eventResourceUsageSampled, eventTerminal, eventAssistantToolCallsCommitted, eventToolResultBatchCommitted, eventSideEffectIntent, eventCompleted, eventFailed:
 		return true
-	case eventSkillReadObserved, eventChildSessionLinked, eventAccepted, eventAssistantMessageCommitted, eventCancelled, eventProposed, eventScheduled, eventStarted, eventStatus:
+	case eventSkillReadObserved, eventChildSessionLinked, eventWorkflowChildLifecycle, eventAccepted, eventAssistantMessageCommitted, eventCancelled, eventProposed, eventScheduled, eventStarted, eventStatus:
 		return false
 	}
 	return false
