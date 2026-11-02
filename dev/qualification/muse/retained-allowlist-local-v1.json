@@ -1038,6 +1038,25 @@
         "event_kind": "memory_reminder_child_session_linked"
       },
       "cross_record_policy": "Link to a child session verified within the parent alone: names this session as parent and its own run, a task this session started in that run, and a child other than this session, each linked once, from a materialized run with a unique increasing source record. A named child log must be the child's own subagent/<child>/session.jsonl beside this session and exist as a regular file. Only the child ID is retained; task, generation, reminder agent and log path are dropped. Grants no child transcript, capture or coverage."
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind",
+        "run_id",
+        "source_run_record_id",
+        "source_run_record_sequence",
+        "child_session_id",
+        "status",
+        "attempt"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "workflow_child_lifecycle"
+      },
+      "cross_record_policy": "Workflow child lifecycle step verified within the parent alone: a child session other than this session, the child's own run, and a task stream of a task this session starts in that run (the first step may precede the task's records; every child's task must exist by the end of the file). Each child keeps one control ID, child run, workflow run, tool call, task and attempt, steps move strictly forward through scheduled, started, usage, completed, terminal, and no two children share a control ID or child run. A child is never also a memory-reminder child. From a materialized run with a unique increasing source record. Only the child ID, status and attempt are retained; label, control ID, child run, task, workflow run, tool call, routing, model, usage, duration and result references are dropped. Grants no child transcript, capture or coverage."
     }
   ],
   "privacy": "Shared policy applies to every retained string/key; changed authority refuses; no raw record_json, permission bodies, native checksums, provider/context or native binding paths",

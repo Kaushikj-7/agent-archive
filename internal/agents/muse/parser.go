@@ -90,6 +90,7 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 	materialized := map[string]bool{}
 	consumed := map[string]bool{}
 	children := map[string]bool{}
+	workflowSteps := map[string]workflowChildStep{}
 	inbox := inboxOrigins(rows)
 	for i, r := range rows {
 		if r.Version == 0 {
@@ -135,8 +136,8 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 				if observeCompletion(r, joined, lastSequence, sourceRecords, &observations) != nil {
 					return view, nil, errFormat
 				}
-			case eventSkillReadObserved, eventChildSessionLinked:
-				if observeRunEvidence(r, children, joined, lastSequence, sourceRecords, &view) != nil {
+			case eventSkillReadObserved, eventChildSessionLinked, eventWorkflowChildLifecycle:
+				if observeRunEvidence(r, children, workflowSteps, joined, lastSequence, sourceRecords, &view) != nil {
 					return view, nil, errFormat
 				}
 			case eventAssistantToolCallsCommitted, eventToolResultBatchCommitted:
@@ -217,10 +218,13 @@ type runIdentity struct {
 }
 
 // observeRunEvidence accepts a run's own native reports that create no
-// conversation turn: skill reads and child links.
-func observeRunEvidence(r retained, children, joined map[string]bool, last map[string]int64, seen map[runIdentity]bool, view *archive.NormalizedView) error {
-	if str(r.Fields["event_kind"]) == string(eventChildSessionLinked) {
+// conversation turn: skill reads, child links and workflow child steps.
+func observeRunEvidence(r retained, children map[string]bool, workflowSteps map[string]workflowChildStep, joined map[string]bool, last map[string]int64, seen map[runIdentity]bool, view *archive.NormalizedView) error {
+	switch runtimeEvent(str(r.Fields["event_kind"])) {
+	case eventChildSessionLinked:
 		return observeChildLink(r, children, joined, last, seen)
+	case eventWorkflowChildLifecycle:
+		return observeWorkflowChild(r, children, workflowSteps, joined, last, seen)
 	}
 	return observeSkillRead(r, joined, last, seen, view)
 }

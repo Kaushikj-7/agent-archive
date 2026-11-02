@@ -600,8 +600,28 @@ cannot check it refuses such a link. The retained row keeps `kind`,
 `event_kind`, the run identity and `child_session_id`; the task, generation,
 reminder agent and log path are dropped. The adapter exposes the verified
 child IDs to capture, which records lineage; the link grants no child
-transcript, capture or coverage. Workflow children and other links still
-refuse.
+transcript, capture or coverage.
+
+Filter 39 verifies workflow child lifecycle records (`workflow_child_lifecycle`
+run events) the same way. Each must have no causation and an exact member set
+for its status: `scheduled`, `started`, `usage`, `completed` or `terminal`,
+with a positive integer `attempt`. It must name a child session
+(`session_stream`) other than this session, the child's own run
+(`run_stream`, not the run carrying the record), and a task with the matching
+`task/<task_id>` stream that this session starts in that run. Muse schedules a
+child before it records the task, so only a child's later steps need the task
+already; every child's task must exist by the end of the file. Each child keeps
+one control ID (`child_id`), child run, workflow run, tool call, task and
+attempt across its steps, which move strictly forward through the statuses
+above; no two children share a control ID or child run, and a workflow child
+is never also a memory-reminder child. The run must be one of this session's
+materialized runs with a unique, increasing source record. The retained row
+keeps `kind`, `event_kind`, the run identity, `child_session_id` (from
+`session_stream`), `status` and `attempt`; the label, control ID, child run,
+task, workflow run, tool call, routing receipt, model, usage, duration and
+result references are dropped. Each verified child is exposed to capture once,
+as lineage like a memory-reminder child; it grants no child transcript,
+capture or coverage. Other links still refuse.
 
 The startup structure qualifies from supported records alone. Omission rows
 keep their sequence slot but are not members of a startup block, so an

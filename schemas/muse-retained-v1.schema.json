@@ -2739,6 +2739,72 @@
           "type": "null"
         }
       }
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "runtime.session"
+        },
+        "payload_schema": {
+          "const": 1
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event_kind",
+            "run_id",
+            "source_run_record_id",
+            "source_run_record_sequence",
+            "child_session_id",
+            "status",
+            "attempt"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run"
+            },
+            "event_kind": {
+              "const": "workflow_child_lifecycle"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "source_run_record_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "source_run_record_sequence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "child_session_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "status": {
+              "enum": [
+                "scheduled",
+                "started",
+                "usage",
+                "completed",
+                "terminal"
+              ]
+            },
+            "attempt": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "causation_id": {
+          "type": "null"
+        }
+      }
     }
   ]
 }

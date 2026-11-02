@@ -64,6 +64,7 @@ const (
 	eventTaskStreamLinked                 runtimeEvent = "task_stream_linked"
 	eventTerminal                         runtimeEvent = "terminal"
 	eventToolResultBatchCommitted         runtimeEvent = "tool_result_batch_committed"
+	eventWorkflowChildLifecycle           runtimeEvent = "workflow_child_lifecycle"
 )
 
 type fieldName string
@@ -89,6 +90,7 @@ const (
 	fieldObservedAtSequence      fieldName = "observed_at_sequence"
 	fieldResume                  fieldName = "resume"
 	fieldFilesystemMode          fieldName = "filesystem_mode"
+	fieldAttempt                 fieldName = "attempt"
 )
 
 // filesystemMode is the retained permission-profile filesystem mode. It is

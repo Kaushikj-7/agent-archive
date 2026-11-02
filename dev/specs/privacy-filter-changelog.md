@@ -5,6 +5,26 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 39
+
+Global and Muse adapter 0.39.0 accompany this change. Parsers and other agents'
+filtering are unchanged; the Muse retained schema gains one variant.
+
+- A Muse `workflow_child_lifecycle` run event is retained when it verifies
+  within the parent session: an exact member set for its status, a child
+  session other than this session, the child's own run, and a task this
+  session starts in that run (by the end of the file, since Muse schedules the
+  child before it records the task). A child's steps keep one control ID,
+  child run, workflow run, tool call, task and attempt and move strictly
+  forward; no two children share a control ID or child run, and no workflow
+  child is also a memory-reminder child.
+- Only the run identity, the child session ID, the status and the attempt are
+  retained. The label, control ID, child run, task, workflow run, tool call,
+  routing receipt, model, usage, duration and result references are dropped.
+  Each child becomes lineage once, like a memory-reminder child, and grants no
+  child transcript, capture or coverage.
+- A lifecycle record that does not verify still refuses the whole file.
+
 ## Source filter version 38
 
 Global and Muse adapter 0.38.0 accompany this change. Parsers and other agents'

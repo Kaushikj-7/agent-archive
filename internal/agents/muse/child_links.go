@@ -43,6 +43,15 @@ func projectChildLink(r retained, p, event map[string]any) (map[string]any, erro
 	return f, nil
 }
 
+// projectLinkedChild qualifies a run's report of a child session: a
+// memory-reminder link or a workflow child's lifecycle step.
+func projectLinkedChild(r retained, p, event map[string]any) (map[string]any, error) {
+	if runtimeEvent(str(event["kind"])) == eventWorkflowChildLifecycle {
+		return projectWorkflowChild(r, p, event)
+	}
+	return projectChildLink(r, p, event)
+}
+
 // childLinkFields validates a retained child link.
 func childLinkFields(r retained) bool {
 	f := r.Fields
