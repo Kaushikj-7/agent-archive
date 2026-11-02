@@ -64,6 +64,7 @@ type rootError struct {
 }
 
 func (rootError) Error() string { return errFormat.Error() }
+
 func (rootError) Unwrap() error { return errFormat }
 
 // startupRefusal names why rows ending at physical line did not qualify as a
