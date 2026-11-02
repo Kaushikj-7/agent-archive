@@ -104,6 +104,12 @@ func planNativeImportResume(ctx context.Context, home string, cfg config.Config,
 	if len(batches) == 0 {
 		return nil
 	}
+	p.skips = map[string]backfill.NativeImportSkip{}
+	for _, batch := range batches {
+		for _, skip := range batch.NativeImportSkipped {
+			p.skips[skip.NativeID] = skip
+		}
+	}
 	last := batches[len(batches)-1]
 	if last.NativeImport == nil || !last.Continues(nativeImportBatchFilters(opts, p.projects), cfg.DestinationID()) {
 		return nil
@@ -237,6 +243,11 @@ func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg
 	digest, err := archive.NativeImportBindingDigest(binding)
 	if err != nil {
 		return row, err
+	}
+	// An earlier batch's final read refused this exact source with this
+	// version; only a changed source or another version reads it again.
+	if skip, found := p.skips[id]; found && skip.BindingSHA256 == digest && skip.Version == Version {
+		return refuseNativeImportRow(row, skip.Reason)
 	}
 	row.selection = archive.NativeImportBatchSelection{Kind: archive.NativeImportOrdinaryRoot, NativeID: id, OriginalTUTC: row.OriginalT.UTC().Format(time.RFC3339Nano), ProjectID: row.ProjectID, RootFingerprint: fingerprint, RootRevision: root.Revision, BindingSHA256: digest, Source: *binding.Checkpoint}
 	row.candidate = state.NativeImportCandidate{NativeID: id, Root: root, ProjectRoot: row.Project, ProjectID: row.ProjectID}

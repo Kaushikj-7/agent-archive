@@ -119,6 +119,11 @@ follow [Semantic Versioning](https://semver.org/).
   batch also no longer stops partway when its native inventory pass runs out
   of its metadata allowance; it renews the pass and continues.
 
+- A session a confirmed `backfill --harness muse` skipped is no longer selected
+  again by the next preview, which would only skip it again. The preview lists
+  it as refused with the same reason until its file changes or a different
+  agent-archive version runs.
+
 - Muse sessions started with the unrestricted filesystem permission mode are
   no longer refused; the archive records that mode. Muse route facts newer
   builds write (terminal identity, a local runtime socket path) no longer

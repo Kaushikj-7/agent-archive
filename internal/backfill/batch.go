@@ -78,6 +78,26 @@ type Batch struct {
 	ProjectsKeptFor map[string][]string `json:"projects_kept_for,omitempty"`
 	// NativeImport is immutable reviewed intent, never first-owner proof.
 	NativeImport *archive.NativeImportBatchConfirmation `json:"native_import,omitempty"`
+	// NativeImportSkipped are the confirmed native entries whose final read
+	// refused them. A later preview leaves each out until its source or the
+	// agent-archive version changes.
+	NativeImportSkipped []NativeImportSkip `json:"native_import_skipped,omitempty"`
+}
+
+// NativeImportSkip records one confirmed native entry a batch skipped: the
+// source it refused, by the selection's binding digest, the reason it
+// printed, and the agent-archive version that refused it.
+type NativeImportSkip struct {
+	NativeID      string `json:"native_id"`
+	BindingSHA256 string `json:"binding_sha256"`
+	Reason        string `json:"reason"`
+	Version       string `json:"version"`
+}
+
+// AddNativeImportSkip records skip, replacing an earlier one of the same entry.
+func (b *Batch) AddNativeImportSkip(skip NativeImportSkip) {
+	b.NativeImportSkipped = slices.DeleteFunc(b.NativeImportSkipped, func(s NativeImportSkip) bool { return s.NativeID == skip.NativeID })
+	b.NativeImportSkipped = append(b.NativeImportSkipped, skip)
 }
 
 // BatchFilters are the filters and --include-* flags a batch was run with.

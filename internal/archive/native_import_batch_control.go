@@ -35,7 +35,7 @@ func DecodeNativeImportBatchControl(raw []byte, next *NativeImportBatchControl) 
 		return err
 	}
 	if present {
-		if err := nativeImportClosedObjectNulls(raw, MaxImportBatchControlBytes, []string{"id", "started_at", "filters", "destination_id", "native_import"}, []string{"completed_at", "projects_added", "apps_added", "projects_kept_out", "sessions", "staged_sessions", "subagents", "retention", "undone_at", "projects_excluded", "projects_kept", "projects_kept_for"}, []string{"projects_added", "apps_added", "sessions", "subagents"}); err != nil {
+		if err := nativeImportClosedObjectNulls(raw, MaxImportBatchControlBytes, []string{"id", "started_at", "filters", "destination_id", "native_import"}, []string{"completed_at", "projects_added", "apps_added", "projects_kept_out", "sessions", "staged_sessions", "subagents", "retention", "undone_at", "projects_excluded", "projects_kept", "projects_kept_for", "native_import_skipped"}, []string{"projects_added", "apps_added", "sessions", "subagents"}); err != nil {
 			return err
 		}
 	}

@@ -114,8 +114,10 @@ func registerNativeImportRow(ctx context.Context, env Env, store *state.Store, h
 	}
 	if refused != nil {
 		// The session's own content refuses it, and no retry can change that:
-		// skip it, nothing of it written, and carry on with the batch.
+		// skip it, nothing of it written, and carry on with the batch. The
+		// batch records the skip so the next preview leaves it out.
 		row.Status, row.Reason, row.skipped = nativeImportRefused, nativeImportRefusalReason(refused), true
+		batch.AddNativeImportSkip(backfill.NativeImportSkip{NativeID: row.NativeID, BindingSHA256: row.selection.BindingSHA256, Reason: row.Reason, Version: Version})
 		return nil
 	}
 	if err != nil {

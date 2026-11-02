@@ -225,6 +225,61 @@ func TestBackfillNativeImportSkipsAnEntryItsFinalReadRefuses(t *testing.T) {
 	}
 }
 
+func TestBackfillNativeImportPreviewLeavesOutAnEntryABatchSkippedUntilItChanges(t *testing.T) {
+	t.Parallel()
+	f := newPublicNativeImportFixture(t)
+	raw, err := os.ReadFile(filepath.Join("..", "agents", "muse", "testdata", "synthetic-exec-conversation.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := "00000000-0000-7000-8000-0000000000e4"
+	path := filepath.Join(f.native, "2026", "10", "15", refused, "session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := withAuthorityRecordBeforeEnd(t, musefixture.Rewrite(t, raw, refused, f.project))
+	if err := os.WriteFile(path, source, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code := f.run(nil, "--harness", "muse", "--yes", "--background")
+	if code != 0 || !strings.Contains(out, "1 skipped.") {
+		t.Fatal("confirmed import", code, out, stderr)
+	}
+	reason := "unsupported Muse record session.permission_grant.recorded"
+	// The next preview reports the skipped entry as refused, with the reason
+	// the batch printed, and confirms no batch that would only skip it again.
+	preview, stderr, code := f.run(nil, "--harness", "muse", "--dry-run")
+	if code != 0 || strings.Contains(preview, "selected") || !strings.Contains(preview, "refused  "+reason) {
+		t.Fatal("preview after skip", code, preview, stderr)
+	}
+	out, stderr, code = f.run(nil, "--harness", "muse", "--yes", "--background")
+	if batches, err := backfill.LoadBatches(f.home); code != 0 || err != nil || len(batches) != 1 {
+		t.Fatal("unchanged skipped entry started another batch", code, out, stderr, batches, err)
+	}
+	// A version other than the one that refused it reads it again.
+	control := filepath.Join(f.home, "imports", f.env.now().Format("2006-01-02")+"-1.json")
+	recorded, err := os.ReadFile(control)
+	if err != nil || bytes.Count(recorded, []byte(`"version": "dev"`)) != 1 {
+		t.Fatal("skip version not recorded", err, string(recorded))
+	}
+	if err := os.WriteFile(control, bytes.Replace(recorded, []byte(`"version": "dev"`), []byte(`"version": "0.0.1"`), 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if preview, stderr, code := f.run(nil, "--harness", "muse", "--dry-run"); code != 0 || strings.Count(preview, "selected") != 1 {
+		t.Fatal("preview after a version change", code, preview, stderr)
+	}
+	if err := os.WriteFile(control, recorded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// So does a changed source.
+	if err := os.WriteFile(path, append(source, source[len(source)-1]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if preview, stderr, code := f.run(nil, "--harness", "muse", "--dry-run"); code != 0 || strings.Count(preview, "selected") != 1 {
+		t.Fatal("preview after a source change", code, preview, stderr)
+	}
+}
+
 func TestBackfillNativeImportRenewsASpentInventoryPassMidBatch(t *testing.T) {
 	t.Parallel()
 	f := newPublicNativeImportFixture(t)

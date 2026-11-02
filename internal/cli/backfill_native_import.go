@@ -86,7 +86,9 @@ type nativeImportPreview struct {
 	inventory     *discovery.NativeInventory
 	budget        *agentapi.NativeReadBudget
 	resume        *backfill.Batch
-	charge        int64
+	// skips are earlier batches' skipped entries by native ID, latest last.
+	skips  map[string]backfill.NativeImportSkip
+	charge int64
 }
 
 func (p *nativeImportPreview) close() error {
