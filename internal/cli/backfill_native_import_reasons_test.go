@@ -264,3 +264,28 @@ func TestBackfillNativeImportRenewsASpentInventoryPassMidBatch(t *testing.T) {
 		t.Fatal("batch did not complete after renewing its inventory", batches, err)
 	}
 }
+
+func TestBackfillNativeImportAsksAboutOneSessionInTheSingular(t *testing.T) {
+	t.Parallel()
+	f := newPublicNativeImportFixture(t)
+	f.env.IsTerminal = func(any) bool { return true }
+	out, stderr, code := f.run(strings.NewReader("\n"), "--harness", "muse", "--background")
+	if code != 0 || !strings.Contains(out, "Import this historical Muse session?") || !strings.Contains(out, "Confirm exactly this session") || strings.Contains(out, "these sessions") {
+		t.Fatal(code, out, stderr)
+	}
+}
+
+func TestNativeImportReadReasonSaysWhatToDoNext(t *testing.T) {
+	t.Parallel()
+	for err, want := range map[error]string{
+		// The same scope spends the allowance the same way again.
+		agentapi.Wrap(agentapi.Unavailable, discovery.ErrNativeStartupAllowance):  "narrow it with --since and --until",
+		agentapi.ReadBudgetLimit(errors.New("synthetic budget")):                  "narrow it with --since and --until",
+		agentapi.Wrap(agentapi.Changed, errors.New("synthetic change")):           "source changed during this preview; run the preview again",
+		agentapi.Wrap(agentapi.Unavailable, errors.New("synthetic read failure")): "source could not be read during this preview; run the preview again",
+	} {
+		if got := nativeImportReadReason(err); !strings.HasSuffix(got, want) {
+			t.Fatalf("%v: %q, want it to end %q", err, got, want)
+		}
+	}
+}

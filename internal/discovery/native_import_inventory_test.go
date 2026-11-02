@@ -11,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 	"github.com/wangjohn/agent-archive/internal/agents/muse"
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
 )
 
 func importInventoryOpen(t *testing.T, root archive.NativeRoot) *NativeInventory {
@@ -169,5 +170,39 @@ func TestNativeImportInventoryPurposeDoesNotEnterOrdinaryConstructor(t *testing.
 		if used != 0 {
 			t.Fatal("rejected constructor leaked", used)
 		}
+	}
+}
+
+func TestNativeImportInventoryReportsACandidateReadFailureAsAnError(t *testing.T) {
+	t.Parallel()
+	_, root, raw := inventoryFixture(t)
+	inventoryFile(t, root, "2026/10/15", inventoryOwner, raw)
+	for name, failure := range map[string]error{
+		"changed":     agentapi.Wrap(agentapi.Changed, transcriptio.ErrChanged),
+		"unreadable":  agentapi.Wrap(agentapi.Unavailable, errors.New("synthetic read failure")),
+		"read budget": agentapi.ReadBudgetLimit(errors.New("synthetic budget")),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			budget := agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
+			l, err := NewNativeImportInventory(t.Context(), []archive.NativeRoot{root}, budget, func(context.Context, agentapi.SourceEnvironment, agentapi.SourceRef, string) error { return failure })
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := l.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			if _, err := l.Candidates(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			// A read failure is not the source's own refusal: the preview must be
+			// able to say to retry or narrow it, not that there is nothing to import.
+			located, err := l.Locate(t.Context(), agentapi.LocatorRequest{Purpose: agentapi.LocatorHistoricalImport, Root: root, NativeID: inventoryOwner})
+			if !errors.Is(err, failure) || located.Status == agentapi.LocatorRefused {
+				t.Fatal(located, err)
+			}
+		})
 	}
 }

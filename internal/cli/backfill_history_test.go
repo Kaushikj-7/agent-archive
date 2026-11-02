@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // history words each state accurately, and neither history nor status fails
@@ -89,4 +91,42 @@ func TestBackfillAllImportsUnreadable(t *testing.T) {
 	if parents, _ := importRegistrations(t, f.data, firstImport); len(parents) != 0 {
 		t.Fatal("sessions registered")
 	}
+}
+
+// History counts a batch's sessions as the batch records them: a native child
+// it registered is one of its subagents, not another session.
+func TestBackfillHistoryCountsNativeChildrenAsSubagents(t *testing.T) {
+	t.Parallel()
+	f, _ := newImportFixture(t)
+	id := "2026-09-22-1"
+	if err := backfill.SaveBatch(f.data, backfill.Batch{ID: id, StartedAt: backfillNow.Add(-time.Hour), Sessions: []string{"parent"}, Subagents: []string{"native-child"}}); err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Open(f.data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, reg := range []archive.SessionRegistration{
+		{ArchiveSessionID: "parent", NativeSessionID: "n-parent"},
+		{ArchiveSessionID: "native-child", NativeSessionID: "n-child", NativeChild: true, ParentNativeSessionID: "n-parent"},
+	} {
+		reg.ProjectID, reg.ProjectRoot, reg.Harness = "p", "/p", archive.Harness{Name: "codex"}
+		reg.SessionStartedAt, reg.ImportBatch, reg.Origin = backfillNow, archive.NewImportBatch(id), archive.SessionOriginImport
+		if err := store.SaveRegistration(reg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, errOut, code := f.command(t, "backfill", "history")
+	if code != 0 {
+		t.Fatalf("code %d, %s", code, errOut)
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		if fields := strings.Fields(line); len(fields) > 3 && fields[0] == id {
+			if fields[3] != "1" || !strings.Contains(line, "interrupted; 1 registered") {
+				t.Fatalf("history row counts the native child as a session: %q", line)
+			}
+			return
+		}
+	}
+	t.Fatalf("history has no row for the import: %s", out)
 }

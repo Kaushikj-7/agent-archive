@@ -1008,26 +1008,13 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 			terminal.Printf(stderr, "agent-archive: backfill history: %v\n", err)
 			return 1
 		}
-		terminal.Printf(tw, "%s\t%s\t%d\t%d\t%s\n", b.ID, b.StartedAt.In(loc).Format("2006-01-02 15:04"), batchSessionCount(regs, b), len(b.ProjectsAdded), state)
+		terminal.Printf(tw, "%s\t%s\t%d\t%d\t%s\n", b.ID, b.StartedAt.In(loc).Format("2006-01-02 15:04"), len(b.RegisteredSessions(regs)), len(b.ProjectsAdded), state)
 	}
 	if err := tw.Flush(); err != nil {
 		terminal.Printf(stderr, "agent-archive: backfill history: %v\n", err)
 		return 1
 	}
 	return 0
-}
-
-// batchSessionCount is history's SESSIONS column: the sessions the import
-// recorded plus any it registered but was interrupted before recording, so the
-// column never falls below the UPLOAD column's registered count.
-func batchSessionCount(regs []archive.SessionRegistration, b backfill.Batch) int {
-	sessions := slices.Clone(b.Sessions)
-	for _, reg := range regs {
-		if reg.InBatch(b.ID) && independentImportedSession(reg) && !slices.Contains(sessions, reg.ArchiveSessionID) {
-			sessions = append(sessions, reg.ArchiveSessionID)
-		}
-	}
-	return len(sessions)
 }
 
 // batchUploadState is history's UPLOAD column: undone, or partly undone
@@ -1050,7 +1037,9 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 		if !reg.InBatch(b.ID) {
 			continue
 		}
-		if !independentImportedSession(reg) {
+		// The same split as the batch's own sessions, so SESSIONS never falls
+		// below the registered count here.
+		if reg.IsChild() {
 			subagents++
 			owed, err := importOutstanding(store, cfg, reg)
 			if err != nil {
