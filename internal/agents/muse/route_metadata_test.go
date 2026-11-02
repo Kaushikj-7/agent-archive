@@ -181,6 +181,7 @@ func TestRouteMetadataStartupRetainedGuards(t *testing.T) {
 		"second metadata cause":     func(b archive.SourceBundle) { b.NativeRecords[4]["causation_id"] = b.NativeRecords[3]["id"] },
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			bundle := cloneBundle(t, bundleFor(t, out))
 			mutate(bundle)
 			assertRetainedRefused(t, bundle)
