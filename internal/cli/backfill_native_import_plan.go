@@ -264,6 +264,10 @@ func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg
 // nativeImportRefusalReason words a native adapter's whole-file refusal and
 // what follows from it. It carries only the bounded record family and line.
 func nativeImportRefusalReason(refused *agentapi.NativeRefusalError) string {
+	family := refused.Family
+	if family == "" {
+		family = "unrecognized"
+	}
 	switch refused.Reason {
 	case agentapi.RefusalNoSessionStart:
 		return "not a session: a Muse side log with no session start; nothing to import"
@@ -271,11 +275,9 @@ func nativeImportRefusalReason(refused *agentapi.NativeRefusalError) string {
 		return "incomplete: the file ends before its startup records; nothing to import"
 	case agentapi.RefusalUnsupportedStartup:
 		return fmt.Sprintf("unsupported Muse startup order at line %d; this agent-archive version cannot import it", refused.Line)
+	case agentapi.RefusalInconsistentRecord:
+		return fmt.Sprintf("inconsistent: Muse record %s at line %d contradicts the session's other records; nothing to import", family, refused.Line)
 	case agentapi.RefusalUnsupportedRecord:
-	}
-	family := refused.Family
-	if family == "" {
-		family = "unrecognized"
 	}
 	return fmt.Sprintf("unsupported Muse record %s at line %d; this agent-archive version cannot import it", family, refused.Line)
 }

@@ -16,8 +16,9 @@ follow [Semantic Versioning](https://semver.org/).
 - Explicit `backfill --harness muse` previews bounded historical ordinary roots,
   confirms their exact dates/projects/source checkpoints, and stages them before
   registration for the normal collector. Each refused session says why: the
-  unsupported record and line, a side log with no session start, an incomplete
-  file, or a read to retry. Preview and cancellation write no state
+  unsupported record and line, a record that contradicts the session's other
+  records, a side log with no session start, a file that ends before its
+  startup records, or a read to retry. Preview and cancellation write no state
   and open no storage. Exact batch undo detaches only its memberships. Child
   coverage and missing-worktree/mapping overrides remain unavailable.
 

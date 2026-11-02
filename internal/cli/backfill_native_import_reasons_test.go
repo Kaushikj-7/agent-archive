@@ -81,7 +81,12 @@ func TestBackfillNativeImportPreviewSaysWhyEachSourceIsRefused(t *testing.T) {
 	lines := bytes.Split(bytes.TrimSuffix(raw, []byte("\n")), []byte("\n"))
 	sideLog := "00000000-0000-7000-8000-00000000000a"
 	frameOnly := "00000000-0000-7000-8000-00000000000b"
+	contradicting := "00000000-0000-7000-8000-00000000000e"
+	opened := bytes.Split(musefixture.Rewrite(t, raw, contradicting, f.project), []byte("\n"))
+	// The opening names another session than the file's owner.
+	opened[2] = bytes.Replace(opened[2], []byte(`"session_id":"`+contradicting+`"`), []byte(`"session_id":"`+sideLog+`"`), 1)
 	for id, content := range map[string][]byte{
+		contradicting: bytes.Join(opened, []byte("\n")),
 		// A side log starts directly with ordinary records.
 		sideLog: bytes.ReplaceAll(append(bytes.Join(lines[1:3], []byte("\n")), '\n'), []byte(publicNativeImportID), []byte(sideLog)),
 		// Only the permission frame was written.
@@ -107,7 +112,7 @@ func TestBackfillNativeImportPreviewSaysWhyEachSourceIsRefused(t *testing.T) {
 		reasons[row.Status] = append(reasons[row.Status], row.Reason)
 	}
 	refused := strings.Join(reasons[nativeImportRefused], "\n")
-	if len(reasons[nativeImportSelected]) != 1 || len(reasons[nativeImportRefused]) != 2 || !strings.Contains(refused, "not a session: a Muse side log with no session start; nothing to import") || !strings.Contains(refused, "incomplete: the file ends before its startup records; nothing to import") {
+	if len(reasons[nativeImportSelected]) != 1 || len(reasons[nativeImportRefused]) != 3 || !strings.Contains(refused, "not a session: a Muse side log with no session start; nothing to import") || !strings.Contains(refused, "incomplete: the file ends before its startup records; nothing to import") || !strings.Contains(refused, "inconsistent: Muse record session.opened.observed at line 3 contradicts the session's other records; nothing to import") {
 		t.Fatalf("preview reasons: %+v", result.Sessions)
 	}
 }
