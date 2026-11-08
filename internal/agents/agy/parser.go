@@ -27,7 +27,6 @@ func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.A
 	view := archive.NormalizedView{}
 	var firstPrompt string
 	var firstAt time.Time
-	var toolCalls int
 	var candidates []archive.ToolCallCandidate
 	for index, record := range bundle.NativeRecords {
 		if err := ctx.Err(); err != nil {
@@ -63,15 +62,12 @@ func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.A
 				view.Turns = append(view.Turns, archive.NormalizedTurn{RecordIndex: index, Role: "assistant", Kind: archive.TurnKindAssistant, Text: text, Model: model, ModelSource: archive.TurnModelSourceNativeTranscript, ID: id, Timestamp: at.Format(time.RFC3339Nano)})
 			}
 		case "RUN_COMMAND", "TOOL_CALL":
-			toolCalls++
-			callID := id
-			if callID == "" {
-				if nested, ok := record["toolCall"].(map[string]any); ok {
-					callID = firstString(nested, "id", "call_id")
-				}
+			callID := ""
+			if nested, ok := record["toolCall"].(map[string]any); ok {
+				callID = firstString(nested, "id", "call_id")
 			}
 			if callID == "" {
-				callID = firstString(record, "call_id", "tool_call_id")
+				callID = firstString(record, "call_id", "tool_call_id", "id")
 			}
 			args := toolArguments(record)
 			name := toolName(record)
@@ -90,10 +86,7 @@ func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.A
 				},
 			})
 		case "TOOL_RESULT":
-			resultID := id
-			if resultID == "" {
-				resultID = firstString(record, "call_id", "tool_call_id", "tool_use_id")
-			}
+			resultID := firstString(record, "call_id", "tool_call_id", "tool_use_id", "id")
 			var isError bool
 			if v, ok := record["is_error"].(bool); ok {
 				isError = v
@@ -167,7 +160,9 @@ func buildToolAction(name string, args map[string]any, fallbacks ...map[string]a
 		action.Path = find("AbsolutePath", "path", "file_path")
 	case "write_to_file", "replace_file_content":
 		action.Kind = archive.ToolActionEdit
-		action.Files = []string{find("TargetFile", "target_file", "path")}
+		if target := find("TargetFile", "target_file", "path"); target != "" {
+			action.Files = []string{target}
+		}
 	case "grep_search":
 		action.Kind = archive.ToolActionSearch
 		action.Text = find("Query", "query")

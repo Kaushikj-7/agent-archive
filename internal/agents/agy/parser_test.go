@@ -282,5 +282,113 @@ func TestParserToolActionsForFileAndSearchOperations(t *testing.T) {
 	if searchCall.Action.Kind != archive.ToolActionSearch || searchCall.Action.Text != "func Parse" {
 		t.Fatalf("unexpected search action: %#v", searchCall.Action)
 	}
+
+	// Verify edit tool with no target file produces empty/nil Files slice rather than []string{""}.
+	emptyEditBundle := archive.SourceBundle{
+		NativeSessionID: "conv-empty-edit",
+		NativeRecords: []map[string]any{
+			{"type": "USER_INPUT", "content": "edit", "created_at": "2026-10-26T10:00:00Z"},
+			{
+				"type": "TOOL_CALL",
+				"toolCall": map[string]any{
+					"name": "write_to_file",
+					"args": map[string]any{},
+				},
+				"created_at": "2026-10-26T10:00:01Z",
+			},
+		},
+	}
+	emptyEditAnalysis, err := (Parser{}).Parse(context.Background(), emptyEditBundle)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(emptyEditAnalysis.View.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(emptyEditAnalysis.View.ToolCalls))
+	}
+	if len(emptyEditAnalysis.View.ToolCalls[0].Action.Files) != 0 {
+		t.Fatalf("expected 0 files for edit call with no target file, got %#v", emptyEditAnalysis.View.ToolCalls[0].Action.Files)
+	}
+}
+
+func TestParserLinksToolCallAndResultWithDistinctStepIDs(t *testing.T) {
+	bundle := archive.SourceBundle{
+		NativeSessionID: "conv-step-ids",
+		NativeRecords: []map[string]any{
+			{"type": "USER_INPUT", "content": "run tests", "step_id": "step-1", "created_at": "2026-10-26T10:00:00Z"},
+			{
+				"type":    "RUN_COMMAND",
+				"step_id": "step-2",
+				"toolCall": map[string]any{
+					"id":   "call-abc",
+					"name": "run_command",
+					"args": map[string]any{"CommandLine": "go test ./..."},
+				},
+				"created_at": "2026-10-26T10:00:01Z",
+			},
+			{
+				"type":       "TOOL_RESULT",
+				"step_id":    "step-3",
+				"call_id":    "call-abc",
+				"content":    "FAIL: tests failed",
+				"is_error":   true,
+				"created_at": "2026-10-26T10:00:02Z",
+			},
+		},
+	}
+	analysis, err := (Parser{}).Parse(context.Background(), bundle)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(analysis.View.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(analysis.View.ToolCalls))
+	}
+	call := analysis.View.ToolCalls[0]
+	if call.CallID != "call-abc" {
+		t.Fatalf("expected CallID 'call-abc', got %q", call.CallID)
+	}
+	if call.IsError == nil || !*call.IsError {
+		t.Fatalf("expected IsError=true linked to call despite differing step_id, got %v", call.IsError)
+	}
+	if call.ResultText != "FAIL: tests failed" {
+		t.Fatalf("expected ResultText 'FAIL: tests failed', got %q", call.ResultText)
+	}
+}
+
+func TestParserPositionalFallbackWithDistinctStepIDs(t *testing.T) {
+	bundle := archive.SourceBundle{
+		NativeSessionID: "conv-step-positional",
+		NativeRecords: []map[string]any{
+			{"type": "USER_INPUT", "content": "run tests", "step_id": "step-1", "created_at": "2026-10-26T10:00:00Z"},
+			{
+				"type":    "RUN_COMMAND",
+				"step_id": "step-2",
+				"toolCall": map[string]any{
+					"name": "run_command",
+					"args": map[string]any{"CommandLine": "go test ./..."},
+				},
+				"created_at": "2026-10-26T10:00:01Z",
+			},
+			{
+				"type":       "TOOL_RESULT",
+				"step_id":    "step-3",
+				"content":    "ok",
+				"created_at": "2026-10-26T10:00:02Z",
+			},
+		},
+	}
+	analysis, err := (Parser{}).Parse(context.Background(), bundle)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(analysis.View.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(analysis.View.ToolCalls))
+	}
+	call := analysis.View.ToolCalls[0]
+	if call.CallID != "" {
+		t.Fatalf("expected empty CallID for step_id-only call, got %q", call.CallID)
+	}
+	if call.ResultText != "ok" {
+		t.Fatalf("expected ResultText 'ok' linked via positional fallback, got %q", call.ResultText)
+	}
 }
 
