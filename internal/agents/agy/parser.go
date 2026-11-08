@@ -2,6 +2,7 @@ package agy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.A
 	var firstPrompt string
 	var firstAt time.Time
 	var toolCalls int
+	var candidates []archive.ToolCallCandidate
 	for index, record := range bundle.NativeRecords {
 		if err := ctx.Err(); err != nil {
 			return archive.Analysis{}, err
@@ -62,18 +64,66 @@ func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.A
 			}
 		case "RUN_COMMAND", "TOOL_CALL":
 			toolCalls++
-			view.ToolCalls = append(view.ToolCalls, archive.NormalizedToolCall{RecordIndex: index, CallID: id, Name: toolName(record), Model: model})
+			callID := id
+			if callID == "" {
+				if nested, ok := record["toolCall"].(map[string]any); ok {
+					callID = firstString(nested, "id", "call_id")
+				}
+			}
+			if callID == "" {
+				callID = firstString(record, "call_id", "tool_call_id")
+			}
+			args := toolArguments(record)
+			name := toolName(record)
+			action, shellCmd := buildToolAction(name, args, record)
+			candidates = append(candidates, archive.ToolCallCandidate{
+				Call: archive.NormalizedToolCall{
+					RecordIndex:  index,
+					CallID:       callID,
+					Name:         name,
+					Model:        model,
+					Input:        args,
+					Action:       action,
+					ShellCommand: shellCmd,
+					ObservedName: name,
+					RecordedAt:   at,
+				},
+			})
 		case "TOOL_RESULT":
-			view.ToolResults = append(view.ToolResults, archive.NormalizedToolResult{RecordIndex: index, CallID: id})
+			resultID := id
+			if resultID == "" {
+				resultID = firstString(record, "call_id", "tool_call_id", "tool_use_id")
+			}
+			var isError bool
+			if v, ok := record["is_error"].(bool); ok {
+				isError = v
+			} else if v, ok := record["isError"].(bool); ok {
+				isError = v
+			} else if status := firstString(record, "status"); strings.EqualFold(status, "ERROR") {
+				isError = true
+			}
+			view.ToolResults = append(view.ToolResults, archive.NormalizedToolResult{
+				RecordIndex: index,
+				CallID:      resultID,
+				IsError:     isError,
+				OutputBytes: len(text),
+				Text:        text,
+				RecordedAt:  at,
+			})
 		}
 	}
 	if len(view.Turns) == 0 {
 		return archive.Analysis{}, &archive.ParseError{Reason: "AGY transcript contains no visible conversation turns"}
 	}
+	view.ToolCalls = archive.FinalizeToolCalls(candidates, view.ToolResults)
 	structured := archive.Availability{State: archive.AvailabilityAvailable}
 	tools := archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
-	if toolCalls > 0 {
+	if len(view.ToolCalls) > 0 {
 		tools = structured
+	}
+	toolResultsAvail := archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded}
+	if len(view.ToolResults) > 0 {
+		toolResultsAvail = structured
 	}
 	return archive.Analysis{
 		View: view,
@@ -82,14 +132,68 @@ func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.A
 			EarliestRecordAt: firstAt, Text: true, TokenScopeUnknown: true,
 		},
 		Observability: archive.Observability{
-			StructuredCounts: structured, ToolCalls: tools,
-			FilesTouched: archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded},
-			GitActivity:  archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded},
-			Compactions:  archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded},
-			ToolErrors:   archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded},
-			ToolResults:  tools,
+			StructuredCounts: structured,
+			ToolCalls:        tools,
+			FilesTouched:     archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded},
+			GitActivity:      archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded},
+			Compactions:      archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded},
+			ToolErrors:       archive.Availability{State: archive.AvailabilityUnavailable, Reason: archive.AvailabilityReasonNotRecorded},
+			ToolResults:      toolResultsAvail,
 		},
 	}, nil
+}
+
+func buildToolAction(name string, args map[string]any, fallbacks ...map[string]any) (archive.ToolAction, string) {
+	var action archive.ToolAction
+	var shellCmd string
+	find := func(keys ...string) string {
+		if val := firstString(args, keys...); val != "" {
+			return val
+		}
+		for _, fb := range fallbacks {
+			if val := firstString(fb, keys...); val != "" {
+				return val
+			}
+		}
+		return ""
+	}
+	switch strings.ToLower(name) {
+	case "run_command", "bash", "exec_command":
+		action.Kind = archive.ToolActionShell
+		action.Text = find("CommandLine", "command", "cmd")
+		shellCmd = action.Text
+	case "view_file", "read_file":
+		action.Kind = archive.ToolActionRead
+		action.Path = find("AbsolutePath", "path", "file_path")
+	case "write_to_file", "replace_file_content":
+		action.Kind = archive.ToolActionEdit
+		action.Files = []string{find("TargetFile", "target_file", "path")}
+	case "grep_search":
+		action.Kind = archive.ToolActionSearch
+		action.Text = find("Query", "query")
+	}
+	return action, shellCmd
+}
+
+func toolArguments(record map[string]any) map[string]any {
+	targets := []map[string]any{record}
+	if nested, ok := record["toolCall"].(map[string]any); ok {
+		targets = []map[string]any{nested, record}
+	}
+	for _, target := range targets {
+		for _, key := range []string{"args", "arguments", "input"} {
+			switch value := target[key].(type) {
+			case map[string]any:
+				return value
+			case string:
+				var decoded map[string]any
+				if strings.TrimSpace(value) != "" && json.Unmarshal([]byte(value), &decoded) == nil && len(decoded) > 0 {
+					return decoded
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func timestamp(record map[string]any) (time.Time, error) {
@@ -105,7 +209,7 @@ func timestamp(record map[string]any) (time.Time, error) {
 }
 
 func recordText(record map[string]any) (string, bool) {
-	for _, key := range []string{"content", "text", "prompt", "message"} {
+	for _, key := range []string{"content", "text", "prompt", "message", "output"} {
 		if value, ok := record[key].(string); ok && strings.TrimSpace(value) != "" {
 			return strings.TrimSpace(value), true
 		}
@@ -126,12 +230,23 @@ func cleanUserInput(value string) string {
 
 func toolName(record map[string]any) string {
 	if nested, ok := record["toolCall"].(map[string]any); ok {
-		return firstString(nested, "name", "tool_name")
+		if name := firstString(nested, "name", "tool_name"); name != "" {
+			return name
+		}
 	}
-	return firstString(record, "tool_name", "name", "command")
+	if name := firstString(record, "tool_name", "name", "command"); name != "" {
+		return name
+	}
+	if kind, _ := record["type"].(string); kind == "RUN_COMMAND" {
+		return "run_command"
+	}
+	return ""
 }
 
 func firstString(record map[string]any, keys ...string) string {
+	if record == nil {
+		return ""
+	}
 	for _, key := range keys {
 		if value, ok := record[key].(string); ok && strings.TrimSpace(value) != "" {
 			return strings.TrimSpace(value)

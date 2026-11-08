@@ -130,3 +130,157 @@ func TestFilterPreservesAntigravityParserFieldsAndRedactsSecrets(t *testing.T) {
 		t.Fatalf("unexpected tool calls from filtered records: %#v", analysis.View.ToolCalls)
 	}
 }
+
+func TestParserPopulatesToolDetailsAndLinksResults(t *testing.T) {
+	bundle := archive.SourceBundle{
+		NativeSessionID: "conv-1",
+		NativeRecords: []map[string]any{
+			{"type": "USER_INPUT", "content": "run tests", "created_at": "2026-10-26T10:00:00Z"},
+			{
+				"type": "RUN_COMMAND",
+				"id":   "call-1",
+				"toolCall": map[string]any{
+					"name": "run_command",
+					"args": map[string]any{"CommandLine": "go test ./..."},
+				},
+				"created_at": "2026-10-26T10:00:01Z",
+			},
+			{
+				"type":       "TOOL_RESULT",
+				"id":         "call-1",
+				"content":    "FAIL: tests failed",
+				"is_error":   true,
+				"created_at": "2026-10-26T10:00:02Z",
+			},
+		},
+	}
+	analysis, err := (Parser{}).Parse(context.Background(), bundle)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(analysis.View.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(analysis.View.ToolCalls))
+	}
+	call := analysis.View.ToolCalls[0]
+	if call.ShellCommand != "go test ./..." {
+		t.Fatalf("expected ShellCommand 'go test ./...', got %q", call.ShellCommand)
+	}
+	if call.Action.Kind != archive.ToolActionShell {
+		t.Fatalf("expected ToolActionShell, got %v", call.Action.Kind)
+	}
+	if call.IsError == nil || !*call.IsError {
+		t.Fatalf("expected IsError=true linked to call, got %v", call.IsError)
+	}
+	if call.ResultText != "FAIL: tests failed" {
+		t.Fatalf("expected ResultText 'FAIL: tests failed', got %q", call.ResultText)
+	}
+	if analysis.Observability.ToolResults.State != archive.AvailabilityAvailable {
+		t.Fatalf("expected ToolResults Available when results exist, got %v", analysis.Observability.ToolResults.State)
+	}
+
+	h, err := archive.BuildHandoffWithAnalysis(bundle, analysis, nil, archive.HandoffOptions{Source: "local"})
+	if err != nil {
+		t.Fatalf("BuildHandoffWithAnalysis() error = %v", err)
+	}
+	rendered := string(archive.RenderHandoffMarkdown(h, archive.HandoffRenderOptions{Preamble: true}))
+	if !strings.Contains(rendered, "go test ./...") {
+		t.Fatalf("expected rendered handoff to contain command 'go test ./...', got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "FAIL: tests failed") {
+		t.Fatalf("expected rendered handoff to contain result 'FAIL: tests failed', got:\n%s", rendered)
+	}
+}
+
+func TestParserToolResultAvailabilityUnavailableWhenNoResultsRecorded(t *testing.T) {
+	bundle := archive.SourceBundle{
+		NativeSessionID: "conv-2",
+		NativeRecords: []map[string]any{
+			{"type": "USER_INPUT", "content": "run tests", "created_at": "2026-10-26T10:00:00Z"},
+			{
+				"type": "RUN_COMMAND",
+				"id":   "call-1",
+				"toolCall": map[string]any{
+					"name": "run_command",
+					"args": map[string]any{"CommandLine": "go test ./..."},
+				},
+				"created_at": "2026-10-26T10:00:01Z",
+			},
+		},
+	}
+	analysis, err := (Parser{}).Parse(context.Background(), bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.Observability.ToolResults.State != archive.AvailabilityUnavailable {
+		t.Fatalf("expected ToolResults Unavailable when no results recorded, got %v", analysis.Observability.ToolResults.State)
+	}
+}
+
+func TestParserToolActionsForFileAndSearchOperations(t *testing.T) {
+	bundle := archive.SourceBundle{
+		NativeSessionID: "conv-3",
+		NativeRecords: []map[string]any{
+			{"type": "USER_INPUT", "content": "check code", "created_at": "2026-10-26T10:00:00Z"},
+			{
+				"type": "TOOL_CALL",
+				"id":   "call-read",
+				"toolCall": map[string]any{
+					"name": "read_file",
+					"args": map[string]any{"file_path": "internal/parser.go"},
+				},
+				"created_at": "2026-10-26T10:00:01Z",
+			},
+			{
+				"type": "TOOL_CALL",
+				"id":   "call-edit",
+				"toolCall": map[string]any{
+					"name": "write_to_file",
+					"args": map[string]any{"TargetFile": "output.txt"},
+				},
+				"created_at": "2026-10-26T10:00:02Z",
+			},
+			{
+				"type": "TOOL_CALL",
+				"id":   "call-replace",
+				"toolCall": map[string]any{
+					"name": "replace_file_content",
+					"args": map[string]any{"target_file": "config.json"},
+				},
+				"created_at": "2026-10-26T10:00:03Z",
+			},
+			{
+				"type": "TOOL_CALL",
+				"id":   "call-search",
+				"toolCall": map[string]any{
+					"name": "grep_search",
+					"args": map[string]any{"Query": "func Parse"},
+				},
+				"created_at": "2026-10-26T10:00:04Z",
+			},
+		},
+	}
+	analysis, err := (Parser{}).Parse(context.Background(), bundle)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(analysis.View.ToolCalls) != 4 {
+		t.Fatalf("expected 4 tool calls, got %d", len(analysis.View.ToolCalls))
+	}
+	readCall := analysis.View.ToolCalls[0]
+	if readCall.Action.Kind != archive.ToolActionRead || readCall.Action.Path != "internal/parser.go" {
+		t.Fatalf("unexpected read action: %#v", readCall.Action)
+	}
+	editCall := analysis.View.ToolCalls[1]
+	if editCall.Action.Kind != archive.ToolActionEdit || len(editCall.Action.Files) != 1 || editCall.Action.Files[0] != "output.txt" {
+		t.Fatalf("unexpected edit action: %#v", editCall.Action)
+	}
+	replaceCall := analysis.View.ToolCalls[2]
+	if replaceCall.Action.Kind != archive.ToolActionEdit || len(replaceCall.Action.Files) != 1 || replaceCall.Action.Files[0] != "config.json" {
+		t.Fatalf("unexpected replace action: %#v", replaceCall.Action)
+	}
+	searchCall := analysis.View.ToolCalls[3]
+	if searchCall.Action.Kind != archive.ToolActionSearch || searchCall.Action.Text != "func Parse" {
+		t.Fatalf("unexpected search action: %#v", searchCall.Action)
+	}
+}
+
