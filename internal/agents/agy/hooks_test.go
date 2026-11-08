@@ -25,9 +25,19 @@ func TestHooksUseAntigravityDirectLifecycleShape(t *testing.T) {
 		t.Fatalf("Antigravity definition must not be nested under hooks: %#v", document)
 	}
 	hooks := document["agent-archive"].(map[string]any)
-	entry := hooks["PreInvocation"].([]any)[0].(map[string]any)
-	if entry["type"] != "command" || entry["hooks"] != nil {
-		t.Fatalf("unexpected Antigravity hook entry: %#v", entry)
+	for _, event := range []string{"SessionStart", "PreInvocation", "PostInvocation", "Stop"} {
+		list, ok := hooks[event].([]any)
+		if !ok || len(list) != 1 {
+			t.Fatalf("missing hook entry for %s: %#v", event, hooks[event])
+		}
+		entry := list[0].(map[string]any)
+		if entry["type"] != "command" || entry["hooks"] != nil {
+			t.Fatalf("unexpected Antigravity hook entry: %#v", entry)
+		}
+		cmd, _ := entry["command"].(string)
+		if !strings.Contains(cmd, "--event "+event) {
+			t.Fatalf("command for %s missing --event flag: %s", event, cmd)
+		}
 	}
 	owner := agentapi.HookOwner{Executable: "/usr/local/bin/agent-archive", DataHome: "/tmp/archive"}
 	inspection, err := Hooks().Inspect(agentapi.HookInspectionRequest{File: agentapi.HookFile{Path: "/tmp/hooks.json", Bytes: changes[0].After, Present: true}, Owner: owner})
@@ -44,24 +54,31 @@ func TestHooksPreserveEnabledToggle(t *testing.T) {
 	existing := []byte(`{
   "agent-archive": {
     "enabled": false,
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "AGENT_ARCHIVE_HOME='/tmp/archive' '/usr/local/bin/agent-archive' _hook --harness agy --event SessionStart # agent-archive lifecycle capture",
+        "timeout": "2"
+      }
+    ],
     "PreInvocation": [
       {
         "type": "command",
-        "command": "'/usr/local/bin/agent-archive' _hook --harness agy # agent-archive lifecycle capture",
+        "command": "AGENT_ARCHIVE_HOME='/tmp/archive' '/usr/local/bin/agent-archive' _hook --harness agy --event PreInvocation # agent-archive lifecycle capture",
         "timeout": "2"
       }
     ],
     "PostInvocation": [
       {
         "type": "command",
-        "command": "'/usr/local/bin/agent-archive' _hook --harness agy # agent-archive lifecycle capture",
+        "command": "AGENT_ARCHIVE_HOME='/tmp/archive' '/usr/local/bin/agent-archive' _hook --harness agy --event PostInvocation # agent-archive lifecycle capture",
         "timeout": "2"
       }
     ],
     "Stop": [
       {
         "type": "command",
-        "command": "'/usr/local/bin/agent-archive' _hook --harness agy # agent-archive lifecycle capture",
+        "command": "AGENT_ARCHIVE_HOME='/tmp/archive' '/usr/local/bin/agent-archive' _hook --harness agy --event Stop # agent-archive lifecycle capture",
         "timeout": "2"
       }
     ]
@@ -109,5 +126,16 @@ func TestHooksPreserveEnabledToggle(t *testing.T) {
 	def := doc["agent-archive"].(map[string]any)
 	if def["enabled"] != false {
 		t.Fatalf("Plan(Install) did not preserve enabled: false, got %#v", def["enabled"])
+	}
+	for _, event := range []string{"SessionStart", "PreInvocation", "PostInvocation", "Stop"} {
+		list, ok := def[event].([]any)
+		if !ok || len(list) != 1 {
+			t.Fatalf("missing installed hook for %s", event)
+		}
+		entry := list[0].(map[string]any)
+		cmd, _ := entry["command"].(string)
+		if !strings.Contains(cmd, "--event "+event) {
+			t.Fatalf("expected --event %s in command, got %s", event, cmd)
+		}
 	}
 }

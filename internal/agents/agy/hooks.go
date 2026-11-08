@@ -12,6 +12,7 @@ func Hooks() hookconfig.Configurator {
 		Flat: true, Direct: true, Rootless: true, Definition: "agent-archive",
 		Owner:          "agent-archive lifecycle capture",
 		PrototypeOwner: "Recording private skill-run evidence",
-		Events:         []string{"PreInvocation", "PostInvocation", "Stop"},
+		Events:         []string{"SessionStart", "PreInvocation", "PostInvocation", "Stop"},
+		EventInCommand: true,
 	}}
 }
