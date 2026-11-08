@@ -34,6 +34,10 @@ type Spec struct {
 	RootEnvironment  string
 	DefaultDirectory string
 	Filename         string
+	// EventInCommand encodes the lifecycle event name directly in the command
+	// string using --event <event>. Used by harnesses like Antigravity whose
+	// lifecycle hooks payload does not include hook_event_name.
+	EventInCommand bool
 }
 
 // Configurator edits injected JSON values using the byte preserving editor.
@@ -70,12 +74,28 @@ func (h Hook) command(spec Spec) (string, error) {
 	return "AGENT_ARCHIVE_HOME=" + quote(h.DataHome) + " " + command, nil
 }
 
+func (h Hook) commandForEvent(spec Spec, event string) (string, error) {
+	if !spec.EventInCommand || event == "" {
+		return h.command(spec)
+	}
+	if !filepath.IsAbs(h.Executable) || strings.ContainsAny(h.Executable, "\x00\r\n") {
+		return "", errors.New("executable must be an absolute path")
+	}
+	command := quote(h.Executable) + " _hook --harness " + spec.Name + " --event " + event + " # " + spec.Owner
+	if h.DataHome == "" {
+		return command, nil
+	}
+	if !filepath.IsAbs(h.DataHome) || strings.ContainsAny(h.DataHome, "\x00\r\n") {
+		return "", errors.New("data directory must be an absolute path")
+	}
+	return "AGENT_ARCHIVE_HOME=" + quote(h.DataHome) + " " + command, nil
+}
+
 // Merge preserves unrelated handlers and top-level settings: only the
 // "hooks" member (and Cursor's "version") is rewritten, and everything else
 // in the file keeps its bytes (see document).
 func merge(existing []byte, spec Spec, hook Hook) ([]byte, error) {
-	command, err := hook.command(spec)
-	if err != nil {
+	if _, err := hook.command(spec); err != nil {
 		return nil, err
 	}
 	names := spec.Events
@@ -129,6 +149,10 @@ func merge(existing []byte, spec Spec, hook Hook) ([]byte, error) {
 		}
 	}
 	for _, event := range names {
+		command, err := hook.commandForEvent(spec, event)
+		if err != nil {
+			return nil, err
+		}
 		// Keys in the order earlier releases wrote them (sorted), so rerunning
 		// setup over an existing installation changes nothing.
 		handler := &object{Members: []member{{Key: "command", Value: command}, {Key: "timeout", Value: json.Number("2")}}}

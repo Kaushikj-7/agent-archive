@@ -8,8 +8,7 @@ import (
 )
 
 func installed(data []byte, spec Spec, hook Hook) (bool, error) {
-	command, err := hook.command(spec)
-	if err != nil {
+	if _, err := hook.command(spec); err != nil {
 		return false, err
 	}
 	doc, err := parseDocument(data)
@@ -54,6 +53,10 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 			return false, err
 		}
 		ours := 0
+		expectedCommand, err := hook.commandForEvent(app, m.Key)
+		if err != nil {
+			return false, err
+		}
 		for _, handler := range handlers {
 			if kind, _, _ := classify(handler, app, hook); !hook.replaces(kind) {
 				continue
@@ -62,7 +65,7 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 			kind, _ := handler.Get("type")
 			timeout, timeoutOK := handler.Get("timeout")
 			timeoutNumber, numberOK := timeout.(json.Number)
-			if got != command || (!app.Flat && !app.Direct && kind != "command") || app.CommandMarkerOwnership && (!timeoutOK || !numberOK || timeoutNumber != "2") {
+			if got != expectedCommand || (!app.Flat && !app.Direct && kind != "command") || app.CommandMarkerOwnership && (!timeoutOK || !numberOK || timeoutNumber != "2") {
 				return false, nil
 			}
 			ours++

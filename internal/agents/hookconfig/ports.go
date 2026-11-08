@@ -100,6 +100,11 @@ func (c Configurator) Command(owner agentapi.HookOwner) (string, error) {
 	return Hook(owner).command(c.Spec)
 }
 
+// CommandForEvent builds the owned command for an event with the integration's declared native name.
+func (c Configurator) CommandForEvent(owner agentapi.HookOwner, event string) (string, error) {
+	return Hook(owner).commandForEvent(c.Spec, event)
+}
+
 // EnvironmentKeys declares native root overrides to the observation caller.
 func (c Configurator) EnvironmentKeys() []string {
 	if c.Spec.RootEnvironment == "" {

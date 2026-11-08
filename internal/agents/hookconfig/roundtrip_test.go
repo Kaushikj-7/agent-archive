@@ -210,3 +210,68 @@ func TestNamedDefinitionEnabledToggle(t *testing.T) {
 		t.Fatalf("otherInstallations with non-boolean enabled expected 'invalid boolean for enabled', got: %v", err)
 	}
 }
+
+func TestEventInCommandRoundtrip(t *testing.T) {
+	spec := Spec{
+		Name: "agy", Flat: true, Direct: true, Rootless: true, Definition: "agent-archive",
+		Owner: Owner, PrototypeOwner: prototypeOwner, EventInCommand: true,
+		Events: []string{"PreInvocation", "PostInvocation", "Stop"},
+	}
+	hook := Hook{Executable: "/usr/local/bin/agent-archive"}
+	merged, err := merge(nil, spec, hook)
+	if err != nil {
+		t.Fatalf("merge error = %v", err)
+	}
+	doc, err := parseDocument(merged)
+	if err != nil {
+		t.Fatalf("parse error = %v", err)
+	}
+	defObj, ok := doc.Root.Get("agent-archive")
+	if !ok {
+		t.Fatalf("missing agent-archive definition in %s", string(merged))
+	}
+	def, ok := defObj.(*object)
+	if !ok {
+		t.Fatalf("agent-archive is not an object: %#v", defObj)
+	}
+	for _, event := range spec.Events {
+		val, ok := def.Get(event)
+		if !ok {
+			t.Fatalf("missing event %s", event)
+		}
+		list, ok := val.([]any)
+		if !ok || len(list) != 1 {
+			t.Fatalf("invalid list for event %s: %#v", event, val)
+		}
+		handler, ok := list[0].(*object)
+		if !ok {
+			t.Fatalf("invalid handler for event %s", event)
+		}
+		cmd, _ := handler.Get("command")
+		wantCmd, _ := hook.commandForEvent(spec, event)
+		if cmd != wantCmd {
+			t.Fatalf("event %s command mismatch: got %v, want %v", event, cmd, wantCmd)
+		}
+	}
+
+	installedOK, err := installed(merged, spec, hook)
+	if err != nil || !installedOK {
+		t.Fatalf("installed error = %v, ok = %v", err, installedOK)
+	}
+
+	// Idempotent merge
+	mergedAgain, err := merge(merged, spec, hook)
+	if err != nil || !bytes.Equal(merged, mergedAgain) {
+		t.Fatalf("merge not idempotent: got %s, want %s", string(mergedAgain), string(merged))
+	}
+
+	// Remove
+	removed, changed, err := remove(merged, spec, hook)
+	if err != nil || !changed {
+		t.Fatalf("remove error = %v, changed = %v", err, changed)
+	}
+	if strings.TrimSpace(string(removed)) != "{}" {
+		t.Fatalf("remove left behind definition: %s", string(removed))
+	}
+}
+

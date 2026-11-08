@@ -155,10 +155,10 @@ func TestDocsQuoteOnlyRealCommandsAndFlags(t *testing.T) {
 func quotedInvocationProblems(sets map[string]*flag.FlagSet, code string, bareCommands bool) (problems []string, checked int) {
 	// What may follow agent-archive besides a public command: help, the
 	// version flags, and the hidden entry points apps and
-	// launchd run (_hook takes --harness).
+	// launchd run (_hook takes --harness and --event).
 	others := map[string][]string{
 		"help": nil, "--help": nil, "-h": nil, "--version": nil, "-v": nil,
-		"_collect": nil, "_hook": {"harness"},
+		"_collect": nil, "_hook": {"harness", "event"},
 		"_catalog": {"bucket", "prefix", "isolated", "owner"},
 	}
 	code = shellContinuation.ReplaceAllString(code, " ")

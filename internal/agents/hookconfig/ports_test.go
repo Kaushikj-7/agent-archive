@@ -114,3 +114,51 @@ func TestInspectionReportsUnrelatedSettingsAsAbsent(t *testing.T) {
 		t.Fatalf("inspection %+v %v", result, err)
 	}
 }
+
+func TestEventInCommandGeneratesEventFlag(t *testing.T) {
+	spec := Spec{
+		Name: "agy", EventInCommand: true, Owner: "test capture",
+		Events: []string{"SessionStart", "Stop"}, Direct: true, Rootless: true, Definition: "agent-archive",
+	}
+	hook := Hook{Executable: "/bin/agent-archive"}
+	cmdStart, err := hook.commandForEvent(spec, "SessionStart")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "'/bin/agent-archive' _hook --harness agy --event SessionStart # test capture"
+	if cmdStart != want {
+		t.Fatalf("got %q, want %q", cmdStart, want)
+	}
+
+	hookRelocated := Hook{Executable: "/bin/agent-archive", DataHome: "/data/archive"}
+	cmdStop, err := hookRelocated.commandForEvent(spec, "Stop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRelocated := "AGENT_ARCHIVE_HOME='/data/archive' '/bin/agent-archive' _hook --harness agy --event Stop # test capture"
+	if cmdStop != wantRelocated {
+		t.Fatalf("got %q, want %q", cmdStop, wantRelocated)
+	}
+
+	specNoEvent := Spec{
+		Name: "codex", EventInCommand: false, Owner: "test capture",
+	}
+	cmdNoEvent, err := hook.commandForEvent(specNoEvent, "SessionStart")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantNoEvent := "'/bin/agent-archive' _hook --harness codex # test capture"
+	if cmdNoEvent != wantNoEvent {
+		t.Fatalf("got %q, want %q", cmdNoEvent, wantNoEvent)
+	}
+
+	cmdEmptyEvent, err := hook.commandForEvent(spec, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEmptyEvent := "'/bin/agent-archive' _hook --harness agy # test capture"
+	if cmdEmptyEvent != wantEmptyEvent {
+		t.Fatalf("got %q, want %q", cmdEmptyEvent, wantEmptyEvent)
+	}
+}
+

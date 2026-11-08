@@ -61,6 +61,7 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 	fs := flag.NewFlagSet("_hook", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	harness = fs.String("harness", "", "harness name (codex, claude, cursor, muse, agy)")
+	eventFlag := fs.String("event", "", "hook event name")
 	if err := fs.Parse(args); err != nil {
 		return 0
 	}
@@ -86,6 +87,9 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 	}
 	if err != nil || payload == nil || limited.N <= 0 {
 		return 0
+	}
+	if *eventFlag != "" && payload != nil && (payload["hook_event_name"] == nil || payload["hook_event_name"] == "") {
+		payload["hook_event_name"] = *eventFlag
 	}
 
 	// Resolved without creating it: a hook left behind after the data
