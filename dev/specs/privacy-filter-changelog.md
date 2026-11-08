@@ -5,6 +5,19 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 33
+
+Global and Agy adapter 0.33.0 accompany this change. Source and metadata schemas
+are unchanged.
+
+- Retain safe Antigravity trajectory keys (`modelName`, `model_name`, `step_id`,
+  `conversationId`, `conversation_id`, `prompt`, `toolCall`, and `args`).
+- Include `args` and `toolcall` in `toolArgumentKeys` so Antigravity command line
+  arguments and non-sensitive tool parameters are preserved while secrets and
+  credentials continue to be redacted.
+- Recognize `conversationId` and `conversation_id` in native and safe identity
+  helpers (`noteNativeIdentity` and `noteSafeIdentity`).
+
 ## Source filter version 32
 
 Global and Muse adapter 0.32.0 accompany this change. Parsers, source and

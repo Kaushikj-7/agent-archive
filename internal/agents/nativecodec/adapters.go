@@ -105,7 +105,7 @@ type AgyAdapter struct{}
 func (AgyAdapter) Name() string { return "agy" }
 
 // Version returns the AGY adapter policy version.
-func (AgyAdapter) Version() string { return "1.0.0" }
+func (AgyAdapter) Version() string { return adapterVersion }
 
 // FilterJSONL keeps documented Antigravity trajectory records through the
 // shared privacy filter.
@@ -755,7 +755,7 @@ func recordCarriesConversation(record map[string]any) bool {
 	return conversationRecordTypes[strings.ToLower(strings.TrimSpace(kind))]
 }
 
-const adapterVersion = "0.32.0"
+const adapterVersion = "0.33.0"
 
 var maxRecordBytes = archive.MaxRecordBytes
 
@@ -782,7 +782,7 @@ func noteNativeIdentity(result *archive.FilteredTranscript, raw map[string]any) 
 		return
 	}
 	noteRecordTime(result, raw)
-	result.SessionIDs = appendUniqueString(result.SessionIDs, firstString(raw, "session_id", "sessionId"))
+	result.SessionIDs = appendUniqueString(result.SessionIDs, firstString(raw, "session_id", "sessionId", "conversationId", "conversation_id"))
 	result.AgentIDs = appendUniqueString(result.AgentIDs, firstString(raw, "agent_id", "agentId"))
 }
 
@@ -796,7 +796,7 @@ func noteSafeIdentity(result *archive.FilteredTranscript, safe map[string]any) {
 			result.LocalIdentity.ID = firstString(payload, "id")
 		}
 	}
-	for _, key := range []string{"session_id", "sessionId"} {
+	for _, key := range []string{"session_id", "sessionId", "conversationId", "conversation_id"} {
 		result.LocalIdentity.Candidates = appendUniqueString(result.LocalIdentity.Candidates, firstString(safe, key))
 	}
 }

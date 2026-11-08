@@ -63,6 +63,9 @@ var allowedKeys = map[string]bool{
 	// as its kind string (see originKindOnly) and promptSource only as a
 	// string, so a parser can tell a notification from a prompt.
 	"origin": true, "promptsource": true,
+	// Filter 33: Antigravity trajectory keys.
+	"modelname": true, "model_name": true, "step_id": true, "conversationid": true,
+	"conversation_id": true, "prompt": true, "toolcall": true, "args": true,
 }
 
 // booleanFlagKeys are allowed only as the boolean flag the harness writes. Any

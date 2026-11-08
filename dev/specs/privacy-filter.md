@@ -13,7 +13,7 @@ keeps, drops, or redacts bumps `FilterVersion`
 
 Every retained string, at every depth, passes injected-instruction
 stripping, value-level redaction, and the 64 KB cap. Tool-argument subtrees
-(`input`, `arguments`, `tool_input`) keep every argument name, because the
+(`input`, `arguments`, `tool_input`, `args`, `toolcall`) keep every argument name, because the
 names belong to the tool, subject to the deny list below.
 
 ### Session names and linked pull requests
