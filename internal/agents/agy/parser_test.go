@@ -392,3 +392,114 @@ func TestParserPositionalFallbackWithDistinctStepIDs(t *testing.T) {
 	}
 }
 
+func TestFilterVersionAndName(t *testing.T) {
+	f := Filter{}
+	if got := f.Name(); got != "agy" {
+		t.Fatalf("Filter.Name() = %q, want %q", got, "agy")
+	}
+	if got := f.Version(); got != "0.33.0" {
+		t.Fatalf("Filter.Version() = %q, want %q", got, "0.33.0")
+	}
+}
+
+func TestParserAntigravityToolActions(t *testing.T) {
+	bundle := archive.SourceBundle{
+		NativeSessionID: "conv-agy-tools",
+		NativeRecords: []map[string]any{
+			{"type": "USER_INPUT", "content": "work on files", "created_at": "2026-10-26T10:00:00Z"},
+			{
+				"type": "TOOL_CALL",
+				"id":   "call-read-path",
+				"toolCall": map[string]any{
+					"name": "read_file",
+					"args": map[string]any{"Path": "E:/repo/main.go"},
+				},
+				"created_at": "2026-10-26T10:00:01Z",
+			},
+			{
+				"type": "TOOL_CALL",
+				"id":   "call-write-path",
+				"toolCall": map[string]any{
+					"name": "write_file",
+					"args": map[string]any{"Path": "E:/repo/new.go"},
+				},
+				"created_at": "2026-10-26T10:00:02Z",
+			},
+			{
+				"type": "TOOL_CALL",
+				"id":   "call-edit-path",
+				"toolCall": map[string]any{
+					"name": "edit_file",
+					"args": map[string]any{"Path": "E:/repo/existing.go"},
+				},
+				"created_at": "2026-10-26T10:00:03Z",
+			},
+		},
+	}
+	analysis, err := (Parser{}).Parse(context.Background(), bundle)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(analysis.View.ToolCalls) != 3 {
+		t.Fatalf("expected 3 tool calls, got %d", len(analysis.View.ToolCalls))
+	}
+	readCall := analysis.View.ToolCalls[0]
+	if readCall.Action.Kind != archive.ToolActionRead || readCall.Action.Path != "E:/repo/main.go" {
+		t.Fatalf("unexpected read action: %#v", readCall.Action)
+	}
+	writeCall := analysis.View.ToolCalls[1]
+	if writeCall.Action.Kind != archive.ToolActionEdit || len(writeCall.Action.Files) != 1 || writeCall.Action.Files[0] != "E:/repo/new.go" {
+		t.Fatalf("unexpected write action: %#v", writeCall.Action)
+	}
+	editCall := analysis.View.ToolCalls[2]
+	if editCall.Action.Kind != archive.ToolActionEdit || len(editCall.Action.Files) != 1 || editCall.Action.Files[0] != "E:/repo/existing.go" {
+		t.Fatalf("unexpected edit action: %#v", editCall.Action)
+	}
+}
+
+func TestParserToolCallSnakeCaseMap(t *testing.T) {
+	bundle := archive.SourceBundle{
+		NativeSessionID: "conv-snake-tool-call",
+		NativeRecords: []map[string]any{
+			{"type": "USER_INPUT", "content": "read and reply", "created_at": "2026-10-26T10:00:00Z"},
+			{
+				"type": "TOOL_CALL",
+				"tool_call": map[string]any{
+					"id":   "call-snake-1",
+					"name": "read_file",
+					"args": map[string]any{"Path": "internal/test.go"},
+				},
+				"created_at": "2026-10-26T10:00:01Z",
+			},
+			{
+				"type": "TOOL_RESULT",
+				"tool_call": map[string]any{
+					"id": "call-snake-1",
+				},
+				"content":    "file contents here",
+				"created_at": "2026-10-26T10:00:02Z",
+			},
+		},
+	}
+	analysis, err := (Parser{}).Parse(context.Background(), bundle)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(analysis.View.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(analysis.View.ToolCalls))
+	}
+	call := analysis.View.ToolCalls[0]
+	if call.CallID != "call-snake-1" {
+		t.Fatalf("expected CallID 'call-snake-1', got %q", call.CallID)
+	}
+	if call.Name != "read_file" {
+		t.Fatalf("expected Name 'read_file', got %q", call.Name)
+	}
+	if call.Action.Kind != archive.ToolActionRead || call.Action.Path != "internal/test.go" {
+		t.Fatalf("unexpected read action: %#v", call.Action)
+	}
+	if call.ResultText != "file contents here" {
+		t.Fatalf("expected ResultText 'file contents here', got %q", call.ResultText)
+	}
+}
+

@@ -3,6 +3,7 @@ package agy
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
 )
@@ -20,8 +21,10 @@ var conflictingPromptFlags = []string{"-p", "--prompt", "--print", "-i", "--prom
 // Args starts a new AGY conversation with the handoff prompt and project root.
 func (Launcher) Args(r agentapi.LaunchRequest) ([]string, error) {
 	for _, flag := range conflictingPromptFlags {
-		if slices.Contains(r.ExtraArgs, flag) {
-			return nil, fmt.Errorf("arguments for agy cannot include %s: the handoff prompt is managed by agent-archive", flag)
+		for _, arg := range r.ExtraArgs {
+			if arg == flag || strings.HasPrefix(arg, flag+"=") {
+				return nil, fmt.Errorf("arguments for agy cannot include %s: the handoff prompt is managed by agent-archive", flag)
+			}
 		}
 	}
 	args := slices.Clone(r.ExtraArgs)

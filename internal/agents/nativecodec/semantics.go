@@ -548,7 +548,7 @@ const maxTokenCount = 1 << 53
 
 const maxPRNumber = 1 << 30
 
-var toolArgumentKeys = map[string]bool{"input": true, "arguments": true, "tool_input": true, "args": true, "toolcall": true}
+var toolArgumentKeys = map[string]bool{"input": true, "arguments": true, "tool_input": true, "args": true, "toolcall": true, "tool_call": true}
 
 var repoPartPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 

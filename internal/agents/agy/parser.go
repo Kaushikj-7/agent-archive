@@ -67,11 +67,24 @@ func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.A
 				callID = firstString(nested, "id", "call_id")
 			}
 			if callID == "" {
+				if nested, ok := record["tool_call"].(map[string]any); ok {
+					callID = firstString(nested, "id", "call_id")
+				}
+			}
+			if callID == "" {
 				callID = firstString(record, "call_id", "tool_call_id", "id")
 			}
 			args := toolArguments(record)
 			name := toolName(record)
-			action, shellCmd := buildToolAction(name, args, record)
+			var fbs []map[string]any
+			if nested, ok := record["toolCall"].(map[string]any); ok {
+				fbs = append(fbs, nested)
+			}
+			if nested, ok := record["tool_call"].(map[string]any); ok {
+				fbs = append(fbs, nested)
+			}
+			fbs = append(fbs, record)
+			action, shellCmd := buildToolAction(name, args, fbs...)
 			candidates = append(candidates, archive.ToolCallCandidate{
 				Call: archive.NormalizedToolCall{
 					RecordIndex:  index,
@@ -87,6 +100,16 @@ func (Parser) Parse(ctx context.Context, bundle archive.SourceBundle) (archive.A
 			})
 		case "TOOL_RESULT":
 			resultID := firstString(record, "call_id", "tool_call_id", "tool_use_id", "id")
+			if resultID == "" {
+				if nested, ok := record["toolCall"].(map[string]any); ok {
+					resultID = firstString(nested, "id", "call_id")
+				}
+				if resultID == "" {
+					if nested, ok := record["tool_call"].(map[string]any); ok {
+						resultID = firstString(nested, "id", "call_id")
+					}
+				}
+			}
 			var isError bool
 			if v, ok := record["is_error"].(bool); ok {
 				isError = v
@@ -157,10 +180,10 @@ func buildToolAction(name string, args map[string]any, fallbacks ...map[string]a
 		shellCmd = action.Text
 	case "view_file", "read_file":
 		action.Kind = archive.ToolActionRead
-		action.Path = find("AbsolutePath", "path", "file_path")
-	case "write_to_file", "replace_file_content":
+		action.Path = find("Path", "AbsolutePath", "path", "file_path")
+	case "write_to_file", "replace_file_content", "edit_file", "write_file":
 		action.Kind = archive.ToolActionEdit
-		if target := find("TargetFile", "target_file", "path"); target != "" {
+		if target := find("Path", "TargetFile", "target_file", "path"); target != "" {
 			action.Files = []string{target}
 		}
 	case "grep_search":
@@ -171,10 +194,14 @@ func buildToolAction(name string, args map[string]any, fallbacks ...map[string]a
 }
 
 func toolArguments(record map[string]any) map[string]any {
-	targets := []map[string]any{record}
+	var targets []map[string]any
 	if nested, ok := record["toolCall"].(map[string]any); ok {
-		targets = []map[string]any{nested, record}
+		targets = append(targets, nested)
 	}
+	if nested, ok := record["tool_call"].(map[string]any); ok {
+		targets = append(targets, nested)
+	}
+	targets = append(targets, record)
 	for _, target := range targets {
 		for _, key := range []string{"args", "arguments", "input"} {
 			switch value := target[key].(type) {
@@ -225,6 +252,11 @@ func cleanUserInput(value string) string {
 
 func toolName(record map[string]any) string {
 	if nested, ok := record["toolCall"].(map[string]any); ok {
+		if name := firstString(nested, "name", "tool_name"); name != "" {
+			return name
+		}
+	}
+	if nested, ok := record["tool_call"].(map[string]any); ok {
 		if name := firstString(nested, "name", "tool_name"); name != "" {
 			return name
 		}

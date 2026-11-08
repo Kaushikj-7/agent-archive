@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agents/nativecodec"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/sourceio"
 )
@@ -30,12 +31,7 @@ func (SourceProvider) Activities(ctx context.Context, env agentapi.SourceEnviron
 }
 
 // Filter owns the AGY privacy adapter and shared retained-source behavior.
-type Filter struct{ nativeAdapter }
-
-type nativeAdapter struct{}
-
-func (nativeAdapter) Name() string    { return "agy" }
-func (nativeAdapter) Version() string { return "1.0.0" }
+type Filter struct{ nativecodec.AgyAdapter }
 
 // FilterJSONL applies the adapter to a retained record stream.
 func (Filter) FilterJSONL(r io.Reader) (archive.FilteredTranscript, error) {

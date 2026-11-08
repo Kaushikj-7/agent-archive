@@ -3,6 +3,8 @@ package agy
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -262,3 +264,57 @@ func TestNativeHeadersDiscover(t *testing.T) {
 		t.Fatalf("got Header.Directory %s, want /tmp/test-project", cand.Header.Directory)
 	}
 }
+
+func TestNativeHeadersInspectHeaderEarlyScanExit(t *testing.T) {
+	t.Parallel()
+	const validID = "44444444-4444-4444-8444-444444444444"
+	p := NativeHeaders{}
+	path := filepath.Join("brain", validID, ".system_generated", "logs", "transcript.jsonl")
+	line1 := []byte(`{"conversationId":"` + validID + `","cwd":"/work","created_at":"2026-11-08T10:00:00Z"}`)
+	line2 := []byte(`{"content":"unreached second line"}`)
+
+	visitedCount := 0
+	h, err := p.InspectHeader(agentapi.NativeHeaderRequest{
+		Purpose: agentapi.DiscoveryImport,
+		Path:    path,
+		Scan: func(visit func([]byte) bool) error {
+			visitedCount++
+			if visit(line1) {
+				visitedCount++
+				visit(line2)
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("InspectHeader() error = %v", err)
+	}
+	if visitedCount != 1 {
+		t.Fatalf("expected early scan exit after line 1, visited %d lines", visitedCount)
+	}
+	if h.NativeID != validID || h.Directory != "/work" || h.StartedAt.IsZero() {
+		t.Fatalf("incomplete header: %#v", h)
+	}
+}
+
+func TestValidConversationID(t *testing.T) {
+	for _, id := range []string{
+		"aaaaaaa-aaaaa-4aaa-8aaa-aaaaaaaaaaaaa",
+		"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa!",
+		"11111111-1111-4111-8111",
+		"",
+	} {
+		if validConversationID(id) {
+			t.Fatalf("validConversationID(%q) = true, want false", id)
+		}
+	}
+	if !validConversationID("11111111-1111-4111-8111-111111111111") {
+		t.Fatal("validConversationID returned false for valid UUID")
+	}
+}
+
+type osDiscoveryFiles struct{}
+
+func (osDiscoveryFiles) ReadDir(path string) ([]fs.DirEntry, error) { return os.ReadDir(path) }
+func (osDiscoveryFiles) Lstat(path string) (fs.FileInfo, error)     { return os.Lstat(path) }
+func (osDiscoveryFiles) Open(path string) (io.ReadCloser, error)    { return os.Open(path) }

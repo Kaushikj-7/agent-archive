@@ -61,12 +61,14 @@ func extractConversationID(p string) string {
 	cleaned := filepath.ToSlash(filepath.Clean(p))
 	parts := strings.Split(cleaned, "/")
 	for i := 0; i < len(parts)-1; i++ {
-		if parts[i] == "brain" {
+		if parts[i] == "brain" && validConversationID(parts[i+1]) {
 			return parts[i+1]
 		}
 	}
 	if len(parts) >= 4 && parts[len(parts)-1] == "transcript.jsonl" && parts[len(parts)-2] == "logs" && parts[len(parts)-3] == ".system_generated" {
-		return parts[len(parts)-4]
+		if validConversationID(parts[len(parts)-4]) {
+			return parts[len(parts)-4]
+		}
 	}
 	for i := len(parts) - 1; i >= 0; i-- {
 		if validConversationID(parts[i]) {
@@ -173,6 +175,9 @@ func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.Nat
 				}
 			}
 		}
+		if h.NativeID != "" && h.Directory != "" && !h.StartedAt.IsZero() {
+			return false
+		}
 		return true
 	})
 	if err != nil {
@@ -182,4 +187,23 @@ func (NativeHeaders) InspectHeader(r agentapi.NativeHeaderRequest) (agentapi.Nat
 		return h, scanDecodeErr
 	}
 	return h, nil
+}
+
+func validConversationID(value string) bool {
+	if len(value) != 36 || strings.Count(value, "-") != 4 {
+		return false
+	}
+	for i, r := range value {
+		separator := i == 8 || i == 13 || i == 18 || i == 23
+		if separator && r == '-' {
+			continue
+		}
+		if separator {
+			return false
+		}
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return false
+		}
+	}
+	return true
 }

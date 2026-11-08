@@ -65,7 +65,7 @@ var allowedKeys = map[string]bool{
 	"origin": true, "promptsource": true,
 	// Filter 33: Antigravity trajectory keys.
 	"modelname": true, "model_name": true, "step_id": true, "conversationid": true,
-	"conversation_id": true, "prompt": true, "toolcall": true, "args": true,
+	"conversation_id": true, "prompt": true, "toolcall": true, "tool_call": true, "args": true,
 }
 
 // booleanFlagKeys are allowed only as the boolean flag the harness writes. Any

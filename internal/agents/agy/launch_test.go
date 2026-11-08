@@ -43,6 +43,14 @@ func TestLauncherRejectsAllConflictingPromptFlags(t *testing.T) {
 	}
 }
 
+func TestLauncherRejectsPromptFlagPrefixSyntax(t *testing.T) {
+	for _, flag := range []string{"--prompt=foo", "--prompt-interactive=bar", "-p=test", "-i=val", "--print=msg"} {
+		if _, err := (Launcher{}).Args(agentapi.LaunchRequest{ExtraArgs: []string{flag}, Prompt: "handoff"}); err == nil {
+			t.Fatalf("Args() accepted conflicting prefix flag %q", flag)
+		}
+	}
+}
+
 func TestLauncherAdvertisesWindowsAndUnixNames(t *testing.T) {
 	names := (Launcher{}).Executables().Names
 	if len(names) != 2 || names[0] != "agy" || names[1] != "agy.exe" {
