@@ -31,8 +31,8 @@ func firstString(payload map[string]any, keys ...string) string {
 		return ""
 	}
 	for _, key := range keys {
-		if v, ok := payload[key].(string); ok && v != "" {
-			return v
+		if v, ok := payload[key].(string); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
 		}
 	}
 	return ""

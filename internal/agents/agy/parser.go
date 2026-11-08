@@ -237,15 +237,3 @@ func toolName(record map[string]any) string {
 	}
 	return ""
 }
-
-func firstString(record map[string]any, keys ...string) string {
-	if record == nil {
-		return ""
-	}
-	for _, key := range keys {
-		if value, ok := record[key].(string); ok && strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
