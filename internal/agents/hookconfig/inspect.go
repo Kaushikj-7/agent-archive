@@ -39,6 +39,12 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 		}
 	}
 	for _, m := range hs.Members {
+		if spec.Definition != "" && m.Key == "enabled" {
+			if _, ok := m.Value.(bool); !ok {
+				return false, fmt.Errorf("invalid boolean for %s", m.Key)
+			}
+			continue
+		}
 		groups, ok := m.Value.([]any)
 		if !ok {
 			return false, fmt.Errorf("invalid hook list for %s", m.Key)
@@ -85,6 +91,12 @@ func otherInstallations(data []byte, spec Spec, hook Hook) ([]agentapi.HookOther
 	var others []agentapi.HookOtherOwner
 	var locations []string
 	for _, m := range hs.Members {
+		if spec.Definition != "" && m.Key == "enabled" {
+			if _, ok := m.Value.(bool); !ok {
+				return nil, nil, fmt.Errorf("invalid boolean for %s", m.Key)
+			}
+			continue
+		}
 		groups, ok := m.Value.([]any)
 		if !ok {
 			return nil, nil, fmt.Errorf("invalid hook list for %s", m.Key)

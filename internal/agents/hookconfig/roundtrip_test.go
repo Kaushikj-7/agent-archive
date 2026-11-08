@@ -3,6 +3,7 @@ package hookconfig
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"github.com/wangjohn/agent-archive/internal/agentmeta"
 	"github.com/wangjohn/agent-archive/internal/jsonedit"
 	"testing"
@@ -125,3 +126,87 @@ func sameJSON(a, b any) bool {
 // Regression: hook ownership review, 2026-09 (1a9420b).
 
 func encodeValue(dst *bytes.Buffer, v any) error { return jsonedit.EncodeValue(dst, v) }
+
+func TestNamedDefinitionEnabledToggle(t *testing.T) {
+	spec := Spec{
+		Name: "agy", Flat: true, Direct: true, Rootless: true, Definition: "agent-archive",
+		Owner: Owner, PrototypeOwner: prototypeOwner,
+		Events: []string{"PreInvocation", "PostInvocation", "Stop"},
+	}
+	hook := Hook{Executable: "/usr/local/bin/agent-archive"}
+	existing := []byte(`{
+  "agent-archive": {
+    "enabled": false,
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "'/usr/local/bin/agent-archive' _hook --harness agy # agent-archive lifecycle capture",
+        "timeout": "2"
+      }
+    ],
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "'/usr/local/bin/agent-archive' _hook --harness agy # agent-archive lifecycle capture",
+        "timeout": "2"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "'/usr/local/bin/agent-archive' _hook --harness agy # agent-archive lifecycle capture",
+        "timeout": "2"
+      }
+    ]
+  }
+}`)
+	merged, err := merge(existing, spec, hook)
+	if err != nil {
+		t.Fatalf("merge error = %v", err)
+	}
+	doc, err := parseDocument(merged)
+	if err != nil {
+		t.Fatalf("parse error = %v", err)
+	}
+	defObj, ok := doc.Root.Get("agent-archive")
+	if !ok {
+		t.Fatalf("missing agent-archive definition in %s", string(merged))
+	}
+	def, ok := defObj.(*object)
+	if !ok {
+		t.Fatalf("agent-archive is not an object: %#v", defObj)
+	}
+	enabledVal, ok := def.Get("enabled")
+	if !ok || enabledVal != false {
+		t.Fatalf("enabled toggle not preserved: got %#v", enabledVal)
+	}
+
+	installedOK, err := installed(existing, spec, hook)
+	if err != nil || !installedOK {
+		t.Fatalf("installed error = %v, ok = %v", err, installedOK)
+	}
+
+	removed, changed, err := remove(existing, spec, hook)
+	if err != nil || !changed {
+		t.Fatalf("remove error = %v, changed = %v", err, changed)
+	}
+	if strings.TrimSpace(string(removed)) != "{}" {
+		t.Fatalf("remove left behind definition: %s", string(removed))
+	}
+
+	// Verify non-boolean enabled produces an error
+	invalid := []byte(`{
+  "agent-archive": {
+    "enabled": "not-a-bool"
+  }
+}`)
+	if _, err := merge(invalid, spec, hook); err == nil || !strings.Contains(err.Error(), "invalid boolean for enabled") {
+		t.Fatalf("merge with non-boolean enabled expected 'invalid boolean for enabled', got: %v", err)
+	}
+	if _, err := installed(invalid, spec, hook); err == nil || !strings.Contains(err.Error(), "invalid boolean for enabled") {
+		t.Fatalf("installed with non-boolean enabled expected 'invalid boolean for enabled', got: %v", err)
+	}
+	if _, _, err := otherInstallations(invalid, spec, hook); err == nil || !strings.Contains(err.Error(), "invalid boolean for enabled") {
+		t.Fatalf("otherInstallations with non-boolean enabled expected 'invalid boolean for enabled', got: %v", err)
+	}
+}

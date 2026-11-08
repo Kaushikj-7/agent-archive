@@ -193,7 +193,8 @@ func remove(existing []byte, spec Spec, hook Hook) ([]byte, bool, error) {
 			hs.Remove(event, 0)
 		}
 	}
-	if len(hs.Members) == 0 {
+	onlyEnabled := len(hs.Members) == 1 && hs.Members[0].Key == "enabled"
+	if len(hs.Members) == 0 || onlyEnabled {
 		if spec.Rootless {
 			doc.Remove(spec.Definition)
 			return doc.Bytes(), true, nil
@@ -463,6 +464,12 @@ func (h Hook) replaces(kind handlerKind) bool {
 func stripOwned(hs *object, app Spec, hook Hook) (map[string]bool, error) {
 	changed := map[string]bool{}
 	for i, m := range hs.Members {
+		if app.Definition != "" && m.Key == "enabled" {
+			if _, ok := m.Value.(bool); !ok {
+				return nil, fmt.Errorf("invalid boolean for %s", m.Key)
+			}
+			continue
+		}
 		groups, ok := m.Value.([]any)
 		if !ok {
 			return nil, fmt.Errorf("invalid hook list for %s", m.Key)

@@ -39,3 +39,75 @@ func TestHooksUseAntigravityDirectLifecycleShape(t *testing.T) {
 		t.Fatalf("remove plan = %#v, error = %v", removed, err)
 	}
 }
+
+func TestHooksPreserveEnabledToggle(t *testing.T) {
+	existing := []byte(`{
+  "agent-archive": {
+    "enabled": false,
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "'/usr/local/bin/agent-archive' _hook --harness agy # agent-archive lifecycle capture",
+        "timeout": "2"
+      }
+    ],
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "'/usr/local/bin/agent-archive' _hook --harness agy # agent-archive lifecycle capture",
+        "timeout": "2"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "'/usr/local/bin/agent-archive' _hook --harness agy # agent-archive lifecycle capture",
+        "timeout": "2"
+      }
+    ]
+  }
+}`)
+	owner := agentapi.HookOwner{Executable: "/usr/local/bin/agent-archive", DataHome: "/tmp/archive"}
+	inspection, err := Hooks().Inspect(agentapi.HookInspectionRequest{
+		File:  agentapi.HookFile{Path: "/tmp/hooks.json", Bytes: existing, Present: true},
+		Owner: owner,
+	})
+	if err != nil || !inspection.Installed {
+		t.Fatalf("Inspect() on disabled hook = %#v, error = %v", inspection, err)
+	}
+
+	plan, err := Hooks().Plan(agentapi.HookPlanRequest{
+		Action: agentapi.HookRemove,
+		File:   agentapi.HookFile{Path: "/tmp/hooks.json", Bytes: existing, Present: true},
+		Owner:  owner,
+	})
+	if err != nil {
+		t.Fatalf("Plan(Remove) error = %v", err)
+	}
+	if strings.TrimSpace(string(plan[0].After)) != "{}" {
+		t.Fatalf("remove left behind definition: %s", string(plan[0].After))
+	}
+
+	// Verify that installing hooks preserves existing "enabled": false
+	initial := []byte(`{
+  "agent-archive": {
+    "enabled": false
+  }
+}`)
+	installedPlan, err := Hooks().Plan(agentapi.HookPlanRequest{
+		Action: agentapi.HookInstall,
+		File:   agentapi.HookFile{Path: "/tmp/hooks.json", Bytes: initial, Present: true},
+		Owner:  owner,
+	})
+	if err != nil {
+		t.Fatalf("Plan(Install) error = %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(installedPlan[0].After, &doc); err != nil {
+		t.Fatal(err)
+	}
+	def := doc["agent-archive"].(map[string]any)
+	if def["enabled"] != false {
+		t.Fatalf("Plan(Install) did not preserve enabled: false, got %#v", def["enabled"])
+	}
+}
