@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Support for Antigravity CLI (`agy`) across capture, browsing, backfill, and handoff.
+  - Lifecycle hook configuration with per-event commands (`agent-archive _hook --harness agy --event <name>`),
+    supporting `SessionStart`, `PreInvocation`, `PostInvocation`, and `Stop`.
+  - JSONL brain transcript discovery under `~/.gemini/antigravity-cli/brain/` and `~/.gemini/antigravity/brain/`.
+  - Native parser with FilterVersion 33 and adapterVersion 0.33.0, extracting tool arguments, tool results,
+    model parameters, and preserving safe Antigravity transcript fields.
+  - Handoff launching support for `agy` defaulting to interactive mode (`-i`) and rejecting conflicting prompt flags.
+
 ### Changed
 
 - Confirmed backfill registers bounded active groups through one ordered batch,
@@ -70,6 +80,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Antigravity tool and turn linkage prioritizes tool-specific call IDs over step ID for reliable pairing.
+- Default handoff launch for Antigravity CLI uses interactive prompt mode (`-i`) and rejects conflicting prompt flags.
+- Antigravity camelCase hook payloads (`conversationId`, `stepId`, `transcriptPath`) and SessionStart freshness checks match vendor semantics.
+- Hook configuration supports named hook definitions with an `enabled` boolean setting and per-event `--event` flags in hook commands.
 - Durable quota and recovery checks traverse complete supported state inventories
   beyond 65,536 combined entries. Explicit import recovery, reconciliation and
   undo acquire session names once per invocation, with fresh stage/control reads

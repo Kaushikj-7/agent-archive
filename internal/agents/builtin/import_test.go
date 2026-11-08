@@ -33,6 +33,8 @@ func TestHistoricalImportConformance(t *testing.T) {
 			switch agentmeta.ID(name) {
 			case agentmeta.Claude:
 				expected.StartedAt = nativeStart
+			case agentmeta.Agy:
+				expected.StartedAt = nativeStart
 			case agentmeta.Cursor:
 				// Native file creation supplies Cursor start evidence before filtering.
 			case agentmeta.Codex:
@@ -44,7 +46,7 @@ func TestHistoricalImportConformance(t *testing.T) {
 			missing := request
 			missing.Filtered.SessionIDs = []string{"another"}
 			mismatch := expected
-			if name == "claude" {
+			if name == "claude" || name == "agy" {
 				mismatch.IdentityMismatch = true
 			}
 			cases = append(cases, agenttest.ImportCase{Name: "native identity policy", Request: missing, Want: mismatch})

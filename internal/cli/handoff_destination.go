@@ -57,6 +57,7 @@ var handoffDefaultDestination = map[string]handoffDestination{
 	archive.HarnessClaude: handoffDestinationCodex,
 	archive.HarnessCodex:  handoffDestinationClaude,
 	archive.HarnessCursor: handoffDestinationClaude,
+	"agy":                 handoffDestinationClaude,
 }
 
 // offersDestinations reports whether the command asks where the handoff

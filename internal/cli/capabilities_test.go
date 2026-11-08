@@ -20,7 +20,7 @@ import (
 
 func TestCapabilityProfilesDoNotClaimUnverifiedNativeEvidence(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"codex", "claude", "cursor"} {
+	for _, name := range []string{"codex", "claude", "cursor", "agy"} {
 		profile := captureCapabilityProfile(productionAgents, name)
 		if profile.Transcript.State != capabilityDocumented {
 			t.Fatalf("%s profile=%#v", name, profile)

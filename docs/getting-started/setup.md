@@ -512,7 +512,10 @@ what was not](install.md#platforms)).
   `$CLAUDE_CONFIG_DIR/settings.json` and Codex's `$CODEX_HOME/hooks.json`
   when those variables are set in the shell you run setup from, otherwise
   `~/.claude/settings.json` and `~/.codex/hooks.json`; Cursor's is always
-  `~/.cursor/hooks.json`. The paths are recorded (`hook_files` in the
+  `~/.cursor/hooks.json`; Antigravity CLI's is `~/.gemini/antigravity-cli/settings.json`
+  (or `~/.gemini/antigravity/settings.json`), where hooks configure per-event commands
+  (`agent-archive _hook --harness agy --event <EventName>`) for `SessionStart`, `PreInvocation`,
+  `PostInvocation`, and `Stop`. The paths are recorded (`hook_files` in the
   [configuration](../reference/configuration.md)), so `status` and
   `uninstall` find them from any shell. Only the `hooks` entry of each file
   is rewritten (and Cursor's `version`, when missing): every other setting

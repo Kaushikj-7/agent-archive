@@ -43,7 +43,7 @@ func pipedHandoff(t *testing.T, env Env, args ...string) string {
 
 func TestDefaultDestination(t *testing.T) {
 	t.Parallel()
-	all := []handoffDestination{handoffDestinationClaude, handoffDestinationCodex, handoffDestinationCursor}
+	all := []handoffDestination{handoffDestinationClaude, handoffDestinationCodex, handoffDestinationCursor, handoffDestinationAgy}
 	for _, tc := range []struct {
 		name      string
 		installed []handoffDestination
@@ -54,6 +54,7 @@ func TestDefaultDestination(t *testing.T) {
 		{"claude goes to codex", all, "claude", nil, handoffDestinationCodex},
 		{"codex goes to claude", all, "codex", nil, handoffDestinationClaude},
 		{"cursor goes to claude", all, "cursor", nil, handoffDestinationClaude},
+		{"agy goes to claude", all, "agy", nil, handoffDestinationClaude},
 		{"configured default", all, "claude", map[string]string{"claude": "cursor"}, handoffDestinationCursor},
 		{"configured for another harness", all, "codex", map[string]string{"claude": "cursor"}, handoffDestinationClaude},
 		{"configured but not installed", []handoffDestination{handoffDestinationClaude, handoffDestinationCodex}, "claude", map[string]string{"claude": "cursor"}, handoffDestinationCodex},
@@ -83,7 +84,7 @@ func TestInstalledDestinationsFollowLookPath(t *testing.T) {
 
 func TestChooseDestinationAnswers(t *testing.T) {
 	t.Parallel()
-	all := []handoffDestination{handoffDestinationClaude, handoffDestinationCodex, handoffDestinationCursor}
+	all := []handoffDestination{handoffDestinationClaude, handoffDestinationCodex, handoffDestinationCursor, handoffDestinationAgy}
 	for _, tc := range []struct {
 		name      string
 		installed []handoffDestination
@@ -92,14 +93,14 @@ func TestChooseDestinationAnswers(t *testing.T) {
 	}{
 		{"enter takes the default", all, "\n", handoffChoice{action: handoffLaunch, dest: handoffDestinationCodex}},
 		{"the default is numbered first", all, "2\n", handoffChoice{action: handoffLaunch, dest: handoffDestinationClaude}},
-		{"the rest keep their order", all, "3\n", handoffChoice{action: handoffLaunch, dest: handoffDestinationCursor}},
-		{"an agent's name", all, "cursor\n", handoffChoice{action: handoffLaunch, dest: handoffDestinationCursor}},
+		{"the rest keep their order", all, "4\n", handoffChoice{action: handoffLaunch, dest: handoffDestinationAgy}},
+		{"an agent's name", all, "agy\n", handoffChoice{action: handoffLaunch, dest: handoffDestinationAgy}},
 		{"print", all, "p\n", handoffChoice{action: handoffPrint}},
 		{"copy", all, "C\n", handoffChoice{action: handoffCopy}},
 		{"write", all, "write\n", handoffChoice{action: handoffWrite}},
 		{"quit", all, "q\n", handoffChoice{action: handoffQuit}},
 		{"end of input quits", all, "", handoffChoice{action: handoffQuit}},
-		{"asks again", all, "4\nnope\n0\nq\n", handoffChoice{action: handoffQuit}},
+		{"asks again", all, "5\nnope\n0\nq\n", handoffChoice{action: handoffQuit}},
 		{"an uninstalled agent's name asks again", []handoffDestination{handoffDestinationCodex}, "claude\n1\n", handoffChoice{action: handoffLaunch, dest: handoffDestinationCodex}},
 		{"nothing installed: enter prints", nil, "\n", handoffChoice{action: handoffPrint}},
 		{"nothing installed: no numbers", nil, "1\nc\n", handoffChoice{action: handoffCopy}},

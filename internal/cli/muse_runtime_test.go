@@ -58,7 +58,7 @@ func TestMuseRuntimeCannotConfigureCapture(t *testing.T) {
 	env := testEnv(t, home, time.Now())
 	executable := testExecutable(t)
 	env.Executable = func() (string, error) { return executable, nil }
-	if got := env.setupNames(); !slices.Equal(got, []string{"codex", "claude", "cursor"}) {
+	if got := env.setupNames(); !slices.Equal(got, []string{"codex", "claude", "cursor", "agy"}) {
 		t.Fatal(got)
 	}
 	cfg := config.Config{}

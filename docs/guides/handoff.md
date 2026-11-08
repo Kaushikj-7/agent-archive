@@ -27,7 +27,7 @@ There are two ways to do it:
 ## Before setup: native local sessions
 
 After installing, run `agent-archive handoff` inside a checkout to browse
-existing Claude Code, Codex and Muse Code conversations. No bucket, capture hooks,
+existing Claude Code, Codex, Cursor, Muse Code, and Antigravity CLI conversations. No bucket, capture hooks,
 credentials, registrations, or background job are created. Cursor automatic
 discovery is deferred; `--file PATH --harness cursor` remains available.
 
@@ -199,12 +199,22 @@ agent-archive handoff --to codex                       # pick the session
 agent-archive handoff --latest --harness claude --to codex
 agent-archive handoff SESSION_ID --to claude
 agent-archive handoff SESSION_ID --to cursor
+agent-archive handoff SESSION_ID --to agy
 agent-archive handoff "fix the auth bug" --to claude   # words, as for show
 ```
 
+When continuing work in Antigravity CLI (`--to agy`), agent-archive launches `agy` in interactive prompt mode (`-i`) by default:
+
+```sh
+agent-archive handoff --to agy
+agent-archive handoff SESSION_ID --to agy
+```
+
+Conflicting prompt flags such as `--prompt` or `-p` in passthrough arguments (`--`) are rejected.
+
 `handoff` asks where to continue only on a terminal, and not with `--to`,
 `--output`, `--format json`, or `--no-preamble`. Inside Claude Code, Codex,
-or Cursor (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or `CURSOR_AGENT` is
+Cursor, or Antigravity CLI (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `CURSOR_AGENT`, or `ANTIGRAVITY_AGENT` is
 set), inside Muse (`MUSE_THREAD_ID` or `MUSE_SESSION_ID` is nonblank), or with `AGENT_ARCHIVE_NONINTERACTIVE=1`, it never asks anything, even
 on a terminal; `AGENT_ARCHIVE_NONINTERACTIVE=0` turns asking back on. See
 [scripting and other outputs](#scripting-and-other-outputs) and

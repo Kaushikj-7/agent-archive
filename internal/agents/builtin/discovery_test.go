@@ -14,6 +14,10 @@ func TestDiscoveryConformance(t *testing.T) {
 		"claude": {".claude/projects/project/first.jsonl", ".claude/projects/project/second.jsonl"},
 		"codex":  {".codex/sessions/day/rollout-first.jsonl", ".codex/sessions/day/rollout-second.jsonl"},
 		"cursor": {".cursor/projects/project/agent-transcripts/first.txt", ".cursor/projects/project/agent-transcripts/second.txt"},
+		"agy": {
+			".gemini/antigravity-cli/brain/11111111-1111-4111-8111-111111111111/.system_generated/logs/transcript.jsonl",
+			".gemini/antigravity-cli/brain/22222222-2222-4222-8222-222222222222/.system_generated/logs/transcript.jsonl",
+		},
 	}
 	r := NewBuiltins()
 	for _, name := range r.DiscoveryAgents() {

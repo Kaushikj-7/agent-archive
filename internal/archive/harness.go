@@ -10,6 +10,7 @@ const (
 	HarnessClaude = string(agentmeta.Claude)
 	HarnessCodex  = string(agentmeta.Codex)
 	HarnessCursor = string(agentmeta.Cursor)
+	HarnessAgy    = string(agentmeta.Agy)
 )
 
 // CanonicalHarness returns the name the archive uses for a harness name from

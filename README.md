@@ -1,5 +1,5 @@
 # agent-archive
-### Session handoffs and backups for Claude Code, Codex, and Cursor
+### Session handoffs and backups for Claude Code, Codex, Cursor, and Antigravity CLI
 
 [![Go 1.27](https://img.shields.io/badge/go-1.27.3-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -14,7 +14,7 @@ OpenAI and Anthropic are constantly one-upping each other for the best model and
 
   <img src="docs/assets/demos/handoff.gif" alt="Browse sessions, select a Claude Code session, and continue the work in Codex" width="800">
 
-- **Archive automatically.** Upload Claude Code, Codex, and Cursor transcripts to your own S3 or R2 bucket.
+- **Archive automatically.** Upload Claude Code, Codex, Cursor, and Antigravity CLI transcripts to your own S3 or R2 bucket.
 
 - **Browse your session history.** Use `agent-archive list` to browse sessions across coding agents. Filter by topic, project, branch, or PR number, then open a session to revisit the conversation ([browsing guide](docs/guides/list-and-show.md)).
 
@@ -40,7 +40,7 @@ OpenAI and Anthropic are constantly one-upping each other for the best model and
    agent-archive handoff
    ```
 
-   Pick an existing Claude Code or Codex session, choose the receiving agent, and continue with its conversation context.
+   Pick an existing Claude Code, Codex, or Antigravity CLI session, choose the receiving agent, and continue with its conversation context.
 
 3. **Enable automatic archiving (optional)**:
 
@@ -57,7 +57,7 @@ OpenAI and Anthropic are constantly one-upping each other for the best model and
 
 ```mermaid
 flowchart LR
-  A["Claude Code · Codex · Cursor"] -- "lifecycle hooks" --> H["agent-archive _hook<br/>records the session"]
+  A["Claude Code · Codex · Cursor · Antigravity CLI"] -- "lifecycle hooks" --> H["agent-archive _hook<br/>records the session"]
   H --> S[("local state<br/>~/.local/share/agent-archive")]
   L["launchd job (macOS) or<br/>systemd timer (Linux)<br/>every 60 s"] --> C["collector<br/>filter → bundle → upload → verify"]
   S --> C
@@ -67,7 +67,7 @@ flowchart LR
   T["transcripts already<br/>on this machine"] --> BF["backfill"] --> S
 ```
 
-Setup edits each included app's hook settings, adds one background job (a LaunchAgent on macOS, a systemd user timer on Linux), and writes two skill files for Claude Code (in `~/.claude/skills`) and two for Codex and Cursor together (in `~/.agents/skills`; `agent-archive setup --no-skills` skips them); for Cursor it also adds a missing `version` field ([everything it changes](docs/getting-started/setup.md#what-setup-changes-on-your-machine)). Old sessions are deleted from the bucket after 90 days by default.
+Setup edits each included app's hook settings, adds one background job (a LaunchAgent on macOS, a systemd user timer on Linux), and writes two skill files for Claude Code (in `~/.claude/skills`) and two for Codex and Cursor together (in `~/.agents/skills`; `agent-archive setup --no-skills` skips them); for Cursor it also adds a missing `version` field, and for Antigravity CLI it registers lifecycle hooks with per-event flags ([everything it changes](docs/getting-started/setup.md#what-setup-changes-on-your-machine)). Old sessions are deleted from the bucket after 90 days by default.
 
 ## Command reference
 

@@ -23,6 +23,11 @@ does not itself validate a newer app version.
 - Cursor documents `sessionStart`, `cursor_version`, `transcript_path`, and
   lifecycle hooks. Agent Archive reads the macOS bundle version rather than
   substituting the separately versioned Agent CLI: <https://cursor.com/docs/hooks>.
+- Antigravity CLI documents `SessionStart`, `PreInvocation`, `PostInvocation`, and
+  `Stop` lifecycle events, camelCase hook payloads (`conversationId`, `stepId`,
+  `transcriptPath`), and native JSONL transcripts under `~/.gemini/antigravity-cli/brain/<conversationId>/.system_generated/logs/transcript.jsonl`
+  (and desktop root `~/.gemini/antigravity/brain/`). Hook commands require `--event <name>`
+  per hook event. Launching handoffs defaults to interactive mode with `-i`.
 
 ## Tested app versions
 
@@ -31,6 +36,7 @@ does not itself validate a newer app version.
 | Claude Code | 2.1.x | Adapter built and checked against transcripts from this version. |
 | Codex CLI | 0.155 | Adapter built and checked against transcripts from this version. |
 | Cursor (desktop) | 3.21.13 | Hook payloads observed live; on 2026-09-23 (main `2a7a8fb`) a new chat registered at its first prompt, was published and read back, and `status` reported `verified_by_capture` for 3.21.13. A resumed chat was declined. |
+| Antigravity CLI | 0.33.x | Adapter built and checked against synthetic transcripts and dated versions (FilterVersion 33, adapterVersion 0.33.0). |
 
 These observations were made on macOS. On Linux the real Cursor app and
 `cursor-agent` have not been run against agent-archive, so Cursor capture
