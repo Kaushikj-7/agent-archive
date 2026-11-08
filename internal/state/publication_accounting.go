@@ -392,7 +392,7 @@ func (q *durableQuota) accountingClassification(path string, expected os.FileInf
 		q.store.invalidatePublishedAccounting(filepath.Join(q.path, path))
 		return 0, 0, false, nil
 	}
-	if err = q.guard.CheckHome(q.path); err != nil {
+	if err = q.checkCensus(); err != nil {
 		a.clear()
 		return 0, 0, false, err
 	}

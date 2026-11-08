@@ -140,6 +140,12 @@ func (l *validationSelection) Check(_ context.Context, id, token string) error {
 
 func nativeCollectorFixture(t *testing.T) (*sessionScan, providerReader, []byte) {
 	t.Helper()
+	return nativeCollectorFixtureFrom(t, "synthetic-exec-empty.jsonl")
+}
+
+// nativeCollectorFixtureFrom binds the named synthetic Muse session.
+func nativeCollectorFixtureFrom(t *testing.T, name string) (*sessionScan, providerReader, []byte) {
+	t.Helper()
 	project, e := filepath.EvalSymlinks(t.TempDir())
 	if e != nil {
 		t.Fatal(e)
@@ -152,7 +158,7 @@ func nativeCollectorFixture(t *testing.T) (*sessionScan, providerReader, []byte)
 	if facts, known := sourcefacts.PhysicalProject(project); !known || facts.Root != project {
 		t.Fatalf("synthetic physical project not established: %#v %v", facts, known)
 	}
-	raw, e := os.ReadFile(filepath.Join("..", "agents", "muse", "testdata", "synthetic-exec-empty.jsonl"))
+	raw, e := os.ReadFile(filepath.Join("..", "agents", "muse", "testdata", name))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -724,5 +730,29 @@ func TestNativeRecoveryWithoutCommitOwnerRefusesAndClosesSnapshot(t *testing.T) 
 	release()
 	if e == nil || builder != nil || counts.opens == 0 || counts.opens != counts.closes {
 		t.Fatal("unsupported native recovery retained a source lease", e, counts.opens, counts.closes)
+	}
+}
+
+func TestNativeValidationRecordsTheChildLinksItsPassVerified(t *testing.T) {
+	scan, r, _ := nativeCollectorFixtureFrom(t, "synthetic-child-link.jsonl")
+	_, observed, e := r.Filter(t.Context(), muse.Filter{}, 64<<20)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = scan.persistNativeValidation(observed.prepared); e != nil {
+		t.Fatal(e)
+	}
+	req, found, e := scan.local.LoadRequest(scan.id())
+	if e != nil || !found {
+		t.Fatal("no request carries the child link", found, e)
+	}
+	links := 0
+	for _, evidence := range req.HookEvidence {
+		if evidence.Kind == archive.EvidenceKindLinkedSession && evidence.Payload["status"] == string(archive.LinkedSessionUnavailable) {
+			links++
+		}
+	}
+	if links != 1 {
+		t.Fatalf("validated pass recorded %d child links", links)
 	}
 }

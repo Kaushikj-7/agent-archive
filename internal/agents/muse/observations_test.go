@@ -176,10 +176,7 @@ func TestNativeCompletionClosedShapeRefusesWholeFile(t *testing.T) {
 			_ = json.Unmarshal(lines[len(lines)-1], &m)
 			mutate(m)
 			lines[len(lines)-1], _ = json.Marshal(m)
-			out, err := filterBytes(t, append(bytes.Join(lines, []byte("\n")), '\n'), agentapi.ReadLimits{})
-			if err == nil || len(out.Records) != 0 {
-				t.Fatal("unsupported completion accepted")
-			}
+			assertKeptOutAt(t, append(bytes.Join(lines, []byte("\n")), '\n'), int64(len(lines)))
 		})
 	}
 }

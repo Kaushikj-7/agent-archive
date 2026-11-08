@@ -98,19 +98,32 @@ func rootedAtomicWrite(root *os.Root, name string, write func(io.Writer) error, 
 	if err != nil {
 		return err
 	}
+	var cleanupOwner *atomicTemporaryCleanup
+	if witnessed != nil && witnessed.preverified != nil {
+		cleanupOwner, err = captureAtomicCleanup(root, temp, f, witnessed.hash)
+		if err != nil {
+			return errors.Join(err, f.Close())
+		}
+	}
 	defer func() {
-		e := root.Remove(temp)
-		if !errors.Is(e, os.ErrNotExist) {
+		if join, e := removeAtomicTemporary(root, temp, witnessed, cleanupOwner); join {
 			err = errors.Join(err, e)
 		}
 	}()
 	output := io.Writer(f)
-	if witnessed != nil {
+	if cleanupOwner != nil {
+		output = atomicCleanupWriter{output: f, owner: cleanupOwner}
+	} else if witnessed != nil {
 		output = io.MultiWriter(f, witnessed.hash)
 	}
 	err = write(output)
 	if err == nil {
 		err = f.Sync()
+	}
+	if cleanupOwner != nil {
+		var statErr error
+		cleanupOwner.written, statErr = f.Stat()
+		err = errors.Join(err, statErr)
 	}
 	var temporaryInfo os.FileInfo
 	if witnessed != nil && err == nil {
@@ -126,46 +139,92 @@ func rootedAtomicWrite(root *os.Root, name string, write func(io.Writer) error, 
 			return e
 		}
 		defer func() { witness.state.active.Store(false) }()
-		commit = func(rename func() error) error {
-			defer witness.state.active.Store(false)
-			return witnessed.check(witness, func() error {
-				if e := witness.verify(witnessed.ctx, witnessed.scratch); e != nil {
-					return e
-				}
-				witness.state.active.Store(false)
-				return rename()
-			})
-		}
+		commit = witnessedAtomicCommitCheck(witness, witnessed)
 	}
 	if commit == nil {
 		if err = root.Rename(temp, name); err != nil {
 			return err
 		}
 	} else {
-		invoked := false
-		renamed := false
-		var renameErr error
-		err = commit(func() error {
-			if invoked {
-				renameErr = errors.New("rooted rename invoked more than once")
-				return renameErr
-			}
-			invoked = true
-			renameErr = root.Rename(temp, name)
-			renamed = renameErr == nil
-			return renameErr
-		})
-		err = errors.Join(err, renameErr)
-		if !invoked {
-			return errors.Join(err, errors.New("rooted commit check omitted rename"))
-		}
-		if !renamed {
+		var renamed bool
+		if renamed, err = renameThroughAtomicCommit(root, temp, name, commit); !renamed {
 			return err
 		}
+	}
+	if witnessed != nil && witnessed.preverified != nil && witnessed.beforeDirSync != nil {
+		witnessed.beforeDirSync()
 	}
 	d, openErr := root.Open(filepath.Dir(name))
 	if openErr != nil {
 		return errors.Join(err, openErr)
 	}
 	return errors.Join(err, d.Sync(), d.Close())
+}
+
+// removeAtomicTemporary removes an uncommitted temporary file unless its
+// cleanup owner forbids it. join reports whether e must be joined into the
+// write result, preserving the distinction between early and final outcomes.
+func removeAtomicTemporary(root *os.Root, temp string, witnessed *witnessedAtomicCommit, cleanupOwner *atomicTemporaryCleanup) (join bool, e error) {
+	if witnessed != nil && witnessed.cleanup != nil {
+		if e := witnessed.cleanup(); e != nil {
+			return true, e
+		}
+	}
+	if cleanupOwner != nil {
+		remove, e := cleanupOwner.removable(witnessed.ctx, witnessed.scratch)
+		if e != nil {
+			return true, e
+		}
+		if !remove {
+			return false, nil
+		}
+	}
+	e = root.Remove(temp)
+	return !errors.Is(e, os.ErrNotExist), e
+}
+
+// witnessedAtomicCommitCheck verifies the witness before allowing its single rename.
+func witnessedAtomicCommitCheck(witness *AtomicWriteWitness, witnessed *witnessedAtomicCommit) func(func() error) error {
+	return func(rename func() error) error {
+		defer witness.state.active.Store(false)
+		if witnessed.preverified != nil {
+			requested := false
+			return witnessed.preverified(witness, func() (func() error, error) {
+				if requested {
+					return nil, errAtomicWitness
+				}
+				requested = true
+				return witness.preverifiedRename(witnessed.ctx, witnessed.scratch, rename)
+			})
+		}
+		return witnessed.check(witness, func() error {
+			if e := witness.verify(witnessed.ctx, witnessed.scratch); e != nil {
+				return e
+			}
+			witness.state.active.Store(false)
+			return rename()
+		})
+	}
+}
+
+// renameThroughAtomicCommit lets commit invoke the rename exactly once. renamed
+// reports whether the rename succeeded; err may still carry a commit error.
+func renameThroughAtomicCommit(root *os.Root, temp, name string, commit func(func() error) error) (renamed bool, err error) {
+	invoked := false
+	var renameErr error
+	err = commit(func() error {
+		if invoked {
+			renameErr = errors.New("rooted rename invoked more than once")
+			return renameErr
+		}
+		invoked = true
+		renameErr = root.Rename(temp, name)
+		renamed = renameErr == nil
+		return renameErr
+	})
+	err = errors.Join(err, renameErr)
+	if !invoked {
+		return false, errors.Join(err, errors.New("rooted commit check omitted rename"))
+	}
+	return renamed, err
 }

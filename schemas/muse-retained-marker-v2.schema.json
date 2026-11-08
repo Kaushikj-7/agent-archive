@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/muse-retained-marker-v2.schema.json",
-  "title": "Muse timestamp-free native omission v2",
+  "title": "Muse timestamp-free omission v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -79,39 +79,95 @@
       "const": 1
     },
     "marker": {
-      "const": "omitted_live_only"
+      "type": "string"
     },
     "omitted_record": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "record_type",
-        "durability",
-        "payload_type",
-        "payload_schema_version",
-        "payload_kind",
-        "omission_class"
-      ],
+      "type": "object"
+    }
+  },
+  "oneOf": [
+    {
+      "description": "A native live-only task delta marker.",
       "properties": {
-        "record_type": {
-          "const": "status"
+        "marker": {
+          "const": "omitted_live_only"
         },
-        "durability": {
-          "const": "ephemeral"
+        "omitted_record": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "record_type",
+            "durability",
+            "payload_type",
+            "payload_schema_version",
+            "payload_kind",
+            "omission_class"
+          ],
+          "properties": {
+            "record_type": {
+              "const": "status"
+            },
+            "durability": {
+              "const": "ephemeral"
+            },
+            "payload_type": {
+              "const": "runtime.session"
+            },
+            "payload_schema_version": {
+              "const": 1
+            },
+            "payload_kind": {
+              "const": "task"
+            },
+            "omission_class": {
+              "const": "task_tool_delta_v1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "A record this adapter version does not support, or a workflow-engine fact, omitted with nothing of it kept.",
+      "properties": {
+        "marker": {
+          "const": "unsupported_record_omitted"
         },
-        "payload_type": {
-          "const": "runtime.session"
-        },
-        "payload_schema_version": {
-          "const": 1
-        },
-        "payload_kind": {
-          "const": "task"
-        },
-        "omission_class": {
-          "const": "task_tool_delta_v1"
+        "omitted_record": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "record_type",
+            "durability",
+            "payload_type",
+            "payload_schema_version",
+            "payload_kind",
+            "omission_class"
+          ],
+          "properties": {
+            "record_type": {
+              "const": "event"
+            },
+            "durability": {
+              "const": "durable"
+            },
+            "payload_type": {
+              "const": ""
+            },
+            "payload_schema_version": {
+              "const": 0
+            },
+            "payload_kind": {
+              "const": ""
+            },
+            "omission_class": {
+              "enum": [
+                "unsupported_record_v1",
+                "workflow_fact_v1"
+              ]
+            }
+          }
         }
       }
     }
-  }
+  ]
 }

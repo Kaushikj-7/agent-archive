@@ -1,0 +1,338 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"slices"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/agentmeta"
+	"github.com/wangjohn/agent-archive/internal/agents/builtin"
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/backfill"
+	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/discovery"
+	"github.com/wangjohn/agent-archive/internal/sourcefacts"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/transcriptio"
+)
+
+func writeNativeImportJSON(out io.Writer, value any) error {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return writeOutput(out, append(archive.DisplayJSON(raw), '\n'))
+}
+
+func nativeImportBatchFilters(opts backfillCommandOptions, projects []string) backfill.BatchFilters {
+	return backfill.BatchFilters{Harnesses: []string{"muse"}, ProjectIDs: append([]string{}, projects...), Since: opts.filters.Since, Until: opts.filters.Until, SinceArg: opts.filters.SinceArg, UntilArg: opts.filters.UntilArg}
+}
+
+func planNativeImport(ctx context.Context, env Env, home string, cfg config.Config, opts backfillCommandOptions) (p nativeImportPreview, err error) {
+	p.ChildCoverage, p.Destination = "unavailable", cfg.DestinationID()
+	p.Rows = []nativeImportRow{}
+	p.projects, err = nativeImportProjectFilters(env, cfg, opts)
+	if err != nil {
+		return p, err
+	}
+	p.SinceUTC, p.UntilUTC, err = nativeImportBounds(opts, env.now())
+	if err != nil {
+		return p, err
+	}
+	if err := planNativeImportResume(ctx, home, cfg, opts, &p); err != nil {
+		return p, err
+	}
+	if p.resume != nil {
+		return p, nil
+	}
+	p.budget = agentapi.NewNativeReadBudget(agentapi.PassReadBudget)
+	// Existing confirmation bounds cover this retained bounded projection.
+	if !p.budget.ReserveUnscoped(archive.MaxNativeImportBatchBytes) {
+		return p, agentapi.ErrReadBudget
+	}
+	p.charge = archive.MaxNativeImportBatchBytes
+	p.inventory, err = discovery.NewNativeImportInventory(ctx, cfg.NativeRoots, p.budget, builtin.ValidateNativeLocator)
+	if err != nil {
+		return p, errors.Join(err, p.close())
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			err = errors.Join(err, p.close())
+		}
+	}()
+	candidates, err := p.inventory.Candidates(ctx)
+	if err != nil {
+		return p, err
+	}
+	p.Complete = candidates.Complete
+	if len(candidates.IDs) > archive.MaxNativeImportBatchSelections {
+		return p, errors.New("historical preview exceeds the existing 256-entry confirmation limit; select a narrower native store before retrying")
+	}
+	store, closeRead := state.OpenReadOnly(home).WithReadBudget(ctx, p.budget)
+	defer closeRead()
+	resolver := sourcefacts.NewProjectResolver()
+	for _, id := range candidates.IDs {
+		row := nativeImportRow{NativeID: id, Status: nativeImportUnavailable, Reason: "bounded namespace coverage incomplete"}
+		if p.Complete {
+			row, err = inspectNativeImportRow(ctx, env, store, cfg, opts, &p, resolver, id)
+			if err != nil {
+				return p, err
+			}
+		}
+		row.Ordinal = len(p.Rows) + 1
+		p.Rows = append(p.Rows, row)
+		if _, err := agentmeta.JSONWireBound(ctx, p.Rows, archive.MaxNativeImportBatchBytes); err != nil {
+			return p, err
+		}
+	}
+	keep = true
+	return p, nil
+}
+
+func planNativeImportResume(ctx context.Context, home string, cfg config.Config, opts backfillCommandOptions, p *nativeImportPreview) error {
+	batches, err := backfill.LoadBatches(home)
+	if err != nil {
+		return err
+	}
+	if len(batches) == 0 {
+		return nil
+	}
+	p.skips = map[string]backfill.NativeImportSkip{}
+	for _, batch := range batches {
+		for _, skip := range batch.NativeImportSkipped {
+			p.skips[skip.NativeID] = skip
+		}
+	}
+	last := batches[len(batches)-1]
+	if last.NativeImport == nil || !last.Continues(nativeImportBatchFilters(opts, p.projects), cfg.DestinationID()) {
+		return nil
+	}
+	if err := last.NativeImport.Validate(ctx); err != nil {
+		return err
+	}
+	p.resume, p.Complete = &last, true
+	p.SinceUTC, p.UntilUTC = last.NativeImport.Scope.SinceUTC, last.NativeImport.Scope.UntilExclusiveUTC
+	for _, selected := range last.NativeImport.Scope.Selected {
+		original, err := time.Parse(time.RFC3339Nano, selected.OriginalTUTC)
+		if err != nil {
+			return err
+		}
+		row := nativeImportRow{NativeID: selected.NativeID, OriginalT: &original, ProjectID: selected.ProjectID, Status: nativeImportSelected, Reason: "resume this exact previously confirmed scope", selection: selected}
+		for _, project := range cfg.Archive.Projects {
+			if project.ProjectID == row.ProjectID && project.Included {
+				row.Project = project.Root
+			}
+		}
+		for _, root := range cfg.NativeRoots {
+			fingerprint, e := archive.NativeRootFingerprint(root)
+			if e == nil && fingerprint == selected.RootFingerprint && root.Revision == selected.RootRevision {
+				row.candidate = state.NativeImportCandidate{NativeID: row.NativeID, Root: root, ProjectRoot: row.Project, ProjectID: row.ProjectID}
+			}
+		}
+		if row.Project == "" || row.candidate.Root.Agent != "muse" {
+			return errors.New("confirmed root/project configuration changed; restore it or explicitly confirm a new scope")
+		}
+		row.Ordinal = len(p.Rows) + 1
+		p.Rows = append(p.Rows, row)
+	}
+	return nil
+}
+
+func inspectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg config.Config, opts backfillCommandOptions, p *nativeImportPreview, resolver *sourcefacts.ProjectResolver, id string) (nativeImportRow, error) {
+	var root archive.NativeRoot
+	for _, candidate := range cfg.NativeRoots {
+		if candidate.Agent == "muse" {
+			root = candidate
+		}
+	}
+	located, err := p.inventory.Locate(ctx, agentapi.LocatorRequest{Purpose: agentapi.LocatorHistoricalImport, NativeID: id, Root: root})
+	if err != nil {
+		return refuseNativeImportRow(nativeImportRow{NativeID: id}, nativeImportReadReason(err))
+	}
+	if located.Status != agentapi.LocatorFound || len(located.Candidates) != 1 {
+		return nativeImportRow{NativeID: id, Status: nativeImportRefused, Reason: nativeImportLocatorReason(located)}, nil
+	}
+	row := nativeImportRow{NativeID: id, Status: nativeImportRefused, ref: located.Candidates[0], token: located.Revision}
+	return inspectLocatedNativeImportRow(ctx, env, store, cfg, opts, p, resolver, root, row)
+}
+
+// inspectLocatedNativeImportRow reads one located source's ordinary root binding.
+func inspectLocatedNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg config.Config, opts backfillCommandOptions, p *nativeImportPreview, resolver *sourcefacts.ProjectResolver, root archive.NativeRoot, row nativeImportRow) (_ nativeImportRow, err error) {
+	id := row.NativeID
+	pass, snapshot, err := openNativeImportSource(ctx, env, root, row.ref, p.inventory, p.budget)
+	if err != nil {
+		row.Reason = nativeImportReadReason(err)
+		return row, nil
+	}
+	defer func() { err = errors.Join(err, snapshot.Close(), pass.Close()) }()
+	evidence, ok := snapshot.(agentapi.SourceAdmissionEvidence)
+	if !ok {
+		return row, agentapi.ErrInvalidSourceBinding
+	}
+	facts, err := evidence.AdmissionEvidence(ctx, agentapi.SourceAdmission{NativeID: id})
+	if err != nil {
+		row.Reason = nativeImportReadReason(err)
+		return row, nil
+	}
+	binding := facts.Binding.Native
+	if facts.Binding.Codex != nil || binding == nil || binding.Checkpoint == nil || binding.NativeID != id || binding.ParentID != "" || binding.RootID != "" && binding.RootID != id {
+		row.Reason = "ordinary root authority unavailable; child authority is unavailable"
+		return row, nil
+	}
+	original := binding.NativeCreatedAt
+	row.OriginalT = &original
+	return selectNativeImportRow(ctx, env, store, cfg, opts, p, resolver, root, binding, row)
+}
+
+// selectNativeImportRow applies filter, ownership and removal checks to a bound root.
+func selectNativeImportRow(ctx context.Context, env Env, store *state.Store, cfg config.Config, opts backfillCommandOptions, p *nativeImportPreview, resolver *sourcefacts.ProjectResolver, root archive.NativeRoot, binding *archive.NativeSourceBinding, row nativeImportRow) (nativeImportRow, error) {
+	id := row.NativeID
+	day := row.OriginalT.In(env.now().Location()).Format("2006-01-02")
+	if opts.filters.Since != "" && day < opts.filters.Since || opts.filters.Until != "" && day > opts.filters.Until {
+		row.Status, row.Reason = nativeImportFiltered, "outside exact original-start date bounds"
+		return row, nil
+	}
+	// A removed worktree is filed under its project only on proof.
+	var projectRoot string
+	var removed *archive.ProjectResolution
+	if physical, known := resolver.Resolve(binding.Cwd); known {
+		projectRoot = physical.Root
+	} else if proof, proved := sourcefacts.RemovedWorktreeProject(cfg.Archive.Projects, binding.Cwd); proved {
+		projectRoot, removed = proof.Root, &proof
+	} else {
+		row.Reason = "physical project/worktree unavailable; mapping overrides are unsupported"
+		return row, nil
+	}
+	for _, project := range cfg.Archive.Projects {
+		if project.Included && project.Root == projectRoot {
+			row.Project, row.ProjectID = project.Root, project.ProjectID
+			break
+		}
+	}
+	if row.ProjectID == "" {
+		row.Reason = "physical project is not currently configured and included"
+		return row, nil
+	}
+	if len(p.projects) > 0 && !slices.Contains(p.projects, row.ProjectID) {
+		row.Status, row.Reason = nativeImportFiltered, "outside selected configured project IDs"
+		return row, nil
+	}
+	if _, found, err := store.ArchiveSessionID(agentmeta.SessionKey{Agent: agentmeta.Muse, NativeID: id}); err != nil {
+		return refuseNativeImportRow(row, "existing ownership/index requires recovery")
+	} else if found {
+		row.Status, row.Reason = nativeImportDuplicate, "independent existing owner is preserved"
+		return row, nil
+	}
+	if _, removed, err := store.Removal("muse", id); err != nil {
+		return row, err
+	} else if removed {
+		row.Reason = "previous removal is preserved; include-removed is unavailable"
+		return row, nil
+	}
+	fingerprint, err := archive.NativeRootFingerprint(root)
+	if err != nil {
+		return row, err
+	}
+	digest, err := archive.NativeImportBindingDigest(binding)
+	if err != nil {
+		return row, err
+	}
+	// An earlier batch's final read refused this exact source with this
+	// version; only a changed source or another version reads it again.
+	if skip, found := p.skips[id]; found && skip.BindingSHA256 == digest && skip.Version == Version {
+		return refuseNativeImportRow(row, skip.Reason)
+	}
+	row.selection = archive.NativeImportBatchSelection{Kind: archive.NativeImportOrdinaryRoot, NativeID: id, OriginalTUTC: row.OriginalT.UTC().Format(time.RFC3339Nano), ProjectID: row.ProjectID, RootFingerprint: fingerprint, RootRevision: root.Revision, BindingSHA256: digest, Source: *binding.Checkpoint}
+	row.candidate = state.NativeImportCandidate{NativeID: id, Root: root, ProjectRoot: row.Project, ProjectID: row.ProjectID}
+	if err := p.inventory.Check(ctx, id, row.token); err != nil {
+		return refuseNativeImportRow(row, nativeImportReadReason(err))
+	}
+	row.Status, row.Reason = nativeImportSelected, "ordinary root; child coverage unavailable"
+	if removed != nil {
+		row.Reason = "ordinary root from a removed worktree of this project; child coverage unavailable"
+	}
+	return row, nil
+}
+
+// nativeImportRefusalReason words a native adapter's whole-file refusal and
+// what follows from it. It carries only the bounded record family and line.
+func nativeImportRefusalReason(refused *agentapi.NativeRefusalError) string {
+	family := refused.Family
+	if family == "" {
+		family = "unrecognized"
+	}
+	switch refused.Reason {
+	case agentapi.RefusalNoSessionStart:
+		return "not a session: a Muse side log with no session start; nothing to import"
+	case agentapi.RefusalIncompleteStart:
+		return "incomplete: the file ends before its startup records; nothing to import"
+	case agentapi.RefusalUnsupportedStartup:
+		return fmt.Sprintf("unsupported Muse startup order at line %d; this agent-archive version cannot import it", refused.Line)
+	case agentapi.RefusalInconsistentRecord:
+		return fmt.Sprintf("inconsistent: Muse record %s at line %d contradicts the session's other records; nothing to import", family, refused.Line)
+	case agentapi.RefusalUnsupportedRecord:
+	}
+	return fmt.Sprintf("unsupported Muse record %s at line %d; this agent-archive version cannot import it", family, refused.Line)
+}
+
+// nativeImportAllowanceReason words a source left unread because the preview's
+// read allowance ran out. The same scope spends it the same way again.
+const nativeImportAllowanceReason = "not read: this preview's read allowance ran out; narrow it with --since and --until"
+
+// nativeImportReadReason words a failure to read one source during preview.
+func nativeImportReadReason(err error) string {
+	var refused *agentapi.NativeRefusalError
+	if errors.As(err, &refused) {
+		return nativeImportRefusalReason(refused)
+	}
+	if errors.Is(err, discovery.ErrNativeStartupAllowance) || errors.Is(err, agentapi.ErrReadBudget) {
+		return nativeImportAllowanceReason
+	}
+	if agentapi.Failure(err) == agentapi.Changed {
+		return "source changed during this preview; run the preview again"
+	}
+	return "source could not be read during this preview; run the preview again"
+}
+
+// nativeImportLocatorReason words a locator result that names no single source.
+func nativeImportLocatorReason(located agentapi.LocatorResult) string {
+	switch {
+	case located.Refusal != nil:
+		return nativeImportRefusalReason(located.Refusal)
+	case located.Status == agentapi.LocatorPending:
+		return nativeImportAllowanceReason
+	case located.Status == agentapi.LocatorAmbiguous:
+		return "more than one Muse file has this session ID; nothing to import"
+	}
+	return "not a supported Muse session root; nothing to import"
+}
+
+// refuseNativeImportRow reports a bounded per-row refusal. The underlying
+// error stays private to the preview and does not fail other rows.
+func refuseNativeImportRow(row nativeImportRow, reason string) (nativeImportRow, error) {
+	row.Status, row.Reason = nativeImportRefused, reason
+	return row, nil
+}
+
+func openNativeImportSource(ctx context.Context, env Env, root archive.NativeRoot, ref agentapi.SourceRef, lookup agentapi.NativeLocatorLookup, budget *agentapi.NativeReadBudget) (agentapi.SourcePass, agentapi.SourceSnapshot, error) {
+	provider, _, ok := env.agentRegistry().LookupSources("muse")
+	if !ok {
+		return nil, nil, agentapi.ErrInvalidSourceBinding
+	}
+	pass, err := provider.OpenPass(ctx, agentapi.SourceEnvironment{NativeRoot: &root, NativeLocators: lookup, ReadBudget: budget, Files: transcriptio.RootOpener{Root: root.Canonical}, Policy: transcriptio.OpenPolicy{Root: root.Canonical, RejectSymlinks: true}})
+	if err != nil {
+		return nil, nil, err
+	}
+	snapshot, err := pass.Read(ctx, ref, agentapi.ReadLimits{RawBytes: collector.MaxRawTranscriptBytes("muse"), RecordBytes: archive.MaxRecordBytes, FilteredBytes: collector.DefaultMaxTranscriptBytes, ReadBudget: budget})
+	if err != nil {
+		return nil, nil, errors.Join(err, pass.Close())
+	}
+	return pass, snapshot, nil
+}

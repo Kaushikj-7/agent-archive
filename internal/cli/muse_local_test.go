@@ -92,17 +92,15 @@ func TestMuseInvalidFileAndBackfillCreateNoArtifacts(t *testing.T) {
 	if _, e := os.Stat(output); !os.IsNotExist(e) {
 		t.Fatalf("invalid output created: %v", e)
 	}
-	homeReads := 0
-	env.Home = func() (string, error) { homeReads++; return home, nil }
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"backfill", "--yes", "--background", "--harness", "muse"}, nil, &out, &errOut, env); code == 0 {
-		t.Fatalf("backfill admitted Muse: %s", out.String())
+		t.Fatalf("backfill without setup succeeded: %s", out.String())
 	}
-	if homeReads != 0 || !strings.Contains(errOut.String(), "muse") {
-		t.Fatalf("backfill reached home/journal before rejecting harness: reads=%d error=%s", homeReads, errOut.String())
+	if !strings.Contains(errOut.String(), "agent-archive setup") {
+		t.Fatalf("backfill without setup did not name setup: %s", errOut.String())
 	}
 	if _, e := os.Stat(home); !os.IsNotExist(e) {
-		t.Fatalf("unsupported backfill wrote state: %v", e)
+		t.Fatalf("backfill without setup wrote state: %v", e)
 	}
 }
 

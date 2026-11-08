@@ -37,13 +37,18 @@
       "fields": [
         "schema_version",
         "permission_epoch",
-        "cause"
+        "cause",
+        "filesystem_mode"
       ],
       "fixed_fields": {
         "schema_version": 1,
         "permission_epoch": 1,
-        "cause": "new_session_default"
-      }
+        "cause": "new_session_default",
+        "filesystem_mode": "unrestricted"
+      },
+      "optional_fields": [
+        "filesystem_mode"
+      ]
     },
     {
       "type": "runtime.session.metadata",
@@ -155,6 +160,18 @@
       }
     },
     {
+      "type": "session.login.completed",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "session_id"
+      ],
+      "fixed_fields": {
+        "kind": "login_completed"
+      },
+      "cross_record_policy": "Exact closed record; session_id must be this session. Method, trigger, subscription and duration are validated and dropped: account facts are never retained."
+    },
+    {
       "type": "session.end",
       "payload_schema": 1,
       "fields": [
@@ -257,6 +274,22 @@
         "kind": "run",
         "event_kind": "started"
       }
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind",
+        "run_id",
+        "source_run_record_id",
+        "source_run_record_sequence"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "started"
+      },
+      "cross_record_policy": "Start of a run an inbox delivery started: prompt validated and dropped, requires the run's earlier inbox origin, joined without a user turn."
     },
     {
       "type": "runtime.session",
@@ -701,6 +734,20 @@
       }
     },
     {
+      "type": "runtime.retained_fact",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "origin_kind",
+        "run_id"
+      ],
+      "fixed_fields": {
+        "kind": "retained_runtime_fact",
+        "origin_kind": "inbox_delivery"
+      },
+      "cross_record_policy": "Inbox-delivery run origin: exact {client_id} body, client dropped; must precede its run's start, once per run."
+    },
+    {
       "type": "runtime.command_intake.session_name.received",
       "payload_schema": 1,
       "fields": [
@@ -974,6 +1021,42 @@
         "hash_evidence": "marker_free_skill_content_v1"
       },
       "cross_record_policy": "Same own native read report plus a trusted producer safe-content join: actual observer full RedactText fixed point with no literal replacement marker, comparing native private hash only to existing safe SHA. Exact prior-event proof restores before activity without I/O. Native original digest erased; content only, no installed-name alias, origin or eligibility. Retained producer-evidence trust, not authenticated/coherent-forgery protection."
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind",
+        "run_id",
+        "source_run_record_id",
+        "source_run_record_sequence",
+        "child_session_id"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "memory_reminder_child_session_linked"
+      },
+      "cross_record_policy": "Link to a child session verified within the parent alone: names this session as parent and its own run, a task this session started in that run, and a child other than this session, each linked once, from a materialized run with a unique increasing source record. A named child log must be the child's own subagent/<child>/session.jsonl beside this session and exist as a regular file. Only the child ID is retained; task, generation, reminder agent and log path are dropped. Grants no child transcript, capture or coverage."
+    },
+    {
+      "type": "runtime.session",
+      "payload_schema": 1,
+      "fields": [
+        "kind",
+        "event_kind",
+        "run_id",
+        "source_run_record_id",
+        "source_run_record_sequence",
+        "child_session_id",
+        "status",
+        "attempt"
+      ],
+      "fixed_fields": {
+        "kind": "run",
+        "event_kind": "workflow_child_lifecycle"
+      },
+      "cross_record_policy": "Workflow child lifecycle step verified within the parent alone: a child session other than this session, the child's own run, and a task stream of a task this session starts in that run (the first step may precede the task's records; every child's task must exist by the end of the file). Each child keeps one control ID, child run, workflow run, tool call, task and attempt, steps move strictly forward through scheduled, started, usage, completed, terminal, and no two children share a control ID or child run. A child is never also a memory-reminder child. From a materialized run with a unique increasing source record. Only the child ID, status and attempt are retained; label, control ID, child run, task, workflow run, tool call, routing, model, usage, duration and result references are dropped. Grants no child transcript, capture or coverage."
     }
   ],
   "privacy": "Shared policy applies to every retained string/key; changed authority refuses; no raw record_json, permission bodies, native checksums, provider/context or native binding paths",
@@ -990,6 +1073,10 @@
     "v": 2,
     "kind": "native_omission",
     "schema": "schemas/muse-retained-marker-v2.schema.json",
-    "classification": "task_tool_delta_v1"
+    "classifications": [
+      "task_tool_delta_v1",
+      "unsupported_record_v1",
+      "workflow_fact_v1"
+    ]
   }
 }

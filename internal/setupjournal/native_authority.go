@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 )
@@ -159,13 +160,49 @@ func nativeJournalStickyCapabilities(doc map[string]json.RawMessage) (bool, bool
 // nativeJournalAuthorityPresent classifies recovery errors without granting
 // authority from a malformed or aliased envelope.
 func nativeJournalAuthorityPresent(raw []byte) bool {
-	var fields map[string]json.RawMessage
-	_ = json.Unmarshal(raw, &fields)
-	protected := false
-	for key, value := range fields {
-		protected = protected || strings.EqualFold(key, "native_authority_protection") || strings.EqualFold(key, "native_admission_protection") || strings.EqualFold(key, "native_import_protection") || strings.EqualFold(key, "native_replay_protection") || strings.EqualFold(key, "files_only") && bytes.HasPrefix(bytes.TrimSpace(value), []byte("{"))
+	// Inspect possible JSON keys even after malformed bytes. This classifies
+	// refusal only: the full closed decoder must still validate the entire wire.
+	// Considering each unescaped quote also survives a broken earlier string;
+	// valid string values cannot become keys merely by naming a capability.
+	for start, value := range raw {
+		if value != '"' || nativeJournalQuoteEscaped(raw, start) {
+			continue
+		}
+		end := start + 1
+		for end < len(raw) && (raw[end] != '"' || nativeJournalQuoteEscaped(raw, end)) {
+			end++
+		}
+		if end == len(raw) {
+			continue
+		}
+		rest := bytes.TrimLeftFunc(raw[end+1:], unicode.IsSpace)
+		if len(rest) == 0 || rest[0] != ':' {
+			continue
+		}
+		var key string
+		if err := json.Unmarshal(raw[start:end+1], &key); err != nil {
+			continue
+		}
+		rest = bytes.TrimLeftFunc(rest[1:], unicode.IsSpace)
+		switch strings.ToLower(key) {
+		case "native_authority_protection", "native_admission_protection", "native_import_protection", "native_replay_protection":
+			return true
+		case "files_only":
+			if len(rest) > 0 && rest[0] == '{' {
+				return true
+			}
+		}
 	}
-	return protected
+	return false
+}
+
+func nativeJournalQuoteEscaped(raw []byte, at int) bool {
+	slashes := 0
+	for at > 0 && raw[at-1] == '\\' {
+		slashes++
+		at--
+	}
+	return slashes%2 != 0
 }
 
 func normalizeNativeJournalFence(raw []byte, doc map[string]json.RawMessage, filesOnly []byte, replayProtected, importProtected bool) ([]byte, error) {

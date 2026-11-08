@@ -170,6 +170,11 @@ func (p *pass) admitStartupCandidate(candidate startupCandidate) (err error) {
 	if err := p.ackStartupCandidate(candidate); err != nil {
 		return err
 	}
+	// The owner is admitted either way; a failed link leaves the scan to the
+	// next pass, whose validated read records the same links.
+	if err := p.local.LinkNativeChildren(prepared); err != nil {
+		return err
+	}
 	// The ordinary scan consumes the borrowed retained output. It never calls
 	// the native Filter again and owns all normal staging/PUT/readback/status work.
 	p.opts.preparedStartup = &preparedStartupReader{prepared: prepared, observation: snapshot.Observation(), id: reg.ArchiveSessionID}

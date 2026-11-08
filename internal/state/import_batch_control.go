@@ -97,6 +97,16 @@ func ReplaceImportBatchControl(ctx context.Context, home, id string, write func(
 	})
 }
 
+// ReadImportBatchControlBytes performs the existing bounded private, stable
+// rooted control read. Call within WithImportBatchLock for a coherent advisory
+// snapshot; bytes alone grant no source, owner or mutation authority.
+func ReadImportBatchControlBytes(home *local.RootedHome, id string) ([]byte, error) {
+	if home == nil || !archive.ValidImportBatchID(id) {
+		return nil, archive.ErrUnsupportedNativeImport
+	}
+	return readImportBatchBytes(home, id)
+}
+
 func readImportBatchBytes(home *local.RootedHome, id string) ([]byte, error) {
 	return readImportBatchBytesBounded(home, id, archive.MaxImportBatchControlBytes)
 }

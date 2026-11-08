@@ -443,6 +443,7 @@ func (r providerReader) filter(ctx context.Context, adapter archive.Adapter, max
 		if err != nil {
 			return out, observed, err
 		}
+		observed.prepared.linked = archive.FilteredTranscript{SessionIDs: out.SessionIDs, NativeChildIDs: out.NativeChildIDs}
 		transferred = true
 		if r.resourceOwner != nil {
 			r.resourceOwner.nativeLeases = append(r.resourceOwner.nativeLeases, observed.prepared)

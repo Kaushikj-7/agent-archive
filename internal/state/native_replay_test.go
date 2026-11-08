@@ -139,7 +139,7 @@ func TestNativeReplayExistingOwnerRequiresStrongFence(t *testing.T) {
 		}
 	})
 	t.Run("validation", func(t *testing.T) {
-		if _, err := fixture.store.CommitNativeValidation(t.Context(), owner, fixture.candidate.Root, owner.NativeBinding, func(context.Context) error { return nil }); err == nil {
+		if _, err := fixture.store.CommitNativeValidation(t.Context(), owner, fixture.candidate.Root, owner.NativeBinding, func(context.Context) error { return nil }, archive.FilteredTranscript{}); err == nil {
 			t.Fatal("replay checkpoint validated without stronger fence")
 		}
 	})
@@ -170,7 +170,7 @@ func TestNativeReplayExistingOwnerRequiresStrongFence(t *testing.T) {
 	if _, err := fixture.store.ForNativeContinuation(t.Context(), intent); err != nil {
 		t.Fatal("strongly fenced unchanged replay owner refused", err)
 	}
-	if _, err := fixture.store.CommitNativeValidation(t.Context(), owner, fixture.candidate.Root, owner.NativeBinding, func(context.Context) error { return nil }); err != nil {
+	if _, err := fixture.store.CommitNativeValidation(t.Context(), owner, fixture.candidate.Root, owner.NativeBinding, func(context.Context) error { return nil }, archive.FilteredTranscript{}); err != nil {
 		t.Fatal("strongly fenced checkpoint refused", err)
 	}
 	if err := fixture.store.SaveRegistration(owner); err != nil {

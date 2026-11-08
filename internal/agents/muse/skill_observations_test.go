@@ -128,10 +128,7 @@ func TestNativeSkillReadRawRefusals(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			raw := nativeSkillReads(t, 1, func(m map[string]any) { p := object(m["payload"]); mutate(p, object(p["event"])) })
-			out, err := filterBytes(t, raw, agentapi.ReadLimits{})
-			if err == nil || len(out.Records) != 0 {
-				t.Fatal("unqualified native skill-read admitted")
-			}
+			assertKeptOutAt(t, raw, physicalLineOf(t, raw, "skill_read_observed"))
 		})
 	}
 	for _, name := range []skillNativeAuthorityCase{skillNativeAuthoritySchema, skillNativeAuthorityCausation, skillNativeAuthorityForeignOwner, skillNativeAuthorityDuplicateKey, skillNativeAuthorityDuplicateSourceId, skillNativeAuthorityUnmaterialized} {
@@ -156,6 +153,11 @@ func TestNativeSkillReadRawRefusals(t *testing.T) {
 			}
 			if name == skillNativeAuthorityUnmaterialized {
 				raw = bytes.Replace(raw, []byte(`"semantic_kind":{"kind":"chat"}`), []byte(`"semantic_kind":{"kind":"other"}`), 1)
+			}
+			if name == skillNativeAuthoritySchema || name == skillNativeAuthorityCausation {
+				// A skill read of another schema or with a cause is omitted.
+				assertKeptOutAt(t, raw, physicalLineOf(t, raw, "skill_read_observed"))
+				return
 			}
 			if out, err := filterBytes(t, raw, agentapi.ReadLimits{}); err == nil || len(out.Records) != 0 {
 				t.Fatal("invalid native authority admitted")

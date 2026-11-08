@@ -65,7 +65,7 @@ func TestNativeValidationCommitsAfterStageOutsideHooksAndPreservesLateHook(t *te
 			return s.RecordHookObservation(owner.ArchiveSessionID, owner.RegisteredAt.Add(time.Hour))
 		}
 		return nil
-	})
+	}, archive.FilteredTranscript{})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -105,7 +105,7 @@ func TestNativeValidationFailureKeepsExactProtectedCheckpoint(t *testing.T) {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			s, owner, root, binding := nativeValidationFixture(t)
-			bound, e := s.CommitNativeValidation(t.Context(), owner, root, binding, func(context.Context) error { return nil })
+			bound, e := s.CommitNativeValidation(t.Context(), owner, root, binding, func(context.Context) error { return nil }, archive.FilteredTranscript{})
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -132,7 +132,7 @@ func TestNativeValidationFailureKeepsExactProtectedCheckpoint(t *testing.T) {
 					otherCP := cp
 					otherCP.Boundary++
 					other.Checkpoint = &otherCP
-					_, err := s.CommitNativeValidation(verifyCtx, bound, root, &other, func(context.Context) error { return nil })
+					_, err := s.CommitNativeValidation(verifyCtx, bound, root, &other, func(context.Context) error { return nil }, archive.FilteredTranscript{})
 					return err
 				case commitFailureRemoval:
 					return os.Remove(s.registrationPath(owner.ArchiveSessionID))
@@ -154,7 +154,7 @@ func TestNativeValidationFailureKeepsExactProtectedCheckpoint(t *testing.T) {
 				default:
 					return errors.New("unknown synthetic commit failure")
 				}
-			})
+			}, archive.FilteredTranscript{})
 			if e == nil {
 				t.Fatal("racing authority accepted")
 			}
@@ -181,7 +181,7 @@ func TestNativeValidationFailureKeepsExactProtectedCheckpoint(t *testing.T) {
 func TestNativeValidationDoesNotReconstructV1OrLoseProofOnCacheRemoval(t *testing.T) {
 	t.Parallel()
 	s, owner, root, binding := nativeValidationFixture(t)
-	bound, e := s.CommitNativeValidation(t.Context(), owner, root, binding, func(context.Context) error { return nil })
+	bound, e := s.CommitNativeValidation(t.Context(), owner, root, binding, func(context.Context) error { return nil }, archive.FilteredTranscript{})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -287,7 +287,7 @@ func TestNativeValidationRequiresExplicitCurrentCaptureWindows(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			if _, e = s.CommitNativeValidation(t.Context(), owner, root, binding, func(context.Context) error { return nil }); e == nil {
+			if _, e = s.CommitNativeValidation(t.Context(), owner, root, binding, func(context.Context) error { return nil }, archive.FilteredTranscript{}); e == nil {
 				t.Fatal("legacy fallback supplied native capture authority")
 			}
 			after, e := os.ReadFile(s.registrationPath(owner.ArchiveSessionID))

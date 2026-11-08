@@ -9,7 +9,7 @@ import (
 )
 
 func FuzzMuseStartupFacts(f *testing.F) {
-	for _, name := range []string{"synthetic-exec-empty.jsonl", "synthetic-msp-empty.jsonl", "synthetic-model-resolution-omissions.jsonl", "synthetic-route-startup.jsonl"} {
+	for _, name := range []string{"synthetic-exec-empty.jsonl", "synthetic-msp-empty.jsonl", "synthetic-model-resolution-omissions.jsonl", "synthetic-route-startup.jsonl", "synthetic-metadata-first.jsonl", "synthetic-route-metadata.jsonl"} {
 		raw, e := os.ReadFile(filepath.Join("testdata", name))
 		if e != nil {
 			f.Fatal(e)

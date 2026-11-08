@@ -6,7 +6,57 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `backfill --harness muse` imports sessions from removed worktrees under
+  their project when the configured project's own repository is provably the
+  one they ran in; the preview names them. Other missing worktrees still
+  refuse.
+
+- Explicit `backfill --harness muse` previews bounded historical ordinary roots,
+  confirms their exact dates/projects/source checkpoints, and stages them before
+  registration for the normal collector. Each refused session says why: the
+  unsupported record and line, a record that contradicts the session's other
+  records, a side log with no session start, a file that ends before its
+  startup records, or a read to retry. Preview and cancellation write no state
+  and open no storage. Exact batch undo detaches only its memberships. Child
+  coverage and missing-worktree/mapping overrides remain unavailable.
+
 ### Changed
+
+- Muse sessions from newer Muse builds are no longer refused for records this
+  version does not support. Those records are left out (nothing of them is
+  uploaded) and the session shows a `muse_unsupported_records_omitted` gap;
+  records about the session's identity, start, workspace, permissions,
+  approvals, links to other sessions, or proofs still refuse the session. Unknown members of startup
+  and opening records are dropped with an `unknown_field_omitted` gap.
+
+- Muse sessions with runs started by an inbox delivery, or with workflow-engine
+  facts, are no longer refused for them. Inbox-started runs keep their replies
+  but not the delivered text; workflow facts are left out and the session shows
+  a `muse_workflow_facts_omitted` gap.
+
+- Muse sessions that record a completed login are no longer refused. Only the
+  fact that this session logged in is kept, never the login method or account
+  details.
+
+- Muse sessions from newer builds that write their startup metadata before the
+  session-start command are no longer refused as an unsupported startup order.
+
+- Muse sessions that write route facts between their two startup metadata
+  records are no longer refused as an unsupported startup order.
+
+- Muse sessions that link memory-reminder child sessions are no longer refused
+  when each link checks out against the session itself. Only the child's
+  session ID is kept; links that do not check out still refuse the session.
+  Imported and captured Muse sessions list those children as linked sessions,
+  shown as unavailable because their transcripts are not archived.
+
+- Muse sessions that run workflow child sessions are no longer refused for
+  the children's lifecycle records when each child checks out against the
+  session itself. Only the child's session ID, lifecycle step and attempt are
+  kept, and the child is listed as an unavailable linked session; records that
+  do not check out still refuse the session.
 
 - Confirmed backfill registers bounded active groups through one ordered batch,
   sharing native/state memory charges and retaining unfinished parents across
@@ -69,6 +119,32 @@ follow [Semantic Versioning](https://semver.org/).
   sync` still prints it. `status --json` adds `collector.session_issue_reasons`.
 
 ### Fixed
+
+- `backfill history` counts the Codex child threads an import registered under
+  its subagents, as the import itself does, instead of as more sessions.
+
+- A historical Muse preview that could not read a session says to run the
+  preview again instead of that there is nothing to import, and one whose read
+  allowance ran out says to narrow it with `--since` and `--until`.
+
+- A confirmed `backfill --harness muse` no longer stops at the first session
+  whose full read finds records this version cannot import. That session is
+  skipped and named with its reason, and the rest of the batch imports. A long
+  batch also no longer stops partway when its native inventory pass runs out
+  of its metadata allowance; it renews the pass and continues.
+
+- A session a confirmed `backfill --harness muse` skipped is no longer selected
+  again by the next preview, which would only skip it again. The preview lists
+  it as refused with the same reason until its file changes or a different
+  agent-archive version runs.
+
+- Muse sessions started with the unrestricted filesystem permission mode are
+  no longer refused; the archive records that mode. Muse route facts newer
+  builds write (terminal identity, a local runtime socket path) no longer
+  refuse the session and are not kept. A refused Muse file now says why: the
+  record type and line it stopped at, that its startup records come in an
+  order this version does not support, that the file is a side log with no
+  session start, or that it ends before its startup records (filter 33).
 
 - Durable quota and recovery checks traverse complete supported state inventories
   beyond 65,536 combined entries. Explicit import recovery, reconciliation and

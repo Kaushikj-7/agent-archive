@@ -188,6 +188,9 @@ func (s *Store) verifyAndBeginStagedRelease(ctx context.Context, id string, remo
 		return nil
 	}
 	q := state.selection
+	if err := s.refuseAttachedNativeImportLaterRequest(id, q); err != nil {
+		return err
+	}
 	if state.pendingFound {
 		if err := s.validateStagedSelection(ctx, state.pending); err != nil {
 			return err
@@ -217,6 +220,23 @@ func (s *Store) verifyAndBeginStagedRelease(ctx context.Context, id string, remo
 	})
 }
 
+// This advisory refusal precedes new readback controls. The locked comparison
+// in finishStagedRelease remains authoritative for request and owner changes.
+func (s *Store) refuseAttachedNativeImportLaterRequest(id string, q *StagedSelection) error {
+	request, requested, err := s.LoadRequest(id)
+	if err != nil || !requested || q.HadRequest && request.Token == q.CoveredToken {
+		return err
+	}
+	reg, found, err := s.LoadRegistration(id)
+	if err != nil {
+		return err
+	}
+	if found && reg.NativeImport != nil && reg.NativeImport.Membership.State == archive.NativeImportAttached {
+		return ErrReadySelectionFrozen
+	}
+	return nil
+}
+
 func (s *Store) finishStagedRelease(ctx context.Context, id string, q *StagedSelection, progress stagedReleaseProgress, pending PendingPublication, found bool, g config.DurableStorageGuard) error {
 	cfg, present, err := config.Load(s.home)
 	if err != nil || !present || !cfg.SupportsStagedSelection() || cfg.DestinationID() != q.Core.DestinationID {
@@ -229,12 +249,9 @@ func (s *Store) finishStagedRelease(ctx context.Context, id string, q *StagedSel
 		return err
 	}
 	defer unlock()
-	current, requested, err := s.LoadRequest(id)
+	coveredRequest, err := s.stagedReleaseCoveredRequest(ctx, id, q)
 	if err != nil {
 		return err
-	}
-	if requested && (!q.HadRequest || current.Token != q.CoveredToken) {
-		return ErrReadySelectionFrozen
 	}
 	stage, staged, err := s.loadPreparedImportStage(ctx, id)
 	if err != nil {
@@ -253,7 +270,7 @@ func (s *Store) finishStagedRelease(ctx context.Context, id string, q *StagedSel
 	} else if progress.Phase != stagedReleaseLocalComplete {
 		return ErrDurableStorageRecovery
 	}
-	if requested {
+	if coveredRequest {
 		if err = s.removeCoveredStagedRequest(id); err != nil {
 			return err
 		}
@@ -276,6 +293,28 @@ func (s *Store) finishStagedRelease(ctx context.Context, id string, q *StagedSel
 	}
 	progress.Phase = stagedReleaseReleased
 	return s.writeDurableGuard(ctx, g, stagedControl(id, stagedReleaseProgressName), progress)
+}
+
+// stagedReleaseCoveredRequest reports whether the current request is the one covered by the selecting ACK; the caller holds the request lock.
+func (s *Store) stagedReleaseCoveredRequest(ctx context.Context, id string, q *StagedSelection) (bool, error) {
+	current, requested, err := s.LoadRequest(id)
+	if err != nil {
+		return false, err
+	}
+	if requested && (!q.HadRequest || current.Token != q.CoveredToken) {
+		reg, found, err := s.LoadRegistration(id)
+		if err != nil || !found || reg.NativeImport == nil || reg.NativeImport.Membership.State != archive.NativeImportDetached {
+			return false, errors.Join(ErrReadySelectionFrozen, err)
+		}
+		digest, err := s.nativeImportStagedAdmissionDigest(ctx, reg, q)
+		if err != nil || digest != q.Core.AdmissionContext {
+			return false, errors.Join(ErrReadySelectionFrozen, err)
+		}
+		// Only the old selecting ACK is being finished. This later independent
+		// request remains byte-for-byte untouched and is never covered by that ACK.
+		return false, nil
+	}
+	return requested, nil
 }
 
 func (s *Store) writeStagedControl(ctx context.Context, id string, name stagedControlName, value any) error {
@@ -616,7 +655,7 @@ func (s *Store) validateFinalStagedAuthority(ctx context.Context, id string, q *
 	if err := validateNativeImportSelectionAuthority(reg, q.Core); err != nil {
 		return err
 	}
-	admission, err := s.readyDigest(ctx, reg)
+	admission, err := s.nativeImportStagedAdmissionDigest(ctx, reg, q)
 	if err != nil || admission != q.Core.AdmissionContext {
 		return errors.Join(ErrReadySelectionFrozen, err)
 	}
@@ -720,6 +759,9 @@ func (s *Store) resumeStagedOwner(ctx context.Context, id string, remote StagedR
 			return err
 		}
 		if found && reg.NativeImport != nil {
+			if _, _, selected := published.LastPublished(); !selected && published.state.PublicationVersion == 0 {
+				return s.checkUnpublishedNativeImportRelease(ctx, reg)
+			}
 			return published.validateNativeImportAuthority(ctx, reg)
 		}
 		return nil
@@ -741,3 +783,26 @@ const (
 	stagedReleaseReceiptName  stagedControlName = "release.json"
 	stagedReleaseProgressName stagedControlName = "release-progress.json"
 )
+
+// An initial stage is not released lineage. A sweep leaves it for normal typed
+// publication only while its complete owner/stage and current controls agree.
+// Any release evidence without an ACK remains a refusal, never a repair hint.
+func (s *Store) checkUnpublishedNativeImportRelease(ctx context.Context, reg archive.SessionRegistration) error {
+	var receipt stagedReleaseReceipt
+	if err := s.readStagedControl(reg.ArchiveSessionID, stagedReleaseReceiptName, &receipt); !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	var progress stagedReleaseProgress
+	if err := s.readStagedControl(reg.ArchiveSessionID, stagedReleaseProgressName, &progress); !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	stage, found, err := s.LoadImportStage(ctx, reg)
+	if err != nil || !found || !stage.TypedSelection || stage.Version != 2 {
+		return errors.Join(ErrDurableStorageRecovery, err)
+	}
+	cfg, found, err := s.loadConfig()
+	if err != nil || nativeImportStagedPolicyMismatch(cfg, reg, found) {
+		return errors.Join(ErrReadySelectionFrozen, err)
+	}
+	return s.resumeOwnedNativeImport(ctx, stage, reg, cfg)
+}

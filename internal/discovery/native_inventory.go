@@ -3,7 +3,6 @@ package discovery
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -103,24 +102,27 @@ type nativeProgress struct {
 // pages are trusted installation-produced historical observations, never current
 // uniqueness or consent. Only live checks mint tokens, kept in this object.
 type NativeInventory struct {
-	ctx       context.Context
-	root      archive.NativeRoot
-	budget    *agentapi.NativeReadBudget
-	validate  NativeLocatorValidator
-	path      string
-	expected  []byte
-	progress  nativeProgress
-	eligible  []string
-	purposes  []uint8
-	counts    NativeInventoryCounts
-	remaining time.Duration
-	deadline  time.Time
-	charge    int64
-	tokens    map[string]nativeSelection
-	nonce     string
-	stopped   bool
-	closed    bool
-	err       error
+	ctx        context.Context
+	root       archive.NativeRoot
+	budget     *agentapi.NativeReadBudget
+	validate   NativeLocatorValidator
+	path       string
+	expected   []byte
+	progress   nativeProgress
+	eligible   []string
+	purposes   []uint8
+	counts     NativeInventoryCounts
+	remaining  time.Duration
+	deadline   time.Time
+	charge     int64
+	tokens     map[string]nativeSelection
+	nonce      string
+	stopped    bool
+	closed     bool
+	err        error
+	historical bool
+	projected  bool
+	complete   bool
 }
 
 type nativeSelection struct {
@@ -133,19 +135,12 @@ type nativeSelection struct {
 // The caller owns the collector lock and must Close after source leases/passes.
 // No native traversal occurs when no supported pending queries exist.
 func NewNativeInventory(ctx context.Context, home string, roots []archive.NativeRoot, queries []agentapi.LocatorRequest, budget *agentapi.NativeReadBudget, validate NativeLocatorValidator) (*NativeInventory, error) {
-	if err := ctx.Err(); err != nil {
+	constructorStart := time.Now()
+	l, err := newNativeInventory(ctx, roots, budget, validate)
+	if err != nil {
 		return nil, err
 	}
-	constructorStart := time.Now()
-	if budget == nil || validate == nil {
-		return nil, agentapi.ErrInvalidSourceBinding
-	}
-	root, rootErr := nativeInventoryRoot(roots)
-	if rootErr != nil {
-		return nil, rootErr
-	}
-
-	l := &NativeInventory{ctx: ctx, root: root, path: filepath.Join(home, "discovery-catalog.json"), budget: budget, validate: validate, remaining: Budget, tokens: map[string]nativeSelection{}}
+	l.path = filepath.Join(home, "discovery-catalog.json")
 	if len(queries) > maxCatalog {
 		return nil, errCatalogTooLarge
 	}
@@ -229,11 +224,9 @@ func NewNativeInventory(ctx context.Context, home string, roots []archive.Native
 	} else {
 		l.reset(owners, query)
 	}
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
+	if err := l.setNonce(); err != nil {
 		return nil, l.failConstruction(err)
 	}
-	l.nonce = hex.EncodeToString(nonce[:])
 	return l, nil
 }
 
@@ -251,6 +244,9 @@ func (l *NativeInventory) reset(owners []string, query string) {
 }
 
 func (l *NativeInventory) resetCoverage() {
+	if l.historical {
+		l.stopped, l.complete = true, false
+	}
 	next := l.progress.Next
 	l.reset(l.progress.Owners, l.progress.Query)
 	l.progress.Next = next
@@ -434,6 +430,15 @@ func validNativeDirectory(d nativeDirectory, index int, seen, edges map[string]b
 	return true
 }
 
+// ErrNativeInventorySpent reports that one inventory pass has spent its time
+// or metadata allowance. Nothing about the source is known from it: a new pass
+// has a fresh allowance.
+var ErrNativeInventorySpent = errors.New("native inventory allowance spent")
+
+// errNativeInventoryMetadataSpent is ErrNativeInventorySpent for the per-pass
+// metadata operation bound.
+var errNativeInventoryMetadataSpent = fmt.Errorf("native inventory metadata allowance spent: %w", ErrNativeInventorySpent)
+
 func (l *NativeInventory) allowed(ctx context.Context) error {
 	if l.closed {
 		return agentapi.ErrClosed
@@ -445,7 +450,7 @@ func (l *NativeInventory) allowed(ctx context.Context) error {
 		return err
 	}
 	if l.remaining <= Budget/4 || !l.deadline.IsZero() && time.Now().After(l.deadline) {
-		return agentapi.Wrap(agentapi.Unavailable, errors.New("native inventory allowance spent"))
+		return agentapi.Wrap(agentapi.Unavailable, ErrNativeInventorySpent)
 	}
 	return nil
 }
@@ -463,7 +468,7 @@ func (l *NativeInventory) metadata() error {
 	}
 	// Existing directory cap bounds retained evidence; also bound per-pass checks.
 	if l.counts.Stats+l.counts.Opens+32 > int64(maxDirectories*16) {
-		return agentapi.Wrap(agentapi.Unavailable, errors.New("native inventory metadata allowance spent"))
+		return agentapi.Wrap(agentapi.Unavailable, errNativeInventoryMetadataSpent)
 	}
 	return nil
 }
@@ -665,34 +670,11 @@ func (l *NativeInventory) acquire(ctx context.Context, directory func(string) (*
 			l.stopped = true
 			return nil
 		}
-		prior := *d
-		priorPages, priorChildren, priorMatches, priorDirectories := len(d.Pages), len(d.Children), len(d.Matches), len(l.progress.Directories)
-		d.Generation = g
 		kind := nativeCompletePage
 		if n == 0 {
 			kind = nativeEOF
 		}
-		d.Pages = append(d.Pages, nativePage{Kind: kind, Start: offset, End: next, Names: len(names), Bytes: n})
-		// Work on acquired complete batches only. Do not discard a tail/cookie.
-		children := []nativeDirectory{}
-		for _, name := range names {
-			if nativeChild(d.Path, name) {
-				child := filepath.ToSlash(filepath.Join(d.Path, name))
-				d.Children = append(d.Children, child)
-				children = append(children, nativeDirectory{Path: child})
-			} else if nativeDepth(d.Path) == 3 && slices.Contains(l.progress.Owners, name) {
-				d.Matches = append(d.Matches, name)
-			}
-		}
-		l.progress.Directories = append(l.progress.Directories, children...)
-		if !l.withinRetainedLimits() {
-			l.counts.UncommittedNames += int64(len(names))
-			prior.Pages = prior.Pages[:priorPages]
-			prior.Children = prior.Children[:priorChildren]
-			prior.Matches = prior.Matches[:priorMatches]
-			l.progress.Directories = l.progress.Directories[:priorDirectories]
-			l.progress.Directories[index] = prior
-			l.stopped = true
+		if !l.recordNativePage(index, g, nativePage{Kind: kind, Start: offset, End: next, Names: len(names), Bytes: n}, names) {
 			return nil
 		}
 		if n > 0 {
@@ -700,6 +682,44 @@ func (l *NativeInventory) acquire(ctx context.Context, directory func(string) (*
 		}
 	}
 	return nil
+}
+
+// recordNativePage records one checked page and queues its child directories.
+// It restores the prior entry, stops, and reports false past retained limits.
+func (l *NativeInventory) recordNativePage(index int, g nativeGeneration, page nativePage, names []string) bool {
+	d := &l.progress.Directories[index]
+	prior := *d
+	priorPages, priorChildren, priorMatches, priorDirectories := len(d.Pages), len(d.Children), len(d.Matches), len(l.progress.Directories)
+	priorOwners := l.progress.Owners
+	d.Generation = g
+	d.Pages = append(d.Pages, page)
+	// Work on acquired complete batches only. Do not discard a tail/cookie.
+	children := []nativeDirectory{}
+	for _, name := range names {
+		if nativeChild(d.Path, name) {
+			child := filepath.ToSlash(filepath.Join(d.Path, name))
+			d.Children = append(d.Children, child)
+			children = append(children, nativeDirectory{Path: child})
+		} else if nativeDepth(d.Path) == 3 && (slices.Contains(l.progress.Owners, name) || l.historical && nativeOwner(name)) {
+			d.Matches = append(d.Matches, name)
+		}
+	}
+	l.progress.Directories = append(l.progress.Directories, children...)
+	if l.historical {
+		l.collectImportOwners()
+	}
+	if !l.withinRetainedLimits() {
+		l.counts.UncommittedNames += int64(len(names))
+		prior.Pages = prior.Pages[:priorPages]
+		prior.Children = prior.Children[:priorChildren]
+		prior.Matches = prior.Matches[:priorMatches]
+		l.progress.Directories = l.progress.Directories[:priorDirectories]
+		l.progress.Directories[index] = prior
+		l.progress.Owners = priorOwners
+		l.stopped = true
+		return false
+	}
+	return true
 }
 
 // A checked page may be recorded without further I/O after the work cutoff,
@@ -711,7 +731,7 @@ func (l *NativeInventory) recordablePage(names int) error {
 	}
 	if time.Now().After(l.deadline.Add(Budget / 4)) {
 		l.counts.UncommittedNames += int64(names)
-		return agentapi.Wrap(agentapi.Unavailable, errors.New("native inventory allowance spent"))
+		return agentapi.Wrap(agentapi.Unavailable, ErrNativeInventorySpent)
 	}
 	return nil
 }
@@ -800,12 +820,15 @@ func (l *NativeInventory) candidate(ctx context.Context, id string) (agentapi.So
 			return ref, stamp, found, agentapi.ErrInvalidSourceBinding
 		}
 		if l.counts.Probes >= HeaderProbes {
-			return ref, stamp, found, agentapi.Wrap(agentapi.Unavailable, errors.New("native startup allowance spent"))
+			return ref, stamp, found, agentapi.Wrap(agentapi.Unavailable, ErrNativeStartupAllowance)
 		}
 		l.counts.Probes++
 		selected := agentapi.SourceRef{Kind: archive.SourceKindFile, Path: path, Key: id}
 		env := agentapi.SourceEnvironment{NativeRoot: &l.root, ReadBudget: l.budget, Files: nativeCountedOpener{owner: l}, Policy: transcriptio.OpenPolicy{Root: l.root.Canonical, RejectSymlinks: true}}
 		if err = l.validate(ctx, env, selected, id); err != nil {
+			if l.historical {
+				err = &nativeCandidateError{err: err}
+			}
 			return ref, stamp, found, err
 		}
 		after, err := (nativeCountedOpener{owner: l}).Lstat(path)
@@ -839,7 +862,12 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 	}
 	n := sort.SearchStrings(l.eligible, request.NativeID)
 	mask := uint8(1)
-	if request.Purpose == agentapi.LocatorStartupCandidate {
+	if l.historical {
+		if request.Purpose != agentapi.LocatorHistoricalImport || !l.complete {
+			return agentapi.LocatorResult{Status: agentapi.LocatorRefused}, nil
+		}
+		mask = 4
+	} else if request.Purpose == agentapi.LocatorStartupCandidate {
 		mask = 2
 	} else if request.Purpose != agentapi.LocatorAdmittedOwner {
 		return agentapi.LocatorResult{Status: agentapi.LocatorRefused}, nil
@@ -847,7 +875,7 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 	if request.Root != l.root || request.Parent != nil || n == len(l.eligible) || l.eligible[n] != request.NativeID || l.purposes[n]&mask == 0 {
 		return agentapi.LocatorResult{Status: agentapi.LocatorRefused}, nil
 	}
-	if !slices.Contains(l.progress.Owners, request.NativeID) || l.stopped || l.progress.Next == len(l.progress.Owners) || request.NativeID != l.progress.Owners[l.progress.Next] {
+	if !slices.Contains(l.progress.Owners, request.NativeID) || l.stopped || !l.historical && (l.progress.Next == len(l.progress.Owners) || request.NativeID != l.progress.Owners[l.progress.Next]) {
 		return pending, nil
 	}
 	start := time.Now()
@@ -875,9 +903,20 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 		l.stopped = true
 		return pending, err
 	}
-	l.progress.Next++
-	l.skipInactive()
+	if !l.historical {
+		l.progress.Next++
+		l.skipInactive()
+	}
 	ref, stamp, n, err := l.candidate(ctx, request.NativeID)
+	if l.refusesCandidate(ctx, err) {
+		if candidateReadFailed(err) {
+			// The preview words the read failure; later owners keep their share.
+			return pending, err
+		}
+		refused := agentapi.LocatorResult{Status: agentapi.LocatorRefused}
+		errors.As(err, &refused.Refusal)
+		return refused, nil
+	}
 	if err != nil {
 		l.stopped = true
 		return pending, err
@@ -900,6 +939,39 @@ func (l *NativeInventory) Locate(ctx context.Context, request agentapi.LocatorRe
 	}
 	l.tokens[request.NativeID] = nativeSelection{token: token, relative: strings.Clone(relative), stamp: stamp}
 	return agentapi.LocatorResult{Status: agentapi.LocatorFound, Candidates: []agentapi.SourceRef{ref}, Revision: token}, nil
+}
+
+// ErrNativeStartupAllowance reports that one pass spent its native startup
+// probes. The same scope spends them again; a narrower one may not.
+var ErrNativeStartupAllowance = errors.New("native startup allowance spent")
+
+// nativeCandidateError marks, for a historical preview only, that the selected
+// source itself failed startup validation, as opposed to the inventory's
+// directories or allowance. Capture keeps the validator's error unchanged.
+type nativeCandidateError struct{ err error }
+
+func (e *nativeCandidateError) Error() string { return e.err.Error() }
+
+func (e *nativeCandidateError) Unwrap() error { return e.err }
+
+// refusesCandidate reports whether a historical preview refuses one source
+// that failed its own startup validation on that source's row. Later owners
+// keep their share of the remaining allowance; inventory, allowance and
+// cancellation failures still stop the inventory.
+func (l *NativeInventory) refusesCandidate(ctx context.Context, err error) bool {
+	var rejected *nativeCandidateError
+	return err != nil && l.historical && errors.As(err, &rejected) && ctx.Err() == nil
+}
+
+// candidateReadFailed reports a candidate whose read failed rather than the
+// source itself: it changed, went missing or could not be read, or the shared
+// read budget ran out.
+func candidateReadFailed(err error) bool {
+	if errors.Is(err, agentapi.ErrReadBudget) || errors.Is(err, transcriptio.ErrChanged) {
+		return true
+	}
+	var failed *agentapi.SourceError
+	return errors.As(err, &failed) && (failed.Kind == agentapi.Unavailable || failed.Kind == agentapi.Changed || failed.Kind == agentapi.Missing)
 }
 
 // Check accepts only an exact token minted by this still-live collector epoch.
@@ -940,7 +1012,7 @@ func (l *NativeInventory) Close() error {
 	}
 	l.closed = true
 	defer l.release()
-	if len(l.progress.Owners) == 0 || l.ctx.Err() != nil {
+	if l.historical || len(l.progress.Owners) == 0 || l.ctx.Err() != nil {
 		return nil
 	}
 	if l.remaining <= 0 {

@@ -447,8 +447,9 @@ exec/MSP roots in the qualified grammar. The [inner record union](../../schemas/
 uses unchanged v1 ordinary rows plus closed timestamp-free v2 omissions. Ordinary rows retain: original envelope identity, physical line and nullable child
 index, exact safe integers, discriminator/schema, causal identity and only the
 fixed per-type safe fields. Initial permission profiles are validated locally
-and reduced to format/schema/epoch/cause; raw child strings and native checksums
-are never retained. Complete startup binds the logical reserved start and own
+and reduced to format/schema/epoch/cause, plus a fixed `filesystem_mode:
+unrestricted` when the native unrestricted mode has no minimal runtime set; raw
+child strings and native checksums are never retained. Complete startup binds the logical reserved start and own
 workspace. Integrity is unkeyed and grants no producer or capture consent.
 
 Own conversation requires accepted main/chat intent, matching materialization,
@@ -457,8 +458,9 @@ terminal copies, task starts and notifications are not prompts. Explicit gaps
 mark complete accounting, tool detail, model switches and children unavailable. Qualified
 own completions additionally retain recorded model and exact input/output
 observations, without filling normalized or billable token fields. Unknown
-authority, unsupported versions, forks, children, checkpoints, malformed or
-partial records refuse the whole file. The native JSON decoder bounds depth
+or unqualified authority-bearing records, forks, children, checkpoints and
+partial files refuse the whole file; since filter 34 other unsupported records
+are omitted (see below). The native JSON decoder bounds depth
 at 32, strings at 1 MiB and nodes per physical record at 200,000, in addition to
 existing raw, record, retained and shared-memory limits. It reserves expansion
 before decoding; no limits or cache reserves increase. Retained-only refilter
@@ -467,6 +469,45 @@ Registered capture, backfill and Muse launch stay unavailable. Explicit files an
 
 The [production local v1 field policy](../qualification/muse/retained-allowlist-local-v1.json) is the exact current retained projection. The original `retained-allowlist.json` and derived corpus remain byte-frozen historical Q0 evidence; their broader metrics ceiling is not a production promise.
 
+Filter 39 qualifies the route-metadata startup lane: the permission frame,
+metadata without a model, schema-2 route facts, matching metadata with the
+model, then the original opening (unsupported records after the second
+metadata are omitted and are not members). The metadata pair is checked as in
+the two-metadata lane, including the private build and search copies before
+omission; the route cwd must equal the workspace. Metadata, route facts and
+metadata are contiguous at sequences 3 to 5, all four rows require nil
+causation, and timestamps never decrease after the frame. This changes
+validation only, with no new retained fields.
+
+Filter 38 supports two more Muse retained runtime facts. An
+`inbox_delivery.run_origin` fact (exact `{client_id}` body; the client is
+dropped) keeps `origin_kind` and the `run_id` it started. That run's start is
+retained without its prompt, must follow its origin, starts without a user
+intent and is joined so its own replies stay visible; a prompt on such a start,
+or a prompt-free start without an origin, refuses. `workflow.*` facts are
+omitted content-free (class `workflow_fact_v1`, gap
+`muse_workflow_facts_omitted`). They are not authority under this policy:
+their workflow owner IDs, binding, script and argument hashes and prompts
+describe the workflow engine's own state, not this session's identity,
+permissions, approvals or proofs, and no retained record depends on them.
+Workflow child lifecycle links remain lineage and refuse.
+
+Filter 37 retains a Muse `session.login.completed` record as identity:
+its closed record must name this session, and only `kind` and `session_id`
+are kept. The login method, trigger, subscription and duration are validated
+and dropped, so no account facts are uploaded.
+
+Filter 36 also qualifies the metadata-first startup lane of newer Muse
+builds: the permission frame, own metadata, the session-start command intake,
+the version-3 start intake with activation `startup`, `session.started`, then
+the original opening (unsupported records interposed are omitted and are not
+members). The command block keeps its existing joins: intake, start intake and
+started share the command ID and are caused by it, and the intake, start intake
+and metadata agree on workspace, provider, model and tool surface. The metadata
+and opening require nil causation, timestamps never decrease after the frame,
+and the opening must be the original one. This changes validation only, with no
+new retained fields.
+
 The qualified single-metadata startup also permits exactly one schema-2
 `runtime.session.route_facts` record immediately before the original
 `session.opened.observed` record. Metadata, route facts and opening all require
@@ -474,7 +515,10 @@ nil causation; the route cwd must equal the metadata workspace. The permission
 frame remains the sole native birth authority. Header corroboration and raw
 startup facts use the same fixed prefix within their existing bounds; complete
 source validation remains mandatory. This changes validation only, with no new
-retained fields or metadata interpretation.
+retained fields or metadata interpretation. Only the route cwd is retained:
+filter 33 accepts and drops every other route-fact member, including the local
+runtime socket path, process ID and terminal identity, and members newer Muse
+builds add.
 
 Muse startup metadata may omit the optional model label. The local projection
 retains it only when present as a string, never infers a provider default, and
@@ -511,6 +555,97 @@ position and participates in shared stream/identity uniqueness, contiguous logic
 sequence, physical position and exact prefix comparison, but contributes no time,
 run/task, activity, turn, pending response, tool or accounting fact. It cannot
 interrupt required startup blocks. Existing v1 row bytes are unchanged.
+
+Filter 34 adds a second classification, written by the adapter rather than
+read from native input: marker `unsupported_record_omitted`, omitted record
+event/durable with empty payload type and kind, payload schema 0 and class
+`unsupported_record_v1`. It replaces a well-formed native record (valid
+envelope: canonical IDs, own session stream, sequence, durable event) that the
+adapter cannot qualify and that bears no authority. Nothing of the record is
+kept, its family name included; the row keeps only its stream, native ID and
+sequence, so ordering and identity uniqueness still cover it. Native
+`retained_marker` lines cannot claim this class. The session records
+`muse_unsupported_records_omitted` once.
+
+A record is authority-bearing, and still refuses the whole file, when:
+
+- it is of a supported family that establishes this session's identity,
+  start, workspace or permissions: the permission frame and profile, startup
+  metadata, opening, capture selection, command intake and settlement, start
+  intake, session started, resumed, login completion, end and name records, route facts, user
+  intent acceptance and materialization, run model configuration, retained
+  runtime facts, and approval waits; or the runtime agent-tree root or any
+  runtime record of a schema other than 1;
+- or its payload type, payload kind, event kind or record kind contains, as a
+  whole word, one of: permission(s), approval(s), policy, sandbox, scope,
+  grant, denied, identity, owner, subagent, child, children, lineage, linked,
+  attest(ed), bound, spawn(ed), parent, login, auth, credential(s), checksum,
+  digest, hash, proof, fingerprint, signature, signed. This covers unknown
+  permission, approval, identity, lineage and proof families of newer Muse
+  builds.
+
+Omission never makes a retained claim false: no retained record depends on an
+omitted one. A record that would have to join an omitted record is omitted
+with it: a tool-batch terminal of an omitted start, and a task output body
+whose task has no retained start. A tool-batch start is never omitted when an
+approval request names its task or call. Otherwise a start the adapter cannot
+qualify is omitted, and a well-formed start whose join fails is omitted only
+when it joins an earlier committed call and task consistently, for a tool that
+is not a read; a well-formed effect that contradicts its call or task still
+refuses. Records linking this session to other
+sessions are lineage and bear authority: they refuse unless the adapter
+verifies them.
+
+Filter 35 verifies memory-reminder child links
+(`memory_reminder_child_session_linked`) within the parent session alone. The
+link must have no causation, name this session as `parent_session_id` and the
+run carrying it as `parent_run_id`, name a task this session started in that
+run with a matching task stream, and name a child session ID other than this
+session's; each child is linked once, and the run must be one of this
+session's materialized runs with a unique, increasing source record. A link
+that names `child_session_log_path` must name exactly
+`subagent/<child>/session.jsonl` beside this session, and that path must open
+as a regular file under the same confinement as the session; input that
+cannot check it refuses such a link. The retained row keeps `kind`,
+`event_kind`, the run identity and `child_session_id`; the task, generation,
+reminder agent and log path are dropped. The adapter exposes the verified
+child IDs to capture, which records lineage; the link grants no child
+transcript, capture or coverage.
+
+Filter 40 verifies workflow child lifecycle records (`workflow_child_lifecycle`
+run events) the same way. Each must have no causation and an exact member set
+for its status: `scheduled`, `started`, `usage`, `completed` or `terminal`,
+with a positive integer `attempt`. It must name a child session
+(`session_stream`) other than this session, the child's own run
+(`run_stream`, not the run carrying the record), and a task with the matching
+`task/<task_id>` stream that this session starts in that run. Muse schedules a
+child before it records the task, so only a child's later steps need the task
+already; every child's task must exist by the end of the file. Each child keeps
+one control ID (`child_id`), child run, workflow run, tool call, task and
+attempt across its steps, which move strictly forward through the statuses
+above; no two children share a control ID or child run, and a workflow child
+is never also a memory-reminder child. The run must be one of this session's
+materialized runs with a unique, increasing source record. The retained row
+keeps `kind`, `event_kind`, the run identity, `child_session_id` (from
+`session_stream`), `status` and `attempt`; the label, control ID, child run,
+task, workflow run, tool call, routing receipt, model, usage, duration and
+result references are dropped. Each verified child is exposed to capture once,
+as lineage like a memory-reminder child; it grants no child transcript,
+capture or coverage. Other links still refuse.
+
+The startup structure qualifies from supported records alone. Omission rows
+keep their sequence slot but are not members of a startup block, so an
+unsupported record interposed in startup does not refuse the file; the
+supported startup records must still form a qualified prefix.
+
+Unknown members of the optional descriptive members of supported identity
+records are dropped: startup metadata and the session-start metadata of
+command and start intake, the session opening, session resumption and user
+intent acceptance. The projection already keeps only its fixed fields; the
+record reports the existing `unknown_field_omitted` privacy gap at its logical
+position. Required members, member types and values are still enforced, and
+the permission frame and profile, approvals and every other record keep their
+closed shapes.
 
 The tool-batch started profile additionally accepts exactly
 `{kind: file_read, subject: string}` alongside `{kind: ineligible}` and exactly

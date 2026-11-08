@@ -53,9 +53,9 @@ import (
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
 type Store struct {
-	atomicWitness *local.AtomicWriteWitness
 	// stagedPrivacyCompressionBoundary is a nil-default fixture observation around canonical retained compression.
 	stagedPrivacyCompressionBoundary func(after bool)
+	atomicWitness                    *local.AtomicWriteWitness
 	nativeContinuation               *nativeContinuation
 	summaryCache                     *publishedSummaryCache
 	summaryBorrow                    *publishedSummaryBorrow

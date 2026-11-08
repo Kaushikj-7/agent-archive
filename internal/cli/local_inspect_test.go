@@ -154,6 +154,9 @@ func TestMuseLocalListAndShowBeforeSetupWriteNoArchiveState(t *testing.T) {
 	if !json.Valid(out.Bytes()) {
 		t.Fatal("invalid local list JSON")
 	}
+	if !strings.Contains(errOut.String(), "list: labels inspected") || strings.Contains(errOut.String(), "handoff:") {
+		t.Fatalf("local list progress names another command: %s", errOut.String())
+	}
 	shown, problems, code := runShow(t, env, museSyntheticID, "--source", "local", "--harness", "muse", "--transcript", "--json")
 	if code != 0 || !json.Valid([]byte(shown)) || !strings.Contains(shown, `"view"`) || !strings.Contains(shown, `"child_coverage_unavailable"`) || counter.calls.Load() != 1 {
 		t.Fatalf("show code %d filters %d: %s %s", code, counter.calls.Load(), shown, problems)

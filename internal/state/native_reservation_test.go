@@ -316,13 +316,22 @@ func FuzzNativeReservationWire(f *testing.F) {
 		f.Fatal(err)
 	}
 	f.Add(raw)
+	entry.NativeReservation = nativeImportReservationPrefix + strings.Repeat("d", 64)
+	if raw, err = json.Marshal(entry); err != nil {
+		f.Fatal(err)
+	}
+	f.Add(raw)
 	f.Add([]byte(`{"native_reservation":{"future":true}}`))
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		if len(raw) > 32<<10 {
 			return
 		}
-		var decoded qualifiedSessionIndexEntry
-		if err := json.Unmarshal(raw, &decoded); err != nil {
+		var decoded, plain qualifiedSessionIndexEntry
+		err := decodeNativeReservationIndex(raw, &decoded)
+		if plainErr := json.Unmarshal(raw, &plain); (err == nil) != (plainErr == nil) {
+			t.Fatal("typed index decode changed acceptance", err, plainErr)
+		}
+		if err != nil {
 			return
 		}
 		if decoded.NativeReservation != "" && !supportedNativeReservationEntry(decoded) {

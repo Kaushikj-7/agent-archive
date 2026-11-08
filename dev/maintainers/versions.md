@@ -8,8 +8,8 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | Build-dependent (`dev-<commit>` from source) | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 32 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.32.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 40 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/agents/nativecodec/adapters.go` | `capture.adapter_version` | 0.40.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | per-agent `Parser.Version()` / `archive.DefaultParserVersion` | metadata `parser.version` | 0.21.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps, titles, session names, branch, linked pull requests, tools used, end time, tokens (per model too), tool errors, MCP calls, git activity, the repository key (derived from the project's git origin, not the source). |
 | Source schema | `archive.SourceSchemaVersion` / `HistorySourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` / `HistoryMetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
@@ -373,6 +373,17 @@ remain intact. The distinct reservation prefix is `muse-import-reservation-v1:`.
 These strings grant only confirmed historical staging and retained maintenance;
 they establish no live capture window. No numeric version, filter, adapter,
 parser or uploaded schema allocation accompanies this private contract.
+A historical import from a removed worktree also carries the existing private
+`project_resolution` with method `removed_worktree`, the original directory and
+the current recovery policy digest. Preparation re-derives the same proof from
+the filesystem and configuration before committing; nothing about it is
+uploaded, and no version changes with it.
+A batch whose final read refused a confirmed entry records it in the private
+optional batch member `native_import_skipped` (native ID, selected binding
+digest, printed reason and the refusing agent-archive version), which later
+previews use to leave that unchanged source out. Older binaries refuse such a
+batch file as an unknown closed member rather than misread it; nothing is
+uploaded and no version changes with it.
 
 Native replay classification protection is independently opt-in through sticky
 `native_replay_protection`. It requires admission protection and the exact
@@ -577,6 +588,17 @@ concrete binding; it is never sufficient source/admission authority by itself.
 Only exact fresh concrete preparation may reuse a pending reservation. Supported
 cleanup requires a complete matching durable Muse owner/proof/binding; missing,
 mismatched and unsupported pending authority is preserved/refused.
+
+Muse child-session links reserve child keys with the existing plain
+qualified-index `reservation`, never a `native_reservation` marker, so a child
+reservation cannot stand in for root admission or import, which refuse such an
+entry. Only a parent's own prepared admission, prepared import, or native
+validation commit reserves them, and only for the child IDs its own filter pass
+verified; a key a root owns or reserves is refused. The parent records each
+link as existing `linked_session` evidence (status unavailable, observed at the
+parent's session start), carried in the import stage bundle or the live
+request. Index version 1, the stage format and the filter, adapter and parser
+versions are unchanged.
 
 Local-origin-chain recovery changes private repository classification and renewed
 ownership evidence only. Its `local-origin-chain-v1` observer-scope discriminator

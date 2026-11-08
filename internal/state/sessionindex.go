@@ -264,7 +264,12 @@ func (s *Store) EnsureArchiveSessionID(key agentmeta.SessionKey) (id string, cre
 	if err := s.generationReservationAllowed(key); err != nil {
 		return "", false, err
 	}
+	return s.reserveArchiveSessionID(key)
+}
 
+// reserveArchiveSessionID is EnsureArchiveSessionID after its admission
+// gates: it returns the key's existing ID or reserves a fresh one.
+func (s *Store) reserveArchiveSessionID(key agentmeta.SessionKey) (id string, created bool, err error) {
 	if err := key.Validate(); err != nil {
 		return "", false, err
 	}
@@ -384,12 +389,15 @@ func (s *Store) removeSessionIndex(key agentmeta.SessionKey, id string) error {
 		var entryID string
 		if i == 0 {
 			var qualified qualifiedSessionIndexEntry
-			err := local.Read(path, &qualified)
+			err := s.readIndexControlJSON(path, &qualified)
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
 			if err != nil {
 				return err
+			}
+			if supportedReservationPrefix(qualified.NativeReservation, nativeImportReservationPrefix) {
+				return errUnsupportedNativeReservation
 			}
 			if qualified.Agent != key.Agent || qualified.NativeID != key.NativeID {
 				continue

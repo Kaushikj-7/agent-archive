@@ -5,6 +5,146 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 40
+
+Global and Muse adapter 0.40.0 accompany this change. Parsers and other agents'
+filtering are unchanged; the Muse retained schema gains one variant.
+
+- A Muse `workflow_child_lifecycle` run event is retained when it verifies
+  within the parent session: an exact member set for its status, a child
+  session other than this session, the child's own run, and a task this
+  session starts in that run (by the end of the file, since Muse schedules the
+  child before it records the task). A child's steps keep one control ID,
+  child run, workflow run, tool call, task and attempt and move strictly
+  forward; no two children share a control ID or child run, and no workflow
+  child is also a memory-reminder child.
+- Only the run identity, the child session ID, the status and the attempt are
+  retained. The label, control ID, child run, task, workflow run, tool call,
+  routing receipt, model, usage, duration and result references are dropped.
+  Each child becomes lineage once, like a memory-reminder child, and grants no
+  child transcript, capture or coverage.
+- A lifecycle record that does not verify still refuses the whole file.
+
+## Source filter version 39
+
+Global and Muse adapter 0.39.0 accompany this change. Parsers, other agents'
+filtering and the retained schemas are unchanged.
+
+- Muse sessions whose startup writes route facts between the two
+  model-resolution metadata records (frame, metadata without a model, route
+  facts, the same metadata with the model, original opening) qualify instead
+  of refusing with "unsupported Muse startup order". The second metadata is
+  checked as strictly as in the two-metadata lane: same session, closed
+  shape, and workspace, provider, tool surface and private build and search
+  copies equal to the first. The route cwd must be the workspace. The three
+  rows are contiguous, with nil causation and non-decreasing timestamps. No
+  new members are retained.
+
+## Source filter version 38
+
+Global and Muse adapter 0.38.0 accompany this change. Parsers and other agents'
+filtering are unchanged; the Muse retained schema gains two variants and the
+omission schema one classification.
+
+- A Muse `inbox_delivery.run_origin` retained fact is supported: an exact
+  `{client_id}` body, the client dropped, keeping only the run it started. That
+  run's start keeps no prompt, because a delivery is not a user turn; it needs
+  its earlier origin, starts without a user intent, and its own replies stay
+  visible.
+- Muse `workflow.*` retained facts are omitted with nothing of them kept, as a
+  content-free omission row of class `workflow_fact_v1`, and the session
+  records `muse_workflow_facts_omitted`. Their workflow owner IDs, binding,
+  script and argument hashes and prompts describe the workflow engine, not this
+  session's identity, permissions or proofs, so they are not authority.
+- Other retained facts still refuse the whole file.
+
+## Source filter version 37
+
+Global and Muse adapter 0.37.0 accompany this change. Parsers and other agents'
+filtering are unchanged; the Muse retained schema gains one variant.
+
+- A Muse `session.login.completed` record is retained instead of refusing the
+  whole file. It bears identity, so its shape is closed and its `session_id`
+  must be this session. Only `kind` and `session_id` are retained; the login
+  method, trigger, subscription and duration are validated and dropped.
+
+## Source filter version 36
+
+Global and Muse adapter 0.36.0 accompany this change. Parsers, other agents'
+filtering and the retained schemas are unchanged.
+
+- Muse sessions from newer builds that write their startup metadata before the
+  session-start command (frame, metadata, command intake, start intake,
+  session started, original opening) qualify instead of refusing with
+  "unsupported Muse startup order". The command block keeps its existing joins,
+  and the metadata and opening require nil causation and the original opening.
+  No new members are retained.
+
+## Source filter version 35
+
+Global and Muse adapter 0.35.0 accompany this change. Parsers and other agents'
+filtering are unchanged; the Muse retained schema gains one variant.
+
+- A Muse `memory_reminder_child_session_linked` run event is retained when it
+  verifies within the parent session: it names this session as parent and its
+  own run, a task this session started in that run, and a child other than this
+  session, each child linked once, from a materialized run. A link that names a
+  child log must name the child's own `subagent/<child>/session.jsonl` beside
+  this session, and that file must exist as a regular file.
+- Only the run identity and the child session ID are retained. The task,
+  generation, reminder agent and log path are dropped. The link grants no child
+  transcript, capture or coverage; `child_coverage_unavailable` still applies.
+- A link that does not verify still refuses the whole file. Other links to
+  other sessions remain lineage and refuse.
+
+## Source filter version 34
+
+Global and Muse adapter 0.34.0 accompany this change. Parsers and other agents'
+filtering are unchanged; the Muse omission schema gains one classification.
+
+- A well-formed Muse record the adapter cannot qualify and that bears no
+  authority is omitted instead of refusing the whole file. It is replaced by a
+  content-free omission row (`unsupported_record_omitted`) that keeps only its
+  stream, native ID and sequence; nothing of the record, its family name
+  included, is uploaded. The session records `muse_unsupported_records_omitted`.
+- Records that would join an omitted record are omitted with it: a tool-batch
+  terminal of an omitted start and a task output body without a retained start.
+  A tool-batch start is omitted only when no approval names its task or call,
+  and, when well-formed, only for a consistent effect of a committed tool the
+  adapter does not support.
+- Authority-bearing records still refuse the whole file: the supported families
+  that establish identity, start, workspace or permissions, and unknown records
+  whose schema names carry a permission, approval, identity, lineage or proof
+  word. Links to other sessions are lineage and refuse. The list is in the [filter specification](privacy-filter.md).
+- Unsupported records interposed in startup are not members of the startup
+  structure, which must still qualify from the supported records.
+- Unknown members of the descriptive members of startup metadata, intake
+  metadata, the session opening, resumption and intent acceptance are dropped
+  and reported with the existing `unknown_field_omitted` gap. Older strict
+  readers refuse the new omission rows.
+
+## Source filter version 33
+
+Global and Muse adapter 0.33.0 accompany this change. Parsers, source and
+metadata schemas, and other agents' filtering are unchanged.
+
+- Muse permission profiles whose filesystem mode is `unrestricted` with a null
+  `minimal_runtime_set_version` are accepted. The retained profile row gains one
+  optional fixed field, `filesystem_mode: unrestricted`; restricted profiles
+  (minimal runtime set 1) keep the earlier row unchanged. A null set with any
+  other mode, and any other set version, still refuse. Older strict Muse
+  readers refuse the new optional field.
+- Muse route facts accept members beyond cwd and drop them: the local runtime
+  command socket path, process ID, terminal kind, bundle ID and title identity,
+  and any member a newer build adds. Only cwd is retained, as before, and it
+  still must equal the startup workspace.
+- Whole-file refusals name the first refused native record family (a schema
+  identifier, kept only when it has the plain identifier shape and shared
+  credential redaction leaves it unchanged) and its line. They also separate a
+  side log with no session start, a file ending before its startup records, and
+  supported startup records in an unqualified order.
+  Refusals stay local: nothing new is uploaded.
+
 ## Source filter version 32
 
 Global and Muse adapter 0.32.0 accompany this change. Parsers, source and

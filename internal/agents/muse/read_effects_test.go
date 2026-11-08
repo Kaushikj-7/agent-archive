@@ -209,7 +209,14 @@ func TestCommittedReadNativeJoinsRefuseContradictions(t *testing.T) {
 	for name, change := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			out, err := filterBytes(t, changeRead(t, change), agentapi.ReadLimits{})
+			raw := changeRead(t, change)
+			if name == "native-marker" {
+				// A start carrying a member the adapter does not know is
+				// omitted, never retained with the forged join.
+				assertKeptOutAt(t, raw, physicalLineOf(t, raw, "tool_batch.effect.started"))
+				return
+			}
+			out, err := filterBytes(t, raw, agentapi.ReadLimits{})
 			if err == nil || len(out.Records) != 0 {
 				t.Fatal("contradictory native read accepted")
 			}

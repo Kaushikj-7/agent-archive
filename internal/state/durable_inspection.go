@@ -339,7 +339,7 @@ func (s *Store) inspectHeldDurableReadRoots(ctx context.Context, home *local.Roo
 	if err := inspectImportLocks(ctx, home, &entries); err != nil {
 		return cfg, found, errors.Join(ErrDurableStorageRecovery, err)
 	}
-	return cfg, found, nil
+	return cfg, found, ctx.Err()
 }
 
 func acknowledgedLegacyQuarantine(name string) bool {

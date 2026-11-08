@@ -49,7 +49,7 @@ const (
 	// Filter 19 adds the strictly validated local Muse conversation projection.
 	// Filter 17 retains typed, owning Codex session_labels metadata with
 	// prompt redaction and a bounded display name; it never establishes activity.
-	FilterVersion = "32"
+	FilterVersion = "40"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.
@@ -528,18 +528,21 @@ type FilteredTranscript struct {
 	// LocalIdentity is safe retained identity evidence, never raw ownership IDs.
 	LocalIdentity NativeSessionIdentity `json:"-"`
 	// ObservedHarness is sanitized retained version/mode evidence for source assembly.
-	ObservedHarness     Harness         `json:"-"`
-	Format              string          `json:"format"`
-	Records             [][]byte        `json:"-"`
-	Boundary            CaptureBoundary `json:"boundary"`
-	Gaps                []CaptureGap    `json:"gaps,omitempty"`
-	FirstEventAt        time.Time       `json:"-"`
-	Text                []string        `json:"-"`
-	SessionIDs          []string        `json:"-"`
-	AgentIDs            []string        `json:"-"`
-	NativeStartAt       time.Time       `json:"-"`
-	NativeEndAt         time.Time       `json:"-"`
-	NativeStartComplete bool            `json:"-"`
+	ObservedHarness Harness         `json:"-"`
+	Format          string          `json:"format"`
+	Records         [][]byte        `json:"-"`
+	Boundary        CaptureBoundary `json:"boundary"`
+	Gaps            []CaptureGap    `json:"gaps,omitempty"`
+	FirstEventAt    time.Time       `json:"-"`
+	Text            []string        `json:"-"`
+	SessionIDs      []string        `json:"-"`
+	AgentIDs        []string        `json:"-"`
+	// NativeChildIDs are native child sessions the adapter verified this
+	// session linked, in record order. A link grants no transcript or capture.
+	NativeChildIDs      []string  `json:"-"`
+	NativeStartAt       time.Time `json:"-"`
+	NativeEndAt         time.Time `json:"-"`
+	NativeStartComplete bool      `json:"-"`
 }
 
 // SupplementalEvidence is hook or verified native metadata evidence. Payload must already be

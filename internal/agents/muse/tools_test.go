@@ -244,10 +244,10 @@ func TestToolNativeClosedGrammarAndJoins(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			out, err := filterBytes(t, mutateToolNative(t, ownTools(t), tc.offset, tc.change), agentapi.ReadLimits{})
-			if err == nil || len(out.Records) != 0 {
-				t.Fatal("malformed tools accepted")
-			}
+			raw := mutateToolNative(t, ownTools(t), tc.offset, tc.change)
+			// A malformed tool record is omitted, or refuses the file when a
+			// retained record can no longer join it; it is never retained.
+			assertKeptOutAt(t, raw, int64(len(bytes.Split(bytes.TrimSpace(raw), []byte("\n")))-tc.offset+1))
 		})
 	}
 }

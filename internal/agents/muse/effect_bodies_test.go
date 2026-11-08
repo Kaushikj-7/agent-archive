@@ -147,9 +147,15 @@ func TestToolEffectBodiesRejectUnknownShapes(t *testing.T) {
 				target = p
 			}
 			c.mutate(target)
-			out, err := filterBytes(t, effectBodies(t, p, o), agentapi.ReadLimits{})
+			raw := effectBodies(t, p, o)
+			if !c.profile {
+				// A malformed terminal is omitted with nothing of it retained.
+				assertKeptOutAt(t, raw, physicalLineOf(t, raw, "tool_batch.effect.terminal"))
+				return
+			}
+			out, err := filterBytes(t, raw, agentapi.ReadLimits{})
 			if err == nil || len(out.Records) != 0 {
-				t.Fatal("malformed effect body admitted")
+				t.Fatal("malformed effect start admitted")
 			}
 		})
 	}
@@ -168,10 +174,8 @@ func TestToolEffectBodiesRejectUnknownShapes(t *testing.T) {
 			t.Parallel()
 			o := completeOutcome()
 			o["output_ref_count"] = bad
-			out, err := filterBytes(t, effectBodies(t, readProfile(), o), agentapi.ReadLimits{})
-			if err == nil || len(out.Records) != 0 {
-				t.Fatal("invalid exact count admitted")
-			}
+			raw := effectBodies(t, readProfile(), o)
+			assertKeptOutAt(t, raw, physicalLineOf(t, raw, "tool_batch.effect.terminal"))
 		})
 	}
 	for i, bad := range []any{map[string]any{"kind": "completed"}, map[string]any{"kind": "complete", "terminal": map[string]any{"kind": "completed"}}, map[string]any{"kind": "terminal", "terminal": map[string]any{"kind": "complete"}}, map[string]any{"kind": "complete", "future": true}} {
@@ -179,10 +183,8 @@ func TestToolEffectBodiesRejectUnknownShapes(t *testing.T) {
 			t.Parallel()
 			o := completeOutcome()
 			o["task_completion"] = bad
-			out, err := filterBytes(t, effectBodies(t, readProfile(), o), agentapi.ReadLimits{})
-			if err == nil || len(out.Records) != 0 {
-				t.Fatal("unknown completion admitted")
-			}
+			raw := effectBodies(t, readProfile(), o)
+			assertKeptOutAt(t, raw, physicalLineOf(t, raw, "tool_batch.effect.terminal"))
 		})
 	}
 }
@@ -231,7 +233,7 @@ func TestToolEffectBodiesPreserveIdentityJoins(t *testing.T) {
 					default:
 						r[key] = "ffffffff-ffff-4fff-8fff-ffffffffffff"
 					}
-					assertNativeMutationRefused(t, lines, i, clone)
+					assertNativeMutationKeptOut(t, lines, i, clone)
 				})
 			}
 		}

@@ -236,7 +236,7 @@ func projectNewEffect(r retained, p, f map[string]any) (map[string]any, error) {
 	f["kind"] = p["kind"]
 	f["event_kind"] = k
 	switch r.Type {
-	case payloadRunModelConfigured, payloadRuntimeCommandIntakeReceived, payloadRuntimeCommandIntakeSessionNameReceived, payloadRuntimeCommandIntakeSettled, payloadRuntimeRetainedFact, payloadRuntimeSession, payloadRuntimeSessionCaptureSelection, payloadRuntimeSessionMetadata, payloadRuntimeSessionPermissionFormatDeclared, payloadRuntimeSessionPermissionProfileCommitted, payloadRuntimeSessionRouteFacts, payloadRuntimeSessionTask, payloadRuntimeSessionStartIntakeV3, payloadRuntimeUserIntentAccepted, payloadRuntimeUserIntentMaterialized, payloadSessionEnd, payloadSessionNameChanged, payloadSessionOpenedObserved, payloadSessionResumed, payloadSessionStarted:
+	case payloadRunModelConfigured, payloadRuntimeCommandIntakeReceived, payloadRuntimeCommandIntakeSessionNameReceived, payloadRuntimeCommandIntakeSettled, payloadRuntimeRetainedFact, payloadRuntimeSession, payloadRuntimeSessionCaptureSelection, payloadRuntimeSessionMetadata, payloadRuntimeSessionPermissionFormatDeclared, payloadRuntimeSessionPermissionProfileCommitted, payloadRuntimeSessionRouteFacts, payloadRuntimeSessionTask, payloadRuntimeSessionStartIntakeV3, payloadRuntimeUserIntentAccepted, payloadRuntimeUserIntentMaterialized, payloadSessionEnd, payloadSessionNameChanged, payloadSessionOpenedObserved, payloadSessionResumed, payloadSessionLoginCompleted, payloadSessionStarted:
 		return nil, errFormat
 	case payloadApprovalWaitStarted:
 		if str(p["kind"]) != "approval_wait_effect" || k != "started" || !keys(e, "kind", "pending_action_id", "run_stream", "task_id", "task_stream", "tool_call_id", "tool_name") || !identifier(e["pending_action_id"]) || !identifier(e["task_id"]) || !streamEquals(e["run_stream"], "run", run) || !streamEquals(e["task_stream"], "task", str(e["task_id"])) || !stringFields(e, "tool_call_id", "tool_name") {
@@ -263,7 +263,7 @@ func newFieldShape(r retained) (int64, []string, bool) {
 	schema := int64(1)
 	kind, ek := str(f["kind"]), str(f["event_kind"])
 	switch r.Type {
-	case payloadRunModelConfigured, payloadRuntimeCommandIntakeReceived, payloadRuntimeCommandIntakeSessionNameReceived, payloadRuntimeCommandIntakeSettled, payloadRuntimeRetainedFact, payloadRuntimeSessionCaptureSelection, payloadRuntimeSessionMetadata, payloadRuntimeSessionPermissionFormatDeclared, payloadRuntimeSessionPermissionProfileCommitted, payloadRuntimeSessionRouteFacts, payloadRuntimeSessionTask, payloadRuntimeSessionStartIntakeV3, payloadRuntimeUserIntentAccepted, payloadRuntimeUserIntentMaterialized, payloadSessionEnd, payloadSessionNameChanged, payloadSessionOpenedObserved, payloadSessionResumed, payloadSessionStarted:
+	case payloadRunModelConfigured, payloadRuntimeCommandIntakeReceived, payloadRuntimeCommandIntakeSessionNameReceived, payloadRuntimeCommandIntakeSettled, payloadRuntimeRetainedFact, payloadRuntimeSessionCaptureSelection, payloadRuntimeSessionMetadata, payloadRuntimeSessionPermissionFormatDeclared, payloadRuntimeSessionPermissionProfileCommitted, payloadRuntimeSessionRouteFacts, payloadRuntimeSessionTask, payloadRuntimeSessionStartIntakeV3, payloadRuntimeUserIntentAccepted, payloadRuntimeUserIntentMaterialized, payloadSessionEnd, payloadSessionNameChanged, payloadSessionOpenedObserved, payloadSessionResumed, payloadSessionLoginCompleted, payloadSessionStarted:
 		return 0, nil, false
 	case payloadRuntimeSession:
 		switch {

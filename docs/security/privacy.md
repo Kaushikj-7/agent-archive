@@ -777,7 +777,12 @@ SQLite companions and search logs while holding the search lifecycle fence.
 The qualified startup may place exactly one route-facts record between metadata
 and the original session opening. All three require no causation, and the route
 workspace must match. The same ownership, permission-frame and complete-file
-checks apply; the accepted sequence adds no retained fields.
+checks apply; the accepted sequence adds no retained fields. Only the route
+working directory is kept; the local runtime socket path, process ID, terminal
+identity and any other route-fact member are dropped.
+
+A session started with Muse's unrestricted filesystem mode keeps only the fixed
+fact `filesystem_mode: unrestricted` from its permission profile.
 
 Startup model availability uses the complete validated startup prefix, including
 the resolved model in a qualified second metadata record. Missing or empty model
@@ -805,6 +810,44 @@ classification, with no invented timestamp or task identity. Fixed
 `muse_private_native_bodies_omitted` and `muse_ephemeral_task_delta_omitted` gaps
 survive privacy refresh. Direct parsing refuses evidence whose required omission
 gaps were removed or altered; retained-only refilter reconstructs them.
+
+Records a newer Muse build writes that this version does not support are left
+out instead of refusing the session, unless they bear authority. An omitted
+record is never uploaded, not even its record type: the archive keeps only its
+position and native ID, and the session reports
+`muse_unsupported_records_omitted`. Records that would join an omitted record
+(a tool effect's end, a task's output) are left out with it. Unknown members of
+startup metadata, the session opening and similar descriptive records are
+dropped and reported as `unknown_field_omitted`. The cost is an incomplete
+transcript.
+
+Authority-bearing records still refuse the whole session: anything that
+establishes the session's identity, start, workspace or permissions
+(the permission frame, startup and intake records, approvals and approval
+waits, route facts, intents), and any unknown record whose type names a
+permission, approval, identity, lineage or proof concept, such as
+`permission`, `approval`, `owner`, `subagent`, `child`, `linked`, `spawn`,
+`login`, `hash` or `digest`. Links to other sessions count as lineage and
+refuse, except a memory-reminder child link that checks out against the
+parent session itself (its parent, run and task are this session's, and a
+named child log really exists). For such a link only the child session's ID
+is uploaded, never the child's transcript or log path. A workflow child's
+lifecycle steps (scheduled, started, usage, completed, terminal) are treated
+the same way when they check out against the parent session: only the child
+session's ID, the step and the attempt number are uploaded, never the step's
+label, model, usage or result references. The session's
+metadata then lists each such child as a linked session, by a random archive
+session ID and marked unavailable. The full list is in the
+[filter specification](../../dev/specs/privacy-filter.md#muse-explicit-local-evidence).
+
+A Muse login completion is kept only as the fact that this session logged in;
+its login method, trigger, subscription and duration are never uploaded.
+
+A Muse run started by an inbox delivery keeps its replies but not the delivered
+text, which is not a user turn. Muse workflow-engine facts are left out with
+nothing of them uploaded (`muse_workflow_facts_omitted`). They are not treated
+as authority: their owner IDs, hashes and prompts belong to the workflow
+engine, not to this session's identity, permissions or proofs.
 
 Muse's closed own `model_completed` branch validates a nonempty model string,
 nonnegative exact `duration_ms`, and all six input/output/cache/reasoning counters

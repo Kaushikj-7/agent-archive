@@ -110,6 +110,9 @@ type undoCommand struct {
 
 // run plans and confirms while runBackfillUndo holds setup.lock.
 func (cmd undoCommand) run() int {
+	if cmd.batch.NativeImport != nil {
+		return cmd.runNativeImportUndo()
+	}
 	home, userHome, cfg, batches, batch := cmd.home, cmd.userHome, cmd.cfg, cmd.batches, cmd.batch
 	project, yes, keepRetention := cmd.project, cmd.yes, cmd.keepRetention
 	stdin, stdout, stderr, env := cmd.stdin, cmd.stdout, cmd.stderr, cmd.env

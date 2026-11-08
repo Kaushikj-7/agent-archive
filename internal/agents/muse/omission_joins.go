@@ -186,11 +186,28 @@ type nativeBodyJoins struct {
 	sources       map[runIdentity]bool
 	lastSource    map[string]int64
 	firstMetadata map[string]any
+	startupRoute  bool
 	sourceInvalid bool
 	hasNew        bool
 	tools         toolObservations
 	readEffects   effectJoinIndex
 	pendingIndex  effectJoinIndex
+	// omitted holds the tool effects and tasks of omitted effect starts, whose
+	// later records cannot join and are omitted with them.
+	omitted omittedEffects
+	// children holds the child sessions this session has linked,
+	// workflowSteps the last lifecycle step of each workflow child, and
+	// workflowControls and workflowRuns their control IDs and runs. A filter pass
+	// sets checkChildLogs, and childLogs when its input can check a named
+	// child log; startup and header reads do not check child logs.
+	children         map[string]bool
+	workflowSteps    map[string]workflowChildStep
+	workflowControls map[string]bool
+	workflowRuns     map[string]bool
+	childLogs        childLogChecker
+	checkChildLogs   bool
+	// inboxRuns are runs an inbox delivery started, from their origin facts.
+	inboxRuns map[string]bool
 }
 
 func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
@@ -200,11 +217,19 @@ func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
 		s.taskIDs = map[taskKey]bool{}
 		s.sources = map[runIdentity]bool{}
 		s.lastSource = map[string]int64{}
+		s.children = map[string]bool{}
+		s.workflowSteps = map[string]workflowChildStep{}
+		s.workflowControls, s.workflowRuns = map[string]bool{}, map[string]bool{}
 	}
 	if r.Sequence == 3 && r.Type == payloadRuntimeSessionMetadata {
 		s.firstMetadata = p
 	}
-	if r.Sequence == 4 && r.Type == payloadRuntimeSessionMetadata && s.firstMetadata != nil && !nativeMetadataPair(s.firstMetadata, p) {
+	if r.Sequence == 4 && r.Type == payloadRuntimeSessionRouteFacts && s.firstMetadata != nil {
+		s.startupRoute = true
+	}
+	// The second model-resolution metadata follows the first directly, or
+	// after the startup route facts.
+	if (r.Sequence == 4 || r.Sequence == 5 && s.startupRoute) && r.Type == payloadRuntimeSessionMetadata && s.firstMetadata != nil && !nativeMetadataPair(s.firstMetadata, p) {
 		return errFormat
 	}
 	run := str(p["run_id"])
@@ -217,6 +242,12 @@ func (s *nativeBodyJoins) observe(r retained, p map[string]any) error {
 	}
 	if err := s.observeCalls(r, p); err != nil {
 		return err
+	}
+	if r.Type == payloadRuntimeSession && kind == "run" && runtimeEvent(ek) == eventChildSessionLinked {
+		return s.childLink(p)
+	}
+	if r.Type == payloadRuntimeSession && kind == "run" && runtimeEvent(ek) == eventWorkflowChildLifecycle {
+		return s.workflowChild(r, p)
 	}
 	if !nativeNewFamily(r, p) {
 		return nil

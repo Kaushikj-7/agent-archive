@@ -23,42 +23,25 @@ func (NativeHeaders) InspectHeader(req agentapi.NativeHeaderRequest) (agentapi.N
 	if req.Purpose != agentapi.DiscoveryHandoff || req.Scan == nil {
 		return agentapi.NativeHeader{}, errFormat
 	}
-	rows := make([]retained, 0, 8)
+	rows := make([]logicalRow, 0, 8)
 	var decodeErr error
 	nativeJoins := nativeBodyJoins{}
 	complete := false
+	line := int64(0)
 	scanErr := req.Scan(func(raw []byte) bool {
-		if len(rows) == 0 {
-			rows, decodeErr = frame(raw, 1)
-		} else {
-			var r retained
-			r, decodeErr = envelope(raw, position{Line: int64(len(rows))})
-			if decodeErr == nil {
-				m, _, err := decodeObject(raw)
-				if err != nil {
-					decodeErr = err
-				} else {
-					decodeErr = nativeJoins.observe(r, object(m["payload"]))
-				}
-			}
-			if decodeErr == nil {
-				rows = append(rows, r)
-			}
-		}
+		line++
+		var decoded []logicalRow
+		decoded, _, decodeErr = decodeNativeRows(raw, line, &nativeJoins)
 		if decodeErr != nil {
+			decodeErr = refusal(raw, line, decodeErr)
 			return false
 		}
-		needed := 4
-		if len(rows) >= 3 && rows[2].Type == payloadRuntimeSessionCaptureSelection {
-			needed = 8
-		}
-		if len(rows) >= 4 && rows[2].Type == payloadRuntimeSessionMetadata && (rows[3].Type == payloadRuntimeSessionMetadata || rows[3].Type == payloadRuntimeSessionRouteFacts) {
-			needed = 5
-		}
-		if len(rows) < needed {
+		rows = append(rows, decoded...)
+		supported := supportedRows(rows)
+		if len(supported) < startupRows(supported) {
 			return true
 		}
-		decodeErr = validateRootRows(rows)
+		decodeErr = startupRefusal(rows, line, validateRoot(rows))
 		complete = decodeErr == nil
 		return false
 	})
@@ -66,19 +49,23 @@ func (NativeHeaders) InspectHeader(req agentapi.NativeHeaderRequest) (agentapi.N
 		return agentapi.NativeHeader{}, err
 	}
 	if !complete {
-		return agentapi.NativeHeader{}, errFormat
+		if line == 0 {
+			return agentapi.NativeHeader{}, errFormat
+		}
+		return agentapi.NativeHeader{}, shortRefusal(rows, line, nil)
 	}
-	owner := rows[0].Stream.ID
+	supported := supportedRows(rows)
+	owner := supported[0].Stream.ID
 	if filepath.Base(req.Path) != "session.jsonl" || filepath.Base(filepath.Dir(req.Path)) != owner {
 		return agentapi.NativeHeader{}, errFormat
 	}
 	workspace := ""
-	for _, r := range rows {
+	for _, r := range supported {
 		if r.Type == payloadRuntimeSessionMetadata {
 			workspace = str(r.Fields["workspace_root"])
 		}
 	}
-	return agentapi.NativeHeader{NativeID: owner, Directory: workspace, StartedAt: time.UnixMicro(rows[0].Timestamp).UTC()}, nil
+	return agentapi.NativeHeader{NativeID: owner, Directory: workspace, StartedAt: time.UnixMicro(supported[0].Timestamp).UTC()}, nil
 }
 
 // Roots declares only the one effective current data home's ordinary root layout.

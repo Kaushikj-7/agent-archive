@@ -111,7 +111,7 @@ func TestNativeImportGenericWritersPreserveClosedReceiptAndNeedFence(t *testing.
 func TestNativeImportHistoricalOwnerCannotGainLiveCheckpointAuthority(t *testing.T) {
 	f, owner := historicalNativeOwnerFixture(t)
 	verified := false
-	if _, err := f.store.CommitNativeValidation(t.Context(), owner, f.candidate.Root, owner.NativeBinding, func(context.Context) error { verified = true; return nil }); err == nil || verified {
+	if _, err := f.store.CommitNativeValidation(t.Context(), owner, f.candidate.Root, owner.NativeBinding, func(context.Context) error { verified = true; return nil }, archive.FilteredTranscript{}); err == nil || verified {
 		t.Fatal("historical owner entered live validation")
 	}
 	if !owner.RetainedOnly() || owner.CaptureFrozen {

@@ -22,6 +22,7 @@ const (
 	payloadSessionNameChanged                       payloadType = "session.name.changed"
 	payloadSessionOpenedObserved                    payloadType = "session.opened.observed"
 	payloadSessionResumed                           payloadType = "session.resumed"
+	payloadSessionLoginCompleted                    payloadType = "session.login.completed"
 	payloadSessionStarted                           payloadType = "session.started"
 )
 
@@ -39,6 +40,7 @@ const (
 	eventAccepted                         runtimeEvent = "accepted"
 	eventAssistantMessageCommitted        runtimeEvent = "assistant_message_committed"
 	eventAssistantToolCallsCommitted      runtimeEvent = "assistant_tool_calls_committed"
+	eventChildSessionLinked               runtimeEvent = "memory_reminder_child_session_linked"
 	eventCancelled                        runtimeEvent = "cancelled"
 	eventCompleted                        runtimeEvent = "completed"
 	eventContextBlockDiagnostic           runtimeEvent = "context_block_diagnostic"
@@ -62,6 +64,7 @@ const (
 	eventTaskStreamLinked                 runtimeEvent = "task_stream_linked"
 	eventTerminal                         runtimeEvent = "terminal"
 	eventToolResultBatchCommitted         runtimeEvent = "tool_result_batch_committed"
+	eventWorkflowChildLifecycle           runtimeEvent = "workflow_child_lifecycle"
 )
 
 type fieldName string
@@ -86,7 +89,16 @@ const (
 	fieldSourceRunRecordSequence fieldName = "source_run_record_sequence"
 	fieldObservedAtSequence      fieldName = "observed_at_sequence"
 	fieldResume                  fieldName = "resume"
+	fieldFilesystemMode          fieldName = "filesystem_mode"
+	fieldAttempt                 fieldName = "attempt"
 )
+
+// filesystemMode is the retained permission-profile filesystem mode. It is
+// present only for the unrestricted mode; absence keeps the earlier meaning,
+// the minimal runtime set version 1.
+type filesystemMode string
+
+const filesystemUnrestricted filesystemMode = "unrestricted"
 
 type streamKind string
 

@@ -89,6 +89,9 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 	lastSequence := map[string]int64{}
 	materialized := map[string]bool{}
 	consumed := map[string]bool{}
+	children := map[string]bool{}
+	workflowSteps := map[string]workflowChildStep{}
+	inbox := inboxOrigins(rows)
 	for i, r := range rows {
 		if r.Version == 0 {
 			continue
@@ -115,7 +118,7 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 			run := str(f["run_id"])
 			switch runtimeEvent(str(f["event_kind"])) {
 			case eventStarted:
-				if !newConversationRun(f, run, started) {
+				if !newConversationRun(f, run, i, started, inbox, joined, materialized) {
 					return view, nil, errFormat
 				}
 				started[run] = i
@@ -133,8 +136,8 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 				if observeCompletion(r, joined, lastSequence, sourceRecords, &observations) != nil {
 					return view, nil, errFormat
 				}
-			case eventSkillReadObserved:
-				if observeSkillRead(r, joined, lastSequence, sourceRecords, &view) != nil {
+			case eventSkillReadObserved, eventChildSessionLinked, eventWorkflowChildLifecycle:
+				if observeRunEvidence(r, children, workflowSteps, joined, lastSequence, sourceRecords, &view) != nil {
 					return view, nil, errFormat
 				}
 			case eventAssistantToolCallsCommitted, eventToolResultBatchCommitted:
@@ -155,7 +158,7 @@ func conversationObserved(rows []retained) (archive.NormalizedView, *archive.Tok
 				view.Turns = append(view.Turns, *turn)
 			}
 
-		case payloadRunModelConfigured, payloadRuntimeCommandIntakeReceived, payloadRuntimeCommandIntakeSessionNameReceived, payloadRuntimeCommandIntakeSettled, payloadRuntimeRetainedFact, payloadRuntimeSessionCaptureSelection, payloadRuntimeSessionMetadata, payloadRuntimeSessionPermissionFormatDeclared, payloadRuntimeSessionPermissionProfileCommitted, payloadRuntimeSessionRouteFacts, payloadRuntimeSessionTask, payloadRuntimeSessionStartIntakeV3, payloadSessionEnd, payloadSessionNameChanged, payloadSessionOpenedObserved, payloadSessionResumed, payloadSessionStarted:
+		case payloadRunModelConfigured, payloadRuntimeCommandIntakeReceived, payloadRuntimeCommandIntakeSessionNameReceived, payloadRuntimeCommandIntakeSettled, payloadRuntimeRetainedFact, payloadRuntimeSessionCaptureSelection, payloadRuntimeSessionMetadata, payloadRuntimeSessionPermissionFormatDeclared, payloadRuntimeSessionPermissionProfileCommitted, payloadRuntimeSessionRouteFacts, payloadRuntimeSessionTask, payloadRuntimeSessionStartIntakeV3, payloadSessionEnd, payloadSessionNameChanged, payloadSessionOpenedObserved, payloadSessionResumed, payloadSessionLoginCompleted, payloadSessionStarted:
 			// These known variants keep the existing non-special-case behavior.
 		}
 	}
@@ -214,6 +217,19 @@ type runIdentity struct {
 	record string
 }
 
+// observeRunEvidence accepts a run's own native reports that create no
+// conversation turn: skill reads, child links and workflow child steps.
+func observeRunEvidence(r retained, children map[string]bool, workflowSteps map[string]workflowChildStep, joined map[string]bool, last map[string]int64, seen map[runIdentity]bool, view *archive.NormalizedView) error {
+	ek := runtimeEvent(str(r.Fields["event_kind"]))
+	if ek == eventChildSessionLinked {
+		return observeChildLink(r, children, joined, last, seen)
+	}
+	if ek == eventWorkflowChildLifecycle {
+		return observeWorkflowChild(r, children, workflowSteps, joined, last, seen)
+	}
+	return observeSkillRead(r, joined, last, seen, view)
+}
+
 func observeConversationSource(f map[string]any, run string, joined map[string]bool, last map[string]int64, seen map[runIdentity]bool) error {
 	key := runIdentity{run, str(f["source_run_record_id"])}
 	seq := num(f["source_run_record_sequence"])
@@ -240,9 +256,39 @@ func observeCompletion(r retained, joined map[string]bool, last map[string]int64
 	return observations.Add(str(f["model"]), num(f["input_tokens"]), num(f["output_tokens"]))
 }
 
-func newConversationRun(f map[string]any, run string, started map[string]int) bool {
+// newConversationRun accepts a run's start at index i. A user turn's run keeps
+// its prompt and is joined when its intent materializes. A run an inbox
+// delivery started keeps no prompt, needs its earlier origin fact, and is
+// joined and accounted for as it starts, with no user turn.
+func newConversationRun(f map[string]any, run string, i int, started map[string]int, inbox map[string]int, joined, materialized map[string]bool) bool {
 	_, exists := started[run]
-	return conversationSourceShape(f) && !exists
+	_, prompted := f["prompt"]
+	origin, fromInbox := inbox[run]
+	if !conversationSourceShape(f) || exists || prompted == fromInbox || fromInbox && (origin < 0 || origin > i) {
+		return false
+	}
+	if fromInbox {
+		joined[run], materialized[run] = true, true
+	}
+	return true
+}
+
+// inboxOrigins indexes the runs inbox deliveries started by the position of
+// their origin fact; a run with two origins is marked -1 and cannot start.
+func inboxOrigins(rows []retained) map[string]int {
+	out := map[string]int{}
+	for i, r := range rows {
+		if r.Type != payloadRuntimeRetainedFact || !inboxOrigin(r) {
+			continue
+		}
+		run := str(r.Fields["run_id"])
+		if _, twice := out[run]; twice {
+			out[run] = -1
+			continue
+		}
+		out[run] = i
+	}
+	return out
 }
 
 func acceptIntent(r retained, accepted map[string]retained) error {

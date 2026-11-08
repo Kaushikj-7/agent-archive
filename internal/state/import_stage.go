@@ -1016,7 +1016,7 @@ func (s *Store) preparedImportChildren(ctx context.Context, stage ImportStage) (
 func sameImportStageOwner(staged, current archive.SessionRegistration) bool {
 	return staged.ArchiveSessionID == current.ArchiveSessionID && staged.NativeSessionID == current.NativeSessionID &&
 		staged.Harness.Name == current.Harness.Name && staged.ProjectID == current.ProjectID && staged.ProjectRoot == current.ProjectRoot &&
-		sameHistoricalProjectProof(staged, current) && sameNativeImportReceipt(staged.NativeImport, current.NativeImport) && sameImportParentProof(staged, current) &&
+		sameHistoricalProjectProof(staged, current) && sameNativeImportStageReceipt(staged.NativeImport, current.NativeImport) && sameImportParentProof(staged, current) &&
 		sameNativeImportBinding(staged.NativeBinding, current.NativeBinding) && staged.DestinationID == current.DestinationID && staged.InBatch(current.ImportBatch.Recorded())
 }
 
@@ -1198,10 +1198,17 @@ func (s *Store) classifyReleasedImportOwner(ctx context.Context, id string, rece
 	if err := validateNativeImportSelectionAuthority(reg, q.Core); err != nil {
 		return reg, err
 	}
-	if reg.NativeImport != nil && reg.NativeImport.Membership.State == archive.NativeImportDetached {
+	if reg.NativeImport != nil {
 		original, err := s.nativeImportReleasedSelection(ctx, reg)
-		if err != nil || !sameStagedSelection(original, q) {
-			return reg, errors.Join(ErrReadySelectionFrozen, err)
+		if err == nil && sameStagedSelection(original, q) {
+			return reg, nil
+		}
+		// An interrupted initial cleanup may have removed its stage immediately
+		// before recording released. Exact local-complete readback and the current
+		// stored ACK suffice for enumeration, without granting released authority.
+		digest, ackErr := s.nativeImportExactACKAdmissionDigest(ctx, reg, &q)
+		if ackErr != nil || digest != q.Core.AdmissionContext {
+			return reg, errors.Join(ErrReadySelectionFrozen, ackErr)
 		}
 		return reg, nil
 	}
@@ -1234,6 +1241,12 @@ func (s *Store) importStageAbsentDescriptor(ctx context.Context, id string) (Imp
 		return descriptor, true, nil
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return ImportStage{}, false, e
+	}
+	// Progress without its immutable receipt is incomplete recovery evidence,
+	// never an empty/cancelled stage. Present malformed controls also refuse.
+	var progress stagedReleaseProgress
+	if err := s.readStagedControl(id, stagedReleaseProgressName, &progress); !errors.Is(err, os.ErrNotExist) {
+		return ImportStage{}, false, errors.Join(ErrDurableStorageRecovery, err)
 	}
 	var cancel importCancellation
 	if e := s.readImportControl(importCancelRelative(id), &cancel); e == nil {

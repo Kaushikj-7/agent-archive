@@ -122,37 +122,45 @@ func frame(raw []byte, line int64) ([]retained, error) {
 }
 
 func envelope(raw []byte, pos position) (retained, error) {
+	r, _, e := envelopeDropping(raw, pos)
+	return r, e
+}
+
+// envelopeDropping also reports whether the payload carried members the
+// adapter does not know, which the projection leaves out.
+func envelopeDropping(raw []byte, pos position) (retained, bool, error) {
 	m, _, e := decodeObject(raw)
 	if e != nil {
-		return retained{}, e
+		return retained{}, false, e
 	}
 	if !keys(m, "schema_version", "id", "stream", "sequence", "recorded_at", "record_type", "durability", "causation_id", "payload_type", "payload_schema_version", "payload") {
-		return retained{}, errFormat
+		return retained{}, false, errFormat
 	}
 	st := object(m["stream"])
 	if !keys(st, "kind", "id") || str(st["kind"]) != "session" {
-		return retained{}, errFormat
+		return retained{}, false, errFormat
 	}
 	id := str(m["id"])
 	sid := str(st["id"])
 	if _, ok := uuid(id); !ok {
-		return retained{}, errFormat
+		return retained{}, false, errFormat
 	}
 	if _, ok := uuid(sid); !ok {
-		return retained{}, errFormat
+		return retained{}, false, errFormat
 	}
 	var cause *string
 	if m["causation_id"] != nil {
 		s := str(m["causation_id"])
 		if _, ok := uuid(s); !ok {
-			return retained{}, errFormat
+			return retained{}, false, errFormat
 		}
 		cause = &s
 	}
 	r := retained{Version: 1, Position: pos, ID: id, Stream: stream{streamSession, sid}, Sequence: num(m["sequence"]), Timestamp: num(m["recorded_at"]), Schema: num(m["schema_version"]), Type: payloadType(str(m["payload_type"])), PayloadSchema: num(m["payload_schema_version"]), RecordType: str(m["record_type"]), Durability: str(m["durability"]), Causation: cause}
 	if r.Schema != 1 || r.Sequence < 1 || r.Timestamp < 1 || r.RecordType != "event" || r.Durability != "durable" {
-		return retained{}, errFormat
+		return retained{}, false, errFormat
 	}
-	r.Fields, e = project(r, object(m["payload"]))
-	return r, e
+	dropped := false
+	r.Fields, e = project(r, object(m["payload"]), &dropped)
+	return r, dropped, e
 }

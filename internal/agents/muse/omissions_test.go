@@ -175,18 +175,18 @@ func TestNewNativeShapesRecursivelyCloseEveryObject(t *testing.T) {
 			case map[string]any:
 				for k, old := range x {
 					delete(x, k)
-					assertNativeMutationRefused(t, lines, line, m)
+					assertNativeMutationKeptOut(t, lines, line, m)
 					x[k] = old
 					// Every new field is mandatory and non-null except the explicitly known null slots.
 					if old != nil {
 						x[k] = nil
-						assertNativeMutationRefused(t, lines, line, m)
+						assertNativeMutationKeptOut(t, lines, line, m)
 						x[k] = old
 					}
 					visit(old)
 				}
 				x["future_authority"] = true
-				assertNativeMutationRefused(t, lines, line, m)
+				assertNativeMutationKeptOut(t, lines, line, m)
 				delete(x, "future_authority")
 			case []any:
 				for _, item := range x {
@@ -198,14 +198,74 @@ func TestNewNativeShapesRecursivelyCloseEveryObject(t *testing.T) {
 	}
 }
 
-func assertNativeMutationRefused(t *testing.T, lines [][]byte, index int, m map[string]any) {
+// assertNativeMutationKeptOut checks a malformed native record never reaches
+// the archive. An authority-bearing record refuses the whole file; any other
+// is replaced by a content-free omission row at its own line.
+func assertNativeMutationKeptOut(t *testing.T, lines [][]byte, index int, m map[string]any) {
 	t.Helper()
 	changed := append([][]byte(nil), lines...)
 	wire, _ := json.Marshal(m)
 	changed[index] = wire
 	out, e := filterBytes(t, append(bytes.Join(changed, []byte("\n")), '\n'), agentapi.ReadLimits{})
-	if e == nil || len(out.Records) != 0 {
-		t.Fatalf("malformed new object admitted at physical %d", index+1)
+	original, _, _ := decodeObject(lines[index])
+	r, _ := envelope(lines[index], position{Line: int64(index + 1)})
+	if !omittable(r, object(original["payload"])) || r.Type == payloadToolBatchStarted {
+		if e == nil || len(out.Records) != 0 {
+			t.Fatalf("malformed authority-bearing record admitted at physical %d", index+1)
+		}
+		return
+	}
+	if e != nil {
+		return
+	}
+	assertOmittedAt(t, out, int64(index+1))
+}
+
+// assertKeptOutAt checks a malformed non-authority record at physical line
+// either refuses the file or is omitted; it is never retained.
+func assertKeptOutAt(t *testing.T, raw []byte, line int64) {
+	t.Helper()
+	out, e := filterBytes(t, raw, agentapi.ReadLimits{})
+	if e != nil {
+		if len(out.Records) != 0 {
+			t.Fatal("refused file returned records")
+		}
+		return
+	}
+	assertOmittedAt(t, out, line)
+}
+
+// physicalLineOf is the first physical line holding needle, ignoring case.
+func physicalLineOf(t *testing.T, raw []byte, needle string) int64 {
+	t.Helper()
+	for i, l := range bytes.Split(raw, []byte("\n")) {
+		if bytes.Contains(bytes.ToLower(l), []byte(needle)) {
+			return int64(i + 1)
+		}
+	}
+	t.Fatalf("no line holds %q", needle)
+	return 0
+}
+
+// assertOmittedAt checks the record at physical line is an unsupported
+// omission row and the session reports the omission.
+func assertOmittedAt(t *testing.T, out archive.FilteredTranscript, line int64) {
+	t.Helper()
+	found := false
+	for _, raw := range out.Records {
+		row, e := decodeLogical(raw)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if row.omission != nil && row.omission.Position.Line == line {
+			found = row.omission.Marker == unsupportedMarker && row.omission.Omitted == unsupportedRecord
+		}
+		if row.ordinary != nil && row.ordinary.Position.Line == line {
+			t.Fatalf("malformed record retained at physical %d", line)
+		}
+	}
+	if !found || !slices.ContainsFunc(out.Gaps, func(g archive.CaptureGap) bool { return g.Code == "muse_unsupported_records_omitted" }) {
+		t.Fatalf("malformed record at physical %d not reported as omitted", line)
 	}
 }
 
@@ -313,7 +373,7 @@ func TestEnrichedAssistantDropsOnlyTypedProviderItem(t *testing.T) {
 	}
 	for _, bad := range []any{nil, 1, true, map[string]any{"kind": "future"}} {
 		event["provider_item_id"] = bad
-		assertNativeMutationRefused(t, lines, 6, m)
+		assertNativeMutationKeptOut(t, lines, 6, m)
 	}
 }
 
@@ -388,7 +448,7 @@ func TestExactModelResolutionStartup(t *testing.T) {
 		clone, _ := json.Marshal(second)
 		m, _, _ := decodeObject(clone)
 		mutate(m)
-		assertNativeMutationRefused(t, lines, 2, m)
+		assertNativeMutationKeptOut(t, lines, 2, m)
 	}
 	for _, mutate := range []func(archive.SourceBundle){
 		func(b archive.SourceBundle) { object(b.NativeRecords[2]["fields"])["model_id"] = "forbidden" },
@@ -431,24 +491,24 @@ func TestNativeMarkerAndUnknownDiscriminatorsRefuseWholeFile(t *testing.T) {
 		if _, present := m["retained_marker"]; present {
 			for k, old := range m {
 				delete(m, k)
-				assertNativeMutationRefused(t, lines, i, m)
+				assertNativeMutationKeptOut(t, lines, i, m)
 				m[k] = old
 				m[k] = nil
-				assertNativeMutationRefused(t, lines, i, m)
+				assertNativeMutationKeptOut(t, lines, i, m)
 				m[k] = old
 			}
 			for _, obj := range []map[string]any{m, object(m["stream"]), object(m["position"]), object(m["omitted_record"])} {
 				obj["future_authority"] = true
-				assertNativeMutationRefused(t, lines, i, m)
+				assertNativeMutationKeptOut(t, lines, i, m)
 				delete(obj, "future_authority")
 			}
 			for k, old := range object(m["omitted_record"]) {
 				object(m["omitted_record"])[k] = "future"
-				assertNativeMutationRefused(t, lines, i, m)
+				assertNativeMutationKeptOut(t, lines, i, m)
 				object(m["omitted_record"])[k] = old
 			}
 			m["recorded_at"] = 1
-			assertNativeMutationRefused(t, lines, i, m)
+			assertNativeMutationKeptOut(t, lines, i, m)
 			delete(m, "recorded_at")
 		} else {
 			r, e := envelope(line, position{Line: int64(i + 1)})
@@ -460,7 +520,7 @@ func TestNativeMarkerAndUnknownDiscriminatorsRefuseWholeFile(t *testing.T) {
 			}
 			old := m["payload_schema_version"]
 			m["payload_schema_version"] = 99
-			assertNativeMutationRefused(t, lines, i, m)
+			assertNativeMutationKeptOut(t, lines, i, m)
 			m["payload_schema_version"] = old
 			p := object(m["payload"])
 			event := object(p["event"])
@@ -469,7 +529,7 @@ func TestNativeMarkerAndUnknownDiscriminatorsRefuseWholeFile(t *testing.T) {
 			}
 			old = event["kind"]
 			event["kind"] = "future"
-			assertNativeMutationRefused(t, lines, i, m)
+			assertNativeMutationKeptOut(t, lines, i, m)
 			event["kind"] = old
 		}
 	}

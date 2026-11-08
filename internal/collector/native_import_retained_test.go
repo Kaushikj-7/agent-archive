@@ -64,6 +64,13 @@ type historicalNativeStage struct {
 
 func newHistoricalNativeStage(t *testing.T) historicalNativeStage {
 	t.Helper()
+	return newHistoricalNativeStageWith(t, nil)
+}
+
+// newHistoricalNativeStageWith stages the synthetic import with extra evidence,
+// built from the import's registration.
+func newHistoricalNativeStageWith(t *testing.T, extra func(archive.SessionRegistration) []archive.SupplementalEvidence) historicalNativeStage {
+	t.Helper()
 	store := newTestStore(t)
 	cfg, _, err := config.Load(store.Home())
 	if err != nil {
@@ -136,7 +143,11 @@ func newHistoricalNativeStage(t *testing.T) historicalNativeStage {
 	if err := local.Write(filepath.Join(store.Home(), "registrations", reg.ArchiveSessionID+".json"), reg); err != nil {
 		t.Fatal(err)
 	}
-	bundle, err := archive.NewSourceBundle(reg, adapter, filtered, at, []archive.SupplementalEvidence{{Kind: archive.EvidenceKindSkillSnapshot, ObservedAt: at, Provenance: "synthetic-test", Payload: map[string]any{"name": "SyntheticSkill", "snapshot": "historical-import-private-skill-body"}}})
+	evidence := []archive.SupplementalEvidence{{Kind: archive.EvidenceKindSkillSnapshot, ObservedAt: at, Provenance: "synthetic-test", Payload: map[string]any{"name": "SyntheticSkill", "snapshot": "historical-import-private-skill-body"}}}
+	if extra != nil {
+		evidence = append(evidence, extra(reg)...)
+	}
+	bundle, err := archive.NewSourceBundle(reg, adapter, filtered, at, evidence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,5 +414,25 @@ func assertInterruptedACKPendingRefusals(t *testing.T, f historicalNativeStage) 
 		if err := os.WriteFile(path, raw, 0600); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestNativeImportPublishesItsChildLinks(t *testing.T) {
+	const child = "00000000-0000-4000-8000-0000000000c1"
+	f := newHistoricalNativeStageWith(t, func(reg archive.SessionRegistration) []archive.SupplementalEvidence {
+		link, err := archive.NewLinkedSessionEvidence(child, archive.LinkedSessionUnavailable, reg.SessionStartedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return []archive.SupplementalEvidence{link}
+	})
+	result, err := Run(t.Context(), f.store, f.remote, f.opts)
+	closeStagedControlResult(result)
+	if err != nil || len(result.Errors) != 0 {
+		t.Fatal(err, result.Errors)
+	}
+	metadata := fetchMetadata(t, f.remote, "muse", f.reg.ArchiveSessionID)
+	if len(metadata.LinkedSessions) != 1 || metadata.LinkedSessions[0].SessionID != child || metadata.LinkedSessions[0].Status != archive.LinkedSessionUnavailable {
+		t.Fatalf("published links = %+v", metadata.LinkedSessions)
 	}
 }

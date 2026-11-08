@@ -251,10 +251,9 @@ func TestSkillContentClosedRetainedAndNativeSeparation(t *testing.T) {
 			t.Fatal("unsupported safe producer shape refiltered")
 		}
 	}
+	// Native input asserting the safe producer marker is omitted, never retained.
 	raw := nativeSkillReads(t, 1, func(m map[string]any) { object(object(m["payload"])["event"])["hash_evidence"] = skillContentEvidence })
-	if _, err := filterBytes(t, raw, agentapi.ReadLimits{}); err == nil {
-		t.Fatal("native input asserted safe producer marker")
-	}
+	assertKeptOutAt(t, raw, physicalLineOf(t, raw, "skill_read_observed"))
 	// Deliberately pin the adopted producer trust boundary. A coherent retained
 	// canonical replacement is not authenticated by a marker or compressed SHA.
 	b := bundleFor(t, out)

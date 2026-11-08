@@ -78,6 +78,26 @@ type Batch struct {
 	ProjectsKeptFor map[string][]string `json:"projects_kept_for,omitempty"`
 	// NativeImport is immutable reviewed intent, never first-owner proof.
 	NativeImport *archive.NativeImportBatchConfirmation `json:"native_import,omitempty"`
+	// NativeImportSkipped are the confirmed native entries whose final read
+	// refused them. A later preview leaves each out until its source or the
+	// agent-archive version changes.
+	NativeImportSkipped []NativeImportSkip `json:"native_import_skipped,omitempty"`
+}
+
+// NativeImportSkip records one confirmed native entry a batch skipped: the
+// source it refused, by the selection's binding digest, the reason it
+// printed, and the agent-archive version that refused it.
+type NativeImportSkip struct {
+	NativeID      string `json:"native_id"`
+	BindingSHA256 string `json:"binding_sha256"`
+	Reason        string `json:"reason"`
+	Version       string `json:"version"`
+}
+
+// AddNativeImportSkip records skip, replacing an earlier one of the same entry.
+func (b *Batch) AddNativeImportSkip(skip NativeImportSkip) {
+	b.NativeImportSkipped = slices.DeleteFunc(b.NativeImportSkipped, func(s NativeImportSkip) bool { return s.NativeID == skip.NativeID })
+	b.NativeImportSkipped = append(b.NativeImportSkipped, skip)
 }
 
 // BatchFilters are the filters and --include-* flags a batch was run with.
@@ -117,6 +137,7 @@ func (b *Batch) Reconcile(store *state.Store) error {
 	if err := b.reconcileStagedSources(store); err != nil {
 		return err
 	}
+	b.Sessions = b.RegisteredSessions(regs)
 	parents := map[string]bool{}
 	for _, reg := range regs {
 		if !reg.InBatch(b.ID) {
@@ -125,7 +146,6 @@ func (b *Batch) Reconcile(store *state.Store) error {
 		if reg.IsChild() {
 			b.Subagents = addUnique(b.Subagents, reg.ArchiveSessionID)
 		} else {
-			b.Sessions = addUnique(b.Sessions, reg.ArchiveSessionID)
 			parents[reg.ArchiveSessionID] = true
 		}
 	}
@@ -139,6 +159,27 @@ func (b *Batch) Reconcile(store *state.Store) error {
 		}
 	}
 	return nil
+}
+
+// RegisteredSessions returns the batch's sessions: those it recorded, then
+// those registered in it that it has not recorded yet, such as after an
+// interrupted save. Children, native ones included, are its subagents.
+func (b *Batch) RegisteredSessions(regs []archive.SessionRegistration) []string {
+	seen := make(map[string]bool, len(b.Sessions))
+	sessions := make([]string, 0, len(b.Sessions))
+	for _, id := range b.Sessions {
+		if !seen[id] {
+			seen[id] = true
+			sessions = append(sessions, id)
+		}
+	}
+	for _, reg := range regs {
+		if reg.InBatch(b.ID) && !reg.IsChild() && !seen[reg.ArchiveSessionID] {
+			seen[reg.ArchiveSessionID] = true
+			sessions = append(sessions, reg.ArchiveSessionID)
+		}
+	}
+	return sessions
 }
 
 // Matches reports whether a run with these filters and destination

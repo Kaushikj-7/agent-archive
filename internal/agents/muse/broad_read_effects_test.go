@@ -105,7 +105,6 @@ func TestCommittedBroadReadRawRefusals(t *testing.T) {
 	cases := map[string]func(map[string]any, map[string]any){
 		"committed-name": func(c, e map[string]any) { c["name"] = "read_file" },
 		"start-name":     func(c, e map[string]any) { e["tool_name"] = "read_file" },
-		"namespace-name": func(c, e map[string]any) { c["name"] = "muse.read_skill"; e["tool_name"] = "muse.read_skill" },
 		"empty-name":     func(c, e map[string]any) { c["name"] = ""; e["tool_name"] = "" },
 		"call":           func(c, e map[string]any) { e["call_id"] = "other-call" },
 		"profile-subject": func(c, e map[string]any) {
@@ -127,6 +126,12 @@ func TestCommittedBroadReadRawRefusals(t *testing.T) {
 				mutate(c, e)
 				return rows
 			})
+			if strings.HasPrefix(name, "profile-") && name != "profile-file-read" || name == "raw-marker" {
+				// A start the adapter cannot qualify is omitted with its
+				// dependents, so no read join is claimed.
+				assertKeptOutAt(t, raw, physicalLineOf(t, raw, "tool_batch.effect.started"))
+				return
+			}
 			out, err := filterBytes(t, raw, agentapi.ReadLimits{})
 			if err == nil || len(out.Records) != 0 {
 				t.Fatal("unqualified broad-read admitted")
@@ -483,3 +488,30 @@ const (
 	broadRetainedMissingCall    broadRetainedCase = "missing-call"
 	broadRetainedDuplicateStart broadRetainedCase = "duplicate-start"
 )
+
+func TestCommittedNamespacedToolEffectIsOmitted(t *testing.T) {
+	t.Parallel()
+	// A consistent effect of a tool the adapter does not support is omitted,
+	// so no read join is claimed for it.
+	raw := changeBroadRead(t, func(rows []map[string]any) []map[string]any {
+		call := readRow(rows, "runtime.session", "assistant_tool_calls_committed")
+		object(object(object(call["payload"])["event"])["tool_calls"].([]any)[0])["name"] = "muse.read_skill"
+		object(object(readRow(rows, "tool_batch.effect.started", "")["payload"])["record"])["tool_name"] = "muse.read_skill"
+		return rows
+	})
+	out, err := filterBytes(t, raw, agentapi.ReadLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Its terminal and its task's output body cannot join a retained start and
+	// are omitted with it.
+	for _, needle := range []string{"tool_batch.effect.started", "tool_batch.effect.terminal", `"kind":"output"`} {
+		assertOmittedAt(t, out, physicalLineOf(t, raw, needle))
+	}
+	if _, err := (Parser{}).Parse(t.Context(), bundleFor(t, out)); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(bytes.Join(out.Records, nil), []byte(broadReadJoinMarker)) {
+		t.Fatal("omitted effect claimed a read join")
+	}
+}

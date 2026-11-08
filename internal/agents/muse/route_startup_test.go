@@ -108,7 +108,6 @@ func TestRouteFactsStartupRejectsUnqualifiedNativePrefixes(t *testing.T) {
 	cases := map[string]func([]map[string]any) []map[string]any{
 		"route schema": func(r []map[string]any) []map[string]any { r[1]["payload_schema_version"] = 1; return r },
 		"route kind":   func(r []map[string]any) []map[string]any { object(r[1]["payload"])["kind"] = "unknown"; return r },
-		"unknown type": func(r []map[string]any) []map[string]any { r[1]["payload_type"] = "runtime.session.future"; return r },
 		"missing cwd": func(r []map[string]any) []map[string]any {
 			delete(object(object(r[1]["payload"])["record"]), "cwd")
 			return r
@@ -267,5 +266,22 @@ func TestRouteFactsStartupKeepsPhysicalAndParentGuards(t *testing.T) {
 	}})
 	if err == nil {
 		t.Fatal("header accepted unrelated parent")
+	}
+}
+
+func TestRouteFactsStartupOmitsAnUnknownInterposedRecord(t *testing.T) {
+	t.Parallel()
+	// A record of an unknown family is not a member of the startup structure:
+	// the remaining metadata and opening rows qualify, and it is omitted.
+	raw := routeStartupMutation(t, func(r []map[string]any) []map[string]any { r[1]["payload_type"] = "runtime.session.future"; return r })
+	assertKeptOutAt(t, raw, physicalLineOf(t, raw, "runtime.session.future"))
+	if _, err := filterBytes(t, raw, agentapi.ReadLimits{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inspectSynthetic(t, raw); err != nil {
+		t.Fatal("header refused an omitted interposed record", err)
+	}
+	if _, err := routeStartupFacts(t, raw); err != nil {
+		t.Fatal("startup refused an omitted interposed record", err)
 	}
 }

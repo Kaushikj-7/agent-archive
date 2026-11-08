@@ -13,11 +13,13 @@ import (
 )
 
 type preparedNativeValidation struct {
-	snapshot    agentapi.SourceSnapshot
-	content     agentapi.VerifiedContentSnapshot
-	input       agentapi.NativeInput
-	binding     *archive.NativeSourceBinding
-	previous    *archive.NativeSourceBinding
+	snapshot agentapi.SourceSnapshot
+	content  agentapi.VerifiedContentSnapshot
+	input    agentapi.NativeInput
+	binding  *archive.NativeSourceBinding
+	previous *archive.NativeSourceBinding
+	// linked is this pass's own filter identity and verified child sessions.
+	linked      archive.FilteredTranscript
 	root        archive.NativeRoot
 	proof       agentapi.SourceContentProof
 	selection   func(context.Context) error
@@ -151,11 +153,10 @@ func (s *sessionScan) persistNativeValidation(p *preparedNativeValidation) (err 
 		return nil
 	}
 	defer func() { err = errors.Join(err, p.close()) }()
-	updated, err := s.local.CommitNativeValidation(s.ctx, s.reg, p.root, p.binding, p.verify)
-	if err != nil {
-		return err
+	updated, err := s.local.CommitNativeValidation(s.ctx, s.reg, p.root, p.binding, p.verify, p.linked)
+	if updated.ArchiveSessionID != "" {
+		p.committed = true
+		s.reg = updated
 	}
-	p.committed = true
-	s.reg = updated
-	return nil
+	return err
 }

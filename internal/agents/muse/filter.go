@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -25,7 +26,7 @@ type Filter struct{}
 func (Filter) Name() string { return "muse" }
 
 // Version identifies the current privacy projection.
-func (Filter) Version() string { return "0.32.0" }
+func (Filter) Version() string { return "0.40.0" }
 
 // LeasedFilterFor refuses decorators which may change filtering semantics.
 func (Filter) LeasedFilterFor(a archive.Adapter) bool { _, ok := a.(Filter); return ok }
@@ -80,7 +81,7 @@ func (Filter) filterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 		held += 512
 		contentJoin = &skillContentJoin{reservation: reservation, held: &held, limits: c.Limits}
 	}
-	nativeJoins := nativeBodyJoins{skillContent: contentJoin}
+	nativeJoins := filterJoins(contentJoin, in)
 	// End private ownership before the earlier error-release defer runs too.
 	defer func() { nativeJoins = nativeBodyJoins{} }()
 	for {
@@ -124,6 +125,7 @@ func (Filter) filterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 			// A failed persistent reservation still leaves this row's private joins
 			// covered by the physical charge. Drop them before returning that charge.
 			nativeJoins = nativeBodyJoins{}
+			err = refusal(raw, line, err)
 		}
 		reservation.Release(charge)
 		held -= charge
@@ -134,14 +136,14 @@ func (Filter) filterLeased(ctx context.Context, in agentapi.NativeInput, c agent
 			return out, release, archive.ErrRecordTooLarge
 		}
 	}
-	if err = in.File.Check(); err != nil {
+	if err = nativeJoins.finish(in); err != nil {
 		return out, release, err
 	}
 	// Private native maps end before the independent retained proof. Their charges
 	// conservatively remain held until the enclosing output lease is released.
 	nativeJoins = nativeBodyJoins{}
 	if err = validateLogical(rows); err != nil {
-		return out, release, err
+		return out, release, startupRefusal(rows, line, err)
 	}
 	out, err = filtered(rows, c.Limits, gaps.list())
 	if err == nil && contentJoin != nil {
@@ -204,7 +206,7 @@ func privacyWithGaps(r retained, record int, addGap func(string, int, string)) (
 	for k, v := range original.Fields {
 		switch fieldName(k) {
 		case fieldPrompt, fieldText, fieldNewName, fieldPreviousName, fieldObservedModel:
-		case fieldObservedAtSequence, fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence, fieldResume, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldModelCallIndex, fieldObservedInput, fieldObservedOutput, fieldToolCalls, fieldToolResults, fieldSkillContentSHA, fieldSkillContentEvidence:
+		case fieldObservedAtSequence, fieldSchemaVersion, fieldPermissionEpoch, fieldEnvelopeSequence, fieldSourceRunRecordSequence, fieldResume, fieldKind, fieldEventKind, fieldSourceRunRecordID, fieldModelCallIndex, fieldObservedInput, fieldObservedOutput, fieldToolCalls, fieldToolResults, fieldSkillContentSHA, fieldSkillContentEvidence, fieldFilesystemMode, fieldAttempt:
 			fallthrough
 		default:
 			if !reflect.DeepEqual(v, r.Fields[k]) {
@@ -221,6 +223,14 @@ func filtered(rows []logicalRow, limits agentapi.ReadLimits, gaps []archive.Capt
 	view, observations, err := conversationObserved(slots)
 	if err != nil {
 		return archive.FilteredTranscript{}, err
+	}
+	for _, r := range slots {
+		ek := runtimeEvent(str(r.Fields["event_kind"]))
+		child := str(r.Fields["child_session_id"])
+		// A workflow child reports several lifecycle steps; it is linked once.
+		if r.Type == payloadRuntimeSession && (ek == eventChildSessionLinked || ek == eventWorkflowChildLifecycle) && !slices.Contains(out.NativeChildIDs, child) {
+			out.NativeChildIDs = append(out.NativeChildIDs, child)
+		}
 	}
 	if len(view.ToolCalls) > 0 {
 		out.Gaps[2].Detail = "Tool names, arguments, result bodies and status unavailable"
@@ -407,9 +417,9 @@ var _ agentapi.LeasedTranscriptRefilter = Filter{}
 var _ agentapi.TranscriptParser = Parser{}
 
 var retainedKeys = func() map[string]bool {
-	keys := strings.Fields("v pos line child id stream kind seq ts_us schema type payload_schema record_type durability causation_id fields schema_version format permission_epoch cause workspace_root provider_id model_id tool_surface_version session_id resume selection publication_id command_id command_kind activation_source cwd intent_id source_session_id surface semantic_kind envelope_record_id envelope_sequence run_id run_started_session_record_id run_started_source_record_id outcome_kind new_name previous_name source operation_id root_agent_id root_session_id event_kind source_run_record_id source_run_record_sequence prompt message_id response_id text position sequence marker omitted_record payload_type payload_schema_version payload_kind omission_class pending_action_id task_id tool_call_id review_id effect_id model_call_index model input_tokens output_tokens tool_calls call_id batch_id results tool_call_index effect_join")
+	keys := strings.Fields("v pos line child id stream kind seq ts_us schema type payload_schema record_type durability causation_id fields schema_version format permission_epoch filesystem_mode cause workspace_root provider_id model_id tool_surface_version session_id resume selection publication_id command_id command_kind activation_source cwd intent_id source_session_id surface semantic_kind envelope_record_id envelope_sequence run_id run_started_session_record_id run_started_source_record_id outcome_kind new_name previous_name source operation_id root_agent_id root_session_id event_kind source_run_record_id source_run_record_sequence prompt message_id response_id text position sequence marker omitted_record payload_type payload_schema_version payload_kind omission_class pending_action_id task_id tool_call_id review_id effect_id model_call_index model input_tokens output_tokens tool_calls call_id batch_id results tool_call_index effect_join")
 	out := map[string]bool{}
-	for _, key := range []string{"skill_id", "evidence_kind", "observed_at_sequence", "hash_evidence", "sha256"} {
+	for _, key := range []string{"skill_id", "evidence_kind", "observed_at_sequence", "hash_evidence", "sha256", "child_session_id", "origin_kind", "status", "attempt"} {
 		out[key] = true
 	}
 	for _, key := range keys {
@@ -462,7 +472,7 @@ func pendingResponse(rows []retained) bool {
 		case eventAssistantMessageCommitted:
 			delete(pending, run)
 
-		case eventSkillReadObserved, eventAccepted, eventAssistantToolCallsCommitted, eventCancelled, eventCompleted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventFailed, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProposed, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventScheduled, eventSideEffectIntent, eventStatus, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
+		case eventSkillReadObserved, eventChildSessionLinked, eventWorkflowChildLifecycle, eventAccepted, eventAssistantToolCallsCommitted, eventCancelled, eventCompleted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventFailed, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProposed, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventScheduled, eventSideEffectIntent, eventStatus, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
 			// These known variants keep the existing non-special-case behavior.
 		}
 	}
@@ -557,9 +567,13 @@ func privacyMarker(raw []byte, record int, add func(string, int, string)) ([]byt
 }
 
 func omissionGaps(rows []logicalRow) []archive.CaptureGap {
-	marker, body := false, false
+	marker, unsupported, body, workflow := false, false, false, false
 	for _, r := range rows {
-		if r.omission != nil {
+		if r.omission != nil && r.omission.Omitted == workflowFactRecord {
+			workflow = true
+		} else if r.omission != nil && r.omission.Marker == unsupportedMarker {
+			unsupported = true
+		} else if r.omission != nil {
 			marker = true
 		}
 		if r.ordinary != nil && newFamily(*r.ordinary) {
@@ -572,6 +586,12 @@ func omissionGaps(rows []logicalRow) []archive.CaptureGap {
 	}
 	if body {
 		out = append(out, archive.CaptureGap{Code: "muse_private_native_bodies_omitted"})
+	}
+	if unsupported {
+		out = append(out, archive.CaptureGap{Code: "muse_unsupported_records_omitted", Detail: "Records this adapter version does not support were left out"})
+	}
+	if workflow {
+		out = append(out, archive.CaptureGap{Code: "muse_workflow_facts_omitted", Detail: "Workflow engine facts were left out"})
 	}
 	return out
 }

@@ -14,31 +14,48 @@ func only(m map[string]any, names ...string) bool {
 	return true
 }
 
+// known accepts a record whose listed members are optional and whose other
+// members the projection never reads: it reports them as dropped instead of
+// refusing the record.
+func known(m map[string]any, dropped *bool, names ...string) bool {
+	if m == nil {
+		return false
+	}
+	if !only(m, names...) {
+		*dropped = true
+	}
+	return true
+}
+
 // authorityShape refuses new authority-bearing members even when the known
-// fields would otherwise project to a plausible root. Explicitly named private
-// context/diagnostic fields are bounded by the JSON decoder and never retained.
-func authorityShape(r retained, p map[string]any) bool {
+// fields would otherwise project to a plausible root. Members outside a list of
+// optional descriptive members are dropped and reported through dropped.
+// Explicitly named private context/diagnostic fields are bounded by the JSON
+// decoder and never retained.
+func authorityShape(r retained, p map[string]any, dropped *bool) bool {
 	switch r.Type {
 	case payloadApprovalWaitStarted, payloadApprovalWaitTerminal, payloadToolBatchStarted, payloadToolBatchTerminal:
 		return false
 	case payloadRuntimeSessionMetadata:
-		return shapeRuntimeSessionMetadata(p)
+		return shapeRuntimeSessionMetadata(p, dropped)
 	case payloadSessionOpenedObserved:
-		return shapeSessionOpenedObserved(p)
+		return shapeSessionOpenedObserved(p, dropped)
 	case payloadRuntimeSessionCaptureSelection:
 		return shapeRuntimeSessionCaptureSelection(p)
 	case payloadRuntimeCommandIntakeReceived:
-		return shapeRuntimeCommandIntakeReceived(r, p)
+		return shapeRuntimeCommandIntakeReceived(r, p, dropped)
 	case payloadRuntimeSessionStartIntakeV3:
-		return shapeRuntimeSessionStartIntakeV3(p)
+		return shapeRuntimeSessionStartIntakeV3(p, dropped)
 	case payloadSessionStarted:
 		return shapeSessionStarted(p)
 	case payloadSessionResumed:
-		return shapeSessionResumed(p)
+		return shapeSessionResumed(p, dropped)
+	case payloadSessionLoginCompleted:
+		return shapeSessionLoginCompleted(p)
 	case payloadRuntimeSessionRouteFacts:
 		return shapeRuntimeSessionRouteFacts(p)
 	case payloadRuntimeUserIntentAccepted:
-		return shapeRuntimeUserIntentAccepted(p)
+		return shapeRuntimeUserIntentAccepted(p, dropped)
 	case payloadRuntimeUserIntentMaterialized:
 		return shapeRuntimeUserIntentMaterialized(p)
 	case payloadSessionNameChanged:
@@ -64,15 +81,15 @@ func authorityShape(r retained, p map[string]any) bool {
 	return true
 }
 
-func shapeRuntimeSessionMetadata(p map[string]any) bool {
+func shapeRuntimeSessionMetadata(p map[string]any, dropped *bool) bool {
 	rec := object(p["record"])
-	return keys(p, "kind", "record") && only(rec, "workspace_root", "provider_id", "model_id", "tool_surface_version", "web_search_mode", "build") && (rec["build"] == nil || keys(object(rec["build"]), "sha", "semver") && stringFields(object(rec["build"]), "sha", "semver"))
+	return keys(p, "kind", "record") && known(rec, dropped, "workspace_root", "provider_id", "model_id", "tool_surface_version", "web_search_mode", "build") && (rec["build"] == nil || keys(object(rec["build"]), "sha", "semver") && stringFields(object(rec["build"]), "sha", "semver"))
 
 }
 
-func shapeSessionOpenedObserved(p map[string]any) bool {
+func shapeSessionOpenedObserved(p map[string]any, dropped *bool) bool {
 	rec := object(p["record"])
-	return keys(p, "kind", "record") && only(rec, "schema_version", "session_id", "resume", "security_mode", "workspace_free_bytes", "data_dir_free_bytes", "credential_backend", "keychain_fallback_reason", "client_info_name", "client_info_version")
+	return keys(p, "kind", "record") && known(rec, dropped, "schema_version", "session_id", "resume", "security_mode", "workspace_free_bytes", "data_dir_free_bytes", "credential_backend", "keychain_fallback_reason", "client_info_name", "client_info_version")
 
 }
 
@@ -81,21 +98,21 @@ func shapeRuntimeSessionCaptureSelection(p map[string]any) bool {
 
 }
 
-func shapeRuntimeCommandIntakeReceived(r retained, p map[string]any) bool {
+func shapeRuntimeCommandIntakeReceived(r retained, p map[string]any, dropped *bool) bool {
 	rec := object(p["record"])
 	if !keys(p, "kind", "record") {
 		return false
 	}
 	if r.PayloadSchema == 2 {
-		return keys(rec, "kind", "command_id", "session_stream", "command") && keys(object(rec["session_stream"]), "kind", "id") && keys(object(rec["command"]), "kind", "background_tasks", "session_metadata") && only(object(object(rec["command"])["session_metadata"]), "workspace_root", "provider_id", "model_id", "tool_surface_version")
+		return keys(rec, "kind", "command_id", "session_stream", "command") && keys(object(rec["session_stream"]), "kind", "id") && keys(object(rec["command"]), "kind", "background_tasks", "session_metadata") && known(object(object(rec["command"])["session_metadata"]), dropped, "workspace_root", "provider_id", "model_id", "tool_surface_version")
 	}
 	return only(rec, "kind", "command_id", "session_stream", "command", "acceptance_identity")
 
 }
 
-func shapeRuntimeSessionStartIntakeV3(p map[string]any) bool {
+func shapeRuntimeSessionStartIntakeV3(p map[string]any, dropped *bool) bool {
 	b := object(p["payload"])
-	return keys(p, "kind", "command_id", "payload", "command_payload_fingerprint") && keys(b, "schema_version", "session_stream", "background_tasks", "session_metadata", "activation_source") && keys(object(b["session_stream"]), "kind", "id") && only(object(b["session_metadata"]), "workspace_root", "provider_id", "model_id", "tool_surface_version")
+	return keys(p, "kind", "command_id", "payload", "command_payload_fingerprint") && keys(b, "schema_version", "session_stream", "background_tasks", "session_metadata", "activation_source") && keys(object(b["session_stream"]), "kind", "id") && known(object(b["session_metadata"]), dropped, "workspace_root", "provider_id", "model_id", "tool_surface_version")
 
 }
 
@@ -104,20 +121,29 @@ func shapeSessionStarted(p map[string]any) bool {
 
 }
 
-func shapeSessionResumed(p map[string]any) bool {
+func shapeSessionResumed(p map[string]any, dropped *bool) bool {
 	rec := object(p["record"])
-	return keys(p, "kind", "record") && only(rec, "schema_version", "session_id", "prior_turn_count", "resumed_from_sequence", "resumed_from_record_id")
+	return keys(p, "kind", "record") && known(rec, dropped, "schema_version", "session_id", "prior_turn_count", "resumed_from_sequence", "resumed_from_record_id")
 
 }
 
+// A login completion names this session; its account facts (method,
+// subscription, trigger, duration) are validated and dropped. Its shape is
+// closed, like every record that bears identity.
+func shapeSessionLoginCompleted(p map[string]any) bool {
+	return keys(p, "kind", "record") && keys(object(p["record"]), "duration_ms", "method", "schema_version", "session_id", "subscribed", "trigger")
+}
+
+// Route facts carry no authority beyond cwd, the only retained member. Other
+// local facts (pid, terminal identity, runtime socket paths) are dropped,
+// including members newer Muse builds add.
 func shapeRuntimeSessionRouteFacts(p map[string]any) bool {
-	rec := object(p["record"])
-	return keys(p, "kind", "record") && only(rec, "cwd", "pid", "terminal_title_identity")
+	return keys(p, "kind", "record") && object(p["record"]) != nil
 
 }
 
-func shapeRuntimeUserIntentAccepted(p map[string]any) bool {
-	return only(p, "intent_id", "source_session_id", "surface", "semantic_kind", "refill_blocks", "model_messages", "bindings", "delivery_policy", "wake_policy") && keys(object(p["semantic_kind"]), "kind")
+func shapeRuntimeUserIntentAccepted(p map[string]any, dropped *bool) bool {
+	return known(p, dropped, "intent_id", "source_session_id", "surface", "semantic_kind", "refill_blocks", "model_messages", "bindings", "delivery_policy", "wake_policy") && keys(object(p["semantic_kind"]), "kind")
 
 }
 
@@ -162,7 +188,7 @@ func shapeRuntimeSession(p map[string]any) bool {
 		case eventAssistantMessageCommitted:
 			return keys(event, "kind", "message_id", "response_id", "text") || keys(event, "kind", "message_id", "response_id", "text", "provider_item_id") && stringFields(event, "provider_item_id")
 
-		case eventSkillReadObserved, eventAccepted, eventAssistantToolCallsCommitted, eventCancelled, eventCompleted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventFailed, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProposed, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventScheduled, eventSideEffectIntent, eventStatus, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
+		case eventSkillReadObserved, eventChildSessionLinked, eventWorkflowChildLifecycle, eventAccepted, eventAssistantToolCallsCommitted, eventCancelled, eventCompleted, eventContextBlockDiagnostic, eventContextBlockUpdated, eventFailed, eventGoalUsageAttribution, eventHookRunStarted, eventHookRunTerminal, eventModelCompleted, eventModelInputTraceRecorded, eventModelRequestConfigured, eventModelResponseCreated, eventProposed, eventProviderRequestOptionsConfigured, eventResourceUsageSampled, eventScheduled, eventSideEffectIntent, eventStatus, eventTaskStreamLinked, eventTerminal, eventToolResultBatchCommitted:
 			// These known variants keep the existing non-special-case behavior.
 		}
 		return true

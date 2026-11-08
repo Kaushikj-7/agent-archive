@@ -289,6 +289,18 @@ func (s *Store) CommitNativeAdmission(ctx context.Context, p *PreparedNativeAdmi
 	return p.reg, nil
 }
 
+// LinkNativeChildren records the child sessions a committed admission's own
+// filter pass verified as linked-session evidence on its new owner. It accepts
+// nothing but the prepared admission itself, so only children of that pass can
+// be reserved. A failure leaves the owner admitted; the owner's next validated
+// pass records the same links.
+func (s *Store) LinkNativeChildren(p *PreparedNativeAdmission) error {
+	if p == nil || p.store != s || p.closed || !p.committed {
+		return errNativeChildLinks
+	}
+	return s.saveNativeChildLinks(p.reg, p.filtered)
+}
+
 type nativeAdmissionCommit struct{ prepared *PreparedNativeAdmission }
 
 func (p *nativeAdmissionCommit) check(next archive.SessionRegistration, found bool) error {

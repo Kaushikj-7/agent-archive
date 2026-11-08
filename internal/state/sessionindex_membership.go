@@ -180,7 +180,7 @@ func readRecoveryJSONLimit(path string, value any, limit int64) error {
 	if int64(len(data)) > limit {
 		return ErrSessionIndexRecoveryRequired
 	}
-	return json.Unmarshal(data, value)
+	return decodeRegistrationJSON(data, value)
 }
 
 func (s *Store) ensureSessionMembershipRevision() (string, error) {

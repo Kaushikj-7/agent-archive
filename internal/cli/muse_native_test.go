@@ -398,28 +398,28 @@ func TestMuseNativeLabelsReadOnlyBatchesAndZeroBudget(t *testing.T) {
 	}
 }
 
-func TestMuseBackfillRefusesBeforeHomeOrStorage(t *testing.T) {
+func TestMuseBackfillWithoutSetupWritesNothingAndOpensNoStorage(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"muse", "muse-code"} {
 		for _, mode := range []string{"--dry-run", "--yes"} {
 			t.Run(name+mode, func(t *testing.T) {
 				t.Parallel()
-				env := testEnv(t, t.TempDir(), time.Now())
-				env.Home = func() (string, error) {
-					t.Fatal("unsupported import resolved archive home")
-					return "", errors.New("forbidden")
-				}
+				home := filepath.Join(t.TempDir(), "not-created")
+				env := testEnv(t, home, time.Now())
 				env.UserHomeDir = func() (string, error) {
-					t.Fatal("unsupported import resolved user home")
+					t.Fatal("import without setup resolved user home")
 					return "", errors.New("forbidden")
 				}
 				env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
-					t.Fatal("unsupported import opened storage")
+					t.Fatal("import without setup opened storage")
 					return nil, errors.New("forbidden")
 				}
 				var out, errOut bytes.Buffer
-				if code := Run([]string{"backfill", mode, "--harness", name}, nil, &out, &errOut, env); code == 0 || !strings.Contains(errOut.String(), "historical import is unavailable for muse") {
-					t.Fatalf("unsupported import %d %s %s", code, out.String(), errOut.String())
+				if code := Run([]string{"backfill", mode, "--harness", name}, nil, &out, &errOut, env); code == 0 || !strings.Contains(errOut.String(), "agent-archive setup") {
+					t.Fatalf("import without setup %d %s %s", code, out.String(), errOut.String())
+				}
+				if _, err := os.Stat(home); !os.IsNotExist(err) {
+					t.Fatalf("import without setup wrote state: %v", err)
 				}
 			})
 		}

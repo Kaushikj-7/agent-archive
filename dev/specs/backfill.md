@@ -14,6 +14,34 @@ below is an approved target recorded 2026-10-17, not a claim that the current
 binary implements it. Its delivery and qualification are tracked in
 [Large backfill completion](../proposals/large-backfill-completion.md).
 
+## Purpose-specific historical Muse route
+
+Explicit `--harness muse` uses the same bounded native inventory census in an
+ephemeral read-only mode, with observation-only historical locator requests.
+The ordinary collector mode retains its existing query scheduling and durable
+catalog behavior. Historical preview never restores or writes that catalog and
+never binds the generic import adapter. Its native IDs, locators, source
+checkpoints and binding facts remain private; public preview uses entry ordinals,
+configured project facts, dates, refusals and explicit unavailable child coverage.
+
+A confirmed exact UTC/project/root/destination/source scope is minted in the
+existing closed Batch control after the durable sticky historical writer fence.
+Actual first ownership still requires the Store-bound opaque confirmation and
+concrete source snapshot/filter/proof/currentness. The existing state transaction
+writes the typed stage before its distinct import reservation and owner. Recovery
+uses the exact stage/control/index authority without native rereads. Public
+history and normal collector publication reuse the existing paths. Purpose-specific
+undo stops the batch and CAS-detaches only its exact membership; acknowledged and
+independent effects survive. There is no live-window/startup-intent substitution.
+A missing worktree is filed under its project only on proof from the directory
+the session recorded: it no longer exists, the nearest existing repository above
+it is a repository's own root (a `.git` directory), and that repository is
+exactly the configured, included project that owns the directory, with no other
+configured project in between. Preparation re-derives the proof before commit
+and the owner keeps it as a private `removed_worktree` project resolution.
+Other missing worktrees, project mappings and child admission remain unavailable
+until their independent source authority is qualified.
+
 ## Problem
 
 The archive captures only sessions that start after their project is activated
@@ -1276,7 +1304,10 @@ Other properties:
   sessions registered, each with a request, so the collector uploads those and
   a rerun registers the rest. A crash during step 6 loses nothing.
 - **Plan freeze.** The import is exactly the confirmed plan, keyed by native
-  ID. Sessions that appear after the plan are not included.
+  ID. Sessions that appear after the plan are not included. A historical Muse
+  entry whose full read refuses its own content (a refusal no retry can change)
+  is skipped with its reason, writing nothing, and the batch continues; a
+  changed or unreadable source still stops the batch for resumption.
 - **Scale.** An unchanged session costs one stat per pass. Retention calls the
   bucket only when something can be deleted. Thousands of imports therefore
   add only local work to the 60-second pass, though a parser upgrade re-reads

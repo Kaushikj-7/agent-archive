@@ -25,6 +25,8 @@ const (
 	LocatorAdmittedOwner LocatorPurpose = ""
 	// LocatorStartupCandidate supplies an explicitly guarded startup query.
 	LocatorStartupCandidate LocatorPurpose = "startup_candidate"
+	// LocatorHistoricalImport supplies observations only to an ephemeral import inventory.
+	LocatorHistoricalImport LocatorPurpose = "historical_import"
 )
 
 // LocatorRequest scopes lookup to the committed root. Observed only locates
@@ -59,6 +61,8 @@ type LocatorResult struct {
 	Current    *SourceRef
 	Candidates []SourceRef
 	Revision   string
+	// Refusal, for a refused candidate, names why its source was refused.
+	Refusal *NativeRefusalError
 }
 
 // SourceBinding is a lossless in-memory tagged union. Exactly one member is

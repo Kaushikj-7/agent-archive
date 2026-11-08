@@ -132,6 +132,15 @@ type nativePreviewCatalog struct {
 	stderr     io.Writer
 	exhausted  bool
 	now        time.Time
+	// command names the command in progress messages; empty means handoff.
+	command string
+}
+
+func (n *nativePreviewCatalog) commandName() string {
+	if n.command == "" {
+		return "handoff"
+	}
+	return n.command
 }
 
 func (n *nativePreviewCatalog) load() (bool, error) {
@@ -159,7 +168,7 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 		}
 		if cost > nativeReadBudget-n.reserved {
 			n.exhausted = true
-			terminal.Println(n.stderr, "handoff: cumulative local read budget exhausted; remaining verified sessions are shown by native ID without preview labels")
+			terminal.Printf(n.stderr, "%s: cumulative local read budget exhausted; remaining verified sessions are shown by native ID without preview labels\n", n.commandName())
 			break
 		}
 		n.reserved += cost
@@ -226,7 +235,7 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 		n.rows = append(n.rows, row)
 	}
 	if partial > 0 || unavailable > 0 {
-		terminal.Printf(n.stderr, "handoff: this preview batch has %d partial labels and %d unavailable labels; word searches may miss uninspected text\n", partial, unavailable)
+		terminal.Printf(n.stderr, "%s: this preview batch has %d partial labels and %d unavailable labels; word searches may miss uninspected text\n", n.commandName(), partial, unavailable)
 	}
 	if n.exhausted {
 		for i := n.next; i < len(n.candidates); i++ {
@@ -235,7 +244,7 @@ func (n *nativePreviewCatalog) load() (bool, error) {
 			n.rows = append(n.rows, row)
 		}
 	}
-	terminal.Printf(n.stderr, "handoff: labels inspected for %d of %d discovered local sessions; word searches cover only these loaded previews\n", n.next, len(n.candidates))
+	terminal.Printf(n.stderr, "%s: labels inspected for %d of %d discovered local sessions; word searches cover only these loaded previews\n", n.commandName(), n.next, len(n.candidates))
 	return n.next < len(n.candidates) && !n.exhausted, nil
 }
 
