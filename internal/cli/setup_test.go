@@ -270,7 +270,7 @@ func TestSetupReconfigurePreservesPauseIdentityActivationAndRemovesHooks(t *test
 		t.Fatal(err)
 	}
 	env.Now = func() time.Time { return time.Now().Add(time.Hour) }
-	setupRun(t, env, "capture\ny\ny\nn\nn\ny\n\ny\n", 0)
+	setupRun(t, env, "capture\ny\ny\nn\nn\nn\ny\n\ny\n", 0)
 	next, _, _ := config.Load(home)
 	if !next.Paused || next.PauseGeneration != old.PauseGeneration || next.MachineID != old.MachineID || !next.Archive.Projects[0].ActivatedAt.Equal(old.Archive.Projects[0].ActivatedAt) {
 		t.Fatal("reconfigure reset stable state")

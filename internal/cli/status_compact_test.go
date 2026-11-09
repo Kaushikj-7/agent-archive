@@ -382,7 +382,7 @@ func TestStatusAppArgument(t *testing.T) {
 	}{
 		{[]string{"CODEX"}, 0, "\nCapture\n  ! Codex   discovery off; included projects   no sessions yet\n", ""},
 		{[]string{"codex", "--verbose"}, 0, "\nDetails\n  Codex: waiting for first session", ""},
-		{[]string{"gemini"}, 2, "", "agent-archive: status: unknown app \"gemini\"; choose one of codex, claude, cursor; run agent-archive status --help\n"},
+		{[]string{"gemini"}, 2, "", "agent-archive: status: unknown app \"gemini\"; choose one of codex, claude, cursor, agy; run agent-archive status --help\n"},
 		{[]string{"codex", "--json"}, 2, "", "agent-archive: status: an app and --json can't be combined; status --json lists every app under applications; run agent-archive status --help\n"},
 		{[]string{"cursor"}, 1, "", "agent-archive: status: Cursor isn't one of the apps this installation captures (Codex). Run agent-archive setup to add it.\n"},
 	} {

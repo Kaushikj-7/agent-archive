@@ -108,7 +108,7 @@ func TestCommandsRejectUnknownArguments(t *testing.T) {
 		{[]string{"backfill", "--since", "yesterday"}, `agent-archive: backfill: --since: "yesterday" is not a date (2026-01-31), an RFC 3339 time, or an age (7d, 12h); run agent-archive backfill --help`},
 		{[]string{"backfill", "projects", "--bogus"}, "agent-archive: backfill projects: unknown flag --bogus; run agent-archive backfill projects --help"},
 		{[]string{"backfill", "undo", "--bogus"}, "agent-archive: backfill undo: unknown flag --bogus; run agent-archive backfill undo --help"},
-		{[]string{"status", "extra"}, `agent-archive: status: unknown app "extra"; choose one of codex, claude, cursor; run agent-archive status --help`},
+		{[]string{"status", "extra"}, `agent-archive: status: unknown app "extra"; choose one of codex, claude, cursor, agy; run agent-archive status --help`},
 		{[]string{"status", "claude", "extra"}, `agent-archive: status: unexpected argument "extra"; run agent-archive status --help`},
 		{[]string{"backfill", "history", "extra"}, `agent-archive: backfill history: unexpected argument "extra"; run agent-archive backfill history --help`},
 	} {

@@ -671,11 +671,11 @@ Example: agent-archive stats --html --output stats.html
 `,
 	"handoff": `Usage: agent-archive handoff [SESSION_ID|WORDS|--latest|--file PATH] [options]
 
-Before setup, browse Claude Code, Codex, Muse Code, and Antigravity native sessions in this
-checkout and its descendants. Local IDs (qualified with --harness) or unique
-prefixes select beyond the first 50 filtered previews. Scrolling past the last
-row (o when reading lines) loads another 50; / filters loaded rows only. Word
-queries report their bounded preview window.
+Before setup, browse Claude Code, Codex, Muse Code, and Antigravity native
+sessions in this checkout and its descendants. Local IDs (qualified with
+--harness) or unique prefixes select beyond the first 50 filtered previews.
+Scrolling past the last row (o when reading lines) loads another 50; / filters
+loaded rows only. Word queries report their bounded preview window.
 --project requires a directory; --all-projects explicitly broadens the scope.
 Local --latest ranks file modification time. Enumeration must finish, and no
 unresolved history may be as recent as the selected session. Missing checkouts

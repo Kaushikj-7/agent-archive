@@ -321,6 +321,7 @@ func TestImportRejectsSourceChangesAcrossHeaderAndRecovery(t *testing.T) {
 					if replacement == body {
 						t.Fatal("mutation did not change fixture")
 					}
+					time.Sleep(20 * time.Millisecond)
 					tr.write(relative, replacement)
 				}
 				env := tr.env()

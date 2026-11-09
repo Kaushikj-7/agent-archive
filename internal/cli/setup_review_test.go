@@ -297,11 +297,11 @@ func TestSetupReviewBlocksStartOnHookFileBrokenAfterPreflight(t *testing.T) {
 		}
 		return storagetest.NewMemoryStore(), nil
 	}
-	answers := []string{"y", "n", "n", "included-projects", project, "", "s3-existing", "profile", "bucket", "us-east-1",
+	answers := []string{"y", "n", "n", "n", "included-projects", project, "", "s3-existing", "profile", "bucket", "us-east-1",
 		"y",     // refused: starting is not a choice
 		"check", // the file is fixed just before this answer
 		"y"}
-	in := &hookFixingAnswers{answers: answers, fixAt: 11, fix: func() {
+	in := &hookFixingAnswers{answers: answers, fixAt: 12, fix: func() {
 		if _, found, err := config.Load(home); err != nil || found {
 			t.Fatalf("setup committed before the invalid hook file was fixed: found=%v err=%v", found, err)
 		}

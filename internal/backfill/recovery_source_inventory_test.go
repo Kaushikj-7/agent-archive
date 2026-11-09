@@ -161,6 +161,7 @@ func TestRecoverySourceInventoryToleratesOwnedAppendsOnly(t *testing.T) {
 				}
 				inv.ownContent(file, info)
 			}
+			time.Sleep(20 * time.Millisecond)
 			tc.mutate(t, tr, file)
 			if got := inv.current(t.Context()); got != tc.current {
 				t.Fatalf("current = %v, want %v", got, tc.current)

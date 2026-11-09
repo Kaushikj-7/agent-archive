@@ -32,7 +32,7 @@ func TestAnotherMachineCommandNeverCarriesTheR2Secret(t *testing.T) {
 		t.Parallel()
 		home := t.TempDir()
 		env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
-		input := strings.Join([]string{"y", "n", "n", "included-projects", t.TempDir(), "", "r2-existing", testR2Account, "test-bucket", keyID, secret, "y", "details"}, "\n") + "\n"
+		input := strings.Join([]string{"y", "n", "n", "n", "included-projects", t.TempDir(), "", "r2-existing", testR2Account, "test-bucket", keyID, secret, "y", "details"}, "\n") + "\n"
 		check(t, setupRun(t, env, input, 0))
 	})
 	t.Run("yes", func(t *testing.T) {

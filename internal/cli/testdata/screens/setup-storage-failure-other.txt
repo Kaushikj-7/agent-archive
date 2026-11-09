@@ -31,6 +31,14 @@ Choose which apps to include:
 › Choose [2]: n
 ✓ Include Cursor No
 
+? Include Antigravity CLI?
+
+  1) Yes
+  2) No (default)
+
+› Choose [2]: n
+✓ Include Antigravity CLI No
+
 ? Codex capture scope
 
   1) Included projects only (Codex) (default)

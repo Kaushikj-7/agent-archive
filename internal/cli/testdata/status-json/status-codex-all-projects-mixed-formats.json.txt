@@ -1,4 +1,4 @@
-$ agent-archive status --json
+$ agent-archive status --verbose --json
 {
   "retention": {
     "retention_days": 90,

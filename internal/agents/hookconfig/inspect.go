@@ -31,6 +31,13 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 	if err != nil || hs == nil {
 		return false, err
 	}
+	if spec.Definition != "" {
+		if val, ok := hs.Get("enabled"); ok {
+			if _, ok := val.(bool); !ok {
+				return false, fmt.Errorf("invalid boolean for enabled")
+			}
+		}
+	}
 	names := spec.Events
 	for _, event := range names {
 		if _, ok := hs.Get(event); !ok {
@@ -39,9 +46,6 @@ func installed(data []byte, spec Spec, hook Hook) (bool, error) {
 	}
 	for _, m := range hs.Members {
 		if spec.Definition != "" && m.Key == "enabled" {
-			if _, ok := m.Value.(bool); !ok {
-				return false, fmt.Errorf("invalid boolean for %s", m.Key)
-			}
 			continue
 		}
 		groups, ok := m.Value.([]any)

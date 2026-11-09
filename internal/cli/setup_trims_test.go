@@ -50,7 +50,7 @@ func TestSetupFirstRunDecliningAsksAppsAndProjectsSeparately(t *testing.T) {
 	f := newScreenFixture(t)
 	f.withApps(t, "codex", "claude")
 	f.inWebApp(t)
-	out := f.runSetup(t, strings.Join([]string{"n", "n", "n", "y", "n", "", "s3-existing", "work", "2", ""}, "\n")+"\n")
+	out := f.runSetup(t, strings.Join([]string{"n", "n", "n", "y", "n", "n", "", "s3-existing", "work", "2", ""}, "\n")+"\n")
 	for _, want := range []string{"Capture sessions from Codex and Claude Code?", "Include Codex?", "Which projects?", "All 1 found projects (default)"} {
 		if !setupContainsText(out, want) {
 			t.Fatalf("missing %q:\n%s", want, out)

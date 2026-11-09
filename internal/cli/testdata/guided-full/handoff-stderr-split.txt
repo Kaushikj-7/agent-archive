@@ -9,6 +9,7 @@ $ agent-archive handoff SESSION
   2) Codex
   3) Cursor
   4) Muse Code
+  5) Antigravity CLI
 
   [p] print  [c] copy  [w] write  [q] quit
 

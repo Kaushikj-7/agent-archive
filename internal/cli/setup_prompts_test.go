@@ -261,12 +261,12 @@ func TestSetupRemembersDeclinedApps(t *testing.T) {
 	}
 
 	output = setupRun(t, env, "capture\n\ny\n\ny\n", 0)
-	if setupContainsText(output, "Also found") || !setupContainsText(output, "Included: Cursor. Not included: Codex and Claude Code.") {
+	if setupContainsText(output, "Also found") || !setupContainsText(output, "Included: Cursor. Not included: Codex, Claude Code, and Antigravity CLI.") {
 		t.Fatalf("declined apps offered again:\n%s", output)
 	}
 
 	// Include Claude Code by hand: it is no longer declined; Codex still is.
-	setupRun(t, env, "capture\ny\nn\ny\ny\ny\n\ny\n", 0)
+	setupRun(t, env, "capture\ny\nn\ny\ny\nn\ny\n\ny\n", 0)
 	cfg, _, _ = config.Load(home)
 	if !reflect.DeepEqual(cfg.Harnesses, []string{"claude", "cursor"}) || !reflect.DeepEqual(cfg.DeclinedHarnesses, []string{"codex"}) {
 		t.Fatalf("harnesses %v declined %v", cfg.Harnesses, cfg.DeclinedHarnesses)
@@ -279,7 +279,7 @@ func TestReviewEditNeverOffersFoundApps(t *testing.T) {
 	t.Parallel()
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"cursor"}, DeclinedHarnesses: []string{"codex", "claude"}}}
 	var out bytes.Buffer
-	p := newPrompter(strings.NewReader("apps\ny\nn\ny\ny\n"), &out)
+	p := newPrompter(strings.NewReader("apps\ny\nn\ny\ny\nn\n"), &out)
 	if err := editSetupReview(allHarnesses, p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -302,14 +302,14 @@ func TestSetupRemembersAppRemovedByHand(t *testing.T) {
 
 	// Apps and projects; change apps: Codex no, Claude Code yes, Cursor no;
 	// keep the project; add none; start archiving.
-	setupRun(t, env, "capture\ny\nn\ny\nn\ny\n\ny\n", 0)
+	setupRun(t, env, "capture\ny\nn\ny\nn\nn\ny\n\ny\n", 0)
 	cfg, _, _ := config.Load(home)
 	if !reflect.DeepEqual(cfg.Harnesses, []string{"claude"}) || !reflect.DeepEqual(cfg.DeclinedHarnesses, []string{"codex"}) {
 		t.Fatalf("harnesses %v declined %v", cfg.Harnesses, cfg.DeclinedHarnesses)
 	}
 
 	output := setupRun(t, env, "capture\n\ny\n\nn\n", 0)
-	if setupContainsText(output, "Also found") || !setupContainsText(output, "Included: Claude Code. Not included: Codex and Cursor.") {
+	if setupContainsText(output, "Also found") || !setupContainsText(output, "Included: Claude Code. Not included: Codex, Cursor, and Antigravity CLI.") {
 		t.Fatalf("removed app offered again:\n%s", output)
 	}
 }
@@ -319,7 +319,7 @@ func TestSetupRemembersAppRemovedByHand(t *testing.T) {
 func TestReviewEditRemovalIsNotOfferedAgain(t *testing.T) {
 	t.Parallel()
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"codex", "claude"}}}
-	p := newPrompter(strings.NewReader("apps\ny\nn\ny\nn\n"), &bytes.Buffer{})
+	p := newPrompter(strings.NewReader("apps\ny\nn\ny\nn\nn\n"), &bytes.Buffer{})
 	if err := editSetupReview(allHarnesses, p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}

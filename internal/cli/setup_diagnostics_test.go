@@ -26,7 +26,7 @@ func TestSetupExcludingProjectPrunesStoredDiagnostic(t *testing.T) {
 		t.Fatalf("diagnostics %+v err=%v", ds, err)
 	}
 	// Reconfigure capture: drop the first project and include the second.
-	setupRun(t, env, "capture\nn\nn\nn\nspecific\n1\np\n"+second+"\n\ny\n", 0)
+	setupRun(t, env, "capture\nn\nn\nn\nn\nspecific\n1\np\n"+second+"\n\ny\n", 0)
 	cfg, _, err = config.Load(home)
 	must(t, err)
 	if len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != local.CanonicalPath(second) || !cfg.Archive.Projects[0].Included {

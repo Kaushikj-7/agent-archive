@@ -568,7 +568,7 @@ func TestSetupThatSkipsStorageRefusesAConfigWhoseKeyFileIsGoneOnLinux(t *testing
 	must(t, os.Remove(filepath.Join(credentials.FileStoreDir(home), before.Storage.R2CredentialRef+".json")))
 
 	// Edit the captured apps only: no storage question is asked.
-	output := setupRun(t, env, "capture\ny\ny\nn\nn\nincluded-projects\ny\n\ny\n", 1)
+	output := setupRun(t, env, "capture\ny\ny\nn\nn\nn\nincluded-projects\ny\n\ny\n", 1)
 	if !strings.Contains(output, "stored R2 credential is unavailable; enter it again") {
 		t.Fatalf("setup committed, or refused for another reason:\n%s", output)
 	}

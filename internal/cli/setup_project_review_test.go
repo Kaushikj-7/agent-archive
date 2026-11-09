@@ -51,8 +51,8 @@ func TestPairingReviewDoesNotClaimUnprobedStorage(t *testing.T) {
 
 var projectRequirementEdits = []projectRequirementEdit{
 	{"included-scope", "codex-scope\nincluded-projects\n"},
-	{"add-claude", "apps\ny\ny\ny\nn\n"},
-	{"add-cursor", "apps\ny\ny\nn\ny\n"},
+	{"add-claude", "apps\ny\ny\ny\nn\nn\n"},
+	{"add-cursor", "apps\ny\ny\nn\ny\nn\n"},
 }
 
 func zeroProjectCodexSetup(t *testing.T) (Env, string, string) {
@@ -66,7 +66,7 @@ func zeroProjectCodexSetup(t *testing.T) (Env, string, string) {
 func setupCaptureFiles(t *testing.T, env Env, home, userHome string, cfg config.Config) map[string][]byte {
 	t.Helper()
 	paths := []string{filepath.Join(home, "config.json"), filepath.Join(home, "setup-transaction.json")}
-	for _, app := range []string{"codex", "claude", "cursor"} {
+	for _, app := range []string{"codex", "claude", "cursor", "agy"} {
 		paths = append(paths, env.hookFiles(userHome)[app])
 	}
 	for _, path := range cfg.HookFiles {

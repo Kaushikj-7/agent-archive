@@ -41,7 +41,7 @@ func TestSetupRefusesAnotherInstallationsAppBeforeStorageQuestions(t *testing.T)
 
 	// Changing the apps to Codex only, which nothing else hooks, goes ahead.
 	// The warning about Claude Code's file still comes first.
-	input := strings.Join([]string{"capture", "y", "y", "n", "n", "included-projects", "", "s3-existing", "b", "p", "us-east-1", "y"}, "\n") + "\n"
+	input := strings.Join([]string{"capture", "y", "y", "n", "n", "n", "included-projects", "", "s3-existing", "b", "p", "us-east-1", "y"}, "\n") + "\n"
 	output = setupRun(t, secondary, input, 0)
 	if !strings.Contains(output, "hooks of another agent-archive installation") {
 		t.Fatalf("setup did not warn about the other installation's hooks:\n%s", output)

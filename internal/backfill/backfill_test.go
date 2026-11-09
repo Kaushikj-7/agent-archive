@@ -149,6 +149,7 @@ func plan(t *testing.T, env Environment, st ArchiveState, cfg config.Config, fil
 	if err != nil {
 		t.Fatal(err)
 	}
+	time.Sleep(20 * time.Millisecond)
 	return p
 }
 

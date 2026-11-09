@@ -194,7 +194,9 @@ func TestAddedTranscriptsWhilePlanningJoinTheInventory(t *testing.T) {
 					// The second store stat begins the inventory renewal, after
 					// discovery read every header.
 					if stats == 2 {
+						time.Sleep(20 * time.Millisecond)
 						tc.add(tr)
+						time.Sleep(20 * time.Millisecond)
 					}
 				}
 				return os.Lstat(path)
@@ -234,7 +236,9 @@ func TestAddedWitnessRenewsThroughAppends(t *testing.T) {
 	env.Lstat = func(path string) (fs.FileInfo, error) {
 		if path == store {
 			if stats++; stats == 2 {
+				time.Sleep(20 * time.Millisecond)
 				added = addedRollout(tr, "00000000-0000-0000-0000-0000000000a3", tr.repo("home/other"), addedOtherURL)
+				time.Sleep(20 * time.Millisecond)
 			}
 		}
 		return os.Lstat(path)
@@ -243,13 +247,16 @@ func TestAddedWitnessRenewsThroughAppends(t *testing.T) {
 	if c := candidate(t, p, goneID); c.ProjectRoot != root || c.ProjectResolution == nil {
 		t.Fatalf("%+v %+v", c, c.Diagnostic)
 	}
+	time.Sleep(20 * time.Millisecond)
 	appendRecord(t, added, `{"more":1}`+"\n")
 	if err := p.CheckRecovery(t.Context()); err != nil {
 		t.Fatal("an appended added witness failed renewal", err)
 	}
+	time.Sleep(20 * time.Millisecond)
 	if err := os.Remove(added); err != nil {
 		t.Fatal(err)
 	}
+	time.Sleep(20 * time.Millisecond)
 	if err := p.CheckRecovery(t.Context()); err == nil {
 		t.Fatal("removed added witness renewed")
 	}
@@ -299,6 +306,7 @@ func inventoryBaseline(t *testing.T, env Environment) *recoverySourceInventory {
 	if _, err := enumerateDiscovery(t.Context(), inv.environment(), agentapi.DiscoveryImport, func(agentapi.DiscoveryCandidate) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
+	time.Sleep(20 * time.Millisecond)
 	return inv
 }
 

@@ -57,7 +57,7 @@ func TestSetupOffersProjectsFromAppHistory(t *testing.T) {
 	writeClaudeSession(t, userHome, "two", newer, now.Add(-time.Hour))
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)
 	env.BackfillTempDirs = []string{}
-	input := strings.Join([]string{"n", "y", "n", "specific", "9", "p", typed, "", "s3-existing", "b", "profile", "us-east-1", "y"}, "\n") + "\n"
+	input := strings.Join([]string{"n", "y", "n", "n", "specific", "9", "p", typed, "", "s3-existing", "b", "profile", "us-east-1", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
 	first, second := strings.Index(output, "1) "+newer), strings.Index(output, "2) "+older)
 	if first < 0 || second < first || !setupContainsText(output, "today") || !setupContainsText(output, "3 days ago") || !setupContainsText(output, "enter project numbers") {
@@ -88,9 +88,9 @@ func TestSetupListsRecentProjectsAfterTheCurrentRepository(t *testing.T) {
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)
 			env.BackfillTempDirs = []string{}
 			env.WorkingDir = func() (string, error) { return current, nil }
-			answers := []string{"n", "y", "n", "specific", "2", ""}
+			answers := []string{"n", "y", "n", "n", "specific", "2", ""}
 			if add {
-				answers = []string{"n", "y", "n", ""}
+				answers = []string{"n", "y", "n", "n", ""}
 			}
 			input := strings.Join(append(answers, "s3-existing", "b", "profile", "us-east-1", "y"), "\n") + "\n"
 			output := setupRun(t, env, input, 0)
@@ -114,7 +114,7 @@ func TestSetupTakesAccountAndBucketFromTheR2BucketURL(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	kc := newFakeKeychain()
 	env := setupTestEnv(t, home, t.TempDir(), kc, time.Now())
-	input := strings.Join([]string{"y", "n", "n", "included-projects", project, "", "r2-existing",
+	input := strings.Join([]string{"y", "n", "n", "n", "included-projects", project, "", "r2-existing",
 		"https://" + testR2Account + ".r2.cloudflarestorage.com/my-bucket/folder",
 		"https://" + testR2Account + ".r2.cloudflarestorage.com/my-bucket",
 		"ACCESS", "secret-value", "y"}, "\n") + "\n"

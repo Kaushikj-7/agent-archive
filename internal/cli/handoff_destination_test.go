@@ -258,7 +258,7 @@ func TestHandoffPromptUsesConfiguredDefault(t *testing.T) {
 		return "/opt/bin/" + name, nil
 	}
 	out, _, code := runPicker(t, f.env, "q\n", f.id)
-	if code != 0 || !strings.Contains(out, "1) Cursor (default)\n  2) Codex\n  3) Muse Code\n\n  [p] print") || strings.Contains(out, "Claude Code") {
+	if code != 0 || !strings.Contains(out, "1) Cursor (default)\n  2) Codex\n  3) Muse Code\n  4) Antigravity CLI\n\n  [p] print") || strings.Contains(out, "Claude Code") {
 		t.Fatalf("code=%d\n%s", code, out)
 	}
 }

@@ -430,7 +430,7 @@ func TestMuseHandoffDiscoveryDoesNotEnterImportProjectsOrRecovery(t *testing.T) 
 	t.Parallel()
 	env, _, _, _ := museNativeEnv(t)
 	bf := env.backfillEnvironment(t.TempDir(), config.Config{})
-	if got := strings.Join(bf.Discovery.DiscoveryAgents(), ","); got != "claude,codex,cursor" {
+	if got := strings.Join(bf.Discovery.DiscoveryAgents(), ","); got != "claude,codex,cursor,agy" {
 		t.Fatalf("import projection %s", got)
 	}
 	if _, ok := bf.Imports.LookupImport("muse"); ok {
@@ -443,7 +443,7 @@ func TestMuseHandoffDiscoveryDoesNotEnterImportProjectsOrRecovery(t *testing.T) 
 	}
 	env.Agents = fourthRegistry(t, &orbifold.Ports{})
 	extension := env.backfillEnvironment(t.TempDir(), config.Config{})
-	if names := strings.Join(extension.Discovery.DiscoveryAgents(), ","); names != "claude,codex,cursor,orbifold" {
+	if names := strings.Join(extension.Discovery.DiscoveryAgents(), ","); names != "claude,codex,cursor,agy,orbifold" {
 		t.Fatalf("extension import omitted: %s", names)
 	}
 	scoped := selectedDiscoveryApps{DiscoveryLookup: extension.Discovery, apps: []string{"muse", "orbifold"}}

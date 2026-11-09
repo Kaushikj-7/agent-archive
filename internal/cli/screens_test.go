@@ -128,7 +128,7 @@ var screens = []screen{
 		// A first run on a Mac with none of the apps, outside any
 		// repository, up to the storage question.
 		name:    "setup-fresh-no-apps",
-		answers: []string{"y", "n", "n", "included-projects", "~/src/web-app", ""},
+		answers: []string{"y", "n", "n", "n", "included-projects", "~/src/web-app", ""},
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
@@ -193,7 +193,7 @@ var screens = []screen{
 		// the one named like agent-archive*, and uses that bucket's own
 		// region rather than the profile's.
 		name:    "setup-s3-bucket-list",
-		answers: []string{"y", "n", "n", "included-projects", "", "s3", "e", "", "", "q"},
+		answers: []string{"y", "n", "n", "n", "included-projects", "", "s3", "e", "", "", "q"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -207,7 +207,7 @@ var screens = []screen{
 		// S3 refuses both lookups, so setup says why and asks for the
 		// bucket and region, turning away a path typed as the region.
 		name:    "setup-s3-bucket-typed",
-		answers: []string{"y", "n", "n", "included-projects", "", "s3-existing", "work", "team-archive", "~/code/api", "us-east-1", "q"},
+		answers: []string{"y", "n", "n", "n", "included-projects", "", "s3-existing", "work", "team-archive", "~/code/api", "us-east-1", "q"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -421,7 +421,7 @@ var screens = []screen{
 	{
 		// What a committed first setup ends with.
 		name:    "setup-next-steps",
-		answers: []string{"y", "y", "y", "included-projects", "", "s3-existing", "work", "2", ""},
+		answers: []string{"y", "y", "y", "n", "included-projects", "", "s3-existing", "work", "2", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -551,7 +551,7 @@ var screens = []screen{
 
 // storageFailureAnswers set up Codex in ~/src/web-app with S3 storage, and
 // stop at the storage check's failure menu.
-var storageFailureAnswers = []string{"y", "n", "n", "included-projects", "", "s3-existing", "work", "2", "q"}
+var storageFailureAnswers = []string{"y", "n", "n", "n", "included-projects", "", "s3-existing", "work", "2", "q"}
 
 // failUploads makes the bucket refuse every upload with err.
 func failUploads(err error) func(*testing.T, *screenFixture) {
@@ -707,7 +707,7 @@ func (f *screenFixture) setup(t *testing.T, exit int, answers ...string) {
 func (f *screenFixture) installed(t *testing.T) {
 	t.Helper()
 	project := f.project(t, "src/web-app")
-	f.setup(t, 0, "y", "n", "n", "included-projects", project, "", "s3-existing", "work", "2", "")
+	f.setup(t, 0, "y", "n", "n", "n", "included-projects", project, "", "s3-existing", "work", "2", "")
 }
 
 // published captures and publishes one Codex session in ~/src/web-app.

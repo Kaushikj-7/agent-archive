@@ -442,6 +442,7 @@ func TestCheckSourceSeparatesAppendsFromRewrites(t *testing.T) {
 			case sourceAppended:
 				tr.write("home/source.jsonl", "a\nb\nc\n")
 			case sourceTruncated:
+				time.Sleep(20 * time.Millisecond)
 				tr.write("home/source.jsonl", "a\n")
 			case sourceReplaced:
 				tr.write("home/other.jsonl", "a\nb\nc\n")
@@ -523,6 +524,7 @@ func TestAppendedWitnessRenewsAtAdmission(t *testing.T) {
 	if current, _, _ := recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}, true); !current {
 		t.Fatal("further append invalidated the appended witness")
 	}
+	time.Sleep(20 * time.Millisecond)
 	tr.write("home/source.jsonl", "a\n")
 	if current, _, _ := recoveryWitnessesCurrent(t.Context(), r, witnesses, map[string]bool{}, true); current {
 		t.Fatal("truncated witness renewed")
