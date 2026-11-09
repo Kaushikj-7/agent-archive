@@ -5,7 +5,13 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/agentapi"
+	"github.com/wangjohn/agent-archive/internal/testutil/agenttest"
 )
+
+func TestLaunchConformance(t *testing.T) {
+	t.Parallel()
+	agenttest.LaunchConformance(t, Launcher{}, []string{"agy"}, []string{"--add-dir", "/project", "--model", "x", "-i", "PROMPT"})
+}
 
 func TestLauncherArgs(t *testing.T) {
 	got, err := (Launcher{}).Args(agentapi.LaunchRequest{ProjectDir: `C:\work`, Prompt: "continue", ExtraArgs: []string{"--model", "gemini"}})
@@ -36,7 +42,7 @@ func TestLauncherRejectsPromptFlagConflict(t *testing.T) {
 }
 
 func TestLauncherRejectsAllConflictingPromptFlags(t *testing.T) {
-	for _, flag := range []string{"-p", "--prompt", "--print", "-i", "--prompt-interactive"} {
+	for _, flag := range []string{"--", "-p", "--prompt", "--print", "-i", "--prompt-interactive"} {
 		if _, err := (Launcher{}).Args(agentapi.LaunchRequest{ExtraArgs: []string{flag}, Prompt: "handoff"}); err == nil {
 			t.Fatalf("Args() accepted conflicting flag %q", flag)
 		}
@@ -51,9 +57,9 @@ func TestLauncherRejectsPromptFlagPrefixSyntax(t *testing.T) {
 	}
 }
 
-func TestLauncherAdvertisesWindowsAndUnixNames(t *testing.T) {
+func TestLauncherExecutables(t *testing.T) {
 	names := (Launcher{}).Executables().Names
-	if len(names) != 2 || names[0] != "agy" || names[1] != "agy.exe" {
+	if len(names) != 1 || names[0] != "agy" {
 		t.Fatalf("executables = %#v", names)
 	}
 }

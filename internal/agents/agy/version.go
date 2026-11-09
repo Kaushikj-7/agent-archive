@@ -16,13 +16,9 @@ var _ agentapi.VersionInspector = VersionInspector{}
 func (p VersionInspector) Candidates(e agentapi.VersionEnvironment) []string {
 	paths := []string{
 		"agy",
-		"agy.exe",
 		filepath.Join(e.UserHome, ".local", "bin", "agy"),
-		filepath.Join(e.UserHome, ".local", "bin", "agy.exe"),
 		filepath.Join(e.UserHome, ".gemini", "antigravity-cli", "bin", "agy"),
-		filepath.Join(e.UserHome, ".gemini", "antigravity-cli", "bin", "agy.exe"),
 		filepath.Join(e.UserHome, ".gemini", "antigravity", "bin", "agy"),
-		filepath.Join(e.UserHome, ".gemini", "antigravity", "bin", "agy.exe"),
 	}
 	return paths
 }

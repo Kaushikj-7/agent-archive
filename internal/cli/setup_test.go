@@ -109,7 +109,7 @@ func s3SetupInput(bucket, region, profile string, codex, claude, cursor bool, pr
 		}
 		return "n"
 	}
-	answers := []string{yn(codex), yn(claude), yn(cursor)}
+	answers := []string{yn(codex), yn(claude), yn(cursor), "n"}
 	if codex {
 		answers = append(answers, "included-projects")
 	}
@@ -118,7 +118,7 @@ func s3SetupInput(bucket, region, profile string, codex, claude, cursor bool, pr
 }
 
 func r2SetupInput(project, secret string) string {
-	return strings.Join([]string{"y", "n", "n", "included-projects", project, "", "r2-existing", "0123456789abcdef0123456789abcdef", "test-bucket", "ACCESS", secret, "y"}, "\n") + "\n"
+	return strings.Join([]string{"y", "n", "n", "n", "included-projects", project, "", "r2-existing", "0123456789abcdef0123456789abcdef", "test-bucket", "ACCESS", secret, "y"}, "\n") + "\n"
 }
 
 func setupRun(t *testing.T, env Env, input string, want int) string {

@@ -320,7 +320,7 @@ func TestStatsRejectsBadFlags(t *testing.T) {
 		{[]string{"--since", "2026-10-15"}, "--since is in the future"},
 		{[]string{"--since", "2000-01-01"}, "--since reaches back"},
 		{[]string{"--by", "hour"}, `--by must be day, week, month, or project, not "hour"`},
-		{[]string{"--harness", "vim"}, "--harness must be claude, codex, or cursor"},
+		{[]string{"--harness", "vim"}, "--harness must be claude, codex, cursor, muse, or agy"},
 		{[]string{"--imported", "--hook-captured"}, "choose one of --imported and --hook-captured"},
 		{[]string{"--prices", filepath.Join(dir, "missing.json")}, "--prices:"},
 		{[]string{"--prices", notPrices}, "--prices:"},

@@ -37,11 +37,16 @@ func TestVersionInspectorCandidates(t *testing.T) {
 	v := VersionInspector{}
 	home := filepath.Join(string(filepath.Separator), "home", "user")
 	candidates := v.Candidates(agentapi.VersionEnvironment{UserHome: home})
-	if len(candidates) < 2 {
-		t.Fatalf("expected at least 2 candidates, got %d", len(candidates))
+	if len(candidates) < 1 {
+		t.Fatalf("expected at least 1 candidate, got %d", len(candidates))
 	}
-	if candidates[0] != "agy" || candidates[1] != "agy.exe" {
-		t.Fatalf("expected agy and agy.exe first, got %v", candidates[:2])
+	if candidates[0] != "agy" {
+		t.Fatalf("expected agy first, got %v", candidates[0])
+	}
+	for _, c := range candidates {
+		if filepath.Ext(c) == ".exe" {
+			t.Fatalf("unexpected .exe in candidates: %s", c)
+		}
 	}
 	expectedHomeCandidate := filepath.Join(home, ".local", "bin", "agy")
 	if !slices.Contains(candidates, expectedHomeCandidate) {

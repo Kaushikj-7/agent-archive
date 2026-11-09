@@ -20,7 +20,7 @@ func TestHarnessFlagRejectsUnknownApps(t *testing.T) {
 	} {
 		var out, errOut bytes.Buffer
 		code := Run(args, nil, &out, &errOut, env)
-		want := "agent-archive: " + args[0] + `: --harness must be claude, codex, or cursor, not "nope"; run agent-archive ` + args[0] + " --help\n"
+		want := "agent-archive: " + args[0] + `: --harness must be claude, codex, cursor, muse, or agy, not "nope"; run agent-archive ` + args[0] + " --help\n"
 		if code != 2 || errOut.String() != want || out.Len() != 0 {
 			t.Errorf("%v: exit=%d stdout=%q stderr=%q, want exit 2 and %q", args, code, out.String(), errOut.String(), want)
 		}

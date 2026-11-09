@@ -13,10 +13,10 @@ type Launcher struct{}
 
 // Executables returns native CLI candidates in preference order.
 func (Launcher) Executables() agentapi.Executables {
-	return agentapi.Executables{Names: []string{"agy", "agy.exe"}, Install: "Antigravity CLI"}
+	return agentapi.Executables{Names: []string{"agy"}, Install: "Antigravity CLI"}
 }
 
-var conflictingPromptFlags = []string{"-p", "--prompt", "--print", "-i", "--prompt-interactive"}
+var conflictingPromptFlags = []string{"--", "-p", "--prompt", "--print", "-i", "--prompt-interactive"}
 
 // Args starts a new AGY conversation with the handoff prompt and project root.
 func (Launcher) Args(r agentapi.LaunchRequest) ([]string, error) {
